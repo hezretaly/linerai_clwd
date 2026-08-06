@@ -33,10 +33,10 @@ make install && make reset-db && make dev
 | | |
 |---|---|
 | Backend | Complete. 17 tables, six agent tools, guards, WebSocket event bus, Act 2 actions, inventory ingest. |
-| Frontend | shadcn classic theme. Seven dashboard pages, buyer chat, voice placeholder. |
+| Frontend | shadcn classic theme. Eight dashboard pages, buyer chat, voice placeholder. |
 | `/` | The real marketing landing page, byte-for-byte as supplied. |
-| `make smoke` | 24 checks including WebSocket assertions. **The gate.** |
-| `make shots` | 12 routes, no console errors. |
+| `make smoke` | 41 checks including WebSocket assertions. **The gate.** |
+| `make shots` | 13 routes, no console errors. |
 | `make e2e` | Two browser windows: buyer books, dashboard KPI moves live. |
 
 ## Decisions that look arbitrary and get "tidied" — don't
@@ -79,6 +79,19 @@ prompt is a request; an executor is a guarantee.
 **Guards run in every `LLM_MODE`, stub included.** If a stubbed turn can slip an
 unsourced price past them, the guard has a hole — that should fail offline.
 
+**`provenance='adf'` is a fifth value only the lead importer can write.** The
+agent tool's enum is the four conversational ones, so `save_captured_fields`
+cannot claim it — a field marked `adf` provably came from a document a dealer
+uploaded. It counts as *verified*: the buyer did state it, just on a
+marketplace's form rather than to us. Only `inferred` is a guess.
+
+**Lead-level outreach needed no migration.** `outreach.appointment_id` was
+already nullable, so a lead with no appointment gets a real `outreach` row. The
+draft is built server-side from the lead's actual state (`_lead_draft` in
+`api/lead_import.py`) — a booked visit produces a reminder naming the slot,
+everyone else a first touch that only says a car is "still here" when it is
+genuinely `status='available'` and not `rule_discuss=False`.
+
 ## Bugs already fixed — don't reintroduce
 
 - **Four booking bugs, all the same shape: Liner confirming a time the buyer
@@ -97,6 +110,11 @@ unsourced price past them, the guard has a hole — that should fail offline.
   `hours_json`.
 - **"The first one" resolved to the wrong car.** `conversations.last_results_json`
   records what the buyer was actually shown, in order.
+- **`api.upload()` sent multipart with `Content-Type: application/json`.** The
+  `request()` wrapper set that header whenever a body existed, which strips the
+  boundary only the browser knows and makes FastAPI see a body with no parts
+  (422). Both file importers were affected. `request()` now leaves the header
+  off for a `FormData` body.
 
 ## What is real and what is not
 
@@ -109,6 +127,8 @@ returns it live and drives the amber banner in the dashboard.
 | Email | **Outbox.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `GmailSender` written and unverified. |
 | Voice | **Not configured, and not faked.** Session mint returns a typed 503 naming the missing keys. Tool relay and transcript endpoints are real and tested. A scripted transcript would look like it worked while proving nothing about latency, barge-in or audio. |
 | Scraper | **Works, against the fixture site** (`make fixture-site`). Real HTTP, real JSON-LD parsing, real diff/publish, manual edits survive re-ingest. No adapter for a real dealer site — that needs real URLs. |
+| Lead import | **Real, end to end.** ADF/XML parsed with `defusedxml`, matched against inventory and existing leads, reviewed, then committed. Nothing is *fetched*: ADF normally arrives by email to a lead inbox or by HTTP POST from the marketplace, and neither is configured — you upload the document. |
+| Reminders | **Manual, and said so on the page.** No scheduler exists here, so a reminder is a draft a rep sends. Nothing runs on a timer. |
 
 ### Known gaps
 

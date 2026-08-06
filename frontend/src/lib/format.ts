@@ -102,4 +102,7 @@ export const PROVENANCE_LABEL: Record<string, string> = {
   listing: 'from listing',
   caller_id: 'caller ID',
   inferred: 'inferred',
+  // Stated by the buyer, but on a marketplace form rather than to us -- so it
+  // is verified, and worth labelling differently from something they told Liner.
+  adf: 'from lead feed',
 }

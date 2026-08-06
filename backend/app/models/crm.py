@@ -22,7 +22,10 @@ STAGES = [
     "escalated",
 ]
 
-PROVENANCE = ["typed", "listing", "caller_id", "inferred"]
+# The first four are conversational and are the only ones `save_captured_fields`
+# will accept -- the agent must not be able to claim a field came from a feed.
+# 'adf' is written solely by the lead importer, from a document a dealer uploaded.
+PROVENANCE = ["typed", "listing", "caller_id", "inferred", "adf"]
 
 
 class Lead(Base):
@@ -32,7 +35,9 @@ class Lead(Base):
     name: Mapped[str] = mapped_column(String(120), default="")
     email: Mapped[str] = mapped_column(String(255), default="", index=True)
     phone: Mapped[str] = mapped_column(String(40), default="")
-    source: Mapped[str] = mapped_column(String(20), default="chat")  # chat|phone|website
+    # chat|phone|website|adf -- 'adf' means it arrived as a marketplace lead
+    # document rather than from a conversation this system had.
+    source: Mapped[str] = mapped_column(String(20), default="chat")
     assigned_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     email_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = created()

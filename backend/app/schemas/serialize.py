@@ -111,7 +111,9 @@ def captured_out(c: CapturedField) -> dict:
         # The UI renders inferred values in italic under "check before using
         # them on a call" -- the difference between reporting what we know and
         # laundering a guess into a fact a rep repeats on the phone.
-        "verified": c.provenance in {"typed", "listing", "caller_id"},
+        # 'adf' counts as verified: the buyer did state it, just on a
+        # marketplace form rather than to us. Only 'inferred' is a guess.
+        "verified": c.provenance != "inferred",
         "updated_at": iso(c.updated_at),
     }
 

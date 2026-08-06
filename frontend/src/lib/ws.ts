@@ -14,6 +14,7 @@ const INVALIDATES: Record<string, string[]> = {
   'conversation.started': ['overview', 'conversations'],
   'conversation.message': ['conversations'],
   'lead.qualified': ['leads', 'overview'],
+  'lead.imported': ['leads', 'overview'],
   'appointment.booked': ['overview', 'appointments', 'leads', 'conversations'],
   'appointment.confirmed': ['overview', 'appointments'],
   'appointment.assigned': ['overview', 'appointments', 'team'],

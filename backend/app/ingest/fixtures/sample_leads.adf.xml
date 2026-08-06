@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?adf version="1.0"?>
+<!--
+  A sample ADF 1.0 drop, shaped like what a marketplace posts to a dealer's lead
+  inbox. Served at GET /api/leads/import/adf/sample so the import page can offer
+  a working file to try, and used by scripts/smoke.py.
+
+  Deliberately mixed. Three of these vehicles are the seeded Riverside Auto
+  inventory and one is not on the lot, so the preview shows both the "it's here"
+  and the "we don't have that" paths, which is the difference a dealer
+  actually cares about before sending anything. The fourth prospect carries a
+  malformed email so the skipped-row path is visible too.
+
+  Addresses are @example.invalid on purpose (RFC 2606): a rehearsal must not be
+  able to reach a stranger even if DEMO_MODE were off.
+-->
+<adf>
+  <prospect status="new">
+    <id sequence="1" source="AutoTrader">AT-88213</id>
+    <requestdate>2026-08-05T09:14:00-05:00</requestdate>
+    <vehicle interest="buy" status="used">
+      <year>2017</year>
+      <make>Toyota</make>
+      <model>RAV4</model>
+      <trim>XLE</trim>
+      <vin>JTMRFREV8HJ135806</vin>
+    </vehicle>
+    <customer>
+      <contact>
+        <name part="first">Nadia</name>
+        <name part="last">Okonkwo</name>
+        <email>nadia.okonkwo@example.invalid</email>
+        <phone type="voice" time="day">(555) 013-8827</phone>
+      </contact>
+      <comments>Looking for all-wheel drive for winter. Weekends work best for me.</comments>
+      <timeframe>
+        <description>Within 2 weeks</description>
+      </timeframe>
+    </customer>
+    <vendor>
+      <vendorname>Riverside Auto</vendorname>
+    </vendor>
+    <provider>
+      <name part="full">AutoTrader</name>
+      <service>Lead Delivery</service>
+    </provider>
+  </prospect>
+
+  <prospect status="new">
+    <id sequence="2" source="CarGurus">CG-40117</id>
+    <requestdate>2026-08-05T16:02:00-05:00</requestdate>
+    <vehicle interest="buy" status="used">
+      <year>2019</year>
+      <make>Kia</make>
+      <model>Sorento</model>
+      <trim>EX</trim>
+    </vehicle>
+    <customer>
+      <contact>
+        <name part="first">Devon</name>
+        <name part="last">Whitfield</name>
+        <email>devon.whitfield@example.invalid</email>
+      </contact>
+      <comments>Is this still available? We need the third row.</comments>
+    </customer>
+    <provider>
+      <name part="full">CarGurus</name>
+    </provider>
+  </prospect>
+
+  <prospect status="new">
+    <id sequence="3" source="Cars.com">CD-77340</id>
+    <requestdate>2026-08-06T08:41:00-05:00</requestdate>
+    <vehicle interest="buy" status="used">
+      <year>2022</year>
+      <make>Porsche</make>
+      <model>Macan</model>
+    </vehicle>
+    <customer>
+      <contact>
+        <name part="first">Marisol</name>
+        <name part="last">Vega</name>
+        <phone type="voice" time="evening">555-013-4402</phone>
+      </contact>
+      <comments>Do you ever get European SUVs in?</comments>
+      <timeframe>
+        <description>This week</description>
+      </timeframe>
+    </customer>
+    <provider>
+      <name part="full">Cars.com</name>
+    </provider>
+  </prospect>
+
+  <prospect status="new">
+    <id sequence="4" source="Website">WEB-2201</id>
+    <requestdate>2026-08-06T10:05:00-05:00</requestdate>
+    <customer>
+      <contact>
+        <name part="first">Alex</name>
+        <name part="last">Toure</name>
+        <email>not-an-address</email>
+      </contact>
+      <comments>Do you take trade-ins?</comments>
+    </customer>
+    <provider>
+      <name part="full">Dealer website form</name>
+    </provider>
+  </prospect>
+</adf>

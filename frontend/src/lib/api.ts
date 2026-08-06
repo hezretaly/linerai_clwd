@@ -28,7 +28,13 @@ export class ApiError extends Error {
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     credentials: 'include',
-    headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
+    /* A multipart body must set its own Content-Type: only the browser knows
+     * the boundary, and naming the type here strips it, which the server sees
+     * as a body with no parts (422). */
+    headers:
+      init.body && !(init.body instanceof FormData)
+        ? { 'Content-Type': 'application/json' }
+        : undefined,
     ...init,
   })
 

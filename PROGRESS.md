@@ -33,8 +33,18 @@ and `CLAUDE.md` for commands and conventions.
   `/`; one approved edit (`Test your Liner AI` → `/chat`). Screenshot gate taught
   to scroll (reveal animations) and to distinguish expected gaps from breakage.
 - **Handoff.** `HANDOFF.md` + `PROGRESS.md`, branch pushed to GitHub.
+- **Overview, conversations and leads ported** from the supplied mockups: layout
+  and hierarchy from the mockup, colour/radius/type from the token layer, and
+  every control the API cannot back rendered as unavailable rather than dead.
+  Backend extended where a mockup legitimately needed data (`by_hour` on
+  `/api/overview`, `lead_summaries()` for the leads table) instead of faking it.
+- **ADF/XML lead import + lead-level outreach.** Marketplace lead documents
+  parsed with `defusedxml`, matched against real inventory and existing leads,
+  reviewed, then committed; manual entry through the same path. Server-built
+  follow-up and reminder drafts a rep sends from the lead drawer. Also fixed
+  `api.upload()`, which had been sending multipart with a JSON content type.
 
 ## Next
 
-Port the seven dashboard mockups — see the last section of `HANDOFF.md` for how
-to send them and the approach to take.
+Port the remaining mockups — calendar, inventory, assistant, team, settings —
+then the embeddable chat widget and `/demo`. See `HANDOFF.md`.

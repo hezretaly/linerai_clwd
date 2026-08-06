@@ -78,6 +78,25 @@ def call(method: str, path: str, body: dict | None = None, *, stream: bool = Fal
     return raw if stream else (json.loads(raw) if raw else {})
 
 
+def upload(path: str, filename: str, content: bytes) -> dict:
+    """One multipart POST, hand-rolled -- smoke.py deliberately has no deps."""
+    boundary = "----linersmoke"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: application/xml\r\n\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+    request = urllib.request.Request(
+        BASE + path, data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with opener.open(request, timeout=60) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise AssertionError(f"POST {path} -> {exc.code}: {exc.read().decode()[:300]}") from None
+
+
 def sse(raw: str) -> list[tuple[str, dict]]:
     events, event = [], None
     for line in raw.splitlines():
@@ -191,13 +210,70 @@ def main() -> int:
     check("it escalated and Liner stopped replying", conversation["agent_paused"] is True,
           f"status={conversation['status']}")
 
+    print("\n== adf lead import ==")
+    raw_sample = call("GET", "/api/leads/import/adf/sample", stream=True).encode()
+    check("a sample ADF document is served", raw_sample.lstrip().startswith(b"<?xml"),
+          raw_sample[:20].decode(errors="replace"))
+
+    preview = upload("/api/leads/import/adf/preview", "sample.adf.xml", raw_sample)
+    check("the drop parsed", len(preview["prospects"]) >= 2, f"{len(preview['prospects'])} usable")
+    check("a prospect with no way to be contacted was skipped, not imported",
+          len(preview["errors"]) >= 1, f"{len(preview['errors'])} skipped")
+    check("nothing was written by the preview",
+          all(p["existing_lead"] is None for p in preview["prospects"]))
+    matched = [p for p in preview["prospects"] if p["in_stock"]]
+    check("a requested vehicle was matched against real inventory", len(matched) >= 1,
+          matched[0]["in_stock"]["title"] if matched else "none matched")
+    unmatched = [p for p in preview["prospects"] if p["vehicle_label"] and not p["in_stock"]]
+    check("a vehicle we do not have is reported as not in inventory", len(unmatched) >= 1)
+
+    committed = call("POST", "/api/leads/import/adf", {"prospects": preview["prospects"]})
+    check("leads were created", len(committed["created"]) == len(preview["prospects"]),
+          f"{len(committed['created'])} created")
+    again = call("POST", "/api/leads/import/adf", {"prospects": preview["prospects"]})
+    check("re-importing the same drop merges instead of duplicating",
+          not again["created"] and len(again["merged"]) == len(preview["prospects"]),
+          f"{len(again['created'])} created, {len(again['merged'])} merged")
+
+    imported = committed["created"][0]
+    fields = {f["key"]: f for f in imported["captured_fields"]}
+    check("what the document said was captured", "comments" in fields)
+    check("and it is marked as coming from the feed, not from a conversation",
+          fields.get("comments", {}).get("provenance") == "adf",
+          fields.get("comments", {}).get("provenance", "missing"))
+
+    with_car = next((c for c in committed["created"] if c["email"]), imported)
+    draft = call("GET", f"/api/leads/{with_car['id']}/outreach?draft=1")
+    check("a lead-level draft was written", bool(draft["subject"] and draft["body"]),
+          draft["kind"])
+    body_text = draft["body"].lower()
+    check("the draft never quotes a price", "$" not in draft["body"])
+    check("it only claims a car is here when it is",
+          ("still here" in body_text) == bool(
+              next((p for p in preview["prospects"]
+                    if p["email"] == with_car["email"] and p["in_stock"]), None)
+          ))
+
+    reached = call("POST", f"/api/leads/{with_car['id']}/outreach",
+                   {"subject": draft["subject"], "body": draft["body"]})
+    check("lead-level outreach was recorded", reached["status"] == "sent", reached["status"])
+    check("with no appointment attached", reached["appointment_id"] is None)
+
+    manual = call("POST", "/api/leads", {
+        "name": "Smoke Walkin", "phone": "555-013-7788", "source": "phone",
+        "vehicle_make": "Honda", "vehicle_model": "Accord",
+    })
+    check("a lead can be entered by hand", bool(manual["lead"]["id"]))
+    check("and it does not claim to have come from a feed",
+          manual["lead"]["source"] == "phone", manual["lead"]["source"])
+
     print("\n== the dashboard saw it happen (websocket) ==")
     import time
 
     time.sleep(1.5)
     check("socket connected", not listener.error, listener.error or "ok")
     for event in ("appointment.booked", "appointment.confirmed", "appointment.assigned",
-                  "outreach.sent", "handoff.triggered"):
+                  "outreach.sent", "handoff.triggered", "lead.imported"):
         check(f"{event} reached the dashboard", event in listener.seen)
 
     return report()

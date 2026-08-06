@@ -5,7 +5,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
 from app.db import get_db
-from app.models import Appointment, Conversation, Escalation, Lead, User, Vehicle
+from app.models import (
+    Appointment,
+    CapturedField,
+    Conversation,
+    Escalation,
+    Lead,
+    User,
+    Vehicle,
+)
 from app.schemas.serialize import iso, lead_out, vehicle_out
 
 router = APIRouter(prefix="/leads", tags=["leads"])
@@ -41,6 +49,20 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
         )
     }
 
+    # An imported lead has no conversation, so the car it asked about lives on a
+    # captured field. Matched back to a real row here rather than shown as free
+    # text, so the table never names a car that is not on the lot.
+    wanted = {
+        row.lead_id: row.value
+        for row in db.query(CapturedField)
+        .filter(CapturedField.lead_id.in_(ids), CapturedField.key == "vehicle_interest")
+        .all()
+    }
+    by_label: dict[str, Vehicle] = {}
+    if wanted:
+        for v in db.query(Vehicle).filter(Vehicle.status == "available").all():
+            by_label[f"{v.year} {v.make} {v.model}".lower()] = v
+
     out: dict[str, dict] = {}
     for lead in leads:
         mine = [c for c in convos if c.lead_id == lead.id]
@@ -67,6 +89,9 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
             ),
             None,
         )
+        if vehicle is None and lead.id in wanted:
+            label = " ".join(wanted[lead.id].split()[:3]).lower()
+            vehicle = by_label.get(label)
 
         touches = [c.started_at for c in mine] + [a.created_at for a in my_appts]
         out[lead.id] = {

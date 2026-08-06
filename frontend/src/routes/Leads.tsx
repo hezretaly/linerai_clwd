@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
 import { PROVENANCE_LABEL, dateTime, initials, money, relative } from '../lib/format'
-import type { Lead, TeamMember, User } from '../lib/types'
-import { Card, Empty, NotBacked, Sheet, Spinner, Unavailable } from '../components/ui'
+import type { Lead, LeadDraft, Outreach, TeamMember, User } from '../lib/types'
+import { Button, Card, Empty, NotBacked, Sheet, Spinner, Unavailable } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
 
@@ -21,6 +21,7 @@ const SOURCE_LABEL: Record<string, string> = {
   chat: 'Website chat',
   phone: 'Phone',
   website: 'Website form',
+  adf: 'Lead feed',
 }
 
 /** Age drives colour -- time is the whole product. */
@@ -118,12 +119,11 @@ export function LeadsPage() {
               label="Export"
               why="No export endpoint exists. The same rows are available from /api/leads."
             />
-            {/* Leads are created by book_appointment when a buyer gives a name
-                and an email. Nothing creates one by hand. */}
-            <Unavailable
-              label="Add lead"
-              why="Leads are created when Liner books an appointment and captures a name and email. There is no manual create endpoint."
-            />
+            <Link to="/app/leads/import">
+              <Button size="sm" variant="primary">
+                Import or add leads
+              </Button>
+            </Link>
           </>
         }
       />
@@ -184,11 +184,14 @@ export function LeadsPage() {
               className="h-9 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             >
               {/* Only the sources a lead can actually have. The mockup lists
-                  AutoTrader, CarGurus and Cars.com; no marketplace feed exists. */}
+                  AutoTrader, CarGurus and Cars.com by name; the importer keeps
+                  the marketplace on a captured field and the source is 'adf'
+                  for all of them, because that is what the document proves. */}
               <option value="">All sources</option>
               <option value="chat">Website chat</option>
               <option value="website">Website form</option>
               <option value="phone">Phone</option>
+              <option value="adf">Lead feed (ADF)</option>
             </select>
             <select
               value={assignee}
@@ -354,6 +357,7 @@ function Row({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
 }
 
 function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
+  const [composing, setComposing] = useState(false)
   const { data: lead } = useQuery({
     queryKey: ['leads', id],
     queryFn: () => api.get<Lead>(`/api/leads/${id}`),
@@ -363,7 +367,10 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
   return (
     <Sheet
       open={Boolean(id)}
-      onClose={onClose}
+      onClose={() => {
+        setComposing(false)
+        onClose()
+      }}
       title={
         <>
           <h2 className="text-base font-semibold">{lead?.name ?? 'Lead'}</h2>
@@ -472,7 +479,22 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
           </section>
 
           <section>
-            <h3 className="text-xs font-medium text-muted-foreground">Outreach</h3>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-medium text-muted-foreground">Outreach</h3>
+              {lead.email ? (
+                <Button size="sm" onClick={() => setComposing((v) => !v)}>
+                  {composing ? 'Cancel' : 'Write to them'}
+                </Button>
+              ) : (
+                <Unavailable
+                  label="Write to them"
+                  why="No email on file, and SMS is out of scope, so this product has no way to reach them. A rep has to call."
+                />
+              )}
+            </div>
+
+            {composing && <Composer lead={lead} onDone={() => setComposing(false)} />}
+
             <ul className="mt-2 space-y-2">
               {lead.outreach?.length ? (
                 lead.outreach.map((o) => (
@@ -485,6 +507,7 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
                         <> -- recorded locally, not delivered</>
                       )}
                     </p>
+                    {o.error && <p className="mt-1 text-xs text-destructive">{o.error}</p>}
                   </li>
                 ))
               ) : (
@@ -505,5 +528,81 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
         </div>
       )}
     </Sheet>
+  )
+}
+
+/**
+ * Lead-level outreach. The draft comes from the server, not from here -- it is
+ * built out of the lead's real state, so a lead with a booked visit gets a
+ * reminder naming the slot and everyone else gets a first touch that only
+ * claims a car is available when it actually is.
+ *
+ * The rep can edit it before sending. What they send is what is stored.
+ */
+function Composer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+  const queryClient = useQueryClient()
+  const [draft, setDraft] = useState<{ subject: string; body: string } | null>(null)
+
+  const { data: seed } = useQuery({
+    queryKey: ['leads', lead.id, 'draft'],
+    queryFn: () => api.get<LeadDraft>(`/api/leads/${lead.id}/outreach?draft=1`),
+  })
+
+  const send = useMutation({
+    mutationFn: () =>
+      api.post<Outreach>(`/api/leads/${lead.id}/outreach`, {
+        subject: draft?.subject ?? seed?.subject,
+        body: draft?.body ?? seed?.body,
+        appointment_id: seed?.appointment_id ?? null,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['leads', lead.id] })
+      void queryClient.invalidateQueries({ queryKey: ['leads'] })
+      onDone()
+    },
+  })
+
+  if (!seed) return <Spinner label="Drafting" />
+
+  const value = draft ?? { subject: seed.subject, body: seed.body }
+  const error = send.error as ApiError | null
+
+  return (
+    <div className="mt-2 rounded-md border border-border bg-muted/40 p-3">
+      <p className="text-xs text-muted-foreground">
+        {seed.kind === 'reminder'
+          ? 'Reminder for their booked visit. Sent when you click, not on a schedule.'
+          : 'First follow-up. It only offers a car that is genuinely on the lot.'}
+      </p>
+
+      <input
+        value={value.subject}
+        onChange={(e) => setDraft({ ...value, subject: e.target.value })}
+        className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <textarea
+        value={value.body}
+        onChange={(e) => setDraft({ ...value, body: e.target.value })}
+        rows={9}
+        className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+
+      {error && <p className="mt-2 text-sm text-destructive">{error.message}</p>}
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => send.mutate()}
+          disabled={send.isPending}
+        >
+          {send.isPending ? 'Sending...' : 'Send email'}
+        </Button>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">to {lead.email}</span>
+        <p className="w-full text-xs text-muted-foreground">
+          Recorded either way -- delivery depends on the email integration.
+        </p>
+      </div>
+    </div>
   )
 }

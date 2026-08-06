@@ -1,7 +1,10 @@
 /* Hand-written to match app/schemas/serialize.py. One shaping layer on each
  * side is easier to keep honest than a generator nobody re-runs. */
 
-export type Provenance = 'typed' | 'listing' | 'caller_id' | 'inferred'
+/* 'adf' is written only by the lead importer, from a document a dealer
+ * uploaded. The agent cannot claim it -- save_captured_fields takes the four
+ * conversational values and nothing else. */
+export type Provenance = 'typed' | 'listing' | 'caller_id' | 'inferred' | 'adf'
 export type Stage =
   | 'opening' | 'browsing' | 'vehicle_focus' | 'objection'
   | 'qualifying' | 'slot_offered' | 'contact_capture' | 'booked' | 'escalated'
@@ -84,7 +87,7 @@ export interface Lead {
   name: string
   email: string
   phone: string
-  source: 'chat' | 'phone' | 'website'
+  source: 'chat' | 'phone' | 'website' | 'adf'
   assigned_user_id: string | null
   assigned_to?: User | null
   contact_risk: boolean
@@ -272,6 +275,46 @@ export interface IntegrationsPayload {
   unconfigured: string[]
   demo_mode: boolean
   llm_mode: string
+}
+
+/** One <prospect> from an ADF document, after parsing and matching. */
+export interface Prospect {
+  name: string
+  email: string
+  phone: string
+  provider: string
+  requested_at: string
+  comments: string
+  timeframe: string
+  vehicle_year: number | null
+  vehicle_make: string
+  vehicle_model: string
+  vehicle_trim: string
+  vehicle_vin: string
+  vehicle_stock: string
+  vehicle_label: string
+  warnings: string[]
+  source: string
+  /** Same email or phone already on file -- importing merges rather than duplicates. */
+  existing_lead: Lead | null
+  /** The car they asked about, if it is genuinely on the lot. */
+  in_stock: Vehicle | null
+}
+
+export interface AdfPreview {
+  filename: string
+  prospects: Prospect[]
+  errors: { row?: number; error: string }[]
+  found: number
+}
+
+export interface LeadDraft {
+  kind: 'reminder' | 'follow_up'
+  to: string
+  subject: string
+  body: string
+  appointment_id: string | null
+  note?: string
 }
 
 export interface IngestRun {

@@ -17,6 +17,9 @@ dependencies = [
     "httpx>=0.27",
     "selectolax>=0.3.21",
     "anthropic>=0.40",
+    # ADF uploads are untrusted XML. stdlib ElementTree is still open to
+    # entity-expansion DoS ("billion laughs"); defusedxml closes it.
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]
