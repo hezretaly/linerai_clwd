@@ -37,7 +37,7 @@ PUBLIC = ["/", "/chat", "/call", "/login"]
 
 # Assets the design references but that have not been supplied yet. Their 404s
 # are reported rather than failing the run; remove each one as it arrives.
-PENDING_ASSETS = ["live_inv_car.png"]
+PENDING_ASSETS: list[str] = []
 
 # Hosts the page legitimately reaches that this sandbox's headless browser
 # cannot. `curl` gets 200 from Google Fonts through the agent proxy, but
