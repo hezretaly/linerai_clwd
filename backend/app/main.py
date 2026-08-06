@@ -69,12 +69,14 @@ def create_app() -> FastAPI:
         chat,
         conversations,
         health,
+        ingest,
         inventory,
         leads,
         outreach,
         overview,
         settings as settings_api,
         team,
+        voice,
         ws,
     )
 
@@ -88,6 +90,8 @@ def create_app() -> FastAPI:
         appointments.router,
         outreach.router,
         inventory.router,
+        ingest.router,
+        voice.router,
         team.router,
         settings_api.router,
     ):
