@@ -4,6 +4,10 @@ An AI assistant for a single car dealership. A buyer chats or calls, Liner
 searches real inventory, qualifies them and books an appointment; the dealer
 dashboard handles it from there.
 
+**Current state, decisions and what's next live in [`HANDOFF.md`](./HANDOFF.md).**
+Read that first if you are picking this up cold; this file is commands and
+conventions only.
+
 **The rule this codebase is built around:** narrow, not fake. Scope is cut
 aggressively — one dealership, six qualification fields, seeded inventory — but
 everything that exists is real. Where an external dependency is missing, the
