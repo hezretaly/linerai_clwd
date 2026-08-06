@@ -200,6 +200,40 @@ in-process, so a second worker serves dashboards that silently miss half their
 events. The app warns if `WEB_CONCURRENCY` is raised. Going wider means moving
 `events.py` to Redis pub/sub first.
 
+## 6a. If nginx is already running here (including in Docker)
+
+Check what owns port 80 before assuming the system nginx is free:
+
+```bash
+sudo ss -ltnp | grep -E ':80 |:443 '
+```
+
+If that names `docker-proxy`, a container is your front door and the system
+nginx must stay stopped and disabled — `systemctl start nginx` will fail with
+`bind() to 0.0.0.0:80 failed (98: Address already in use)`. Use
+`deploy/liner-vhost.conf`, which drops into an existing nginx and assumes the
+certificate already exists. Skip §6 entirely, and skip certbot if that proxy
+already terminates TLS for the hostname (`curl -skI https://127.0.0.1/ -H 'Host:
+YOUR-HOST'` returning 200 means it does).
+
+**The one thing that will bite you:** inside a container, `127.0.0.1` is the
+container, so it cannot reach a uvicorn bound to the host's loopback. Bind the
+Docker bridge gateway instead — the header comment in `liner-vhost.conf` has
+the two commands and the systemd drop-in.
+
+Find where that nginx reads its config from:
+
+```bash
+sudo docker inspect <container> --format '{{json .Mounts}}' | python3 -m json.tool
+```
+
+A bind mount onto `/etc/nginx/conf.d` means you can add a file on the host and
+reload in place — `docker exec <container> nginx -t && docker exec <container>
+nginx -s reload`. That is zero downtime; **do not `docker restart`**, which
+would drop every other service in the stack. If the config is baked into the
+image instead, adding a mount means recreating the container, which is a
+different and more disruptive change.
+
 ## 6. nginx, in two passes
 
 **Do not apply `liner.nginx.conf` first.** It names certificate files, and nginx
