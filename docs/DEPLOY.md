@@ -145,9 +145,37 @@ sudo -u liner make build       # frontend/dist -- the API serves this
 sudo -u liner make reset-db    # prints the two logins; wipes any existing data
 ```
 
+**This step is not optional, and nothing else does it.** SQLite means there is no
+database *server* to install, which makes it easy to assume the data takes care
+of itself. It does not. The file is created on demand and `create_all()` builds
+the tables at startup — so `/api/health` reports `database: ok` on a completely
+empty database — but nothing writes a single row. Skip this and every login
+returns 401 because there is no account to log in as. Confirm with:
+
+```bash
+sudo -u liner /srv/liner/backend/.venv/bin/python -c "
+import sqlite3; c = sqlite3.connect('/srv/liner/backend/liner.db')
+for t in ('users','vehicles','leads'):
+    print(t, c.execute(f'select count(*) from {t}').fetchone()[0])"
+```
+
 `make reset-db` **deletes the database**. Use `make seed` only on a fresh one,
 and neither once there is real data you care about — there is no migration tool
 here (`create_all` only), so a schema change after that point needs one written.
+
+**Reseeding an install that is already running: stop the service first.**
+
+```bash
+sudo systemctl stop liner
+sudo -u liner make reset-db
+sudo systemctl start liner
+```
+
+`reset-db` unlinks `liner.db` and its WAL sidecars, and uvicorn holds pooled
+connections to that file. On Unix, unlinking a file a process has open does not
+free it: the running app keeps reading the old, deleted copy while the new one
+fills up on disk. The symptom is a reseed that appears to do nothing — fresh
+data on disk, an app that still cannot see it, and no error anywhere.
 
 ## 4. Two logins, two roles
 
