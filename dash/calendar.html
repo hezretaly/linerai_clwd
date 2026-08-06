@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calendar — Liner AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="liner-theme.js"></script>
+<link rel="stylesheet" href="liner-theme.css">
+</head>
+<body class="min-h-screen">
+
+<!-- ========================= SIDEBAR ========================= -->
+<aside class="fixed inset-y-0 left-0 z-40 flex w-14 lg:w-60 flex-col border-r border-border bg-sidebar">
+
+  <div class="flex h-14 items-center gap-2.5 border-b border-border px-3 lg:px-4">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+    </div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-semibold leading-tight">Riverside Auto</div>
+      <div class="truncate text-xs text-muted-foreground"><span class="font-semibold text-primary" style="color:#007AFF">Liner</span> AI</div>
+    </div>
+  </div>
+
+  <nav class="flex-1 overflow-y-auto scroll-thin px-2 py-3">
+    <div class="hidden lg:block px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground">Today</div>
+
+    <a href="overview.html" title="Overview"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      <span class="hidden lg:inline">Overview</span>
+    </a>
+
+    <a href="conversations.html" title="Conversations"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      <span class="hidden lg:inline">Conversations</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">3</span>
+    </a>
+
+    <a href="leads.html" title="Leads"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>
+      <span class="hidden lg:inline">Leads</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">12</span>
+    </a>
+
+    <a href="calendar.html" title="Calendar"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md bg-accent px-2.5 py-2 text-sm font-medium text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span class="hidden lg:inline">Calendar</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">6</span>
+    </a>
+
+    <div class="hidden lg:block px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground">Manage</div>
+    <div class="lg:hidden my-2 border-t border-border"></div>
+
+    <a href="inventory.html" title="Inventory"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-5a2 2 0 012-1h10a2 2 0 012 1l2 5"/><rect x="2" y="12" width="20" height="7" rx="2"/><circle cx="7" cy="19" r="1.2"/><circle cx="17" cy="19" r="1.2"/></svg>
+      <span class="hidden lg:inline">Inventory</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">2</span>
+    </a>
+
+    <a href="assistant.html" title="Liner setup"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="hidden lg:inline">Liner setup</span>
+    </a>
+
+    <a href="team.html" title="Team"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="hidden lg:inline">Team</span>
+    </a>
+
+    <a href="settings.html" title="Settings"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 3.68 1.65 1.65 0 0010 2.17V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0020.32 8c.14.35.4.65.74.85"/></svg>
+      <span class="hidden lg:inline">Settings</span>
+    </a>
+  </nav>
+
+  <div class="border-t border-border p-2 lg:p-3">
+    <div class="hidden lg:block rounded-md border border-border bg-background p-3">
+      <div class="mb-1 flex items-center gap-2">
+        <span class="relative flex h-2 w-2">
+          <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60"></span>
+          <span class="relative inline-flex h-2 w-2 rounded-full bg-success"></span>
+        </span>
+        <span class="text-sm font-medium">Liner is answering</span>
+      </div>
+      <p class="text-xs text-muted-foreground">3 open · replying in ~24s</p>
+      <button class="mt-2.5 inline-flex h-8 w-full items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-destructive hover:text-destructive">
+        Pause Liner
+      </button>
+    </div>
+    <button title="Pause Liner" class="lg:hidden flex h-9 w-full items-center justify-center rounded-md border border-input text-muted-foreground hover:text-destructive">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    </button>
+  </div>
+
+  <div class="flex items-center gap-2.5 border-t border-border p-2 lg:px-4 lg:py-3">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">DM</div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-medium leading-tight">Dana Mercer</div>
+      <div class="truncate text-xs text-muted-foreground">Sales manager</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ========================= MAIN ========================= -->
+<div class="ml-14 lg:ml-60">
+
+  <header class="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background/95 px-4 backdrop-blur md:px-6">
+    <div class="relative w-full max-w-sm">
+      <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="search" placeholder="Search appointments, leads, vehicles…"
+             class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring">
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button class="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"></span>
+      </button>
+      <div class="h-5 w-px bg-border"></div>
+      <span class="hidden text-sm text-muted-foreground sm:inline tnum">Fri, Jul 31 · 9:12 AM</span>
+    </div>
+  </header>
+
+  <main class="p-4 md:p-6">
+
+    <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Calendar</h1>
+        <p class="mt-1 text-sm text-muted-foreground">Test drives, deliveries, appraisals and follow-ups. Liner books straight onto here.</p>
+      </div>
+      <button class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        New appointment
+      </button>
+    </div>
+
+    <!-- unconfirmed strip -->
+    <div id="unconfirmedStrip" class="mb-4"></div>
+
+    <!-- calendar card -->
+    <div class="rounded-lg border border-border bg-card shadow-sm">
+
+      <div class="flex flex-wrap items-center gap-3 border-b border-border p-3">
+        <div class="flex items-center gap-1">
+          <button onclick="step(-1)" aria-label="Previous" class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button onclick="step(1)" aria-label="Next" class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+          <button onclick="goToday()" class="ml-1 inline-flex h-9 items-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">Today</button>
+        </div>
+
+        <h2 id="rangeLabel" class="text-base font-semibold tracking-tight"></h2>
+
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <select id="repFilter" onchange="render()" class="h-9 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring">
+            <option value="">All reps</option>
+            <option>Dana Mercer</option>
+            <option>Jess Rowe</option>
+            <option>Tomas Vega</option>
+            <option>Marcus Idowu</option>
+            <option>Unassigned</option>
+          </select>
+          <div id="viewToggle" class="flex rounded-md border border-input p-0.5"></div>
+        </div>
+      </div>
+
+      <!-- legend + type filters -->
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-3 py-2.5">
+        <div id="typeFilters" class="flex flex-wrap gap-1.5"></div>
+        <div class="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span class="flex items-center gap-1.5">
+            <span class="inline-flex h-3.5 items-center rounded-sm px-1 text-[9px] font-bold leading-none text-white" style="background:#007AFF">L</span>
+            Booked by Liner
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block h-3.5 w-3.5 rounded-sm border border-dashed" style="border-color:#94A3B8"></span>
+            Unconfirmed
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block h-3.5 w-3.5 rounded-sm bg-muted"></span>
+            Outside opening hours
+          </span>
+        </div>
+      </div>
+
+      <div id="calBody" class="overflow-x-auto scroll-thin"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ========================= EVENT DRAWER ========================= -->
+<div id="scrim" onclick="closeDrawer()" class="fixed inset-0 z-40 hidden" style="background:rgba(15,23,42,.32)"></div>
+<aside id="drawer" class="fixed inset-y-0 right-0 z-50 w-full max-w-[420px] translate-x-full overflow-y-auto scroll-thin border-l border-border transition-transform duration-200"
+       style="background:#FFFFFF;color:#0F172A;box-shadow:-12px 0 32px -12px rgba(15,23,42,.25)"></aside>
+
+<script src="cal-data.js"></script>
+<script>
+/* ============================================================
+   Calendar — week / month / day, all from EVENTS
+   ============================================================ */
+const DAY_START = 8;      /* first hour shown */
+const DAY_END   = 20;     /* last hour shown */
+const OPEN_FROM = 8;      /* showroom hours — anything outside is shaded */
+const OPEN_TO   = 18;
+const HOUR_PX   = 56;
+
+const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const ICON = {
+  close:'<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  phone:'<svg class="h-3.5 w-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.36 1.9.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0122 16.92z"/></svg>',
+  car:'<svg class="h-3.5 w-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-5a2 2 0 012-1h10a2 2 0 012 1l2 5"/><rect x="2" y="12" width="20" height="7" rx="2"/></svg>',
+  user:'<svg class="h-3.5 w-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  clock:'<svg class="h-3.5 w-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>',
+  globe:'<svg class="h-3.5 w-3.5 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M2 12h20M12 3a15 15 0 010 18 15 15 0 010-18z"/></svg>',
+  alert:'<svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>'
+};
+
+/* ---------- date helpers (local, no timezone drift) ---------- */
+function d(iso) { const p = iso.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+function iso(dt) {
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return dt.getFullYear() + '-' + m + '-' + day;
+}
+function addDays(dt, n) { const c = new Date(dt); c.setDate(c.getDate() + n); return c; }
+function mondayOf(dt) { const c = new Date(dt); const w = (c.getDay() + 6) % 7; return addDays(c, -w); }
+function mins(hhmm) { const p = hhmm.split(':'); return +p[0] * 60 + +p[1]; }
+function fmtTime(hhmm) {
+  const p = hhmm.split(':'); let h = +p[0]; const m = p[1];
+  const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12;
+  return h + (m === '00' ? '' : ':' + m) + ' ' + ap;
+}
+function endTime(e) {
+  const t = mins(e.start) + e.mins;
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+}
+
+/* ---------- state ---------- */
+let view = 'week';
+let cursor = d(TODAY);
+let hiddenTypes = new Set();
+
+function activeEvents() {
+  const rep = document.getElementById('repFilter').value;
+  return EVENTS.filter(function (e) {
+    if (hiddenTypes.has(e.type)) return false;
+    if (rep && e.rep !== rep) return false;
+    return true;
+  });
+}
+function eventsOn(isoDate) {
+  return activeEvents().filter(e => e.date === isoDate)
+    .sort((a, b) => mins(a.start) - mins(b.start));
+}
+
+/* ---------- overlap packing: side-by-side lanes ---------- */
+function packLanes(list) {
+  const lanes = [];
+  list.forEach(function (e) {
+    const s = mins(e.start), en = s + e.mins;
+    let placed = false;
+    for (let i = 0; i < lanes.length && !placed; i++) {
+      const clash = lanes[i].some(function (o) {
+        const os = mins(o.start), oe = os + o.mins;
+        return s < oe && os < en;
+      });
+      if (!clash) { lanes[i].push(e); e._lane = i; placed = true; }
+    }
+    if (!placed) { lanes.push([e]); e._lane = lanes.length - 1; }
+  });
+  list.forEach(function (e) {
+    const s = mins(e.start), en = s + e.mins;
+    e._lanes = Math.max(1, lanes.filter(function (ln) {
+      return ln.some(function (o) { const os = mins(o.start), oe = os + o.mins; return s < oe && os < en; });
+    }).length);
+  });
+  return list;
+}
+
+/* ---------- chip / block markup ---------- */
+function statusRing(e) {
+  if (e.status === 'unconfirmed') return 'border-style:dashed;';
+  if (e.status === 'cancelled') return 'opacity:.55;';
+  return '';
+}
+function linerBadge(e) {
+  return e.bookedBy === 'liner'
+    ? '<span class="ml-1 inline-flex h-3.5 shrink-0 items-center rounded-sm px-1 text-[9px] font-bold leading-none text-white" style="background:' + EVENT_TYPES[e.type].color + '">L</span>'
+    : '';
+}
+
+function blockHtml(e, styleExtra) {
+  const t = EVENT_TYPES[e.type];
+  const cancelled = e.status === 'cancelled';
+  return '<button onclick="openEvent(\'' + e.id + '\')" class="absolute overflow-hidden rounded-md border-[1.5px] px-2 py-1 text-left transition-shadow hover:shadow-md" ' +
+    'style="' + styleExtra + 'background:' + t.tint + ';border-color:' + t.color + ';' + statusRing(e) + '">' +
+      '<span class="flex items-center gap-0.5">' +
+        '<span class="truncate text-[11px] font-semibold leading-tight ' + (cancelled ? 'line-through' : '') + '">' + e.name + '</span>' +
+        linerBadge(e) +
+      '</span>' +
+      '<span class="block truncate text-[10px] leading-tight text-muted-foreground tnum">' + fmtTime(e.start) + ' · ' + t.label + '</span>' +
+      '<span class="block truncate text-[10px] leading-tight text-muted-foreground">' + e.vehicle + '</span>' +
+      (e.status === 'unconfirmed' ? '<span class="mt-0.5 inline-block rounded-sm px-1 text-[9px] font-semibold" style="background:#FDF1E1;color:#C26A00">Unconfirmed</span>' : '') +
+    '</button>';
+}
+
+/* ---------- time gutter + hour lines ---------- */
+function hourRows() {
+  let h = '';
+  for (let hr = DAY_START; hr < DAY_END; hr++) {
+    const closed = hr < OPEN_FROM || hr >= OPEN_TO;
+    h += '<div class="border-b border-border ' + (closed ? 'bg-muted/50' : '') + '" style="height:' + HOUR_PX + 'px"></div>';
+  }
+  return h;
+}
+function gutter() {
+  let h = '';
+  for (let hr = DAY_START; hr < DAY_END; hr++) {
+    h += '<div class="relative border-b border-transparent pr-2 text-right" style="height:' + HOUR_PX + 'px">' +
+         '<span class="absolute right-2 -top-2 text-[10px] text-muted-foreground tnum">' + fmtTime(String(hr).padStart(2,'0') + ':00') + '</span></div>';
+  }
+  return h;
+}
+
+/* ============================================================
+   WEEK
+   ============================================================ */
+function renderWeek() {
+  const start = mondayOf(cursor);
+  const days = []; for (let i = 0; i < 7; i++) days.push(addDays(start, i));
+
+  let head = '<div class="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-card"></div>';
+  days.forEach(function (dt) {
+    const isToday = iso(dt) === TODAY;
+    const isSun = dt.getDay() === 0;
+    head += '<div class="min-w-[130px] flex-1 border-r border-border px-2 py-2 text-center ' + (isToday ? 'bg-primary/5' : '') + '">' +
+      '<div class="text-[11px] font-medium ' + (isToday ? 'text-primary' : 'text-muted-foreground') + '">' + DOW[(dt.getDay() + 6) % 7] + (isSun ? ' · closed' : '') + '</div>' +
+      '<div class="text-lg font-semibold tnum ' + (isToday ? 'text-primary' : '') + '">' + dt.getDate() + '</div>' +
+    '</div>';
+  });
+
+  let cols = '<div class="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-card">' + gutter() + '</div>';
+  days.forEach(function (dt) {
+    const list = packLanes(eventsOn(iso(dt)));
+    const isToday = iso(dt) === TODAY;
+    let blocks = '';
+    list.forEach(function (e) {
+      const top = (mins(e.start) - DAY_START * 60) / 60 * HOUR_PX;
+      const height = Math.max(34, e.mins / 60 * HOUR_PX - 3);
+      const w = 100 / e._lanes;
+      blocks += blockHtml(e, 'top:' + top + 'px;height:' + height + 'px;left:calc(' + (w * e._lane) + '% + 3px);width:calc(' + w + '% - 6px);');
+    });
+
+    let nowLine = '';
+    if (isToday) {
+      const nowTop = (9 * 60 + 12 - DAY_START * 60) / 60 * HOUR_PX;   /* 9:12 AM */
+      nowLine = '<div class="pointer-events-none absolute inset-x-0 z-20" style="top:' + nowTop + 'px">' +
+        '<div class="h-px w-full" style="background:#FF3B30"></div>' +
+        '<div class="absolute -left-1 -top-[3px] h-[7px] w-[7px] rounded-full" style="background:#FF3B30"></div></div>';
+    }
+
+    cols += '<div class="relative min-w-[130px] flex-1 border-r border-border ' + (isToday ? 'bg-primary/5' : '') + '">' +
+      hourRows() + nowLine + blocks + '</div>';
+  });
+
+  return '<div class="min-w-[900px]">' +
+    '<div class="flex border-b border-border bg-card">' + head + '</div>' +
+    '<div class="flex">' + cols + '</div>' +
+  '</div>';
+}
+
+/* ============================================================
+   DAY
+   ============================================================ */
+function renderDay() {
+  const key = iso(cursor);
+  const list = packLanes(eventsOn(key));
+  let blocks = '';
+  list.forEach(function (e) {
+    const top = (mins(e.start) - DAY_START * 60) / 60 * HOUR_PX;
+    const height = Math.max(40, e.mins / 60 * HOUR_PX - 3);
+    const w = 100 / e._lanes;
+    blocks += blockHtml(e, 'top:' + top + 'px;height:' + height + 'px;left:calc(' + (w * e._lane) + '% + 4px);width:calc(' + w + '% - 8px);');
+  });
+
+  let nowLine = '';
+  if (key === TODAY) {
+    const nowTop = (9 * 60 + 12 - DAY_START * 60) / 60 * HOUR_PX;
+    nowLine = '<div class="pointer-events-none absolute inset-x-0 z-20" style="top:' + nowTop + 'px">' +
+      '<div class="h-px w-full" style="background:#FF3B30"></div>' +
+      '<div class="absolute -left-1 -top-[3px] h-[7px] w-[7px] rounded-full" style="background:#FF3B30"></div></div>';
+  }
+
+  const empty = list.length ? '' :
+    '<div class="absolute inset-x-0 top-16 text-center text-sm text-muted-foreground">Nothing booked this day.</div>';
+
+  return '<div class="flex min-w-[560px]">' +
+    '<div class="w-14 shrink-0 border-r border-border">' + gutter() + '</div>' +
+    '<div class="relative flex-1">' + hourRows() + nowLine + blocks + empty + '</div>' +
+  '</div>';
+}
+
+/* ============================================================
+   MONTH
+   ============================================================ */
+function renderMonth() {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const gridStart = mondayOf(first);
+  let cells = '';
+
+  for (let i = 0; i < 42; i++) {
+    const dt = addDays(gridStart, i);
+    const key = iso(dt);
+    const outside = dt.getMonth() !== cursor.getMonth();
+    const isToday = key === TODAY;
+    const list = eventsOn(key);
+    const shown = list.slice(0, 3);
+    const more = list.length - shown.length;
+
+    cells += '<div class="min-h-[112px] border-b border-r border-border p-1.5 ' + (outside ? 'bg-muted/40' : '') + '">' +
+      '<div class="mb-1 flex items-center gap-1">' +
+        '<span class="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1 text-[11px] font-semibold tnum ' +
+          (isToday ? 'bg-primary text-primary-foreground' : (outside ? 'text-muted-foreground' : '')) + '">' + dt.getDate() + '</span>' +
+        (dt.getDay() === 0 ? '<span class="text-[9px] text-muted-foreground">closed</span>' : '') +
+      '</div>' +
+      shown.map(function (e) {
+        const t = EVENT_TYPES[e.type];
+        return '<button onclick="openEvent(\'' + e.id + '\')" class="mb-0.5 flex w-full items-center gap-1 truncate rounded-sm border-[1.5px] px-1 py-0.5 text-left text-[10px] leading-tight hover:brightness-95" ' +
+          'style="background:' + t.tint + ';border-color:' + t.color + ';' + (e.status === 'cancelled' ? 'opacity:.55;' : '') + '">' +
+          '<span class="tnum text-muted-foreground">' + fmtTime(e.start) + '</span>' +
+          '<span class="truncate font-medium ' + (e.status === 'cancelled' ? 'line-through' : '') + '">' + e.name + '</span>' +
+          (e.status === 'unconfirmed' ? '<span class="ml-auto shrink-0" style="color:#C26A00">•</span>' : '') +
+        '</button>';
+      }).join('') +
+      (more > 0 ? '<button onclick="jumpToDay(\'' + key + '\')" class="w-full px-1 text-left text-[10px] font-medium text-primary hover:underline">+' + more + ' more</button>' : '') +
+    '</div>';
+  }
+
+  const head = DOW.map(function (x) {
+    return '<div class="border-b border-r border-border py-2 text-center text-[11px] font-medium text-muted-foreground">' + x + '</div>';
+  }).join('');
+
+  return '<div class="min-w-[860px]"><div class="grid grid-cols-7">' + head + cells + '</div></div>';
+}
+
+/* ============================================================
+   Chrome
+   ============================================================ */
+function rangeLabel() {
+  if (view === 'month') return MONTHS[cursor.getMonth()] + ' ' + cursor.getFullYear();
+  if (view === 'day') return DOW[(cursor.getDay() + 6) % 7] + ', ' + cursor.getDate() + ' ' + MONTHS[cursor.getMonth()].slice(0, 3) + ' ' + cursor.getFullYear();
+  const s = mondayOf(cursor), e = addDays(s, 6);
+  const sm = MONTHS[s.getMonth()].slice(0, 3), em = MONTHS[e.getMonth()].slice(0, 3);
+  return s.getDate() + ' ' + sm + ' – ' + e.getDate() + ' ' + em + ' ' + e.getFullYear();
+}
+
+function renderViewToggle() {
+  document.getElementById('viewToggle').innerHTML = ['month','week','day'].map(function (v) {
+    const on = v === view;
+    return '<button onclick="setView(\'' + v + '\')" class="rounded-[4px] px-3 py-1.5 text-sm font-medium capitalize transition-colors ' +
+      (on ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground') + '">' + v + '</button>';
+  }).join('');
+}
+
+function renderTypeFilters() {
+  document.getElementById('typeFilters').innerHTML = Object.keys(EVENT_TYPES).map(function (k) {
+    const t = EVENT_TYPES[k];
+    const off = hiddenTypes.has(k);
+    return '<button onclick="toggleType(\'' + k + '\')" class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-opacity ' +
+      (off ? 'opacity-40' : '') + '" style="border-color:' + t.color + '40;background:' + t.tint + ';color:#0F172A">' +
+      '<span class="h-2 w-2 rounded-full" style="background:' + t.color + '"></span>' + t.label + '</button>';
+  }).join('');
+}
+
+function renderUnconfirmed() {
+  const todays = EVENTS.filter(e => e.date === TODAY && e.status === 'unconfirmed');
+  const el = document.getElementById('unconfirmedStrip');
+  if (!todays.length) { el.innerHTML = ''; return; }
+  el.innerHTML =
+    '<div class="flex flex-wrap items-center gap-3 rounded-lg border p-3" style="border-color:#F5C77E;background:#FDF7EC">' +
+      '<span style="color:#C26A00">' + ICON.alert + '</span>' +
+      '<div><div class="text-sm font-medium" style="color:#8A4B00">' + todays.length + ' appointments today are unconfirmed</div>' +
+      '<div class="text-xs" style="color:#A05B00">' +
+        todays.map(e => e.name + ' at ' + fmtTime(e.start) + (e.phone ? '' : ' — no phone on file')).join(' · ') +
+      '</div></div>' +
+      '<button class="ml-auto inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Resend all</button>' +
+    '</div>';
+}
+
+function render() {
+  renderViewToggle();
+  renderTypeFilters();
+  renderUnconfirmed();
+  document.getElementById('rangeLabel').textContent = rangeLabel();
+  document.getElementById('calBody').innerHTML =
+    view === 'month' ? renderMonth() : view === 'day' ? renderDay() : renderWeek();
+}
+
+/* ---------- actions ---------- */
+function setView(v) { view = v; render(); }
+function step(n) {
+  if (view === 'month') cursor = new Date(cursor.getFullYear(), cursor.getMonth() + n, 1);
+  else cursor = addDays(cursor, view === 'week' ? 7 * n : n);
+  render();
+}
+function goToday() { cursor = d(TODAY); render(); }
+function jumpToDay(key) { cursor = d(key); view = 'day'; render(); }
+function toggleType(k) { hiddenTypes.has(k) ? hiddenTypes.delete(k) : hiddenTypes.add(k); render(); }
+
+/* ============================================================
+   Event drawer
+   ============================================================ */
+function openEvent(id) {
+  const e = EVENTS.find(x => x.id === id);
+  const t = EVENT_TYPES[e.type];
+  const statusTone = {
+    confirmed:   ['#E9F7EE', '#16A34A', 'Confirmed'],
+    unconfirmed: ['#FDF1E1', '#C26A00', 'Unconfirmed'],
+    cancelled:   ['#F1F5F9', '#64748B', 'Cancelled']
+  }[e.status];
+
+  let h = '';
+  h += '<div class="sticky top-0 z-10 flex items-start gap-3 border-b border-border p-5" style="background:#FFFFFF">' +
+    '<span class="mt-0.5 h-10 w-1.5 shrink-0 rounded-full" style="background:' + t.color + '"></span>' +
+    '<div class="min-w-0 flex-1">' +
+      '<div class="truncate text-base font-semibold leading-tight">' + e.name + '</div>' +
+      '<div class="mt-0.5 text-xs text-muted-foreground">' + t.label + '</div>' +
+      '<div class="mt-2 flex flex-wrap gap-1.5">' +
+        '<span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium" style="background:' + statusTone[0] + ';color:' + statusTone[1] + '">' + statusTone[2] + '</span>' +
+        (e.bookedBy === 'liner'
+          ? '<span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium" style="background:#E8F2FF;color:#007AFF">Booked by Liner</span>'
+          : '<span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Added by a rep</span>') +
+      '</div>' +
+    '</div>' +
+    '<button onclick="closeDrawer()" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">' + ICON.close + '</button>' +
+  '</div>';
+
+  if (e.status === 'unconfirmed') {
+    h += '<div class="flex items-start gap-2 border-b border-border px-5 py-3 text-xs" style="background:#FDF7EC;color:#8A4B00">' +
+      ICON.alert + '<span>' + (e.phone
+        ? 'Confirmation sent, no reply yet. Call before the slot is held any longer.'
+        : 'No phone number on file — confirmation went by email only. There is no way to reach them quickly.') +
+      '</span></div>';
+  }
+
+  h += '<div class="space-y-2.5 border-b border-border p-5 text-sm">' +
+    '<div class="flex items-center gap-2">' + ICON.clock + '<span class="tnum">' + fmtTime(e.start) + ' – ' + fmtTime(endTime(e)) + '</span>' +
+      '<span class="ml-auto text-xs text-muted-foreground tnum">' + e.mins + ' min</span></div>' +
+    '<div class="flex items-center gap-2">' + ICON.car + '<span>' + e.vehicle + '</span></div>' +
+    '<div class="flex items-center gap-2">' + ICON.user + '<span>' + e.rep + '</span></div>' +
+    '<div class="flex items-center gap-2">' + ICON.phone +
+      (e.phone ? '<span class="tnum">' + e.phone + '</span>'
+               : '<span class="text-destructive">No phone on file</span>') + '</div>' +
+    '<div class="flex items-center gap-2">' + ICON.globe + '<span class="text-muted-foreground">' + e.source + '</span></div>' +
+  '</div>';
+
+  if (e.note) {
+    h += '<div class="border-b border-border p-5"><div class="mb-2 text-xs font-medium text-muted-foreground">Notes</div>' +
+      '<p class="text-sm leading-relaxed">' + e.note + '</p></div>';
+  }
+
+  h += '<div class="border-b border-border p-5">' +
+    '<div class="mb-3 text-xs font-medium text-muted-foreground">Actions</div>' +
+    '<div class="grid gap-2">' +
+      (e.status === 'unconfirmed'
+        ? '<button class="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">Mark confirmed</button>' +
+          '<button class="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">Resend confirmation</button>'
+        : '<button class="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">Reschedule</button>') +
+      '<a href="leads.html" class="inline-flex h-9 items-center justify-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">Open lead</a>' +
+      '<button class="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium transition-colors" style="border-color:#FECACA;color:#DC2626">Cancel appointment</button>' +
+    '</div>' +
+  '</div>';
+
+  h += '<div class="p-5"><div class="mb-2 text-xs font-medium text-muted-foreground">Internal note</div>' +
+    '<textarea rows="3" placeholder="Only your team sees this." class="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"></textarea></div>';
+
+  const dr = document.getElementById('drawer');
+  dr.innerHTML = h;
+  dr.classList.remove('translate-x-full');
+  document.getElementById('scrim').classList.remove('hidden');
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.add('translate-x-full');
+  document.getElementById('scrim').classList.add('hidden');
+}
+document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeDrawer(); });
+
+render();
+</script>
+
+
+</body>
+</html>

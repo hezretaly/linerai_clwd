@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liner setup — Liner AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="liner-theme.js"></script>
+<link rel="stylesheet" href="liner-theme.css">
+</head>
+<body class="min-h-screen">
+
+<!-- ========================= SIDEBAR ========================= -->
+<aside class="fixed inset-y-0 left-0 z-40 flex w-14 lg:w-60 flex-col border-r border-border bg-sidebar">
+
+  <div class="flex h-14 items-center gap-2.5 border-b border-border px-3 lg:px-4">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+    </div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-semibold leading-tight">Riverside Auto</div>
+      <div class="truncate text-xs text-muted-foreground"><span class="font-semibold text-primary" style="color:#007AFF">Liner</span> AI</div>
+    </div>
+  </div>
+
+  <nav class="flex-1 overflow-y-auto scroll-thin px-2 py-3">
+    <div class="hidden lg:block px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground">Today</div>
+
+    <a href="overview.html" title="Overview"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      <span class="hidden lg:inline">Overview</span>
+    </a>
+
+    <a href="conversations.html" title="Conversations"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      <span class="hidden lg:inline">Conversations</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">3</span>
+    </a>
+
+    <a href="leads.html" title="Leads"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>
+      <span class="hidden lg:inline">Leads</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">12</span>
+    </a>
+
+    <a href="calendar.html" title="Calendar"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span class="hidden lg:inline">Calendar</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">6</span>
+    </a>
+
+    <div class="hidden lg:block px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground">Manage</div>
+    <div class="lg:hidden my-2 border-t border-border"></div>
+
+    <a href="inventory.html" title="Inventory"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-5a2 2 0 012-1h10a2 2 0 012 1l2 5"/><rect x="2" y="12" width="20" height="7" rx="2"/><circle cx="7" cy="19" r="1.2"/><circle cx="17" cy="19" r="1.2"/></svg>
+      <span class="hidden lg:inline">Inventory</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">3</span>
+    </a>
+
+    <a href="assistant.html" title="Liner setup"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md bg-accent px-2.5 py-2 text-sm font-medium text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="hidden lg:inline">Liner setup</span>
+    </a>
+
+    <a href="team.html" title="Team"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="hidden lg:inline">Team</span>
+    </a>
+
+    <a href="settings.html" title="Settings"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 3.68 1.65 1.65 0 0010 2.17V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0020.32 8c.14.35.4.65.74.85"/></svg>
+      <span class="hidden lg:inline">Settings</span>
+    </a>
+  </nav>
+
+  <div class="border-t border-border p-2 lg:p-3">
+    <div class="hidden lg:block rounded-md border border-border bg-background p-3">
+      <div class="mb-1 flex items-center gap-2">
+        <span class="relative flex h-2 w-2">
+          <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60"></span>
+          <span class="relative inline-flex h-2 w-2 rounded-full bg-success"></span>
+        </span>
+        <span class="text-sm font-medium">Liner is answering</span>
+      </div>
+      <p class="text-xs text-muted-foreground">3 open · replying in ~24s</p>
+      <button class="mt-2.5 inline-flex h-8 w-full items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-destructive hover:text-destructive">
+        Pause Liner
+      </button>
+    </div>
+    <button title="Pause Liner" class="lg:hidden flex h-9 w-full items-center justify-center rounded-md border border-input text-muted-foreground hover:text-destructive">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    </button>
+  </div>
+
+  <div class="flex items-center gap-2.5 border-t border-border p-2 lg:px-4 lg:py-3">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">DM</div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-medium leading-tight">Dana Mercer</div>
+      <div class="truncate text-xs text-muted-foreground">Sales manager</div>
+    </div>
+  </div>
+</aside>
+
+<!-- ========================= MAIN ========================= -->
+<div class="ml-14 lg:ml-60">
+
+  <header class="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background/95 px-4 backdrop-blur md:px-6">
+    <div class="relative w-full max-w-sm">
+      <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="search" placeholder="Search settings, rules, knowledge…"
+             class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring">
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button class="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"></span>
+      </button>
+      <div class="h-5 w-px bg-border"></div>
+      <span class="hidden text-sm text-muted-foreground sm:inline tnum">Fri, Jul 31 · 9:12 AM</span>
+    </div>
+  </header>
+
+  <main class="p-4 md:p-6">
+
+    <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Liner setup</h1>
+        <p class="mt-1 text-sm text-muted-foreground">How Liner talks, what it is allowed to say, and when it stops.</p>
+      </div>
+      <div class="flex items-center gap-2 text-sm text-muted-foreground">
+        <span class="tnum">Version 7</span>
+        <span class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium" style="border-color:#A7E3BC;background:#E9F7EE;color:#15803D">
+          <span class="h-1.5 w-1.5 rounded-full" style="background:#16A34A"></span>Live
+        </span>
+      </div>
+    </div>
+
+    <!-- unpublished changes bar -->
+    <div id="dirtyBar" class="mb-4 hidden"></div>
+
+    <div id="tabs" class="mb-4 flex flex-wrap gap-1.5"></div>
+
+    <div class="grid gap-4 xl:grid-cols-3">
+      <div id="panel" class="space-y-4 xl:col-span-2"></div>
+      <div class="xl:col-span-1">
+        <div id="preview" class="xl:sticky xl:top-20"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="setup-data.js"></script>
+<script>
+/* ============================================================
+   Liner setup — presets, handoff rules, knowledge, override
+   ============================================================ */
+const ICON = {
+  alert:'<svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>',
+  undo:'<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 103-7.7L3 8"/></svg>',
+  plus:'<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+  pencil:'<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>'
+};
+
+const TABS = [
+  ['behaviour', 'Behaviour'],
+  ['handoff', 'Handoff rules'],
+  ['knowledge', 'Knowledge'],
+  ['advanced', 'Advanced']
+];
+
+let tab = 'behaviour';
+let dirty = false;
+let overrideOn = false;
+const S = Object.assign({}, SETTINGS);
+
+/* ---------- small building blocks ---------- */
+function card(title, sub, body) {
+  return '<div class="rounded-lg border border-border bg-card shadow-sm">' +
+    '<div class="border-b border-border p-5">' +
+      '<h3 class="font-semibold leading-none tracking-tight">' + title + '</h3>' +
+      (sub ? '<p class="mt-1.5 text-sm text-muted-foreground">' + sub + '</p>' : '') +
+    '</div><div class="p-5">' + body + '</div></div>';
+}
+
+function segmented(name, options, current) {
+  return '<div class="flex flex-wrap rounded-md border border-input p-0.5">' +
+    options.map(function (o) {
+      const on = o[0] === current;
+      return '<button onclick="setVal(\'' + name + '\',\'' + o[0] + '\')" class="flex-1 rounded-[4px] px-3 py-1.5 text-sm font-medium transition-colors ' +
+        (on ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground') + '">' + o[1] + '</button>';
+    }).join('') + '</div>';
+}
+
+function radioRows(name, options, current) {
+  return '<div class="grid gap-2">' + options.map(function (o) {
+    const on = o[0] === current;
+    return '<button onclick="setVal(\'' + name + '\',\'' + o[0] + '\')" class="flex items-start gap-3 rounded-md border p-3 text-left transition-colors ' +
+      (on ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent') + '">' +
+      '<span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ' + (on ? 'border-primary' : 'border-input') + '">' +
+        (on ? '<span class="h-2 w-2 rounded-full bg-primary"></span>' : '') + '</span>' +
+      '<span class="min-w-0"><span class="block text-sm font-medium">' + o[1] + '</span>' +
+      '<span class="block text-xs text-muted-foreground">' + o[2] + '</span></span></button>';
+  }).join('') + '</div>';
+}
+
+function toggle(on, onclick, danger) {
+  const c = danger ? '#C4241B' : '#007AFF';
+  return '<button onclick="' + onclick + '" class="flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors" style="background:' + (on ? c : '#CBD5E1') + '">' +
+    '<span class="h-4 w-4 rounded-full bg-white transition-transform" style="transform:translateX(' + (on ? '16px' : '0') + ')"></span></button>';
+}
+
+/* ============================================================
+   Behaviour
+   ============================================================ */
+function panelBehaviour() {
+  let h = '';
+
+  h += card('Tone', 'How Liner sounds. Set during onboarding from your intake call.',
+    segmented('tone', [['warm','Warm'],['professional','Professional'],['brisk','Brisk']], S.tone) +
+    '<p class="mt-3 text-sm text-muted-foreground">' + TONE_COPY[S.tone].hint + '</p>');
+
+  h += card('Pushing for the appointment', 'The single setting most likely to annoy buyers if you get it wrong.',
+    '<input type="range" min="1" max="5" value="' + S.push + '" oninput="setVal(\'push\', this.value)" class="w-full accent-primary">' +
+    '<div class="mt-2 flex justify-between text-[11px] text-muted-foreground"><span>Let them browse</span><span>Ask every reply</span></div>' +
+    '<div class="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">' +
+      '<span class="font-medium tnum">Level ' + S.push + '</span> · ' + PUSH_COPY[S.push] + '</div>');
+
+  h += card('Price', 'What Liner may say about money before a person is involved.',
+    radioRows('priceMode', [
+      ['listed', 'State the listed price and negotiate within limits', 'Liner may agree up to your discount limit, then stops.'],
+      ['listed_firm', 'State the listed price, no negotiation', 'Any offer below asking is handed to a person.'],
+      ['never', 'Never discuss price', 'Liner converts every price question into an appointment.']
+    ], S.priceMode) +
+    (S.priceMode === 'listed'
+      ? '<div class="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-border p-3">' +
+          '<div class="min-w-0"><div class="text-sm font-medium">Discount authority</div>' +
+          '<div class="text-xs text-muted-foreground">Liner may agree to this much below asking without a person.</div></div>' +
+          '<div class="ml-auto flex items-center gap-2">' +
+            '<input type="number" min="0" max="15" value="' + S.discountPct + '" oninput="setVal(\'discountPct\', this.value)" class="h-9 w-20 rounded-md border border-input bg-background px-2.5 text-sm tnum outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+            '<span class="text-sm text-muted-foreground">% below asking</span>' +
+          '</div>' +
+          (S.discountPct > 8 ? '<p class="w-full text-xs" style="color:#C26A00">' + S.discountPct + '% is a wide margin to give an unsupervised system. Most stores sit at 3–5%.</p>' : '') +
+        '</div>'
+      : ''));
+
+  h += card('Financing', 'Liner has no access to credit data and cannot assess anyone.',
+    radioRows('financing', [
+      ['never', 'Never discuss financing', 'Any mention hands off immediately.'],
+      ['explain', 'Explain published terms only', 'States your rate range and term lengths. Never estimates approval.'],
+      ['start', 'Start the application', 'Collects name, income and trade details, then hands off to finance.']
+    ], S.financing));
+
+  h += card('After hours', 'Between 6 PM and 8 AM, when nobody is on the floor.',
+    radioRows('afterHours', [
+      ['same', 'Behave exactly as during the day', 'No change.'],
+      ['push', 'Push harder for the appointment', 'The buyer cannot visit now, so book them for tomorrow.'],
+      ['capture', 'Capture details and stop', 'Answers the question, takes contact details, promises a callback.']
+    ], S.afterHours));
+
+  return h;
+}
+
+/* ============================================================
+   Handoff rules
+   ============================================================ */
+function panelHandoff() {
+  const body = RULES.map(function (r) {
+    return '<div class="mb-2 rounded-lg border border-border p-4 last:mb-0">' +
+      '<div class="flex items-start gap-3">' +
+        toggle(r.on, 'toggleRule(\'' + r.id + '\')') +
+        '<div class="min-w-0 flex-1">' +
+          '<div class="text-sm font-medium">' + r.name + '</div>' +
+          '<div class="text-xs text-muted-foreground">' + r.detail + '</div>' +
+        '</div>' +
+        '<span class="shrink-0 text-xs text-muted-foreground tnum">fired ' + r.fired + '× this month</span>' +
+      '</div>' +
+      '<div class="mt-3 grid gap-2 sm:grid-cols-3">' +
+        (r.threshold
+          ? '<div><div class="mb-1 text-[11px] text-muted-foreground">' + r.threshold.label + '</div>' +
+            '<div class="flex items-center gap-1.5">' +
+            '<input type="number" value="' + r.threshold.value + '" oninput="markDirty()" class="h-9 w-20 rounded-md border border-input bg-background px-2.5 text-sm tnum outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+            '<span class="text-xs text-muted-foreground">' + r.threshold.unit + '</span></div></div>'
+          : '<div><div class="mb-1 text-[11px] text-muted-foreground">Trigger</div><div class="flex h-9 items-center text-sm text-muted-foreground">No threshold</div></div>') +
+        '<div><div class="mb-1 text-[11px] text-muted-foreground">Goes to</div>' +
+          '<select onchange="markDirty()" class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+            ['Sales manager','Marcus Idowu — finance','Duty rep','Jess Rowe','Tomas Vega','Unclaimed pool'].map(function (o) {
+              return '<option' + (o === r.route ? ' selected' : '') + '>' + o + '</option>'; }).join('') +
+          '</select></div>' +
+        '<div><div class="mb-1 text-[11px] text-muted-foreground">Notify by</div>' +
+          '<select onchange="markDirty()" class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+            ['SMS + dashboard','Dashboard only','Email + dashboard'].map(function (o) {
+              return '<option' + (o === r.notify ? ' selected' : '') + '>' + o + '</option>'; }).join('') +
+          '</select></div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  const off = RULES.filter(r => !r.on).length;
+  const warn = off
+    ? '<div class="mt-3 flex items-start gap-2 rounded-md border p-3 text-xs" style="border-color:#F5A9A3;background:#FFF4F3;color:#8F1F18">' +
+      ICON.alert + '<span>' + off + ' rule' + (off > 1 ? 's are' : ' is') + ' switched off. Liner will keep going in those situations instead of stopping.</span></div>'
+    : '';
+
+  return card('When Liner stops and gets a person',
+    'Every one of these is a hot lead frozen mid-sentence. Turning one off means Liner keeps talking instead.',
+    body + warn);
+}
+
+/* ============================================================
+   Knowledge
+   ============================================================ */
+function panelKnowledge() {
+  const rows = KNOWLEDGE.map(function (k) {
+    return '<tr class="border-b border-border last:border-0 transition-colors hover:bg-muted/50">' +
+      '<td class="px-4 py-3 align-top"><div class="font-medium">' + k.topic + '</div></td>' +
+      '<td class="px-3 py-3 align-top"><div class="max-w-md text-sm text-muted-foreground">' + k.answer + '</div></td>' +
+      '<td class="whitespace-nowrap px-3 py-3 align-top text-xs text-muted-foreground tnum">' + k.edited + '</td>' +
+      '<td class="whitespace-nowrap px-3 py-3 align-top text-xs text-muted-foreground tnum">' + k.used + '×</td>' +
+      '<td class="pr-4 py-3 align-top text-right">' +
+        '<button class="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">' + ICON.pencil + '</button>' +
+      '</td></tr>';
+  }).join('');
+
+  return '<div class="rounded-lg border border-border bg-card shadow-sm">' +
+    '<div class="flex flex-wrap items-center gap-3 border-b border-border p-5">' +
+      '<div><h3 class="font-semibold leading-none tracking-tight">What the listings do not cover</h3>' +
+      '<p class="mt-1.5 text-sm text-muted-foreground">Liner answers from the feed first, then from here. Anything not in either becomes an appointment.</p></div>' +
+      '<button class="ml-auto inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">' + ICON.plus + 'Add entry</button>' +
+    '</div>' +
+    '<div class="overflow-x-auto scroll-thin"><table class="w-full text-sm"><thead><tr class="border-b border-border">' +
+      '<th class="h-10 px-4 text-left font-medium text-muted-foreground">Topic</th>' +
+      '<th class="h-10 px-3 text-left font-medium text-muted-foreground">What Liner says</th>' +
+      '<th class="h-10 px-3 text-left font-medium text-muted-foreground">Edited</th>' +
+      '<th class="h-10 px-3 text-left font-medium text-muted-foreground">Used</th>' +
+      '<th class="h-10 w-10 pr-4"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+  '</div>';
+}
+
+/* ============================================================
+   Advanced — the nuke option
+   ============================================================ */
+function panelAdvanced() {
+  let h = '';
+
+  h += '<div class="rounded-lg border shadow-sm" style="border-color:#F5A9A3">' +
+    '<div class="border-b p-5" style="border-color:#F5A9A3;background:#FFF4F3">' +
+      '<div class="flex items-start gap-3">' +
+        '<span style="color:#C4241B">' + ICON.alert + '</span>' +
+        '<div class="min-w-0 flex-1">' +
+          '<h3 class="font-semibold leading-none tracking-tight" style="color:#8F1F18">Write the prompt yourself</h3>' +
+          '<p class="mt-1.5 text-sm" style="color:#A82820">This replaces every preset above. Tone, price limits, financing and after-hours settings stop applying. The five handoff rules still run.</p>' +
+        '</div>' +
+        toggle(overrideOn, 'toggleOverride()', true) +
+      '</div>' +
+    '</div>' +
+    '<div class="p-5" style="background:#FFFFFF">' +
+      (overrideOn
+        ? '<textarea rows="16" class="w-full resize-y rounded-md border border-input bg-background p-3 font-mono text-xs leading-relaxed outline-none focus:border-ring focus:ring-1 focus:ring-ring">' + COMPILED_PROMPT + '</textarea>' +
+          '<div class="mt-3 flex flex-wrap gap-2">' +
+            '<button class="inline-flex h-9 items-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">Test in sandbox</button>' +
+            '<button onclick="markDirty()" class="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">Save as draft</button>' +
+          '</div>' +
+          '<p class="mt-3 text-xs text-muted-foreground">Drafts do not go live until you publish. Sandbox runs against real inventory but talks to nobody.</p>'
+        : '<div class="rounded-md border border-border bg-muted/40 p-3">' +
+            '<div class="mb-2 text-xs font-medium text-muted-foreground">What your presets currently compile to — read only</div>' +
+            '<pre class="overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-muted-foreground">' + COMPILED_PROMPT + '</pre>' +
+          '</div>') +
+    '</div>' +
+  '</div>';
+
+  h += card('Version history', 'Every published change, and who made it.',
+    VERSIONS.map(function (v) {
+      return '<div class="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-border p-3 last:mb-0">' +
+        '<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold tnum">v' + v.v + '</span>' +
+        '<div class="min-w-0 flex-1"><div class="text-sm">' + v.note + '</div>' +
+        '<div class="text-xs text-muted-foreground">' + v.by + ' · ' + v.when + '</div></div>' +
+        (v.live
+          ? '<span class="inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs font-medium" style="border-color:#A7E3BC;background:#E9F7EE;color:#15803D"><span class="h-1.5 w-1.5 rounded-full" style="background:#16A34A"></span>Live</span>'
+          : '<button class="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">' + ICON.undo + 'Roll back</button>') +
+      '</div>';
+    }).join(''));
+
+  return h;
+}
+
+/* ============================================================
+   Preview — how Liner answers with the current settings
+   ============================================================ */
+function previewReply() {
+  const name = S.tone === 'warm' ? 'Hi Tara — ' : S.tone === 'brisk' ? '' : 'Hi Tara. ';
+  let price;
+  if (S.priceMode === 'never') {
+    price = 'I can go through the numbers properly with you in person.';
+  } else if (S.priceMode === 'listed_firm') {
+    price = 'It is listed at $29,200 and that price is firm.';
+  } else {
+    price = 'It is listed at $29,200. I have a little room to move — up to ' + S.discountPct + '% — but past that I would need a manager.';
+  }
+
+  /* with price off the table the whole reply is the appointment ask,
+     so it never renders without one however low the push level */
+  const level = S.priceMode === 'never' ? Math.max(S.push, 3) : S.push;
+  const push = level >= 4
+    ? 'I have 10:00 or 2:30 free tomorrow — which works?'
+    : level === 3 ? 'Would you like to come see it?' : '';
+
+  return [name + price, push].filter(Boolean).join(' ');
+}
+
+function renderPreview() {
+  const afterHoursNote = {
+    same: 'Same behaviour around the clock.',
+    push: 'After 6 PM Liner pushes harder for tomorrow.',
+    capture: 'After 6 PM Liner captures details and stops.'
+  }[S.afterHours];
+
+  document.getElementById('preview').innerHTML =
+  '<div class="rounded-lg border border-border bg-card shadow-sm">' +
+    '<div class="border-b border-border p-5">' +
+      '<h3 class="font-semibold leading-none tracking-tight">How this sounds</h3>' +
+      '<p class="mt-1.5 text-sm text-muted-foreground">A buyer asking about price on the Grand Cherokee.</p>' +
+    '</div>' +
+    '<div class="space-y-1 p-5">' +
+      '<div class="max-w-[85%] rounded-lg rounded-bl-sm border border-border bg-background px-3 py-2 text-sm">What is your best price on the Grand Cherokee?</div>' +
+      '<div class="pb-2 text-[11px] text-muted-foreground">Buyer</div>' +
+      '<div class="ml-auto max-w-[90%] rounded-lg rounded-br-sm bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground">' + previewReply() + '</div>' +
+      '<div class="text-right text-[11px] text-muted-foreground">Liner</div>' +
+    '</div>' +
+    '<div class="border-t border-border p-5">' +
+      '<div class="mb-2 text-xs font-medium text-muted-foreground">In force right now</div>' +
+      '<div class="space-y-1.5 text-xs text-muted-foreground">' +
+        '<div>Tone — <span class="text-foreground">' + TONE_COPY[S.tone].label + '</span></div>' +
+        '<div>Appointment push — <span class="text-foreground tnum">level ' + S.push + '</span></div>' +
+        '<div>Discount authority — <span class="text-foreground">' + (S.priceMode === 'listed' ? S.discountPct + '% below asking' : 'none') + '</span></div>' +
+        '<div>Financing — <span class="text-foreground">' + { never:'never discussed', explain:'terms only', start:'starts the application' }[S.financing] + '</span></div>' +
+        '<div>After hours — <span class="text-foreground">' + afterHoursNote + '</span></div>' +
+        '<div>Handoff rules — <span class="text-foreground tnum">' + RULES.filter(r => r.on).length + ' of 5 active</span></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* ============================================================
+   Chrome
+   ============================================================ */
+function renderTabs() {
+  document.getElementById('tabs').innerHTML = TABS.map(function (t) {
+    const on = t[0] === tab;
+    return '<button onclick="setTab(\'' + t[0] + '\')" class="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ' +
+      (on ? 'border-foreground bg-foreground text-background' : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground') +
+      '">' + t[1] + '</button>';
+  }).join('');
+}
+
+function renderDirty() {
+  const bar = document.getElementById('dirtyBar');
+  bar.classList.toggle('hidden', !dirty);
+  if (!dirty) return;
+  bar.innerHTML =
+    '<div class="flex flex-wrap items-center gap-3 rounded-lg border p-3" style="border-color:#F5C77E;background:#FDF7EC">' +
+      '<span style="color:#C26A00">' + ICON.alert + '</span>' +
+      '<div><div class="text-sm font-medium" style="color:#8A4B00">Unpublished changes</div>' +
+      '<div class="text-xs" style="color:#A05B00">Liner is still running version 7. Nothing you change here reaches a buyer until you publish.</div></div>' +
+      '<div class="ml-auto flex gap-2">' +
+        '<button onclick="discard()" class="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Discard</button>' +
+        '<button class="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Test in sandbox</button>' +
+        '<button onclick="publish()" class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90">Publish version 8</button>' +
+      '</div>' +
+    '</div>';
+}
+
+function render() {
+  renderTabs();
+  renderDirty();
+  document.getElementById('panel').innerHTML =
+    tab === 'behaviour' ? panelBehaviour() :
+    tab === 'handoff'   ? panelHandoff()   :
+    tab === 'knowledge' ? panelKnowledge() : panelAdvanced();
+  renderPreview();
+}
+
+/* ---------- actions ---------- */
+function setTab(t) { tab = t; render(); }
+function markDirty() { dirty = true; renderDirty(); }
+function setVal(k, v) {
+  S[k] = (k === 'push' || k === 'discountPct') ? Number(v) : v;
+  dirty = true;
+  render();
+}
+function toggleRule(id) { const r = RULES.find(x => x.id === id); r.on = !r.on; markDirty(); render(); }
+function toggleOverride() { overrideOn = !overrideOn; markDirty(); render(); }
+function discard() { Object.assign(S, SETTINGS); RULES.forEach(r => r.on = true); overrideOn = false; dirty = false; render(); }
+function publish() { dirty = false; render(); }
+
+render();
+</script>
+
+
+</body>
+</html>

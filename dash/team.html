@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team — Liner AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="liner-theme.js"></script>
+<link rel="stylesheet" href="liner-theme.css">
+</head>
+<body class="min-h-screen">
+
+<!-- ========================= SIDEBAR ========================= -->
+<aside class="fixed inset-y-0 left-0 z-40 flex w-14 lg:w-60 flex-col border-r border-border bg-sidebar">
+
+  <div class="flex h-14 items-center gap-2.5 border-b border-border px-3 lg:px-4">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+    </div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-semibold leading-tight">Riverside Auto</div>
+      <div class="truncate text-xs text-muted-foreground"><span class="font-semibold text-primary" style="color:#007AFF">Liner</span> AI</div>
+    </div>
+  </div>
+
+  <nav class="flex-1 overflow-y-auto scroll-thin px-2 py-3">
+    <div class="hidden lg:block px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground">Today</div>
+
+    <a href="overview.html" title="Overview"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      <span class="hidden lg:inline">Overview</span>
+    </a>
+
+    <a href="conversations.html" title="Conversations"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      <span class="hidden lg:inline">Conversations</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">3</span>
+    </a>
+
+    <a href="leads.html" title="Leads"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>
+      <span class="hidden lg:inline">Leads</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">12</span>
+    </a>
+
+    <a href="calendar.html" title="Calendar"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span class="hidden lg:inline">Calendar</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">6</span>
+    </a>
+
+    <div class="hidden lg:block px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground">Manage</div>
+    <div class="lg:hidden my-2 border-t border-border"></div>
+
+    <a href="inventory.html" title="Inventory"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-5a2 2 0 012-1h10a2 2 0 012 1l2 5"/><rect x="2" y="12" width="20" height="7" rx="2"/><circle cx="7" cy="19" r="1.2"/><circle cx="17" cy="19" r="1.2"/></svg>
+      <span class="hidden lg:inline">Inventory</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">3</span>
+    </a>
+
+    <a href="assistant.html" title="Liner setup"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="hidden lg:inline">Liner setup</span>
+    </a>
+
+    <a href="team.html" title="Team"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md bg-accent px-2.5 py-2 text-sm font-medium text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="hidden lg:inline">Team</span>
+    </a>
+
+    <a href="settings.html" title="Settings"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 3.68 1.65 1.65 0 0010 2.17V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0020.32 8c.14.35.4.65.74.85"/></svg>
+      <span class="hidden lg:inline">Settings</span>
+    </a>
+  </nav>
+
+  <div class="border-t border-border p-2 lg:p-3">
+    <div class="hidden lg:block rounded-md border border-border bg-background p-3">
+      <div class="mb-1 flex items-center gap-2">
+        <span class="relative flex h-2 w-2">
+          <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60"></span>
+          <span class="relative inline-flex h-2 w-2 rounded-full bg-success"></span>
+        </span>
+        <span class="text-sm font-medium">Liner is answering</span>
+      </div>
+      <p class="text-xs text-muted-foreground">3 open · replying in ~24s</p>
+      <button class="mt-2.5 inline-flex h-8 w-full items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-destructive hover:text-destructive">
+        Pause Liner
+      </button>
+    </div>
+    <button title="Pause Liner" class="lg:hidden flex h-9 w-full items-center justify-center rounded-md border border-input text-muted-foreground hover:text-destructive">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    </button>
+  </div>
+
+  <div class="flex items-center gap-2.5 border-t border-border p-2 lg:px-4 lg:py-3">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">DM</div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-medium leading-tight">Dana Mercer</div>
+      <div class="truncate text-xs text-muted-foreground">Sales manager</div>
+    </div>
+  </div>
+</aside>
+
+<div class="ml-14 lg:ml-60">
+  <header class="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background/95 px-4 backdrop-blur md:px-6">
+    <div class="relative w-full max-w-sm">
+      <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="search" placeholder="Search people…"
+             class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring">
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button class="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"></span>
+      </button>
+      <div class="h-5 w-px bg-border"></div>
+      <span class="hidden text-sm text-muted-foreground sm:inline tnum">Fri, Jul 31 · 9:12 AM</span>
+    </div>
+  </header>
+
+  <main class="p-4 md:p-6">
+
+    <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Team</h1>
+        <p class="mt-1 text-sm text-muted-foreground">Who works the leads Liner hands over, and what each of them can change.</p>
+      </div>
+      <button class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        Invite someone
+      </button>
+    </div>
+
+    <div id="people" class="mb-4"></div>
+    <div class="grid gap-4 lg:grid-cols-2">
+      <div id="assignment"></div>
+      <div id="permissions"></div>
+    </div>
+  </main>
+</div>
+
+<div id="scrim" onclick="closeDrawer()" class="fixed inset-0 z-40 hidden" style="background:rgba(15,23,42,.32)"></div>
+<aside id="drawer" class="fixed inset-y-0 right-0 z-50 w-full max-w-[420px] translate-x-full overflow-y-auto scroll-thin border-l border-border transition-transform duration-200"
+       style="background:#FFFFFF;color:#0F172A;box-shadow:-12px 0 32px -12px rgba(15,23,42,.25)"></aside>
+
+<script src="team-data.js"></script>
+<script>
+const ICON = {
+  close:'<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  check:'<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>',
+  dash:'<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>',
+  chev:'<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>'
+};
+
+function roleBadge(role) {
+  const r = ROLES[role];
+  return '<span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium" style="background:' + r.tint + ';color:' + r.ink + '">' + r.label + '</span>';
+}
+
+function renderPeople() {
+  const rows = MEMBERS.map(function (m) {
+    const invited = m.status === 'invited';
+    return '<tr class="border-b border-border last:border-0 transition-colors hover:bg-muted/50">' +
+      '<td class="px-4 py-3">' +
+        '<button onclick="openMember(\'' + m.id + '\')" class="flex items-center gap-3 text-left">' +
+          '<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold ' + (invited ? 'text-muted-foreground' : '') + '">' + m.initials + '</span>' +
+          '<span class="min-w-0">' +
+            '<span class="flex items-center gap-1.5"><span class="truncate font-medium hover:underline">' + m.name + '</span>' +
+              (m.dutyTonight ? '<span class="inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium" style="border-color:#A7C7FF;background:#E8F2FF;color:#0062CC">Duty tonight</span>' : '') +
+              (invited ? '<span class="inline-flex items-center rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">Invite pending</span>' : '') +
+            '</span>' +
+            '<span class="block truncate text-xs text-muted-foreground">' + m.title + ' · ' + m.email + '</span>' +
+          '</span>' +
+        '</button></td>' +
+      '<td class="whitespace-nowrap px-3 py-3">' + roleBadge(m.role) + '</td>' +
+      '<td class="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">' + m.shift + '</td>' +
+      '<td class="whitespace-nowrap px-3 py-3 tnum">' + (invited ? '—' : m.openLeads) + '</td>' +
+      '<td class="whitespace-nowrap px-3 py-3 tnum text-muted-foreground">' + m.avgResponse + '</td>' +
+      '<td class="whitespace-nowrap px-3 py-3 tnum text-muted-foreground">' + (invited ? '—' : m.takeovers) + '</td>' +
+      '<td class="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">' + m.lastActive + '</td>' +
+      '<td class="pr-4 py-3 text-right"><button onclick="openMember(\'' + m.id + '\')" class="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">' + ICON.chev + '</button></td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('people').innerHTML =
+  '<div class="rounded-lg border border-border bg-card shadow-sm">' +
+    '<div class="border-b border-border p-5"><h3 class="font-semibold leading-none tracking-tight">People</h3>' +
+    '<p class="mt-1.5 text-sm text-muted-foreground">' + MEMBERS.filter(m => m.status === 'active').length + ' active · 1 invite outstanding</p></div>' +
+    '<div class="overflow-x-auto scroll-thin"><table class="w-full text-sm"><thead><tr class="border-b border-border">' +
+      ['Person','Role','Shift','Open leads','Avg reply','Takeovers','Last active'].map(function (h) {
+        return '<th class="h-10 whitespace-nowrap px-3 text-left font-medium text-muted-foreground first:pl-4">' + h + '</th>'; }).join('') +
+      '<th class="h-10 w-10 pr-4"></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+  '</div>';
+}
+
+function renderAssignment() {
+  document.getElementById('assignment').innerHTML =
+  '<div class="rounded-lg border border-border bg-card shadow-sm">' +
+    '<div class="border-b border-border p-5"><h3 class="font-semibold leading-none tracking-tight">Assignment</h3>' +
+    '<p class="mt-1.5 text-sm text-muted-foreground">Nobody is assigning leads at 2 AM, so these rules do it instead.</p></div>' +
+    '<div class="space-y-4 p-5">' +
+      '<div class="flex flex-wrap items-center gap-3">' +
+        '<div class="min-w-0"><div class="text-sm font-medium">Round robin after</div>' +
+        '<div class="text-xs text-muted-foreground">How long a lead may sit unclaimed before it is given to someone.</div></div>' +
+        '<div class="ml-auto flex items-center gap-2">' +
+          '<input type="number" value="' + ASSIGNMENT.roundRobinHours + '" class="h-9 w-20 rounded-md border border-input bg-background px-2.5 text-sm tnum outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+          '<span class="text-sm text-muted-foreground">hours</span></div>' +
+      '</div>' +
+      '<div class="flex flex-wrap items-center gap-3 border-t border-border pt-4">' +
+        '<div class="min-w-0"><div class="text-sm font-medium">Overnight</div>' +
+        '<div class="text-xs text-muted-foreground">What happens to leads that arrive while the store is shut.</div></div>' +
+        '<select class="ml-auto h-9 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+          ['Hold in the pool until 8 AM','Assign to the duty rep immediately','Round robin immediately'].map(function (o) {
+            return '<option' + (o === ASSIGNMENT.overnightMode ? ' selected' : '') + '>' + o + '</option>'; }).join('') +
+        '</select>' +
+      '</div>' +
+      '<div class="flex flex-wrap items-center gap-3 border-t border-border pt-4">' +
+        '<div class="min-w-0"><div class="text-sm font-medium">Cap per rep</div>' +
+        '<div class="text-xs text-muted-foreground">Round robin skips anyone already at this many open leads.</div></div>' +
+        '<input type="number" value="' + ASSIGNMENT.capPerRep + '" class="ml-auto h-9 w-20 rounded-md border border-input bg-background px-2.5 text-sm tnum outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+      '</div>' +
+      '<div class="border-t border-border pt-4">' +
+        '<div class="mb-2 text-sm font-medium">In the rotation</div>' +
+        '<div class="flex flex-wrap gap-2">' +
+          MEMBERS.filter(m => m.status === 'active').map(function (m) {
+            const on = m.rotation;
+            return '<span class="inline-flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm ' +
+              (on ? 'border-primary bg-primary/5' : 'border-border text-muted-foreground') + '">' +
+              '<span class="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">' + m.initials + '</span>' +
+              m.name.split(' ')[0] + (on ? '' : ' · out') + '</span>';
+          }).join('') +
+        '</div>' +
+        '<p class="mt-3 text-xs text-muted-foreground">Jess is at 7 open leads against a cap of 8. One more and round robin skips her.</p>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderPermissions() {
+  const head = '<tr class="border-b border-border">' +
+    '<th class="h-10 pl-4 pr-3 text-left font-medium text-muted-foreground">Can do</th>' +
+    ['Rep','Manager','Admin'].map(function (r) {
+      return '<th class="h-10 w-20 px-2 text-center font-medium text-muted-foreground">' + r + '</th>'; }).join('') + '</tr>';
+
+  const rows = PERMISSIONS.map(function (p) {
+    return '<tr class="border-b border-border last:border-0">' +
+      '<td class="py-2.5 pl-4 pr-3 text-sm">' + p[0] + '</td>' +
+      [1,2,3].map(function (i) {
+        return '<td class="px-2 py-2.5 text-center">' +
+          (p[i] ? '<span class="inline-flex text-success">' + ICON.check + '</span>'
+                : '<span class="inline-flex text-muted-foreground/40">' + ICON.dash + '</span>') + '</td>';
+      }).join('') + '</tr>';
+  }).join('');
+
+  document.getElementById('permissions').innerHTML =
+  '<div class="rounded-lg border border-border bg-card shadow-sm">' +
+    '<div class="border-b border-border p-5"><h3 class="font-semibold leading-none tracking-tight">What each role can do</h3>' +
+    '<p class="mt-1.5 text-sm text-muted-foreground">Fixed for now. Per-person exceptions are not supported.</p></div>' +
+    '<div class="overflow-x-auto scroll-thin"><table class="w-full"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>' +
+  '</div>';
+}
+
+function openMember(id) {
+  const m = MEMBERS.find(x => x.id === id);
+  const invited = m.status === 'invited';
+  let h = '';
+
+  h += '<div class="sticky top-0 z-10 flex items-start gap-3 border-b border-border p-5" style="background:#FFFFFF">' +
+    '<span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold">' + m.initials + '</span>' +
+    '<div class="min-w-0 flex-1"><div class="truncate text-base font-semibold leading-tight">' + m.name + '</div>' +
+      '<div class="mt-0.5 truncate text-xs text-muted-foreground">' + m.email + '</div>' +
+      '<div class="mt-2 flex flex-wrap gap-1.5">' + roleBadge(m.role) +
+        (invited ? '<span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Invite pending</span>' : '') +
+        (m.dutyTonight ? '<span class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium" style="background:#E8F2FF;color:#0062CC">Duty tonight</span>' : '') +
+      '</div></div>' +
+    '<button onclick="closeDrawer()" class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">' + ICON.close + '</button>' +
+  '</div>';
+
+  if (invited) {
+    h += '<div class="border-b border-border px-5 py-3 text-xs text-muted-foreground">Invited 2 days ago and not yet accepted. They cannot see anything until they do.</div>';
+  }
+
+  h += '<div class="grid grid-cols-3 gap-px border-b border-border" style="background:hsl(var(--border))">' +
+    [['Open leads', invited ? '—' : m.openLeads], ['Avg reply', m.avgResponse], ['Takeovers', invited ? '—' : m.takeovers]].map(function (s) {
+      return '<div class="p-4" style="background:#FFFFFF"><div class="text-[11px] text-muted-foreground">' + s[0] + '</div>' +
+        '<div class="mt-0.5 text-lg font-semibold tnum">' + s[1] + '</div></div>';
+    }).join('') + '</div>';
+
+  h += '<div class="border-b border-border p-5"><div class="mb-3 text-xs font-medium text-muted-foreground">Role</div>' +
+    '<select class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring">' +
+      Object.keys(ROLES).map(function (k) {
+        return '<option' + (k === m.role ? ' selected' : '') + '>' + ROLES[k].label + '</option>'; }).join('') +
+    '</select>' +
+    '<div class="mt-3"><div class="mb-1.5 text-xs font-medium text-muted-foreground">Shift</div>' +
+    '<input value="' + m.shift + '" class="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"></div>' +
+    '<label class="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" ' + (m.rotation ? 'checked' : '') + ' class="h-4 w-4 rounded border-input accent-primary">In the round-robin rotation</label>' +
+  '</div>';
+
+  h += '<div class="border-b border-border p-5"><div class="mb-3 text-xs font-medium text-muted-foreground">Notifications</div>' +
+    [['A conversation needs a person', m.notify.flags],
+     ['An appointment is booked', m.notify.bookings],
+     ['Overnight summary', m.notify.digest]].map(function (r) {
+      return '<div class="flex items-baseline gap-2 py-1 text-sm"><span class="min-w-0 flex-1">' + r[0] + '</span>' +
+        '<span class="shrink-0 text-xs text-muted-foreground">' + r[1] + '</span></div>';
+    }).join('') +
+  '</div>';
+
+  h += '<div class="p-5"><div class="grid gap-2">' +
+    (invited
+      ? '<button class="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">Resend invite</button>'
+      : '<button class="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">Save changes</button>') +
+    '<button class="inline-flex h-9 items-center justify-center rounded-md border px-3 text-sm font-medium" style="border-color:#FECACA;color:#DC2626">Remove from the team</button>' +
+  '</div></div>';
+
+  const dr = document.getElementById('drawer');
+  dr.innerHTML = h;
+  dr.classList.remove('translate-x-full');
+  document.getElementById('scrim').classList.remove('hidden');
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.add('translate-x-full');
+  document.getElementById('scrim').classList.add('hidden');
+}
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
+
+renderPeople(); renderAssignment(); renderPermissions();
+</script>
+
+
+</body>
+</html>

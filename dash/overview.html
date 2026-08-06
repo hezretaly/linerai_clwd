@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overview — Liner AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="liner-theme.js"></script>
+<link rel="stylesheet" href="liner-theme.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="min-h-screen">
+
+<!-- =========================================================
+     SIDEBAR — icon rail under lg, full width above. Never hides.
+     ========================================================= -->
+<aside class="fixed inset-y-0 left-0 z-40 flex w-14 lg:w-60 flex-col border-r border-border bg-sidebar">
+
+  <div class="flex h-14 items-center gap-2.5 border-b border-border px-3 lg:px-4">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+    </div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-semibold leading-tight">Riverside Auto</div>
+      <div class="truncate text-xs text-muted-foreground"><span class="font-semibold text-primary" style="color:#007AFF">Liner</span> AI</div>
+    </div>
+  </div>
+
+  <nav class="flex-1 overflow-y-auto scroll-thin px-2 py-3">
+    <div class="hidden lg:block px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground">Today</div>
+
+    <a href="overview.html" title="Overview"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md bg-accent px-2.5 py-2 text-sm font-medium text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      <span class="hidden lg:inline">Overview</span>
+    </a>
+
+    <a href="conversations.html" title="Conversations"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      <span class="hidden lg:inline">Conversations</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">4</span>
+    </a>
+
+    <a href="leads.html" title="Leads"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>
+      <span class="hidden lg:inline">Leads</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">31</span>
+    </a>
+
+    <a href="calendar.html" title="Calendar"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      <span class="hidden lg:inline">Calendar</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tnum">6</span>
+    </a>
+
+    <div class="hidden lg:block px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground">Manage</div>
+    <div class="lg:hidden my-2 border-t border-border"></div>
+
+    <a href="inventory.html" title="Inventory"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-5a2 2 0 012-1h10a2 2 0 012 1l2 5"/><rect x="2" y="12" width="20" height="7" rx="2"/><circle cx="7" cy="19" r="1.2"/><circle cx="17" cy="19" r="1.2"/></svg>
+      <span class="hidden lg:inline">Inventory</span>
+      <span class="hidden lg:inline ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-destructive-foreground tnum">2</span>
+    </a>
+
+    <a href="assistant.html" title="Liner setup"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="hidden lg:inline">Liner setup</span>
+    </a>
+
+    <a href="team.html" title="Team"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="hidden lg:inline">Team</span>
+    </a>
+
+    <a href="settings.html" title="Settings"
+       class="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 3.68 1.65 1.65 0 0010 2.17V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0020.32 8c.14.35.4.65.74.85"/></svg>
+      <span class="hidden lg:inline">Settings</span>
+    </a>
+  </nav>
+
+  <div class="border-t border-border p-2 lg:p-3">
+    <div class="hidden lg:block rounded-md border border-border bg-background p-3">
+      <div class="mb-1 flex items-center gap-2">
+        <span class="relative flex h-2 w-2">
+          <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60"></span>
+          <span class="relative inline-flex h-2 w-2 rounded-full bg-success"></span>
+        </span>
+        <span class="text-sm font-medium">Liner is answering</span>
+      </div>
+      <p class="text-xs text-muted-foreground">3 open · replying in ~24s</p>
+      <button class="mt-2.5 inline-flex h-8 w-full items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-destructive hover:text-destructive">
+        Pause Liner
+      </button>
+    </div>
+    <button title="Pause Liner" class="lg:hidden flex h-9 w-full items-center justify-center rounded-md border border-input text-muted-foreground hover:text-destructive">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+    </button>
+  </div>
+
+  <div class="flex items-center gap-2.5 border-t border-border p-2 lg:px-4 lg:py-3">
+    <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">DM</div>
+    <div class="hidden lg:block min-w-0">
+      <div class="truncate text-sm font-medium leading-tight">Dana Mercer</div>
+      <div class="truncate text-xs text-muted-foreground">Sales manager</div>
+    </div>
+  </div>
+</aside>
+
+<!-- =========================================================
+     MAIN
+     ========================================================= -->
+<div class="ml-14 lg:ml-60">
+
+  <header class="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background/95 px-4 backdrop-blur md:px-6">
+    <div class="relative w-full max-w-sm">
+      <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="search" placeholder="Search leads, VINs, conversations…"
+             class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring">
+    </div>
+    <div class="ml-auto flex items-center gap-2">
+      <button class="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-background"></span>
+      </button>
+      <div class="h-5 w-px bg-border"></div>
+      <span class="hidden text-sm text-muted-foreground sm:inline tnum">Fri, Jul 31 · 9:12 AM</span>
+    </div>
+  </header>
+
+  <main class="p-4 md:p-6">
+
+    <div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Overview</h1>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Liner handled 23 conversations since you closed at 6 PM and booked 5 appointments.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <select class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring">
+          <option>Today</option>
+          <option>Yesterday</option>
+          <option>Last 7 days</option>
+          <option>Last 30 days</option>
+        </select>
+        <button class="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg>
+          Export
+        </button>
+      </div>
+    </div>
+
+    <!-- ============ KPI CARDS ============ -->
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+      <div class="rounded-lg border border-border bg-card shadow-sm">
+        <div class="flex items-center justify-between p-6 pb-2">
+          <h3 class="text-sm font-medium">Credit applications</h3>
+          <svg class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 15h6M9 11h3"/></svg>
+        </div>
+        <div class="p-6 pt-0">
+          <div class="text-2xl font-bold tnum">3</div>
+          <p class="mt-1 text-xs text-muted-foreground">2 submitted · 1 stopped at income</p>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card shadow-sm">
+        <div class="flex items-center justify-between p-6 pb-2">
+          <h3 class="text-sm font-medium">Leads answered</h3>
+          <svg class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+        </div>
+        <div class="p-6 pt-0">
+          <div class="text-2xl font-bold tnum">14</div>
+          <p class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+            <svg class="h-3 w-3 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            4 above your 30-day average
+          </p>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card shadow-sm">
+        <div class="flex items-center justify-between p-6 pb-2">
+          <h3 class="text-sm font-medium">Appointments set</h3>
+          <svg class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        </div>
+        <div class="p-6 pt-0">
+          <div class="text-2xl font-bold tnum">5</div>
+          <p class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+            <svg class="h-3 w-3 text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            2 above your 30-day average
+          </p>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card shadow-sm">
+        <div class="flex items-center justify-between p-6 pb-2">
+          <h3 class="text-sm font-medium">Median first reply</h3>
+          <svg class="h-4 w-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+        </div>
+        <div class="p-6 pt-0">
+          <div class="text-2xl font-bold tnum">18s</div>
+          <p class="mt-1 text-xs text-muted-foreground">Holding steady</p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============ NEEDS A PERSON ============ -->
+    <div class="mt-4 rounded-lg border border-border bg-card shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border p-6">
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 class="font-semibold leading-none tracking-tight">Needs a person</h3>
+            <span class="inline-flex items-center rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground tnum">4</span>
+          </div>
+          <p class="mt-1.5 text-sm text-muted-foreground">Liner stopped and is holding. Oldest has waited 11h 1m.</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="inline-flex h-9 items-center rounded-md border border-input bg-background px-3 text-sm font-medium transition-colors hover:bg-accent">Assign all to me</button>
+          <button class="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">Open queue</button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto scroll-thin">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-border">
+              <th class="h-10 whitespace-nowrap px-6 text-left font-medium text-muted-foreground">Lead</th>
+              <th class="h-10 whitespace-nowrap px-4 text-left font-medium text-muted-foreground">Why it stopped</th>
+              <th class="h-10 whitespace-nowrap px-4 text-left font-medium text-muted-foreground">Vehicle</th>
+              <th class="h-10 whitespace-nowrap px-4 text-left font-medium text-muted-foreground">Source</th>
+              <th class="h-10 whitespace-nowrap px-4 text-left font-medium text-muted-foreground">Waiting</th>
+              <th class="h-10 whitespace-nowrap px-6 text-right font-medium text-muted-foreground">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-border transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Tara Nolan</div>
+                <div class="text-xs text-muted-foreground tnum">555-0148</div>
+              </td>
+              <td class="px-4 py-3">
+                <span class="inline-flex items-center rounded-md border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">Price floor</span>
+                <div class="mt-1 max-w-[15rem] text-xs text-muted-foreground">Offered $3,200 under asking, cash today</div>
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-muted-foreground">2020 Grand Cherokee</td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Website</span></td>
+              <td class="whitespace-nowrap px-4 py-3"><span class="font-medium text-destructive tnum">11h 1m</span></td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90">Take over</button>
+              </td>
+            </tr>
+
+            <tr class="border-b border-border transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Renee Solano</div>
+                <div class="text-xs text-muted-foreground">r.solano@…</div>
+              </td>
+              <td class="px-4 py-3">
+                <span class="inline-flex items-center rounded-md border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">Finance</span>
+                <div class="mt-1 max-w-[15rem] text-xs text-muted-foreground">Mentioned a 2023 repossession</div>
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-muted-foreground">2019 Equinox LT</td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">AutoTrader</span></td>
+              <td class="whitespace-nowrap px-4 py-3"><span class="font-medium text-destructive tnum">5h 32m</span></td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90">Take over</button>
+              </td>
+            </tr>
+
+            <tr class="border-b border-border transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Unknown caller</div>
+                <div class="text-xs text-muted-foreground tnum">555-0621</div>
+              </td>
+              <td class="px-4 py-3">
+                <span class="inline-flex items-center rounded-md border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">Asked for a manager</span>
+                <div class="mt-1 max-w-[15rem] text-xs text-muted-foreground">Asked for Marcus in finance by name</div>
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-muted-foreground">—</td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Phone</span></td>
+              <td class="whitespace-nowrap px-4 py-3"><span class="font-medium text-warning tnum">3h 25m</span></td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90">Take over</button>
+              </td>
+            </tr>
+
+            <tr class="transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Devon Clarke <span class="text-muted-foreground">+1</span></div>
+                <div class="text-xs text-muted-foreground">Unconfirmed appointments</div>
+              </td>
+              <td class="px-4 py-3">
+                <span class="inline-flex items-center rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">No reply</span>
+                <div class="mt-1 max-w-[15rem] text-xs text-muted-foreground">Confirmation texts sent 7h ago</div>
+              </td>
+              <td class="whitespace-nowrap px-4 py-3 text-muted-foreground">2019 F-150 XLT</td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Calendar</span></td>
+              <td class="whitespace-nowrap px-4 py-3"><span class="font-medium text-warning tnum">7h 04m</span></td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Resend</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ============ CHARTS ============ -->
+    <div class="mt-4 grid gap-4 lg:grid-cols-7">
+
+      <div class="rounded-lg border border-border bg-card shadow-sm lg:col-span-4">
+        <div class="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
+          <div>
+            <h3 class="font-semibold leading-none tracking-tight">Conversations by hour</h3>
+            <p class="mt-1.5 text-sm text-muted-foreground">Today, midnight to now</p>
+          </div>
+          <div class="flex items-center gap-4 text-xs text-muted-foreground">
+            <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm bg-primary"></span>Closed hours</span>
+            <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-sm" style="background:hsl(var(--border))"></span>Open hours</span>
+          </div>
+        </div>
+        <div class="p-6 pt-0">
+          <div class="h-[260px]"><canvas id="hourChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card shadow-sm lg:col-span-3">
+        <div class="p-6 pb-3">
+          <h3 class="font-semibold leading-none tracking-tight">Where leads came from</h3>
+          <p class="mt-1.5 text-sm text-muted-foreground">Today · marketplace leads are the paid ones</p>
+        </div>
+        <div class="p-6 pt-0">
+          <div class="h-[260px]"><canvas id="sourceChart"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ LIVE + UNCLAIMED ============ -->
+    <div class="mt-4 grid gap-4 lg:grid-cols-7">
+
+      <div class="rounded-lg border border-border bg-card shadow-sm lg:col-span-4">
+        <div class="flex items-center justify-between border-b border-border p-6">
+          <div class="flex items-center gap-2">
+            <h3 class="font-semibold leading-none tracking-tight">Happening now</h3>
+            <span class="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
+              <span class="h-1.5 w-1.5 rounded-full bg-success"></span>Live
+            </span>
+          </div>
+          <a href="conversations.html" class="text-sm font-medium text-primary hover:underline">View all</a>
+        </div>
+        <div class="overflow-x-auto scroll-thin">
+        <table class="w-full text-sm">
+          <tbody>
+            <tr class="border-b border-border transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Hector Villalba</div>
+                <div class="mt-0.5 max-w-md truncate text-xs text-muted-foreground">Liner: "It's got 41,000 miles and a clean CARFAX — want to see it today?"</div>
+              </td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Voice</span></td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground tnum">on call 1:24</td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Join call</button>
+              </td>
+            </tr>
+            <tr class="border-b border-border transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Blake Ferreira</div>
+                <div class="mt-0.5 max-w-md truncate text-xs text-muted-foreground">Blake: "Does it come with the tow package or is that extra?"</div>
+              </td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Chat</span></td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">typing…</td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Take over</button>
+              </td>
+            </tr>
+            <tr class="border-b border-border transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Colin Hart</div>
+                <div class="mt-0.5 max-w-md truncate text-xs text-muted-foreground">Liner sent two time slots. Delivered, still unread.</div>
+              </td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Email</span></td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground tnum">3h ago</td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Take over</button>
+              </td>
+            </tr>
+            <tr class="transition-colors hover:bg-muted/50">
+              <td class="px-6 py-3">
+                <div class="font-medium">Amara Osei</div>
+                <div class="mt-0.5 max-w-md truncate text-xs text-muted-foreground">Liner: "Saturday 9:30 or 11:00 — which suits you better?"</div>
+              </td>
+              <td class="px-4 py-3"><span class="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">Chat</span></td>
+              <td class="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground tnum">4h ago</td>
+              <td class="px-6 py-3 text-right">
+                <button class="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent">Take over</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card shadow-sm lg:col-span-3">
+        <div class="flex items-center justify-between border-b border-border p-6">
+          <div>
+            <h3 class="font-semibold leading-none tracking-tight">Unclaimed leads</h3>
+            <p class="mt-1.5 text-sm text-muted-foreground">Round robin after 12 hours</p>
+          </div>
+          <a href="leads.html" class="text-sm font-medium text-primary hover:underline">Pool</a>
+        </div>
+        <div class="divide-y divide-border">
+          <div class="flex items-center gap-3 px-6 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium">Tara Nolan</div>
+              <div class="truncate text-xs text-muted-foreground">2020 Grand Cherokee · Website</div>
+            </div>
+            <span class="rounded-md bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive tnum">11h</span>
+          </div>
+          <div class="flex items-center gap-3 px-6 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium">Colin Hart</div>
+              <div class="truncate text-xs text-muted-foreground">2021 Ram 1500 · CarGurus</div>
+            </div>
+            <span class="rounded-md bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning tnum">11h</span>
+          </div>
+          <div class="flex items-center gap-3 px-6 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium">Renee Solano</div>
+              <div class="truncate text-xs text-muted-foreground">2019 Equinox LT · AutoTrader</div>
+            </div>
+            <span class="rounded-md bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning tnum">5h</span>
+          </div>
+          <div class="flex items-center gap-3 px-6 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium">Sol Bergman</div>
+              <div class="truncate text-xs text-muted-foreground">Service enquiry · Phone</div>
+            </div>
+            <span class="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground tnum">8h</span>
+          </div>
+          <div class="flex items-center gap-3 px-6 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-medium">Priya Raman</div>
+              <div class="truncate text-xs text-muted-foreground">2022 Mazda CX-5 · Website</div>
+            </div>
+            <span class="rounded-md bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground tnum">2h</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const hsl = (n, a) => a === undefined ? 'hsl(' + css(n) + ')' : 'hsl(' + css(n) + ' / ' + a + ')';
+
+  Chart.defaults.font.family = "'Inter', sans-serif";
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = hsl('--muted-foreground');
+
+  /* ---- conversations by hour ---- */
+  const hours = ['12a','1a','2a','3a','4a','5a','6a','7a','8a','9a','10a','11a','12p','1p','2p','3p','4p','5p','6p','7p','8p','9p','10p','11p'];
+  const counts = [1,1,2,0,1,1,2,1,3,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+  const isClosed = h => h < 8 || h >= 18;   /* showroom hours: 8am–6pm */
+
+  new Chart(document.getElementById('hourChart'), {
+    type: 'bar',
+    data: {
+      labels: hours,
+      datasets: [{
+        label: 'Conversations',
+        data: counts,
+        backgroundColor: counts.map(function (_, h) { return isClosed(h) ? hsl('--primary') : hsl('--border'); }),
+        borderRadius: 3,
+        borderSkipped: false,
+        maxBarThickness: 22
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: hsl('--foreground'),
+          padding: 10, cornerRadius: 6, displayColors: false,
+          callbacks: {
+            label: function (c) { return c.parsed.y + (c.parsed.y === 1 ? ' conversation' : ' conversations'); },
+            afterLabel: function (c) { return isClosed(c.dataIndex) ? 'Showroom closed' : 'Showroom open'; }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, border: { color: hsl('--border') }, ticks: { maxRotation: 0, autoSkipPadding: 12 } },
+        y: {
+          beginAtZero: true, ticks: { precision: 0, stepSize: 1 },
+          grid: { color: hsl('--border', 0.6), drawTicks: false },
+          border: { display: false }
+        }
+      }
+    }
+  });
+
+  /* ---- lead sources ---- */
+  const srcLabels = ['Website', 'Marketplace', 'Phone', 'Email'];
+  const srcData   = [7, 3, 3, 1];
+  const srcTotal  = srcData.reduce(function (a, b) { return a + b; }, 0);
+  const pct = function (v) { return Math.round(v / srcTotal * 100) + '%'; };
+
+  /* greyscale ramp, dark to light, ordered largest share first.
+     the lightest step stops short of white so it still reads on a white card */
+  const srcColors = ['#111113', '#5A5A5F', '#9A9AA0', '#D4D4D9'];
+
+  /* running total in the hole, so the ring has a denominator */
+  const centreTotal = {
+    id: 'centreTotal',
+    afterDraw: function (chart) {
+      const ctx = chart.ctx;
+      const meta = chart.getDatasetMeta(0);
+      if (!meta.data.length) return;
+      const x = meta.data[0].x, y = meta.data[0].y;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = hsl('--foreground');
+      ctx.font = '600 20px Inter, sans-serif';
+      ctx.fillText(String(srcTotal), x, y - 8);
+      ctx.fillStyle = hsl('--muted-foreground');
+      ctx.font = '400 11px Inter, sans-serif';
+      ctx.fillText('leads today', x, y + 10);
+      ctx.restore();
+    }
+  };
+
+  new Chart(document.getElementById('sourceChart'), {
+    type: 'doughnut',
+    plugins: [centreTotal],
+    data: {
+      labels: srcLabels,
+      datasets: [{
+        data: srcData,
+        backgroundColor: srcColors,
+        borderWidth: 0,
+        hoverBorderWidth: 0,
+        hoverOffset: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '62%',
+      layout: { padding: 6 },
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: {
+            boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle', padding: 12,
+            generateLabels: function (chart) {
+              return chart.data.labels.map(function (label, i) {
+                const v = chart.data.datasets[0].data[i];
+                return {
+                  text: label + '  ' + pct(v) + '  (' + v + ')',
+                  fillStyle: srcColors[i],
+                  strokeStyle: srcColors[i],
+                  pointStyle: 'circle',
+                  index: i
+                };
+              });
+            }
+          }
+        },
+        tooltip: {
+          backgroundColor: hsl('--foreground'),
+          padding: 10, cornerRadius: 6, displayColors: false,
+          callbacks: {
+            label: function (c) { return c.parsed + ' of ' + srcTotal + ' leads · ' + pct(c.parsed); }
+          }
+        }
+      }
+    }
+  });
+</script>
+
+</body>
+</html>
