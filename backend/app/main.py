@@ -57,9 +57,30 @@ def create_app() -> FastAPI:
         # 503, not 500: the feature exists, the credential does not.
         return JSONResponse(status_code=503, content=exc.as_dict())
 
-    from app.api import health
+    from app.api import (
+        appointments,
+        auth,
+        conversations,
+        health,
+        inventory,
+        leads,
+        overview,
+        settings as settings_api,
+        team,
+    )
 
-    app.include_router(health.router, prefix="/api")
+    for router in (
+        health.router,
+        auth.router,
+        overview.router,
+        conversations.router,
+        leads.router,
+        appointments.router,
+        inventory.router,
+        team.router,
+        settings_api.router,
+    ):
+        app.include_router(router, prefix="/api")
 
     @app.get("/api/photos/{vin}.svg")
     def vehicle_photo(vin: str) -> Response:
