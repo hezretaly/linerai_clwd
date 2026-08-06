@@ -216,10 +216,17 @@ certificate already exists. Skip §6 entirely, and skip certbot if that proxy
 already terminates TLS for the hostname (`curl -skI https://127.0.0.1/ -H 'Host:
 YOUR-HOST'` returning 200 means it does).
 
-**The one thing that will bite you:** inside a container, `127.0.0.1` is the
-container, so it cannot reach a uvicorn bound to the host's loopback. Bind the
-Docker bridge gateway instead — the header comment in `liner-vhost.conf` has
-the two commands and the systemd drop-in.
+**Two things will bite you, in this order.** Inside a container, `127.0.0.1` is
+the container, so it cannot reach a uvicorn bound to the host's loopback — bind
+the Docker bridge gateway instead. Then UFW, whose usual `deny (incoming)`
+default drops packets from the container to that same gateway address. The
+header comment in `liner-vhost.conf` has both fixes.
+
+**Read the status code before guessing.** A `502` means the connection was
+*refused* — nothing is listening, so look at the app. A `504` means packets
+went out and vanished, which nothing does silently except a firewall. A 504
+against an app that answers `curl` on the host is a firewall every time, and no
+amount of re-reading the nginx config will show it.
 
 Find where that nginx reads its config from:
 
