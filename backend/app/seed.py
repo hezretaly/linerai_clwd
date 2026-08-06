@@ -50,36 +50,52 @@ def _hash(password: str) -> str:
 # --------------------------------------------------------------------------
 # Vehicles
 # --------------------------------------------------------------------------
-# (vin, year, make, model, trim, price, mileage, body_style, seats, keywords)
+# (vin, year, make, model, trim, price, mileage, body_style, seats, keywords, features)
+# `keywords` is what search matches on; `features` is what Liner is allowed to
+# read back to a buyer, so it has to be phrased the way a person would say it.
 VEHICLES = [
     ("1HGCV1F34LA015782", 2020, "Honda", "Accord", "Sport", 21400, 38120, "Sedan", 5,
-     "commuter fuel efficient apple carplay one owner"),
+     "commuter fuel efficient apple carplay one owner",
+     ["Apple CarPlay", "adaptive cruise control", "one owner", "heated seats"]),
     ("5TDKZ3DC8JS905311", 2018, "Toyota", "Sienna", "LE", 19850, 74300, "Minivan", 8,
-     "third row family sliding doors seven seats"),
+     "third row family sliding doors seven seats minivan",
+     ["eight seats", "power sliding doors", "rear climate control", "backup camera"]),
     ("2C4RC1BG7KR522104", 2019, "Chrysler", "Pacifica", "Touring L", 18900, 81500, "Minivan", 7,
-     "third row family stow n go"),
+     "third row family stow n go minivan",
+     ["Stow 'n Go seating", "power liftgate", "tri-zone climate", "backup camera"]),
     ("1FTEW1EP7JKD41209", 2018, "Ford", "F-150", "XLT", 27600, 68240, "Truck", 5,
-     "towing crew cab four wheel drive"),
+     "towing crew cab four wheel drive truck",
+     ["crew cab", "four-wheel drive", "tow package", "bed liner"]),
     ("3VW217AU9HM045118", 2017, "Volkswagen", "Golf", "S", 13950, 92400, "Hatchback", 5,
-     "budget commuter manual hatch"),
+     "budget commuter manual hatch",
+     ["heated seats", "Bluetooth", "alloy wheels"]),
     ("KM8J3CA46JU622180", 2018, "Hyundai", "Tucson", "SEL", 16750, 79880, "SUV", 5,
-     "budget suv all wheel drive heated seats"),
+     "budget suv all wheel drive heated seats",
+     ["all-wheel drive", "heated seats", "blind spot monitoring", "Apple CarPlay"]),
     ("1N4AL3AP7JC201955", 2018, "Nissan", "Altima", "SV", 14200, 88600, "Sedan", 5,
-     "budget commuter backup camera"),
+     "budget commuter backup camera",
+     ["backup camera", "Bluetooth", "keyless entry"]),
     ("5XYPH4A54KG455012", 2019, "Kia", "Sorento", "EX", 22900, 61200, "SUV", 7,
-     "third row awd leather"),
+     "third row awd leather suv",
+     ["third-row seating", "all-wheel drive", "leather", "power liftgate"]),
     ("WBA8E9G59JNU22771", 2018, "BMW", "330i", "xDrive", 23400, 54900, "Sedan", 5,
-     "luxury awd sport"),
+     "luxury awd sport",
+     ["all-wheel drive", "leather", "sunroof", "navigation"]),
     ("1G1ZD5ST4LF071244", 2020, "Chevrolet", "Malibu", "LT", 17300, 47110, "Sedan", 5,
-     "budget commuter low miles"),
+     "budget commuter low miles",
+     ["Apple CarPlay", "backup camera", "remote start"]),
     ("JTMRFREV8HJ135806", 2017, "Toyota", "RAV4", "XLE", 18450, 86750, "SUV", 5,
-     "reliable awd sunroof"),
+     "reliable awd sunroof suv",
+     ["all-wheel drive", "sunroof", "backup camera", "dual-zone climate"]),
     ("1C4RJFAG9JC301877", 2018, "Jeep", "Grand Cherokee", "Laredo", 21950, 71300, "SUV", 5,
-     "four wheel drive towing"),
+     "four wheel drive towing suv",
+     ["four-wheel drive", "tow package", "heated seats"]),
     ("3GNKBBRA1KS587440", 2019, "Chevrolet", "Blazer", "LT", 24100, 52880, "SUV", 5,
-     "awd apple carplay"),
+     "awd apple carplay suv",
+     ["all-wheel drive", "Apple CarPlay", "power liftgate", "heated seats"]),
     ("1HGCR2F31HA108422", 2017, "Honda", "Civic", "LX", 12900, 98400, "Sedan", 5,
-     "budget commuter fuel efficient first car"),
+     "budget commuter fuel efficient first car",
+     ["backup camera", "Bluetooth", "40 mpg highway"]),
 ]
 
 KNOWLEDGE = [
@@ -213,12 +229,12 @@ def _seed_users(db: Session) -> list[User]:
 def _seed_vehicles(db: Session) -> list[Vehicle]:
     now = utcnow()
     vehicles = []
-    for vin, year, make, model, trim, price, mileage, body, seats, keywords in VEHICLES:
+    for vin, year, make, model, trim, price, mileage, body, seats, keywords, features in VEHICLES:
         vehicles.append(
             Vehicle(
                 vin=vin, year=year, make=make, model=model, trim=trim, price=price,
                 mileage=mileage, body_style=body, seats=seats, keywords=keywords,
-                features_json=json.dumps(sorted(set(keywords.split()))[:6]),
+                features_json=json.dumps(features),
                 photo_url=f"/api/photos/{vin}.svg",
                 listing_url=f"/inventory/{vin}",
                 status="available", source="seed",

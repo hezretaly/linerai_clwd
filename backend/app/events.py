@@ -60,13 +60,39 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# The main event loop, captured at startup. Most endpoints here are sync `def`,
+# which FastAPI runs in a threadpool -- there is no running loop in that thread,
+# so the broadcast has to be handed back to the main one explicitly. Without
+# this, events reach the database and never reach a dashboard.
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def bind_loop(loop: asyncio.AbstractEventLoop) -> None:
+    global _loop
+    _loop = loop
+
+
+def _schedule(message: dict) -> None:
+    loop = _loop
+    if loop is None or loop.is_closed():
+        return
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+
+    if running is loop:
+        loop.create_task(manager.broadcast(message))
+    else:
+        asyncio.run_coroutine_threadsafe(manager.broadcast(message), loop)
+
 
 def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
     """Write the event row and push it to connected dashboards.
 
-    Safe to call from sync request handlers: if an event loop is running the
-    broadcast is scheduled on it, otherwise the row is still persisted and any
-    dashboard picks it up on its next ``?since=`` replay.
+    Safe to call from sync handlers and background threads. If the broadcast
+    cannot be scheduled the row is still persisted, and any dashboard catches
+    up on its next ``?since=`` replay.
     """
     if type_ not in EVENT_TYPES:
         log.warning("emitting unregistered event type %r", type_)
@@ -82,11 +108,7 @@ def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
         "payload": payload or {},
         "created_at": event.created_at.isoformat(),
     }
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return event
-    loop.create_task(manager.broadcast(message))
+    _schedule(message)
     return event
 
 

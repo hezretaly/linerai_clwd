@@ -54,6 +54,9 @@ class Conversation(Base):
     agent_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     stage: Mapped[str] = mapped_column(String(30), default="opening")
     focus_vehicle_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # VINs from the most recent search, in the order the buyer saw them, so
+    # "tell me about the first one" resolves to the car actually shown first.
+    last_results_json: Mapped[str] = mapped_column(Text, default="[]")
     started_at: Mapped[datetime] = created()
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")

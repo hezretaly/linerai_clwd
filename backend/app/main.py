@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -8,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from app import events
 from app.config import settings
 from app.db import SessionLocal, create_all
 from app.integrations.base import NotConfigured
@@ -20,6 +22,10 @@ log = logging.getLogger("liner")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_all()
+
+    # Sync endpoints run in a threadpool; events.emit needs a handle on the
+    # main loop to reach connected sockets from there.
+    events.bind_loop(asyncio.get_running_loop())
 
     # The WebSocket connection manager is in-process (§5.2), so more than one
     # worker silently breaks realtime for whichever workers a client misses.
@@ -60,27 +66,35 @@ def create_app() -> FastAPI:
     from app.api import (
         appointments,
         auth,
+        chat,
         conversations,
         health,
         inventory,
         leads,
+        outreach,
         overview,
         settings as settings_api,
         team,
+        ws,
     )
 
     for router in (
         health.router,
         auth.router,
+        chat.router,
         overview.router,
         conversations.router,
         leads.router,
         appointments.router,
+        outreach.router,
         inventory.router,
         team.router,
         settings_api.router,
     ):
         app.include_router(router, prefix="/api")
+
+    # No /api prefix: the socket lives at /ws/dealer.
+    app.include_router(ws.router)
 
     @app.get("/api/photos/{vin}.svg")
     def vehicle_photo(vin: str) -> Response:
