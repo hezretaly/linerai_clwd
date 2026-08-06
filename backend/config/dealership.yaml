@@ -1,0 +1,22 @@
+# The one file you edit per prospect.
+#
+# Switching to a different dealership means editing this file and re-seeding
+# (`make reset-db && make seed`) -- there is no dealership_id column anywhere,
+# so the app holds exactly one dealership at a time. See plan §4.
+
+name: Riverside Auto
+timezone: America/Chicago
+address: 4820 Riverside Parkway, Cedar Falls, IA 50613
+phone: (319) 555-0142
+website_url: ""   # set this, and SCRAPER_BASE_URL, to ingest a real site
+
+# Fixed at 8 AM - 8 PM, closed Sunday (plan §20). No page states its own hours;
+# every surface reads these values.
+hours:
+  monday:    { open: "08:00", close: "20:00" }
+  tuesday:   { open: "08:00", close: "20:00" }
+  wednesday: { open: "08:00", close: "20:00" }
+  thursday:  { open: "08:00", close: "20:00" }
+  friday:    { open: "08:00", close: "20:00" }
+  saturday:  { open: "08:00", close: "20:00" }
+  sunday:    null   # closed

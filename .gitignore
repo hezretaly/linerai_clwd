@@ -1,0 +1,23 @@
+# Environment and secrets -- never commit
+.env
+*.pem
+*service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+backend/.venv/
+*.egg-info/
+
+# Database (regenerate with `make reset-db`)
+backend/liner.db
+backend/liner.db-wal
+backend/liner.db-shm
+
+# Node
+node_modules/
+frontend/dist/
+
+# Runtime output -- kept between sessions, never auto-deleted mid-session
+.logs/
+.artifacts/

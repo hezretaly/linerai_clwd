@@ -1,0 +1,53 @@
+.PHONY: help install dev backend frontend seed reset-db smoke fixture-site stop placeholders shots
+
+PY := backend/.venv/bin/python
+UVICORN := backend/.venv/bin/uvicorn
+BACKEND_PORT := 8000
+FRONTEND_PORT := 5173
+FIXTURE_PORT := 8100
+
+help:
+	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+install: ## Install backend and frontend dependencies
+	cd backend && uv venv .venv && uv pip install --python .venv/bin/python -e .
+	cd frontend && npm install
+
+stop: ## Kill anything bound to our ports
+	@for p in $(BACKEND_PORT) $(FRONTEND_PORT) $(FIXTURE_PORT); do \
+		pid=$$(lsof -ti tcp:$$p 2>/dev/null); \
+		if [ -n "$$pid" ]; then kill -9 $$pid 2>/dev/null || true; fi; \
+	done
+	@echo "ports clear"
+
+backend: ## Run the API on :8000 (single worker -- see plan §5.2)
+	cd backend && ../$(UVICORN) app.main:app --reload --host 127.0.0.1 --port $(BACKEND_PORT)
+
+frontend: ## Run Vite on :5173
+	cd frontend && npm run dev
+
+dev: stop ## Run both servers in the background, logging to .logs/
+	@mkdir -p .logs
+	cd backend && ../$(UVICORN) app.main:app --host 127.0.0.1 --port $(BACKEND_PORT) \
+		> ../.logs/backend.log 2>&1 & echo "backend  -> .logs/backend.log"
+	cd frontend && npm run dev > ../.logs/frontend.log 2>&1 & echo "frontend -> .logs/frontend.log"
+	@sleep 3 && echo "http://localhost:$(FRONTEND_PORT)"
+
+seed: ## Wipe and rebuild the Riverside Auto fixture
+	cd backend && ../$(PY) -m app.seed
+
+reset-db: ## Delete the database and reseed
+	rm -f backend/liner.db backend/liner.db-wal backend/liner.db-shm
+	cd backend && ../$(PY) -m app.seed
+
+smoke: ## Drive the whole booking flow over HTTP. No browser, no credentials.
+	$(PY) scripts/smoke.py
+
+fixture-site: ## Serve the scraper fixture dealer site on :8100
+	cd backend/fixtures/sites/riverside && ../../../../$(PY) -m http.server $(FIXTURE_PORT)
+
+placeholders: ## Collect every PLACEHOLDER marker into docs/PLACEHOLDERS.md
+	$(PY) scripts/placeholders.py
+
+shots: ## Screenshot every route into .artifacts/
+	cd frontend && npx playwright test --reporter=line 2>/dev/null || $(PY) scripts/screenshots.py
