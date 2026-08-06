@@ -317,9 +317,13 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         slots = result["slots"]
         if not slots:
             return "We're fully booked this week. Want me to look at next week?", calls
+        first, second = _spread(slots)
+        # Remember exactly what was offered, so the booking uses the slot the
+        # buyer picks rather than whatever comes back first next time.
+        convo.offered_slots_json = json.dumps([first, second])
+        convo.chosen_slot = ""
         convo.stage = "slot_offered"
         db.commit()
-        first, second = _spread(slots)
         return (
             f"I can do {_slot_label(first)} or {_slot_label(second)}. Which one works?",
             calls,
@@ -330,24 +334,32 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         email_match = EMAIL_IN_TEXT.search(text)
         name_match = NAME_IN_TEXT.search(text)
 
+        # Resolve which of the offered times the buyer just agreed to.
+        chosen = convo.chosen_slot or _pick_offered_slot(convo, text)
+        if chosen:
+            convo.chosen_slot = chosen
+
         if not email_match:
             convo.stage = "contact_capture"
             db.commit()
+            when = f" for {_slot_label(chosen)}" if chosen else ""
             return (
-                "Perfect. Can I get your name and the best email for you? I'll send the "
-                "confirmation and the address there.",
+                f"Perfect{when}. Can I get your name and the best email for you? I'll send "
+                "the confirmation and the address there.",
                 calls,
             )
 
-        availability = call("check_availability", {"days_ahead": 7})
-        if not availability["slots"]:
-            return "That time just went. Want me to look at next week?", calls
+        if not chosen:
+            availability = call("check_availability", {"days_ahead": 7})
+            if not availability["slots"]:
+                return "That time just went. Want me to look at next week?", calls
+            chosen = availability["slots"][0]
 
         try:
             result = call("book_appointment", {
                 "name": name_match.group(1) if name_match else email_match.group(0).split("@")[0],
                 "email": email_match.group(0),
-                "starts_at": availability["slots"][0],
+                "starts_at": chosen,
             }, tool_call_id=f"stub-book-{convo.id}")
         except tools.ToolError as exc:
             return f"I couldn't lock that in -- {exc}", calls
@@ -374,6 +386,40 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
     )
 
 
+PERIODS = {"morning": (0, 12), "afternoon": (12, 17), "evening": (17, 24)}
+
+
+def _pick_offered_slot(convo: Conversation, text: str) -> str:
+    """Match "Saturday morning works" against the two times actually offered."""
+    try:
+        offered: list[str] = json.loads(convo.offered_slots_json or "[]")
+    except ValueError:
+        return ""
+    if not offered:
+        return ""
+
+    lowered = text.lower()
+    candidates = [(slot, datetime.fromisoformat(slot)) for slot in offered]
+
+    by_day = [s for s, when in candidates if when.strftime("%A").lower() in lowered]
+    if len(by_day) == 1:
+        return by_day[0]
+
+    pool = by_day or [s for s, _ in candidates]
+    for period, (lo, hi) in PERIODS.items():
+        if period in lowered:
+            for slot in pool:
+                if lo <= datetime.fromisoformat(slot).hour < hi:
+                    return slot
+
+    # "the first one" / "the second" / "either".
+    if re.search(r"\bfirst\b|\bearlier\b", lowered):
+        return pool[0]
+    if re.search(r"\bsecond\b|\blater\b", lowered):
+        return pool[-1]
+    return pool[0] if len(pool) == 1 else ""
+
+
 def _spread(slots: list[str]) -> tuple[str, str]:
     """Two genuinely different options.
 
@@ -382,9 +428,14 @@ def _spread(slots: list[str]) -> tuple[str, str]:
     """
     first = slots[0]
     head = datetime.fromisoformat(first)
+    # Best: another day at another time of day, so "Saturday morning" and
+    # "Friday afternoon" are distinguishable by either half of the phrase.
     for candidate in slots[1:]:
         when = datetime.fromisoformat(candidate)
-        if when.date() != head.date():
+        if when.date() != head.date() and when.hour != head.hour:
+            return first, candidate
+    for candidate in slots[1:]:
+        if datetime.fromisoformat(candidate).date() != head.date():
             return first, candidate
     for candidate in slots[1:]:
         if abs((datetime.fromisoformat(candidate) - head).total_seconds()) >= 3 * 3600:

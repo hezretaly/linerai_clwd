@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+/* Every design token lives here and nowhere else.
+ *
+ * Names follow shadcn/ui's HSL conventions so the primitives in components/ui
+ * stay drop-in compatible if we ever move to the shadcn CLI. The mockups'
+ * hardcoded hex (#FFFFFF on every drawer, #C4241B, #FDF1E1, #E8F2FF) becomes
+ * a semantic token here -- no component should ever name a colour. */
+
+@theme {
+  --color-background: hsl(0 0% 100%);
+  --color-foreground: hsl(222 22% 12%);
+
+  --color-card: hsl(0 0% 100%);
+  --color-card-foreground: hsl(222 22% 12%);
+
+  --color-muted: hsl(220 16% 96%);
+  --color-muted-foreground: hsl(220 9% 44%);
+
+  --color-border: hsl(220 14% 90%);
+  --color-input: hsl(220 14% 90%);
+  --color-ring: hsl(211 100% 50%);
+
+  /* iOS blue -- the one brand colour, carried over from the landing page. */
+  --color-primary: hsl(211 100% 50%);
+  --color-primary-foreground: hsl(0 0% 100%);
+
+  --color-secondary: hsl(220 16% 96%);
+  --color-secondary-foreground: hsl(222 22% 12%);
+
+  --color-accent: hsl(211 100% 96%);
+  --color-accent-foreground: hsl(211 100% 32%);
+
+  --color-destructive: hsl(4 71% 44%);
+  --color-destructive-foreground: hsl(0 0% 100%);
+  --color-destructive-muted: hsl(4 71% 96%);
+
+  --color-warning: hsl(33 90% 48%);
+  --color-warning-muted: hsl(36 84% 94%);
+  --color-warning-foreground: hsl(28 74% 26%);
+
+  --color-success: hsl(152 58% 34%);
+  --color-success-muted: hsl(152 48% 95%);
+
+  --color-sidebar: hsl(222 24% 11%);
+  --color-sidebar-foreground: hsl(220 14% 78%);
+  --color-sidebar-accent: hsl(222 20% 18%);
+  --color-sidebar-active: hsl(211 100% 62%);
+
+  --radius-card: 0.75rem;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* The buyer side keeps a warm iOS-message register; the dealer side stays
+ * dense and quiet. Both read from the same tokens. */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* One orchestrated motion moment per screen; everything else 150-250ms. */
+@keyframes liner-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes liner-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-fade-up {
+  animation: liner-fade-up 220ms ease-out both;
+}
+
+.animate-cell-fill {
+  animation: liner-fade-up 260ms ease-out both;
+}
+
+.typing-dot {
+  animation: liner-pulse 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

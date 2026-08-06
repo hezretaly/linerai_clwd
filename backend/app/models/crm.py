@@ -57,6 +57,10 @@ class Conversation(Base):
     # VINs from the most recent search, in the order the buyer saw them, so
     # "tell me about the first one" resolves to the car actually shown first.
     last_results_json: Mapped[str] = mapped_column(Text, default="[]")
+    # The slots the buyer was offered, and the one they picked. Without this a
+    # booking can land on a different time than the one they agreed to.
+    offered_slots_json: Mapped[str] = mapped_column(Text, default="[]")
+    chosen_slot: Mapped[str] = mapped_column(String(40), default="")
     started_at: Mapped[datetime] = created()
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")

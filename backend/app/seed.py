@@ -40,6 +40,8 @@ from app.models import (
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
 SEED_PASSWORD = "liner-dev"  # documented in CLAUDE.md; @example.invalid accounts only
 
 
@@ -301,9 +303,29 @@ def _seed_rails(db: Session) -> None:
     db.commit()
 
 
+def _next_open_slot(hours: dict, now: datetime, days_ahead: int, hour: int) -> datetime:
+    """Pick a real slot inside the dealership's hours.
+
+    Timestamps are naive and interpreted in the dealership's local frame
+    everywhere -- check_availability builds slots from hours_json the same way.
+    Hardcoding an hour in the seed is how the fixture ends up with a 9 PM
+    appointment the calendar cannot draw and book_appointment would reject.
+    """
+    day = (now + timedelta(days=days_ahead)).replace(
+        hour=hour, minute=0, second=0, microsecond=0
+    )
+    for _ in range(7):
+        window = hours.get(DAY_NAMES[day.weekday()])
+        if window and int(window["open"][:2]) <= hour < int(window["close"][:2]):
+            return day
+        day += timedelta(days=1)
+    return day
+
+
 def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> None:
     """A populated yesterday: conversations, leads, appointments, one open escalation."""
     now = utcnow()
+    hours = json.loads(db.query(Dealership).first().hours_json)
     manager, marcus, priya, trevor = users
     by_vin = {v.vin: v for v in vehicles}
     sienna = by_vin["5TDKZ3DC8JS905311"]
@@ -351,14 +373,17 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     # --- Devon Clarke: booked overnight, confirmation email unanswered --------
     devon = add_lead("Devon Clarke", "devon.clarke@example.com", "(319) 555-0188",
                      "chat", marcus, 9)
+    devon_slot = _next_open_slot(hours, now, 1, 10)
+    devon_day = devon_slot.strftime("%A")
     devon_convo = add_convo(devon, "chat", "booked", [
         ("buyer", "Do you have anything with a third row under $20k?"),
         ("assistant", f"We do -- a {sienna.year} {sienna.make} {sienna.model} {sienna.trim} at "
                       f"${sienna.price:,}, {sienna.mileage:,} miles, eight seats."),
         ("buyer", "That could work. I need something by the end of the month."),
-        ("assistant", "I can get you in Saturday at 10:00 AM or Saturday at 2:30 PM."),
-        ("buyer", "Saturday at 10 works. Devon Clarke, devon.clarke@example.com."),
-        ("assistant", "Booked -- Saturday 10:00 AM to see the Sienna. Confirmation is on its way."),
+        ("assistant", f"I can get you in {devon_day} at 10:00 AM or {devon_day} at 2:30 PM."),
+        ("buyer", f"{devon_day} at 10 works. Devon Clarke, devon.clarke@example.com."),
+        ("assistant", f"Booked -- {devon_day} 10:00 AM to see the Sienna. "
+                      "Confirmation is on its way."),
     ], 9)
     capture(devon, "budget", "under $20k", "typed")
     capture(devon, "timeline", "end of the month", "typed")
@@ -368,7 +393,7 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
                           quoted_price=sienna.price))
     devon_appt = Appointment(
         lead_id=devon.id, vehicle_id=sienna.id, assigned_user_id=marcus.id,
-        starts_at=(now + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0),
+        starts_at=devon_slot,
         duration_min=30, status="confirmed", booked_by="liner",
         conversation_id=devon_convo.id, created_at=now - timedelta(hours=9),
     )
@@ -377,22 +402,24 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     db.add(Outreach(
         appointment_id=devon_appt.id, lead_id=devon.id, sent_by_user_id=marcus.id,
         channel="email", to_address=devon.email,
-        subject="Your Saturday 10:00 AM appointment at Riverside Auto",
-        body="Hi Devon -- you're set for Saturday at 10:00 AM to see the 2018 Sienna.",
+        subject=f"Your {devon_day} 10:00 AM appointment at Riverside Auto",
+        body=f"Hi Devon -- you're set for {devon_day} at 10:00 AM to see the 2018 Sienna.",
         provider="outbox", provider_message_id="outbox-seed-devon", status="sent",
         sent_at=now - timedelta(hours=7), created_at=now - timedelta(hours=7),
     ))
 
     # --- Janet Whitfield: booked, unconfirmed, unassigned --------------------
     janet = add_lead("Janet Whitfield", "j.whitfield@example.com", "", "chat", None, 6)
+    janet_slot = _next_open_slot(hours, now, 2, 16)
+    janet_day = janet_slot.strftime("%A")
     janet_convo = add_convo(janet, "chat", "booked", [
         ("buyer", "I'm looking at trucks for towing a small camper."),
         ("assistant", f"The {f150.year} {f150.make} {f150.model} {f150.trim} is ${f150.price:,} "
                       f"with {f150.mileage:,} miles -- crew cab, four wheel drive."),
-        ("buyer", "Can I look at it Friday afternoon?"),
-        ("assistant", "Friday at 4:00 PM or Friday at 5:30 PM -- which suits you?"),
+        ("buyer", f"Can I look at it {janet_day} afternoon?"),
+        ("assistant", f"{janet_day} at 4:00 PM or {janet_day} at 5:30 PM -- which suits you?"),
         ("buyer", "4 PM. Janet Whitfield, j.whitfield@example.com."),
-        ("assistant", "You're booked for Friday at 4:00 PM."),
+        ("assistant", f"You're booked for {janet_day} at 4:00 PM."),
     ], 6)
     capture(janet, "use_case", "towing a small camper", "typed")
     capture(janet, "vehicle_interest", f"{f150.year} {f150.make} {f150.model}", "listing")
@@ -401,7 +428,7 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
                           quoted_price=f150.price))
     db.add(Appointment(
         lead_id=janet.id, vehicle_id=f150.id, assigned_user_id=None,
-        starts_at=(now + timedelta(days=1)).replace(hour=21, minute=0, second=0, microsecond=0),
+        starts_at=janet_slot,
         duration_min=30, status="booked", booked_by="liner",
         conversation_id=janet_convo.id, created_at=now - timedelta(hours=6),
     ))
