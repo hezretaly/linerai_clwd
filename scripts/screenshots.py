@@ -38,6 +38,11 @@ PUBLIC = ["/", "/chat", "/call", "/login"]
 # Assets the design references but that have not been supplied yet. Their 404s
 # are reported rather than failing the run; remove each one as it arrives.
 PENDING_ASSETS = ["live_inv_car.png"]
+
+# Hosts the page legitimately reaches that this sandbox's headless browser
+# cannot. `curl` gets 200 from Google Fonts through the agent proxy, but
+# Chromium does not inherit it -- so a failure here says nothing about the page.
+UNREACHABLE_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"]
 DEALER = [
     "/app",
     "/app/conversations",
@@ -71,18 +76,48 @@ async def main() -> int:
             "console",
             lambda msg: errors.append(msg.text) if msg.type == "error" else None,
         )
-        # A 404 console message does not name the file, so the URL has to come
-        # off the response itself to tell a pending asset from a real break.
+        # A resource-load console message does not name the file, so the URL has
+        # to come off the request itself to tell an expected gap from a real
+        # break. Both signals matter: a 404 arrives as a response, a blocked
+        # host as a failed request.
         page.on(
             "response",
             lambda r: bad_urls.append(r.url) if r.status >= 400 else None,
         )
+        page.on("requestfailed", lambda r: bad_urls.append(r.url))
 
         async def shot(route: str) -> None:
             errors.clear()
             bad_urls.clear()
             await page.goto(BASE + route, wait_until="networkidle")
             await page.wait_for_timeout(700)
+
+            # Scroll the whole page before capturing. The landing page hides
+            # every section behind `.reveal { opacity: 0 }` until an
+            # IntersectionObserver fires, and a full-page screenshot does not
+            # scroll -- without this the artifact looks like a broken page.
+            await page.evaluate(
+                """async () => {
+                    // The landing page sets `scroll-behavior: smooth`, which
+                    // makes scrollTo animate -- the page then lags far behind
+                    // the loop and the lower sections are never reached at all.
+                    const root = document.documentElement;
+                    const previous = root.style.scrollBehavior;
+                    root.style.scrollBehavior = 'auto';
+
+                    const step = window.innerHeight * 0.6;
+                    const height = () => document.documentElement.scrollHeight;
+                    for (let y = 0; y < height(); y += step) {
+                        window.scrollTo(0, y);
+                        await new Promise(r => setTimeout(r, 120));
+                    }
+                    window.scrollTo(0, 0);
+                    await new Promise(r => setTimeout(r, 300));
+                    root.style.scrollBehavior = previous;
+                }"""
+            )
+            await page.wait_for_timeout(600)
+
             name = route.strip("/").replace("/", "-") or "landing"
             await page.screenshot(path=OUT / f"{name}.png", full_page=True)
 
@@ -92,16 +127,25 @@ async def main() -> int:
             # A React crash leaves the root blank; console errors catch the rest.
             real = [e for e in errors if "favicon" not in e.lower()]
 
-            # The landing page ships with the dealer's Yukon photo, which is not
-            # in the repo yet. Surface it loudly instead of failing the gate --
-            # delete PENDING_ASSETS entries as the files arrive.
-            missing = [u for u in bad_urls if any(a in u for a in PENDING_ASSETS)]
-            if missing and len(missing) == len(bad_urls):
-                # Every failed request was an expected-missing asset, so the
-                # generic "failed to load resource" noise is accounted for.
+            # Two kinds of expected gap, reported rather than hidden: assets the
+            # design references that have not been supplied, and hosts this
+            # sandbox's browser cannot reach. Anything else is a real failure.
+            excused, unexplained = [], []
+            for url in dict.fromkeys(bad_urls):
+                if any(a in url for a in PENDING_ASSETS):
+                    excused.append(f"asset not supplied yet: {url.rsplit('/', 1)[-1]}")
+                elif any(h in url for h in UNREACHABLE_HOSTS):
+                    excused.append(f"blocked in this sandbox: {url.split('/')[2]}")
+                else:
+                    unexplained.append(url)
+
+            if excused and not unexplained:
+                # Every failed request is accounted for, so the generic
+                # "failed to load resource" noise it produced is too.
                 real = [e for e in real if "failed to load resource" not in e.lower()]
-                for url in dict.fromkeys(missing):
-                    print(f"       PENDING ASSET not supplied yet: {url.rsplit('/', 1)[-1]}")
+            for note in excused:
+                print(f"       NOTE  {note}")
+
             if real:
                 failures.append(f"{route}: {real[0][:120]}")
             print(f"  {route:32} {len(body.strip()):>6} chars"
