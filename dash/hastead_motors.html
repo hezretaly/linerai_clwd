@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Halstead Motors — Certified Pre-Owned · Orem, UT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..900&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   HOST SITE — Halstead Motors
+   Its own identity on purpose: spruce green, brass, bone, condensed
+   signage type. The widget below is intentionally a different world.
+   ===================================================================== */
+:root{
+  --spruce:#10322A;
+  --spruce-deep:#08201B;
+  --spruce-soft:#1B4A3E;
+  --brass:#C79A3F;
+  --brass-soft:#E8D8B0;
+  --bone:#F5F2EA;
+  --paper:#FFFFFF;
+  --graphite:#1B1D1B;
+  --slate:#5F6660;
+  --hair:#E3DFD4;
+
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  background:var(--bone);color:var(--graphite);
+  font-family:var(--body);font-size:16px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:inherit;text-decoration:none}
+img,svg{display:block;max-width:100%}
+:focus-visible{outline:2px solid var(--brass);outline-offset:3px;border-radius:4px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+
+.h-display{
+  font-family:var(--display);font-weight:800;font-stretch:80%;
+  text-transform:uppercase;letter-spacing:-0.01em;line-height:0.95;
+}
+.mono{font-family:var(--mono)}
+.eyebrow{
+  font-family:var(--mono);font-size:11px;font-weight:700;
+  letter-spacing:0.16em;text-transform:uppercase;color:var(--brass);
+}
+
+/* ---------- announcement ---------- */
+.ticker{
+  background:var(--spruce-deep);color:#CFE0D8;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:0.06em;
+}
+.ticker .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;height:38px;flex-wrap:wrap}
+.ticker .closed{display:inline-flex;align-items:center;gap:8px}
+.ticker .lamp{width:7px;height:7px;border-radius:50%;background:#E0554A;box-shadow:0 0 0 3px rgba(224,85,74,.2)}
+.ticker .always{color:var(--brass-soft)}
+
+/* ---------- nav ---------- */
+header.site{position:sticky;top:0;z-index:40;background:rgba(245,242,234,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--hair)}
+header.site .wrap{display:flex;align-items:center;justify-content:space-between;gap:24px;height:78px}
+.mark{display:flex;flex-direction:column;gap:3px;flex-shrink:0}
+.mark-name{font-family:var(--display);font-weight:900;font-stretch:78%;font-size:27px;letter-spacing:0.02em;text-transform:uppercase;line-height:1}
+.mark-rule{height:3px;background:var(--brass);width:100%}
+.mark-sub{font-family:var(--mono);font-size:9.5px;letter-spacing:0.22em;color:var(--slate);text-transform:uppercase}
+.site-nav{display:flex;gap:30px;font-size:14.5px;font-weight:500}
+.site-nav a{color:var(--slate);padding-bottom:2px;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
+.site-nav a:hover{color:var(--graphite);border-color:var(--brass)}
+.callbtn{
+  display:inline-flex;align-items:center;gap:9px;background:var(--spruce);color:var(--bone);
+  font-family:var(--mono);font-size:13px;font-weight:500;padding:11px 17px;border-radius:2px;
+  transition:background .15s
+}
+.callbtn:hover{background:var(--spruce-soft)}
+
+/* ---------- hero ---------- */
+.hero{background:var(--spruce);color:var(--bone);position:relative;overflow:hidden}
+.hero::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(90deg,rgba(255,255,255,.028) 0 1px,transparent 1px 92px);
+}
+.hero .wrap{position:relative;z-index:1;padding-top:76px;padding-bottom:76px}
+.hero-grid{display:grid;grid-template-columns:1.25fr .85fr;gap:56px;align-items:end}
+.hero h1{font-family:var(--display);font-weight:900;font-stretch:76%;text-transform:uppercase;font-size:clamp(44px,6.4vw,88px);line-height:0.9;letter-spacing:-0.015em}
+.hero h1 em{font-style:normal;color:var(--brass)}
+.hero-lede{margin-top:24px;max-width:440px;color:#C9D8D1;font-size:17.5px}
+.hero-stats{display:flex;gap:38px;margin-top:38px;flex-wrap:wrap}
+.hero-stat .n{font-family:var(--display);font-weight:800;font-stretch:80%;font-size:34px;line-height:1}
+.hero-stat .l{font-family:var(--mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:#8FA9A0;margin-top:6px}
+
+.finder{background:var(--bone);color:var(--graphite);padding:26px;border-top:4px solid var(--brass)}
+.finder h2{font-family:var(--display);font-weight:800;font-stretch:80%;text-transform:uppercase;font-size:17px;letter-spacing:0.02em;margin-bottom:18px}
+.finder-field{margin-bottom:13px}
+.finder-field span{display:block;font-family:var(--mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--slate);margin-bottom:5px}
+.finder-field .box{
+  border:1px solid var(--hair);background:var(--paper);padding:11px 13px;font-size:15px;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--graphite)
+}
+.finder-field .box svg{color:var(--slate);flex-shrink:0}
+.finder-go{
+  width:100%;margin-top:6px;background:var(--spruce);color:var(--bone);border:none;cursor:pointer;
+  font-family:var(--display);font-weight:800;font-stretch:82%;text-transform:uppercase;letter-spacing:0.06em;
+  font-size:15px;padding:15px;transition:background .15s
+}
+.finder-go:hover{background:var(--spruce-soft)}
+
+.afterhours{
+  display:inline-flex;align-items:center;gap:12px;margin-top:44px;
+  border:1px solid rgba(199,154,63,.45);padding:11px 17px;
+  font-family:var(--mono);font-size:12.5px;color:var(--brass-soft);letter-spacing:0.03em
+}
+.afterhours b{color:var(--brass);font-weight:700}
+
+/* ---------- inventory ---------- */
+.inv{padding:84px 0}
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:28px;flex-wrap:wrap;margin-bottom:30px}
+.sec-head h2{font-family:var(--display);font-weight:900;font-stretch:78%;text-transform:uppercase;font-size:clamp(30px,4vw,46px);line-height:0.95;margin-top:10px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{
+  font-family:var(--mono);font-size:12px;letter-spacing:0.05em;padding:8px 14px;
+  border:1px solid var(--hair);background:var(--paper);color:var(--slate);cursor:pointer;transition:.15s
+}
+.chip:hover{border-color:var(--brass);color:var(--graphite)}
+.chip.on{background:var(--spruce);border-color:var(--spruce);color:var(--bone)}
+
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.card{background:var(--paper);border:1px solid var(--hair);display:flex;flex-direction:column;transition:transform .2s,box-shadow .2s}
+.card:hover{transform:translateY(-3px);box-shadow:0 18px 40px -22px rgba(16,50,42,.5)}
+.card-shot{position:relative;aspect-ratio:16/10;overflow:hidden}
+.card-shot svg{width:100%;height:100%}
+.tagline{
+  position:absolute;top:12px;left:12px;font-family:var(--mono);font-size:10px;letter-spacing:0.12em;
+  text-transform:uppercase;background:rgba(8,32,27,.82);color:var(--brass-soft);padding:5px 9px
+}
+.tagline.sold{background:rgba(224,85,74,.92);color:#fff}
+.card-body{padding:18px 18px 20px;display:flex;flex-direction:column;flex:1}
+.stockline{font-family:var(--mono);font-size:10.5px;letter-spacing:0.1em;color:var(--slate);display:flex;justify-content:space-between;gap:10px;padding-bottom:11px;border-bottom:1px dashed var(--hair)}
+.card h3{font-family:var(--display);font-weight:800;font-stretch:82%;text-transform:uppercase;font-size:19px;line-height:1.05;margin:14px 0 6px}
+.card .specs{font-size:13.5px;color:var(--slate)}
+.card .foot{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-top:18px;padding-top:15px;border-top:1px solid var(--hair)}
+.price{font-family:var(--display);font-weight:900;font-stretch:80%;font-size:27px;line-height:1}
+.permo{font-family:var(--mono);font-size:11px;color:var(--slate);margin-top:4px}
+.ask{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:0.06em;text-transform:uppercase;
+  border:1px solid var(--spruce);color:var(--spruce);background:none;cursor:pointer;padding:9px 12px;transition:.15s;white-space:nowrap
+}
+.ask:hover{background:var(--spruce);color:var(--bone)}
+
+/* ---------- band ---------- */
+.band{background:var(--spruce-deep);color:var(--bone);padding:76px 0}
+.band-grid{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+.band h2{font-family:var(--display);font-weight:900;font-stretch:78%;text-transform:uppercase;font-size:clamp(28px,3.6vw,42px);line-height:0.98;margin:12px 0 18px}
+.band p{color:#B7CBC3;max-width:460px}
+.terms{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.12)}
+.term{background:var(--spruce-deep);padding:24px}
+.term .k{font-family:var(--mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:#8FA9A0}
+.term .v{font-family:var(--display);font-weight:800;font-stretch:80%;font-size:31px;margin-top:8px;line-height:1}
+.term .v.gold{color:var(--brass)}
+
+/* ---------- hours ---------- */
+.hours{padding:74px 0}
+.hours-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:56px;align-items:start}
+.hours-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px}
+.hours-table td{padding:12px 0;border-bottom:1px solid var(--hair)}
+.hours-table td:last-child{text-align:right;color:var(--slate)}
+.hours-table tr.now td{color:var(--graphite);font-weight:700}
+.hours-note{margin-top:20px;border-left:3px solid var(--brass);padding:12px 0 12px 16px;font-size:14.5px;color:var(--slate)}
+
+/* ---------- footer ---------- */
+footer.site{background:var(--spruce);color:#A9C3BA;padding:52px 0 40px;font-size:14px}
+footer.site .wrap{display:flex;gap:36px;justify-content:space-between;flex-wrap:wrap}
+footer.site .mark-name{color:var(--bone)}
+footer.site .mark-sub{color:#7E9A91}
+.fcol h4{font-family:var(--mono);font-size:10.5px;letter-spacing:0.16em;text-transform:uppercase;color:var(--brass);margin-bottom:12px}
+.fcol a{display:block;padding:4px 0}
+.fcol a:hover{color:var(--bone)}
+.legal{margin-top:38px;padding-top:20px;border-top:1px solid rgba(255,255,255,.1);font-family:var(--mono);font-size:11px;color:#7E9A91}
+
+@media (max-width:960px){
+  .hero-grid,.band-grid,.hours-grid{grid-template-columns:1fr;gap:40px}
+  .grid{grid-template-columns:repeat(2,1fr)}
+  .site-nav{display:none}
+}
+@media (max-width:640px){
+  .wrap{padding:0 18px}
+  .grid{grid-template-columns:1fr}
+  .terms{grid-template-columns:1fr}
+  .hero .wrap{padding-top:52px;padding-bottom:56px}
+  .inv{padding:56px 0}
+  header.site .wrap{height:66px}
+  .callbtn span{display:none}
+}
+
+/* =====================================================================
+   LINER AI WIDGET  —  everything below is namespaced .lnr-*
+   Drop-in: this block + the markup + the script are the whole thing.
+   Tokens inherited from the Liner AI brand, not the host site.
+   ===================================================================== */
+.lnr{
+  --lnr-blue:#007AFF;
+  --lnr-blue-dark:#0062CC;
+  --lnr-indigo:#5856D6;
+  --lnr-them:#EBEBED;
+  --lnr-ink:#0B0B0C;
+  --lnr-muted:#6E6E76;
+  --lnr-faint:#9A9AA2;
+  --lnr-line:#E7E7EA;
+  --lnr-field:#F4F4F6;
+  --lnr-green:#2FBF55;
+  --lnr-radius:20px;
+  --lnr-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-family:var(--lnr-ui);
+  position:fixed;z-index:9000;right:24px;bottom:24px;
+  display:flex;flex-direction:column;align-items:flex-end;gap:14px;
+}
+.lnr *{box-sizing:border-box}
+.lnr button{font-family:inherit}
+.lnr :focus-visible{outline:2px solid var(--lnr-blue);outline-offset:2px;border-radius:8px}
+
+/* ---- launcher ---- */
+.lnr-launcher{
+  position:relative;width:58px;height:58px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
+  background:linear-gradient(140deg,var(--lnr-blue),var(--lnr-indigo));
+  box-shadow:0 10px 26px -6px rgba(0,80,200,.55);
+  display:flex;align-items:center;justify-content:center;color:#fff;
+  transition:transform .22s cubic-bezier(.34,1.4,.64,1),box-shadow .2s;
+}
+.lnr-launcher:hover{transform:scale(1.06)}
+.lnr-launcher:active{transform:scale(.96)}
+.lnr-launcher svg{position:absolute;transition:opacity .18s,transform .28s cubic-bezier(.34,1.4,.64,1)}
+.lnr-launcher .ico-close{opacity:0;transform:rotate(-70deg) scale(.6)}
+.lnr.is-open .lnr-launcher .ico-chat{opacity:0;transform:rotate(70deg) scale(.6)}
+.lnr.is-open .lnr-launcher .ico-close{opacity:1;transform:none}
+.lnr-launcher::before{
+  content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--lnr-blue);
+  animation:lnrRing 2.6s ease-out infinite;
+}
+.lnr.is-open .lnr-launcher::before,.lnr.has-seen .lnr-launcher::before{display:none}
+@keyframes lnrRing{0%{opacity:.55;transform:scale(1)}70%{opacity:0;transform:scale(1.5)}100%{opacity:0}}
+.lnr-badge{
+  position:absolute;top:-3px;right:-3px;min-width:21px;height:21px;padding:0 6px;border-radius:11px;
+  background:#FF3B30;color:#fff;font-size:12px;font-weight:700;line-height:21px;text-align:center;
+  border:2px solid var(--bone);
+}
+.lnr.is-open .lnr-badge,.lnr.has-seen .lnr-badge{display:none}
+
+/* ---- proactive nudge ---- */
+.lnr-nudge{
+  max-width:288px;background:#fff;border-radius:18px;border-bottom-right-radius:6px;
+  box-shadow:0 16px 40px -12px rgba(11,11,12,.28);padding:14px 16px 15px;
+  display:flex;gap:11px;position:relative;cursor:pointer;text-align:left;border:none;
+  opacity:0;transform:translateY(12px) scale(.94);pointer-events:none;
+  transition:opacity .3s,transform .3s cubic-bezier(.34,1.3,.64,1);
+}
+.lnr-nudge.show{opacity:1;transform:none;pointer-events:auto}
+.lnr-nudge:hover{box-shadow:0 20px 46px -12px rgba(11,11,12,.34)}
+.lnr-nudge .who{font-size:12px;font-weight:700;color:var(--lnr-ink);margin-bottom:2px}
+.lnr-nudge .txt{font-size:14px;line-height:1.42;color:var(--lnr-muted)}
+.lnr-nudge-x{
+  position:absolute;top:-8px;left:-8px;width:23px;height:23px;border-radius:50%;background:#fff;
+  border:1px solid var(--lnr-line);color:var(--lnr-muted);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 3px 8px rgba(0,0,0,.12)
+}
+.lnr-av{
+  width:34px;height:34px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(140deg,var(--lnr-blue),var(--lnr-indigo));color:#fff;
+  font-size:13px;font-weight:700;letter-spacing:-.02em
+}
+.lnr-av.human{background:linear-gradient(140deg,#3A3A3C,#101012)}
+
+/* ---- panel ---- */
+.lnr-panel{
+  position:fixed;right:24px;bottom:96px;width:396px;height:min(660px,calc(100vh - 132px));
+  background:#fff;border-radius:var(--lnr-radius);overflow:hidden;display:flex;flex-direction:column;
+  box-shadow:0 28px 70px -18px rgba(11,11,12,.42),0 0 0 1px rgba(11,11,12,.06);
+  opacity:0;transform:translateY(16px) scale(.97);transform-origin:bottom right;pointer-events:none;
+  transition:opacity .24s ease,transform .28s cubic-bezier(.16,1,.3,1);
+}
+.lnr.is-open .lnr-panel{opacity:1;transform:none;pointer-events:auto}
+
+.lnr-head{background:linear-gradient(150deg,var(--lnr-blue),var(--lnr-indigo));color:#fff;padding:18px 18px 16px;flex-shrink:0;position:relative}
+.lnr-head-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+.lnr-host{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;letter-spacing:.01em;opacity:.92}
+.lnr-host .dot{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.6)}
+.lnr-headbtns{display:flex;gap:4px}
+.lnr-iconbtn{
+  width:30px;height:30px;border-radius:50%;border:none;background:rgba(255,255,255,.16);color:#fff;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s
+}
+.lnr-iconbtn:hover{background:rgba(255,255,255,.3)}
+.lnr-greet{font-size:25px;font-weight:700;letter-spacing:-.028em;line-height:1.2}
+.lnr-greet span{display:block;opacity:.78;font-weight:500;font-size:15.5px;letter-spacing:-.01em;margin-top:5px}
+
+/* chat header variant */
+.lnr-head.chat{padding:14px 16px}
+.lnr-head.chat .lnr-head-top{margin-bottom:0}
+.lnr-agent{display:flex;align-items:center;gap:10px;min-width:0}
+.lnr-agent .lnr-av{width:36px;height:36px;background:rgba(255,255,255,.2);box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.lnr-agent-name{font-size:14.5px;font-weight:700;letter-spacing:-.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lnr-agent-state{font-size:11.5px;opacity:.85;display:flex;align-items:center;gap:5px;margin-top:1px}
+.lnr-agent-state i{width:6px;height:6px;border-radius:50%;background:#5BE58A;display:inline-block;flex-shrink:0}
+
+/* ---- screens ---- */
+.lnr-screens{flex:1;position:relative;overflow:hidden}
+.lnr-screen{position:absolute;inset:0;display:flex;flex-direction:column;background:#fff;
+  transition:transform .3s cubic-bezier(.16,1,.3,1),opacity .22s}
+.lnr-screen[data-state="left"]{transform:translateX(-16%);opacity:0;pointer-events:none}
+.lnr-screen[data-state="right"]{transform:translateX(100%);opacity:0;pointer-events:none}
+
+/* home */
+.lnr-home{overflow-y:auto;padding:16px 16px 20px;gap:12px}
+.lnr-card{border:1px solid var(--lnr-line);border-radius:14px;background:#fff;box-shadow:0 6px 18px -12px rgba(11,11,12,.25)}
+.lnr-resume{padding:14px;display:flex;gap:11px;align-items:flex-start;cursor:pointer;text-align:left;width:100%;border:1px solid var(--lnr-line);border-radius:14px;background:#fff}
+.lnr-resume:hover{border-color:#D3D3D8}
+.lnr-resume .body{min-width:0;flex:1}
+.lnr-resume .t{font-size:13.5px;font-weight:700;color:var(--lnr-ink)}
+.lnr-resume .p{font-size:13px;color:var(--lnr-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.lnr-resume .m{font-size:11px;color:var(--lnr-faint);margin-top:4px}
+.lnr-sechead{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--lnr-faint);margin:6px 2px 2px}
+.lnr-action{
+  width:100%;display:flex;align-items:center;gap:12px;padding:13px 14px;background:#fff;cursor:pointer;
+  border:1px solid var(--lnr-line);border-radius:14px;text-align:left;transition:border-color .15s,transform .12s
+}
+.lnr-action:hover{border-color:var(--lnr-blue);transform:translateX(2px)}
+.lnr-action .glyph{width:32px;height:32px;border-radius:9px;background:#EAF3FF;color:var(--lnr-blue);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.lnr-action .lbl{flex:1;min-width:0}
+.lnr-action .lbl b{display:block;font-size:14px;font-weight:600;color:var(--lnr-ink);letter-spacing:-.01em}
+.lnr-action .lbl small{display:block;font-size:12px;color:var(--lnr-muted);margin-top:1px}
+.lnr-action .chev{color:var(--lnr-faint);flex-shrink:0}
+
+/* messages list screen */
+.lnr-list{overflow-y:auto;padding:8px 0}
+.lnr-thread{width:100%;display:flex;gap:11px;padding:14px 16px;background:#fff;border:none;border-bottom:1px solid var(--lnr-line);cursor:pointer;text-align:left}
+.lnr-thread:hover{background:#FAFAFB}
+.lnr-thread .body{flex:1;min-width:0}
+.lnr-thread .t{display:flex;justify-content:space-between;gap:8px;font-size:13.5px;font-weight:700;color:var(--lnr-ink)}
+.lnr-thread .t em{font-style:normal;font-weight:400;font-size:11px;color:var(--lnr-faint);flex-shrink:0}
+.lnr-thread .p{font-size:13px;color:var(--lnr-muted);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.lnr-empty{padding:40px 26px;text-align:center;color:var(--lnr-muted);font-size:13.5px}
+
+/* ---- conversation ---- */
+.lnr-log{flex:1;overflow-y:auto;padding:18px 16px 8px;display:flex;flex-direction:column;gap:9px;scroll-behavior:smooth}
+.lnr-daymark{align-self:center;font-size:11px;color:var(--lnr-faint);padding:2px 0 8px}
+.lnr-row{display:flex;gap:9px;align-items:flex-end;max-width:100%}
+.lnr-row.me{justify-content:flex-end}
+.lnr-row .lnr-av{width:26px;height:26px;font-size:10.5px;margin-bottom:2px}
+.lnr-row.tail-hidden .lnr-av{visibility:hidden}
+.lnr-bubble{
+  max-width:78%;font-size:14.6px;line-height:1.44;padding:10px 14px;border-radius:19px;
+  letter-spacing:-.005em;word-wrap:break-word;
+  animation:lnrPop .3s cubic-bezier(.16,1,.3,1) both
+}
+@keyframes lnrPop{from{opacity:0;transform:translateY(7px) scale(.96)}to{opacity:1;transform:none}}
+.lnr-bubble.them{background:var(--lnr-them);color:var(--lnr-ink);border-bottom-left-radius:6px}
+.lnr-bubble.me{background:var(--lnr-blue);color:#fff;border-bottom-right-radius:6px}
+.lnr-bubble b{font-weight:700}
+.lnr-meta{align-self:flex-end;font-size:10.5px;color:var(--lnr-faint);margin:-4px 4px 2px}
+.lnr-sysline{display:flex;align-items:center;gap:9px;margin:8px 0 2px;color:var(--lnr-muted);font-size:11.5px}
+.lnr-sysline::before,.lnr-sysline::after{content:"";height:1px;background:var(--lnr-line);flex:1}
+
+/* typing */
+.lnr-typing{display:flex;gap:4px;align-items:center;background:var(--lnr-them);padding:13px 15px;border-radius:19px;border-bottom-left-radius:6px;width:fit-content}
+.lnr-typing i{width:7px;height:7px;border-radius:50%;background:#A0A0A8;display:block;animation:lnrDot 1.3s infinite ease-in-out}
+.lnr-typing i:nth-child(2){animation-delay:.16s}
+.lnr-typing i:nth-child(3){animation-delay:.32s}
+@keyframes lnrDot{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-4px);opacity:1}}
+
+/* ---- rich cards inside the log ---- */
+.lnr-rich{max-width:82%;background:#fff;border:1px solid var(--lnr-line);border-radius:18px;border-bottom-left-radius:6px;overflow:hidden;box-shadow:0 8px 22px -16px rgba(11,11,12,.4);animation:lnrPop .34s cubic-bezier(.16,1,.3,1) both}
+.lnr-veh-shot{aspect-ratio:16/9;background:linear-gradient(160deg,#DCE6F2,#F1F4F8);position:relative}
+.lnr-veh-shot svg{width:100%;height:100%}
+.lnr-veh-tag{position:absolute;top:9px;left:9px;background:rgba(11,11,12,.72);color:#fff;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:4px 8px;border-radius:6px}
+.lnr-veh-body{padding:12px 14px 13px}
+.lnr-veh-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.lnr-veh-price{font-size:19px;font-weight:800;letter-spacing:-.03em}
+.lnr-veh-flag{font-size:10.5px;font-weight:700;color:#1C8B3D;background:rgba(47,191,85,.14);padding:3px 8px;border-radius:8px;white-space:nowrap}
+.lnr-veh-name{font-size:14px;font-weight:600;margin-top:3px;letter-spacing:-.01em}
+.lnr-veh-spec{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.lnr-veh-spec span{font-size:11px;color:var(--lnr-muted);background:var(--lnr-field);padding:4px 8px;border-radius:7px}
+.lnr-vin{font-family:var(--mono);font-size:10px;color:var(--lnr-faint);margin-top:9px;letter-spacing:.04em}
+.lnr-cardbtns{display:flex;border-top:1px solid var(--lnr-line)}
+.lnr-cardbtn{
+  flex:1;padding:12px 8px;background:#fff;border:none;cursor:pointer;font-size:13px;font-weight:600;
+  color:var(--lnr-blue);transition:background .14s
+}
+.lnr-cardbtn:hover{background:#F2F8FF}
+.lnr-cardbtn+.lnr-cardbtn{border-left:1px solid var(--lnr-line)}
+
+/* picker card (days / times) */
+.lnr-pick{padding:13px 14px}
+.lnr-pick-h{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--lnr-faint);margin-bottom:9px}
+.lnr-slots{display:flex;flex-wrap:wrap;gap:7px}
+.lnr-slot{
+  border:1px solid var(--lnr-line);background:#fff;border-radius:11px;padding:9px 12px;cursor:pointer;
+  font-size:13px;font-weight:600;color:var(--lnr-ink);transition:.14s;text-align:center;line-height:1.25
+}
+.lnr-slot small{display:block;font-size:10.5px;font-weight:500;color:var(--lnr-faint)}
+.lnr-slot:hover:not(:disabled){border-color:var(--lnr-blue);color:var(--lnr-blue)}
+.lnr-slot:disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
+.lnr-slot.chosen{background:var(--lnr-blue);border-color:var(--lnr-blue);color:#fff}
+.lnr-slot.chosen small{color:rgba(255,255,255,.8)}
+.lnr-rich.done{opacity:.72}
+
+/* lead capture card */
+.lnr-form{padding:14px}
+.lnr-form-h{font-size:13.5px;font-weight:700;letter-spacing:-.01em;margin-bottom:2px}
+.lnr-form-s{font-size:12.5px;color:var(--lnr-muted);margin-bottom:12px}
+.lnr-input{
+  width:100%;border:1px solid var(--lnr-line);background:var(--lnr-field);border-radius:11px;
+  padding:11px 13px;font-size:14px;font-family:inherit;color:var(--lnr-ink);margin-bottom:8px
+}
+.lnr-input::placeholder{color:var(--lnr-faint)}
+.lnr-input:focus{outline:none;border-color:var(--lnr-blue);background:#fff}
+.lnr-submit{
+  width:100%;border:none;border-radius:11px;background:var(--lnr-blue);color:#fff;cursor:pointer;
+  padding:12px;font-size:14px;font-weight:600;transition:background .14s;margin-top:3px
+}
+.lnr-submit:hover{background:var(--lnr-blue-dark)}
+.lnr-consent{font-size:10.5px;color:var(--lnr-faint);line-height:1.4;margin-top:9px}
+
+/* confirmation card */
+.lnr-confirm{padding:15px 15px 13px;display:flex;gap:11px;align-items:flex-start}
+.lnr-tick{width:30px;height:30px;border-radius:50%;background:var(--lnr-green);color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.lnr-confirm .t{font-size:13.5px;font-weight:700;letter-spacing:-.01em}
+.lnr-confirm .d{font-size:12.5px;color:var(--lnr-muted);margin-top:3px;line-height:1.45}
+.lnr-confirm .d b{color:var(--lnr-ink);font-weight:600}
+
+/* ---- composer ---- */
+.lnr-foot{flex-shrink:0;border-top:1px solid var(--lnr-line);background:#fff}
+.lnr-quick{display:flex;gap:7px;padding:10px 14px 2px;overflow-x:auto;scrollbar-width:none}
+.lnr-quick::-webkit-scrollbar{display:none}
+.lnr-qbtn{
+  white-space:nowrap;border:1px solid #CDE2FF;background:#F2F8FF;color:var(--lnr-blue);
+  border-radius:15px;padding:8px 13px;font-size:12.5px;font-weight:600;cursor:pointer;transition:.14s;flex-shrink:0
+}
+.lnr-qbtn:hover{background:var(--lnr-blue);color:#fff;border-color:var(--lnr-blue)}
+.lnr-compose{display:flex;align-items:flex-end;gap:8px;padding:10px 12px 11px}
+.lnr-ta{
+  flex:1;border:1px solid var(--lnr-line);background:var(--lnr-field);border-radius:19px;resize:none;
+  padding:10px 14px;font-family:inherit;font-size:14.5px;line-height:1.4;max-height:96px;color:var(--lnr-ink)
+}
+.lnr-ta:focus{outline:none;border-color:#C9D8EA;background:#fff}
+.lnr-send{
+  width:36px;height:36px;border-radius:50%;border:none;background:var(--lnr-blue);color:#fff;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:.16s
+}
+.lnr-send:disabled{background:#D8D8DE;cursor:default}
+.lnr-brand{
+  display:flex;align-items:center;justify-content:center;gap:6px;padding:0 0 9px;
+  font-size:10.5px;color:var(--lnr-faint);letter-spacing:.02em
+}
+.lnr-brand b{color:var(--lnr-muted);font-weight:700}
+
+@media (max-width:520px){
+  .lnr{right:16px;bottom:16px}
+  .lnr-panel{right:0;left:0;bottom:0;top:0;width:auto;height:100%;border-radius:0}
+  .lnr-nudge{max-width:246px}
+  .lnr-bubble,.lnr-rich{max-width:86%}
+  .lnr.is-open .lnr-launcher{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<!-- reusable vehicle silhouettes -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="v-suv" viewBox="0 0 200 88">
+    <ellipse cx="100" cy="76" rx="82" ry="6" fill="currentColor" opacity=".08"/>
+    <path d="M12 62V47c0-4 2.5-6.5 8-8l38-11c9-3.5 19-5 33-5h27c12 0 22 3 30 8l23 15c11 2.5 17 6 17 12v4z" fill="currentColor"/>
+    <path d="M60 32l32-8h6v18H52z" fill="#fff" opacity=".22"/>
+    <path d="M106 24h12c10 0 18 2.5 25 7l14 11h-51z" fill="#fff" opacity=".22"/>
+    <circle cx="58" cy="62" r="14" fill="#15161A"/><circle cx="58" cy="62" r="6" fill="#7C8698"/>
+    <circle cx="150" cy="62" r="14" fill="#15161A"/><circle cx="150" cy="62" r="6" fill="#7C8698"/>
+  </symbol>
+  <symbol id="v-truck" viewBox="0 0 200 88">
+    <ellipse cx="100" cy="76" rx="84" ry="6" fill="currentColor" opacity=".08"/>
+    <path d="M8 62V48c0-4 2-6.5 7-7.5l30-4 13-14c3-3.5 7-5 12-5h30c6 0 10 2 12 6l9 17h71c4 0 6 2 6 6v15.5z" fill="currentColor"/>
+    <path d="M64 25h20v15H52z" fill="#fff" opacity=".22"/>
+    <path d="M92 25h11c4 0 6.5 1.5 8 4.5l5.5 10.5H92z" fill="#fff" opacity=".22"/>
+    <rect x="126" y="42" width="66" height="4" fill="#fff" opacity=".18"/>
+    <circle cx="52" cy="62" r="14" fill="#15161A"/><circle cx="52" cy="62" r="6" fill="#7C8698"/>
+    <circle cx="158" cy="62" r="14" fill="#15161A"/><circle cx="158" cy="62" r="6" fill="#7C8698"/>
+  </symbol>
+  <symbol id="v-sedan" viewBox="0 0 200 88">
+    <ellipse cx="100" cy="76" rx="80" ry="6" fill="currentColor" opacity=".08"/>
+    <path d="M10 62V51c0-5 4-8.5 12-10l40-8c10-8 22-12 38-12h20c13 0 24 4 33 12l25 8c8 1.5 12 5 12 10v11z" fill="currentColor"/>
+    <path d="M66 33l24-8h8v16H56z" fill="#fff" opacity=".22"/>
+    <path d="M106 25h12c9 0 17 3 24 9l5 7h-41z" fill="#fff" opacity=".22"/>
+    <circle cx="56" cy="62" r="13" fill="#15161A"/><circle cx="56" cy="62" r="5.5" fill="#7C8698"/>
+    <circle cx="148" cy="62" r="13" fill="#15161A"/><circle cx="148" cy="62" r="5.5" fill="#7C8698"/>
+  </symbol>
+</svg>
+
+<!-- ============================ HOST SITE ============================ -->
+<div class="ticker">
+  <div class="wrap">
+    <span class="closed"><i class="lamp"></i>SHOWROOM CLOSED · OPENS TOMORROW 8:00 AM</span>
+    <span class="always">CHAT ANSWERED 24/7 &nbsp;·&nbsp; 1180 S STATE ST, OREM UT</span>
+  </div>
+</div>
+
+<header class="site">
+  <div class="wrap">
+    <a class="mark" href="#top">
+      <div class="mark-name">Halstead</div>
+      <div class="mark-rule"></div>
+      <div class="mark-sub">Motors · Est. 1994</div>
+    </a>
+    <nav class="site-nav">
+      <a href="#inventory">Inventory</a>
+      <a href="#financing">Financing</a>
+      <a href="#trade">Trade-in</a>
+      <a href="#visit">Visit us</a>
+    </nav>
+    <a class="callbtn" href="tel:+18015550117">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 01-2.2 2 19.8 19.8 0 01-8.6-3.1 19.5 19.5 0 01-6-6A19.8 19.8 0 012.1 4.2 2 2 0 014.1 2h3a2 2 0 012 1.7c.1 1 .4 1.9.7 2.8a2 2 0 01-.5 2.1L8.1 9.9a16 16 0 006 6l1.3-1.2a2 2 0 012.1-.5c.9.3 1.8.6 2.8.7a2 2 0 011.7 2z"/></svg>
+      <span>(801) 555-0117</span>
+    </a>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="eyebrow">Certified pre-owned · Utah County</div>
+        <h1>Two hundred<br>and forty-one<br><em>trucks, SUVs</em><br>and sedans.</h1>
+        <p class="hero-lede">Every vehicle inspected on 172 points, reconditioned in our own shop, and priced against the live market — no haggling required.</p>
+        <div class="hero-stats">
+          <div class="hero-stat"><div class="n">241</div><div class="l">On the lot</div></div>
+          <div class="hero-stat"><div class="n">172</div><div class="l">Point inspection</div></div>
+          <div class="hero-stat"><div class="n">7 day</div><div class="l">Return window</div></div>
+        </div>
+        <div class="afterhours">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+          It's <b id="clock">9:41 PM</b> — the floor is empty. Ask anyway, bottom right.
+        </div>
+      </div>
+
+      <div class="finder">
+        <h2>Find your vehicle</h2>
+        <div class="finder-field">
+          <span>Body style</span>
+          <div class="box">Full-size SUV
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+        </div>
+        <div class="finder-field">
+          <span>Make</span>
+          <div class="box">Any make
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+        </div>
+        <div class="finder-field">
+          <span>Monthly payment</span>
+          <div class="box">Up to $525 / mo
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+        </div>
+        <button class="finder-go">Show 38 matches</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="inv" id="inventory">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">Fresh this week</div>
+        <h2>On the lot right now</h2>
+      </div>
+      <div class="chips">
+        <button class="chip on">All 241</button>
+        <button class="chip">SUV 96</button>
+        <button class="chip">Truck 61</button>
+        <button class="chip">Sedan 54</button>
+        <button class="chip">Under $20K</button>
+      </div>
+    </div>
+
+    <div class="grid" id="invGrid"></div>
+  </div>
+</section>
+
+<section class="band" id="financing">
+  <div class="wrap">
+    <div class="band-grid">
+      <div>
+        <div class="eyebrow">Financing</div>
+        <h2>Approved before<br>you get here.</h2>
+        <p>We work with fourteen lenders including two Utah credit unions. One soft pull, no impact on your score, an answer the same day — most often within the hour.</p>
+      </div>
+      <div class="terms">
+        <div class="term"><div class="k">Rates from</div><div class="v gold">4.89%</div></div>
+        <div class="term"><div class="k">Terms</div><div class="v">36–84 mo</div></div>
+        <div class="term"><div class="k">Min. down</div><div class="v">$0</div></div>
+        <div class="term"><div class="k">Decision in</div><div class="v">1 hour</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hours" id="visit">
+  <div class="wrap">
+    <div class="hours-grid">
+      <div>
+        <div class="eyebrow">Visit us</div>
+        <h2 style="font-family:var(--display);font-weight:900;font-stretch:78%;text-transform:uppercase;font-size:34px;line-height:.95;margin:10px 0 20px">Showroom hours</h2>
+        <table class="hours-table">
+          <tr><td>Monday – Friday</td><td>8:00 AM – 8:00 PM</td></tr>
+          <tr class="now"><td>Saturday</td><td>8:00 AM – 6:00 PM</td></tr>
+          <tr><td>Sunday</td><td>Closed</td></tr>
+          <tr><td>Service &amp; parts</td><td>7:30 AM – 6:00 PM</td></tr>
+        </table>
+        <div class="hours-note">Chat and test-drive booking stay open every hour we're not. Nights, Sundays, holidays.</div>
+      </div>
+      <div id="trade" style="background:var(--paper);border:1px solid var(--hair);padding:30px">
+        <div class="eyebrow">Trade-in</div>
+        <h2 style="font-family:var(--display);font-weight:900;font-stretch:78%;text-transform:uppercase;font-size:30px;line-height:.95;margin:10px 0 14px">What's yours worth?</h2>
+        <p style="color:var(--slate);max-width:420px">Give us the VIN and mileage and we'll price it against last week's Mountain West auction data. The number holds for seven days, whether or not you buy from us.</p>
+        <div class="mono" style="margin-top:22px;font-size:12px;color:var(--slate);letter-spacing:.06em">AVG. HALSTEAD OFFER VS. ONLINE INSTANT QUOTE</div>
+        <div style="font-family:var(--display);font-weight:900;font-stretch:80%;font-size:44px;line-height:1;margin-top:8px;color:var(--spruce)">+$1,410</div>
+        <button class="ask" style="margin-top:20px" data-ask="What's my trade worth?">Start a trade appraisal</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <div style="max-width:280px">
+      <div class="mark">
+        <div class="mark-name">Halstead</div>
+        <div class="mark-rule"></div>
+        <div class="mark-sub">Motors · Est. 1994</div>
+      </div>
+      <p style="margin-top:16px">1180 S State St<br>Orem, UT 84097</p>
+    </div>
+    <div class="fcol">
+      <h4>Shop</h4>
+      <a href="#inventory">All inventory</a><a href="#inventory">Trucks</a><a href="#inventory">SUVs</a><a href="#inventory">Under $20K</a>
+    </div>
+    <div class="fcol">
+      <h4>Buy</h4>
+      <a href="#financing">Financing</a><a href="#trade">Trade-in</a><a href="#visit">Warranty</a><a href="#visit">Book a test drive</a>
+    </div>
+    <div class="fcol">
+      <h4>Store</h4>
+      <a href="#visit">Hours &amp; directions</a><a href="#visit">Our shop</a><a href="#visit">Careers</a><a href="#visit">Contact</a>
+    </div>
+  </div>
+  <div class="wrap"><div class="legal">© 2026 HALSTEAD MOTORS · DEALER LIC. #UT-8842 · A FICTIONAL DEALERSHIP BUILT TO DEMO LINER AI</div></div>
+</footer>
+
+<!-- ============================ LINER AI WIDGET ============================ -->
+<div class="lnr" id="lnr">
+
+  <div class="lnr-nudge" id="lnrNudge" role="button" tabindex="0" aria-label="Open chat with Liner AI">
+    <span class="lnr-av">L</span>
+    <span>
+      <span class="who">Liner AI · Halstead Motors</span>
+      <span class="txt">Still looking at the Yukon XL? It's on the lot — I can hold it for a test drive tonight.</span>
+    </span>
+    <button class="lnr-nudge-x" id="lnrNudgeX" type="button" aria-label="Dismiss message">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+
+  <div class="lnr-panel" id="lnrPanel" role="dialog" aria-modal="false" aria-label="Chat with Liner AI">
+
+    <!-- header: home -->
+    <div class="lnr-head" id="lnrHeadHome">
+      <div class="lnr-head-top">
+        <div class="lnr-host">Halstead Motors <i class="dot"></i> Liner AI</div>
+        <div class="lnr-headbtns">
+          <button class="lnr-iconbtn" id="lnrMin" aria-label="Minimize chat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12h14"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="lnr-greet">Evening 👋<span>The lot's closed. I'm not — ask me anything.</span></div>
+    </div>
+
+    <!-- header: conversation -->
+    <div class="lnr-head chat" id="lnrHeadChat" style="display:none">
+      <div class="lnr-head-top">
+        <button class="lnr-iconbtn" id="lnrBack" aria-label="Back to home">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="lnr-agent" style="flex:1">
+          <span class="lnr-av" id="lnrAgentAv">L</span>
+          <span style="min-width:0">
+            <span class="lnr-agent-name" id="lnrAgentName">Liner AI</span>
+            <span class="lnr-agent-state"><i></i><span id="lnrAgentState">Replies in about 30 seconds</span></span>
+          </span>
+        </div>
+        <button class="lnr-iconbtn" id="lnrMin2" aria-label="Minimize chat">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12h14"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="lnr-screens">
+      <!-- HOME -->
+      <div class="lnr-screen lnr-home" id="scrHome" data-state="in">
+        <button class="lnr-resume" id="lnrResume">
+          <span class="lnr-av">L</span>
+          <span class="body">
+            <span class="t">Liner AI</span>
+            <span class="p">Yes — the Yukon XL is still here. Want me to hold it?</span>
+            <span class="m">Just now · Tap to continue</span>
+          </span>
+        </button>
+
+        <div class="lnr-sechead">What can I do for you?</div>
+
+        <button class="lnr-action" data-flow="inventory">
+          <span class="glyph"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M5 12l1.8-5.2A2 2 0 018.7 5.4h6.6a2 2 0 011.9 1.4L19 12v6h-3v-2H8v2H5z"/></svg></span>
+          <span class="lbl"><b>Check a vehicle</b><small>Availability, specs, price</small></span>
+          <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+        </button>
+
+        <button class="lnr-action" data-flow="booking">
+          <span class="glyph"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span>
+          <span class="lbl"><b>Book a test drive</b><small>Tonight or this weekend</small></span>
+          <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+        </button>
+
+        <button class="lnr-action" data-flow="trade">
+          <span class="glyph"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4M3 6h18M7 22l-4-4 4-4M21 18H3"/></svg></span>
+          <span class="lbl"><b>Value my trade</b><small>VIN and mileage, that's it</small></span>
+          <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+        </button>
+
+        <button class="lnr-action" data-flow="human">
+          <span class="glyph"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+          <span class="lbl"><b>Talk to a person</b><small>Jordan is on call until 11</small></span>
+          <span class="chev"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6"/></svg></span>
+        </button>
+
+        <div class="lnr-brand" style="margin-top:auto;padding-top:16px">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h7l-1 8 11-13h-7z"/></svg>
+          Powered by <b>Liner AI</b>
+        </div>
+      </div>
+
+      <!-- CONVERSATION -->
+      <div class="lnr-screen" id="scrChat" data-state="right">
+        <div class="lnr-log" id="lnrLog" role="log" aria-live="polite"></div>
+        <div class="lnr-foot">
+          <div class="lnr-quick" id="lnrQuick"></div>
+          <div class="lnr-compose">
+            <textarea class="lnr-ta" id="lnrTa" rows="1" placeholder="Write a message…" aria-label="Write a message"></textarea>
+            <button class="lnr-send" id="lnrSend" disabled aria-label="Send message">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+          </div>
+          <div class="lnr-brand">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h7l-1 8 11-13h-7z"/></svg>
+            Powered by <b>Liner AI</b>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="lnr-launcher" id="lnrLauncher" aria-label="Open chat" aria-expanded="false">
+    <svg class="ico-chat" width="25" height="25" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.9 3 2.8 6.6 2.8 11c0 2.4 1.2 4.6 3.2 6-.2 1.3-.8 2.5-1.8 3.4 1.6-.2 3.1-.8 4.4-1.7 1.1.3 2.2.5 3.4.5 5.1 0 9.2-3.6 9.2-8S17.1 3 12 3z"/></svg>
+    <svg class="ico-close" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    <span class="lnr-badge">1</span>
+  </button>
+</div>
+
+<script>
+/* ---------------- host site: inventory + clock ---------------- */
+const VEHICLES = [
+  {y:2021,name:"GMC Yukon XL SLT",stock:"H-4471",vin:"1GKS2HKJ4MR",price:"$28,495",mo:"$412",mi:"34,210 mi",spec:"4WD · 3rd row · Clean title",type:"v-suv",tint:"#2E4B5F",tag:"Just arrived"},
+  {y:2022,name:"Ford F-150 XLT",stock:"H-4386",vin:"1FTFW1E85NF",price:"$36,900",mo:"$534",mi:"41,880 mi",spec:"5.0 V8 · Crew cab · Tow pkg",type:"v-truck",tint:"#7A3B2E",tag:"172-pt certified"},
+  {y:2020,name:"Toyota Camry SE",stock:"H-4402",vin:"4T1G11AK2LU",price:"$21,150",mo:"$308",mi:"52,640 mi",spec:"One owner · Apple CarPlay",type:"v-sedan",tint:"#4A4E55",tag:"172-pt certified"},
+  {y:2023,name:"Chevrolet Tahoe LT",stock:"H-4459",vin:"1GNSKNKD1PR",price:"$47,300",mo:"$668",mi:"19,405 mi",spec:"4WD · Leather · 2nd row captains",type:"v-suv",tint:"#1F3B33",tag:"Low miles"},
+  {y:2021,name:"Ram 1500 Big Horn",stock:"H-4348",vin:"1C6SRFFT8MN",price:"$33,775",mo:"$489",mi:"46,120 mi",spec:"HEMI · 4x4 · Bed liner",type:"v-truck",tint:"#3B4A63",tag:"Price drop"},
+  {y:2019,name:"Honda Accord EX-L",stock:"H-4290",vin:"1HGCV1F53KA",price:"$19,480",mo:"$284",mi:"61,330 mi",spec:"Sunroof · Heated seats",type:"v-sedan",tint:"#5C4B33",tag:"Under $20K"}
+];
+document.getElementById('invGrid').innerHTML = VEHICLES.map(v => `
+  <article class="card">
+    <div class="card-shot" style="background:linear-gradient(158deg,#E9E5DA,#FBFAF6)">
+      <span class="tagline">${v.tag}</span>
+      <svg viewBox="0 0 200 88" style="color:${v.tint}"><use href="#${v.type}"/></svg>
+    </div>
+    <div class="card-body">
+      <div class="stockline"><span>STOCK ${v.stock}</span><span>${v.vin}•••</span></div>
+      <h3>${v.y} ${v.name}</h3>
+      <div class="specs">${v.mi} · ${v.spec}</div>
+      <div class="foot">
+        <div>
+          <div class="price">${v.price}</div>
+          <div class="permo">${v.mo}/mo · 72 mo</div>
+        </div>
+        <button class="ask" data-ask="Is the ${v.y} ${v.name} (stock ${v.stock}) still available?">Ask about it</button>
+      </div>
+    </div>
+  </article>`).join('');
+
+/* a fixed after-hours clock, ticking so the page feels live */
+let mins = 21*60 + 41;
+const fmt = m => {
+  const h24 = Math.floor(m/60)%24, mm = String(m%60).padStart(2,'0');
+  const h = h24%12 === 0 ? 12 : h24%12;
+  return `${h}:${mm} ${h24 < 12 ? 'AM' : 'PM'}`;
+};
+const clockEl = document.getElementById('clock');
+setInterval(() => { mins++; clockEl.textContent = fmt(mins); }, 20000);
+
+/* =====================================================================
+   LINER AI WIDGET
+   Scripted interface demo — no backend. Every reply below is canned.
+   ===================================================================== */
+(() => {
+  const root    = document.getElementById('lnr');
+  const panel   = document.getElementById('lnrPanel');
+  const launch  = document.getElementById('lnrLauncher');
+  const nudge   = document.getElementById('lnrNudge');
+  const nudgeX  = document.getElementById('lnrNudgeX');
+  const scrHome = document.getElementById('scrHome');
+  const scrChat = document.getElementById('scrChat');
+  const headHome= document.getElementById('lnrHeadHome');
+  const headChat= document.getElementById('lnrHeadChat');
+  const log     = document.getElementById('lnrLog');
+  const quick   = document.getElementById('lnrQuick');
+  const ta      = document.getElementById('lnrTa');
+  const send    = document.getElementById('lnrSend');
+
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const pace = ms => reduced ? Math.min(ms, 220) : ms;
+
+  let started = false;   // has the conversation been seeded
+  let handedOff = false; // is a human in the thread
+  let busy = false;      // bot is composing
+
+  /* ---------- open / close ---------- */
+  function open(screen){
+    root.classList.add('is-open','has-seen');
+    launch.setAttribute('aria-expanded','true');
+    hideNudge();
+    if(screen === 'chat') toChat(); 
+    if(scrChat.dataset.state === 'in') setTimeout(() => ta.focus(), 320);
+  }
+  function close(){
+    root.classList.remove('is-open');
+    launch.setAttribute('aria-expanded','false');
+    launch.focus();
+  }
+  function toggle(){ root.classList.contains('is-open') ? close() : open(); }
+
+  launch.addEventListener('click', toggle);
+  document.getElementById('lnrMin').addEventListener('click', close);
+  document.getElementById('lnrMin2').addEventListener('click', close);
+  document.addEventListener('keydown', e => {
+    if(e.key === 'Escape' && root.classList.contains('is-open')) close();
+  });
+
+  /* ---------- nudge ---------- */
+  function hideNudge(){ nudge.classList.remove('show'); }
+  nudge.addEventListener('click', e => {
+    if(e.target.closest('#lnrNudgeX')) return;
+    open('chat');
+  });
+  nudgeX.addEventListener('click', e => { e.stopPropagation(); hideNudge(); });
+  nudge.addEventListener('keydown', e => {
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); open('chat'); }
+  });
+  setTimeout(() => { if(!root.classList.contains('is-open')) nudge.classList.add('show'); }, 4200);
+
+  /* ---------- screen routing ---------- */
+  function toChat(){
+    scrHome.dataset.state = 'left';
+    scrChat.dataset.state = 'in';
+    headHome.style.display = 'none';
+    headChat.style.display = 'block';
+    if(!started){ started = true; seed(); }
+    setTimeout(() => ta.focus(), 300);
+  }
+  function toHome(){
+    scrChat.dataset.state = 'right';
+    scrHome.dataset.state = 'in';
+    headChat.style.display = 'none';
+    headHome.style.display = 'block';
+  }
+  document.getElementById('lnrBack').addEventListener('click', toHome);
+  document.getElementById('lnrResume').addEventListener('click', () => toChat());
+
+  /* ---------- message primitives ---------- */
+  function stamp(){ mins++; return fmt(mins); }
+  const scroll = () => { log.scrollTop = log.scrollHeight; };
+
+  function el(html){
+    const d = document.createElement('div');
+    d.innerHTML = html.trim();
+    return d.firstElementChild;
+  }
+  function push(node){ log.appendChild(node); scroll(); return node; }
+
+  function bot(html, opts = {}){
+    const initial = handedOff ? 'JR' : 'L';
+    const cls = handedOff ? 'lnr-av human' : 'lnr-av';
+    return push(el(`
+      <div class="lnr-row">
+        <span class="${cls}">${initial}</span>
+        <div class="lnr-bubble them">${html}</div>
+      </div>`));
+  }
+  function me(text){
+    log.querySelectorAll('.lnr-meta').forEach(m => m.remove());
+    const row = push(el(`<div class="lnr-row me"><div class="lnr-bubble me">${text}</div></div>`));
+    push(el(`<div class="lnr-meta">Delivered · ${stamp()}</div>`));
+    return row;
+  }
+  function rich(inner){
+    return push(el(`
+      <div class="lnr-row">
+        <span class="${handedOff ? 'lnr-av human' : 'lnr-av'}">${handedOff ? 'JR' : 'L'}</span>
+        <div class="lnr-rich">${inner}</div>
+      </div>`));
+  }
+  function sysline(text){ return push(el(`<div class="lnr-sysline">${text}</div>`)); }
+
+  async function typing(ms = 1100){
+    const row = push(el(`
+      <div class="lnr-row">
+        <span class="${handedOff ? 'lnr-av human' : 'lnr-av'}">${handedOff ? 'JR' : 'L'}</span>
+        <div class="lnr-typing"><i></i><i></i><i></i></div>
+      </div>`));
+    await wait(pace(ms));
+    row.remove();
+  }
+
+  function setQuick(items){
+    quick.innerHTML = '';
+    items.forEach(it => {
+      const b = el(`<button class="lnr-qbtn">${it.label}</button>`);
+      b.addEventListener('click', () => { if(!busy) it.run(); });
+      quick.appendChild(b);
+    });
+  }
+
+  /* ---------- rich card builders ---------- */
+  const yukon = VEHICLES[0];
+  const booking = { day:'Saturday the 21st', short:'Sat', time:'11:00 AM' };
+
+  function vehicleCard(v){
+    return `
+      <div class="lnr-veh-shot" style="background:linear-gradient(158deg,#E7EDF4,#F7F9FC)">
+        <span class="lnr-veh-tag">${v.tag}</span>
+        <svg viewBox="0 0 200 88" style="color:${v.tint}"><use href="#${v.type}"/></svg>
+      </div>
+      <div class="lnr-veh-body">
+        <div class="lnr-veh-top">
+          <span class="lnr-veh-price">${v.price}</span>
+          <span class="lnr-veh-flag">Below market</span>
+        </div>
+        <div class="lnr-veh-name">${v.y} ${v.name}</div>
+        <div class="lnr-veh-spec"><span>${v.mi}</span><span>${v.spec.split(' · ')[0]}</span><span>${v.mo}/mo</span></div>
+        <div class="lnr-vin">STOCK ${v.stock} · VIN ${v.vin}•••</div>
+      </div>
+      <div class="lnr-cardbtns">
+        <button class="lnr-cardbtn" data-act="book">Book a test drive</button>
+        <button class="lnr-cardbtn" data-act="similar">See 3 similar</button>
+      </div>`;
+  }
+
+  function dayCard(){
+    const days = [
+      {d:'Thu', full:'Thursday the 19th', n:'19', note:'2 slots'},
+      {d:'Fri', full:'Friday the 20th',   n:'20', note:'4 slots'},
+      {d:'Sat', full:'Saturday the 21st', n:'21', note:'6 slots'},
+      {d:'Sun', full:'Sunday the 22nd',   n:'22', note:'Closed', off:true}
+    ];
+    return `<div class="lnr-pick">
+      <div class="lnr-pick-h">Pick a day</div>
+      <div class="lnr-slots">${days.map(x =>
+        `<button class="lnr-slot" data-day="${x.full}" data-short="${x.d}" ${x.off?'disabled':''}>${x.d} ${x.n}<small>${x.note}</small></button>`
+      ).join('')}</div>
+    </div>`;
+  }
+  function timeCard(){
+    const times = ['9:30 AM','11:00 AM','1:15 PM','3:00 PM','4:30 PM'];
+    return `<div class="lnr-pick">
+      <div class="lnr-pick-h">${booking.day}</div>
+      <div class="lnr-slots">${times.map((t,i) =>
+        `<button class="lnr-slot" data-time="${t}" ${i===3?'disabled':''}>${t}</button>`
+      ).join('')}</div>
+    </div>`;
+  }
+  function leadCard(){
+    return `<div class="lnr-form">
+      <div class="lnr-form-h">Where do I send the details?</div>
+      <div class="lnr-form-s">Confirmation, directions, and Jordan's direct line.</div>
+      <input class="lnr-input" data-f="name" placeholder="First and last name" autocomplete="name">
+      <input class="lnr-input" data-f="phone" placeholder="Mobile number" inputmode="tel" autocomplete="tel">
+      <button class="lnr-submit" data-act="lead">Confirm ${booking.time}, ${booking.short}</button>
+      <div class="lnr-consent">Text messages about this appointment only. Reply STOP any time.</div>
+    </div>`;
+  }
+  function confirmCard(name){
+    return `<div class="lnr-confirm">
+      <span class="lnr-tick"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span>
+      <span>
+        <span class="t">Test drive booked</span>
+        <span class="d"><b>${booking.day}, ${booking.time}</b> · 2021 GMC Yukon XL SLT<br>Keys held under <b>${name}</b>. Directions texted to you.</span>
+      </span>
+    </div>
+    <div class="lnr-cardbtns">
+      <button class="lnr-cardbtn" data-act="cal">Add to calendar</button>
+      <button class="lnr-cardbtn" data-act="human">Message Jordan</button>
+    </div>`;
+  }
+
+  /* ---------- delegated clicks inside the log ---------- */
+  log.addEventListener('click', e => {
+    const slotDay = e.target.closest('[data-day]');
+    if(slotDay && !busy){ chooseDay(slotDay); return; }
+    const slotTime = e.target.closest('[data-time]');
+    if(slotTime && !busy){ chooseTime(slotTime); return; }
+    const act = e.target.closest('[data-act]');
+    if(!act || busy) return;
+    const kind = act.dataset.act;
+    if(kind === 'book')    flowBooking();
+    if(kind === 'similar') flowSimilar();
+    if(kind === 'lead')    submitLead(act);
+    if(kind === 'human')   flowHuman();
+    if(kind === 'cal')     flowCalendar();
+  });
+
+  /* ---------- flows (all canned) ---------- */
+  async function seed(){
+    busy = true;
+    bot("Evening! I'm Liner, the assistant for Halstead Motors. The showroom's closed but I've got the full lot in front of me — 241 vehicles, live pricing.");
+    await wait(pace(600));
+    bot("You were looking at the <b>2021 Yukon XL SLT</b>. Want the details, or should I get you booked in?");
+    resetQuick();
+    busy = false;
+  }
+
+  function resetQuick(){
+    setQuick([
+      {label:'Is it still available?', run:flowInventory},
+      {label:'Book a test drive',      run:flowBooking},
+      {label:"What's my trade worth?", run:flowTrade},
+      {label:'Talk to a person',       run:flowHuman}
+    ]);
+  }
+
+  async function flowInventory(said){
+    busy = true;
+    me(said || 'Is the Yukon XL still available?');
+    await typing(1000);
+    bot("It is — it's on the front row and nobody has a hold on it.");
+    await wait(pace(450));
+    rich(vehicleCard(yukon));
+    await wait(pace(400));
+    bot("Clean title, one owner, and it came off a Utah lease so no rust. Anything specific you want checked?");
+    setQuick([
+      {label:'Book a test drive', run:flowBooking},
+      {label:'Any accidents?',    run:() => flowHistory()},
+      {label:'Talk to a person',  run:flowHuman}
+    ]);
+    busy = false;
+  }
+
+  async function flowHistory(){
+    busy = true;
+    me('Any accidents on it?');
+    await typing(1000);
+    bot("CARFAX shows no accidents and no damage reports. Two service visits, both at a GMC dealer in Provo — 30k service and a set of tires at 32k.");
+    await wait(pace(400));
+    bot("I'll have the full report printed and waiting if you come see it.");
+    setQuick([
+      {label:'Book a test drive', run:flowBooking},
+      {label:'Talk to a person',  run:flowHuman}
+    ]);
+    busy = false;
+  }
+
+  async function flowSimilar(){
+    busy = true;
+    me('Show me something similar');
+    await typing(950);
+    bot("Two full-size SUVs close to it, both certified:");
+    await wait(pace(350));
+    rich(vehicleCard(VEHICLES[3]));
+    await wait(pace(500));
+    bot("Or the Tahoe LT above — newer, 19k miles, quite a bit more truck for the money. Want to drive them back to back Saturday?");
+    setQuick([
+      {label:'Book both for Saturday', run:flowBooking},
+      {label:'Talk to a person',       run:flowHuman}
+    ]);
+    busy = false;
+  }
+
+  async function flowBooking(said){
+    busy = true;
+    me(said || "Let's book a test drive");
+    await typing(900);
+    bot("Easy. Here's what's open this week — the Yukon will be pulled up and running when you get here.");
+    await wait(pace(350));
+    rich(dayCard());
+    setQuick([{label:'Talk to a person', run:flowHuman}]);
+    busy = false;
+  }
+
+  async function chooseDay(btn){
+    busy = true;
+    const card = btn.closest('.lnr-rich');
+    card.querySelectorAll('.lnr-slot').forEach(s => s.disabled = true);
+    btn.classList.add('chosen'); btn.disabled = false;
+    card.classList.add('done');
+    booking.day = btn.dataset.day;
+    booking.short = btn.dataset.short;
+    me(booking.day);
+    await typing(850);
+    bot(`${booking.short === 'Sat' ? "Saturday works — we're open 8 to 6" : "That works — we're open 8 to 8"}. What time?`);
+    await wait(pace(300));
+    rich(timeCard());
+    busy = false;
+  }
+
+  async function chooseTime(btn){
+    busy = true;
+    const card = btn.closest('.lnr-rich');
+    card.querySelectorAll('.lnr-slot').forEach(s => s.disabled = true);
+    btn.classList.add('chosen'); btn.disabled = false;
+    card.classList.add('done');
+    booking.time = btn.dataset.time;
+    me(booking.time);
+    await typing(900);
+    bot(`Got it — <b>${booking.time}, ${booking.day}</b>, held for 20 minutes past.`);
+    await wait(pace(350));
+    rich(leadCard());
+    busy = false;
+  }
+
+  async function submitLead(btn){
+    const card = btn.closest('.lnr-rich');
+    const name  = card.querySelector('[data-f="name"]').value.trim();
+    const phone = card.querySelector('[data-f="phone"]').value.trim();
+    if(!name || !phone){
+      const empty = !name ? card.querySelector('[data-f="name"]') : card.querySelector('[data-f="phone"]');
+      empty.style.borderColor = '#FF3B30';
+      empty.focus();
+      empty.addEventListener('input', () => empty.style.borderColor = '', {once:true});
+      return;
+    }
+    busy = true;
+    card.classList.add('done');
+    card.querySelectorAll('input,button').forEach(i => i.disabled = true);
+    me(`${name} · ${phone}`);
+    await typing(1000);
+    bot("Booked. Text is on its way to you now.");
+    await wait(pace(350));
+    rich(confirmCard(name));
+    await wait(pace(600));
+    bot("One more thing — do you have a trade? If I get the VIN tonight, Jordan can have a number ready when you walk in.");
+    setQuick([
+      {label:'Yes, value my trade', run:flowTrade},
+      {label:'Talk to a person',    run:flowHuman},
+      {label:'No thanks',           run:flowDone}
+    ]);
+    busy = false;
+  }
+
+  async function flowCalendar(){
+    busy = true;
+    await typing(700);
+    bot("Sent — check your texts for the invite and a pin for the lot at 1180 S State St.");
+    busy = false;
+  }
+
+  async function flowTrade(said){
+    busy = true;
+    me(said || "What's my trade worth?");
+    await typing(1000);
+    bot("I can get you a real number, not a range. Two things: the <b>VIN</b> off the door jamb or your registration, and the current <b>mileage</b>.");
+    await wait(pace(400));
+    bot("Type them here and I'll price it against last week's Mountain West auction results tonight.");
+    setQuick([
+      {label:'Book a test drive', run:flowBooking},
+      {label:'Talk to a person',  run:flowHuman}
+    ]);
+    busy = false;
+  }
+
+  async function flowDone(){
+    busy = true;
+    me('No thanks');
+    await typing(750);
+    bot(`All set then. See you ${booking.short === 'Sat' ? 'Saturday' : booking.day} at ${booking.time.replace(':00','')} — text this thread if anything changes.`);
+    setQuick([{label:'Talk to a person', run:flowHuman}]);
+    busy = false;
+  }
+
+  /* the handoff */
+  async function flowHuman(said){
+    if(handedOff){
+      busy = true;
+      me(said || 'One more question');
+      await typing(1200);
+      bot("On it — give me two minutes and I'll pull the numbers up.");
+      busy = false;
+      return;
+    }
+    busy = true;
+    me(said || 'Can I talk to a person?');
+    await typing(900);
+    bot("Of course. Jordan Reyes is on call tonight — passing him everything we've covered so he doesn't make you repeat it.");
+    await wait(pace(900));
+    handedOff = true;
+    document.getElementById('lnrAgentAv').textContent = 'JR';
+    document.getElementById('lnrAgentAv').classList.add('human');
+    document.getElementById('lnrAgentName').textContent = 'Jordan Reyes';
+    document.getElementById('lnrAgentState').textContent = 'Sales · Halstead Motors';
+    sysline(`Jordan Reyes joined · ${fmt(mins)}`);
+    await typing(1500);
+    bot(`Hey, Jordan here. I've got the thread — Yukon XL, ${booking.day} at ${booking.time.replace(':00','')}. I'll have it out front with the CARFAX on the seat.`);
+    await wait(pace(500));
+    bot("Anything you want me to look at before then, out-the-door number included, just send it here.");
+    setQuick([
+      {label:'Out-the-door price?', run:() => flowHuman("What's the out-the-door price?")},
+      {label:'Thanks!',             run:() => flowHuman('Thanks!')}
+    ]);
+    busy = false;
+  }
+
+  /* ---------- free typing → keyword routing (mock) ---------- */
+  async function route(text){
+    const t = text.toLowerCase();
+    if(handedOff)                                              return flowHuman(text);
+    if(/(person|human|rep|manager|someone|call me|jordan)/.test(t)) return flowHuman(text);
+    if(/(trade|worth|appraise|my car)/.test(t))                return flowTrade(text);
+    if(/(test drive|drive|appointment|book|see it|come by|visit|tomorrow|saturday)/.test(t)) return flowBooking(text);
+    if(/(available|still|have|in stock|yukon|tahoe|f-150|truck|suv|price|miles|stock)/.test(t)) return flowInventory(text);
+
+    busy = true;
+    me(text);
+    await typing(950);
+    if(/(hour|open|close)/.test(t)){
+      bot("We're open 8 to 8 weekdays, 8 to 6 Saturday, closed Sunday. This chat runs all night either way.");
+    } else if(/(financ|credit|apr|payment|down)/.test(t)){
+      bot("We work with fourteen lenders and rates start at 4.89%. I can start a soft-pull application here, or hand you to Jordan for the exact numbers on a specific vehicle.");
+    } else {
+      bot("Good question — let me put that in front of a person rather than guess at it.");
+      await wait(pace(400));
+      bot("Want me to pull Jordan in, or should I book you a time to come see it?");
+    }
+    setQuick([
+      {label:'Book a test drive', run:flowBooking},
+      {label:'Talk to a person',  run:flowHuman}
+    ]);
+    busy = false;
+  }
+
+  /* ---------- composer ---------- */
+  function grow(){
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 96) + 'px';
+    send.disabled = !ta.value.trim();
+  }
+  ta.addEventListener('input', grow);
+  ta.addEventListener('keydown', e => {
+    if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); submit(); }
+  });
+  send.addEventListener('click', submit);
+  function submit(){
+    const text = ta.value.trim();
+    if(!text || busy) return;
+    ta.value = ''; grow();
+    route(text);
+  }
+
+  /* ---------- home actions + site buttons ---------- */
+  document.querySelectorAll('[data-flow]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const f = btn.dataset.flow;
+      toChat();
+      setTimeout(() => {
+        if(busy) return;
+        if(f === 'inventory') flowInventory();
+        if(f === 'booking')   flowBooking();
+        if(f === 'trade')     flowTrade();
+        if(f === 'human')     flowHuman();
+      }, started ? 500 : 2200);
+    });
+  });
+
+  /* "Ask about it" buttons on the host page open the widget with that question */
+  document.addEventListener('click', e => {
+    const ask = e.target.closest('[data-ask]');
+    if(!ask) return;
+    open('chat');
+    setTimeout(() => { if(!busy) route(ask.dataset.ask); }, started ? 400 : 2400);
+  });
+})();
+</script>
+</body>
+</html>
