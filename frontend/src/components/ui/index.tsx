@@ -19,16 +19,19 @@ export function Button({
   return (
     <button
       className={clsx(
-        'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors duration-150',
+        'inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors duration-150',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
         'disabled:pointer-events-none disabled:opacity-50',
         size === 'sm' ? 'h-8 px-3 text-sm' : 'h-9 px-4 text-sm',
-        variant === 'primary' && 'bg-primary text-primary-foreground hover:opacity-90',
+        variant === 'primary' && 'bg-primary text-primary-foreground hover:bg-primary/90',
+        // classic's `accent` is a light grey, so an outline button hovers to
+        // `accent` rather than the near-identical `muted`.
         variant === 'secondary' &&
-          'border border-border bg-card text-foreground hover:bg-muted',
-        variant === 'ghost' && 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          'border border-border bg-background text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground',
+        variant === 'ghost' &&
+          'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
         variant === 'destructive' &&
-          'bg-destructive text-destructive-foreground hover:opacity-90',
+          'bg-destructive text-destructive-foreground hover:bg-destructive/90',
         className,
       )}
       {...props}
@@ -39,7 +42,7 @@ export function Button({
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={clsx('rounded-card border border-border bg-card', className)}
+      className={clsx('rounded-xl border border-border bg-card shadow-xs', className)}
       {...props}
     />
   )
@@ -55,12 +58,14 @@ export function Badge({
   return (
     <span
       className={clsx(
-        'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap',
-        tone === 'neutral' && 'bg-muted text-muted-foreground',
-        tone === 'primary' && 'bg-accent text-accent-foreground',
-        tone === 'warning' && 'bg-warning-muted text-warning-foreground',
-        tone === 'destructive' && 'bg-destructive-muted text-destructive',
-        tone === 'success' && 'bg-success-muted text-success',
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+        // classic resolves `accent` and `muted` to the same grey, so `primary`
+        // has to be the solid fill or it is indistinguishable from `neutral`.
+        tone === 'neutral' && 'border-transparent bg-secondary text-secondary-foreground',
+        tone === 'primary' && 'border-transparent bg-primary text-primary-foreground',
+        tone === 'warning' && 'border-warning/25 bg-warning-muted text-warning-foreground',
+        tone === 'destructive' && 'border-destructive/25 bg-destructive-muted text-destructive',
+        tone === 'success' && 'border-success/25 bg-success-muted text-success',
         className,
       )}
       {...props}
@@ -72,7 +77,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={clsx(
-        'h-9 w-full rounded-lg border border-input bg-background px-3 text-sm',
+        'h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs',
         'placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,
       )}

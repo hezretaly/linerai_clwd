@@ -1,4 +1,4 @@
-.PHONY: help install dev backend frontend seed reset-db smoke fixture-site stop placeholders shots
+.PHONY: help install dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 UVICORN := backend/.venv/bin/uvicorn
@@ -10,7 +10,7 @@ help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install backend and frontend dependencies
-	cd backend && uv venv .venv && uv pip install --python .venv/bin/python -e .
+	cd backend && uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 	cd frontend && npm install
 
 stop: ## Kill anything bound to our ports
@@ -43,11 +43,15 @@ reset-db: ## Delete the database and reseed
 smoke: ## Drive the whole booking flow over HTTP. No browser, no credentials.
 	$(PY) scripts/smoke.py
 
+e2e: ## Book through two browser windows and assert the dashboard reacts
+	$(PY) scripts/e2e_booking.py
+
 fixture-site: ## Serve the scraper fixture dealer site on :8100
+	$(PY) backend/fixtures/build_site.py
 	cd backend/fixtures/sites/riverside && ../../../../$(PY) -m http.server $(FIXTURE_PORT)
 
 placeholders: ## Collect every PLACEHOLDER marker into docs/PLACEHOLDERS.md
 	$(PY) scripts/placeholders.py
 
 shots: ## Screenshot every route into .artifacts/
-	cd frontend && npx playwright test --reporter=line 2>/dev/null || $(PY) scripts/screenshots.py
+	$(PY) scripts/screenshots.py

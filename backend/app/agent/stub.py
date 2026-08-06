@@ -181,6 +181,12 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
     stage = convo.stage
     next_stage = rail.advances_to if rail and rail.advances_to else stage
 
+    # An email address is an unambiguous "book me" at any stage. Without this,
+    # rail matching can route a buyer who just handed over their details back
+    # into another round of slot offers.
+    if EMAIL_IN_TEXT.search(text) and stage != "booked":
+        next_stage = "contact_capture"
+
     # ---- browsing: search real inventory --------------------------------
     if next_stage == "browsing" or stage in {"opening", "browsing"} and next_stage == stage:
         args: dict = {"keywords": text}
@@ -313,8 +319,29 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         elif re.search(r"evening|after work", text, re.IGNORECASE):
             period = "evening"
 
-        result = call("check_availability", {"days_ahead": 7, "preferred_period": period})
+        lowered = text.lower()
+        asked_day = next((d for d in WEEKDAYS if d in lowered), "")
+
+        result = call("check_availability", {
+            "days_ahead": 10 if asked_day else 7, "preferred_period": period,
+        })
         slots = result["slots"]
+        if asked_day:
+            # A named day is a request, not a hint -- offering a different one
+            # and calling it an answer is how a buyer ends up booked wrong.
+            on_day = [
+                s for s in slots
+                if datetime.fromisoformat(s).strftime("%A").lower() == asked_day
+            ]
+            if on_day:
+                slots = on_day
+            else:
+                return (
+                    f"I don't have anything open on {asked_day.title()}. "
+                    "What other day works for you?",
+                    calls,
+                )
+
         if not slots:
             return "We're fully booked this week. Want me to look at next week?", calls
         first, second = _spread(slots)
@@ -335,7 +362,47 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         name_match = NAME_IN_TEXT.search(text)
 
         # Resolve which of the offered times the buyer just agreed to.
-        chosen = convo.chosen_slot or _pick_offered_slot(convo, text)
+        chosen, unmet_day, unmet_period = "", "", ""
+        if convo.chosen_slot:
+            chosen = convo.chosen_slot
+        else:
+            chosen, unmet_day, unmet_period = _pick_offered_slot(convo, text)
+
+        if unmet_day or unmet_period:
+            # They asked for a day or time we did not offer. Go and look rather
+            # than booking them into the slot they did not ask for.
+            result = call("check_availability", {
+                "days_ahead": 10, "preferred_period": unmet_period or "any",
+            })
+            slots = result["slots"]
+            if unmet_day:
+                slots = [
+                    s for s in slots
+                    if datetime.fromisoformat(s).strftime("%A").lower() == unmet_day
+                ]
+
+            asked = " ".join(w for w in (unmet_day.title(), unmet_period) if w)
+            if not slots:
+                convo.stage = "slot_offered"
+                db.commit()
+                return (
+                    f"I don't have anything open {asked}. Would one of the times I "
+                    "mentioned work, or should I look further out?",
+                    calls,
+                )
+
+            first, second = _spread(slots)
+            convo.offered_slots_json = json.dumps([first, second])
+            convo.stage = "slot_offered"
+            db.commit()
+            if first == second:
+                return f"For {asked} I have {_slot_label(first)}. Does that work?", calls
+            return (
+                f"For {asked} I can do {_slot_label(first)} or {_slot_label(second)}. "
+                "Which suits you?",
+                calls,
+            )
+
         if chosen:
             convo.chosen_slot = chosen
 
@@ -350,10 +417,20 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
             )
 
         if not chosen:
-            availability = call("check_availability", {"days_ahead": 7})
-            if not availability["slots"]:
-                return "That time just went. Want me to look at next week?", calls
-            chosen = availability["slots"][0]
+            # Fall back to the first slot we actually offered, not to whatever a
+            # fresh lookup returns -- booking a buyer into a time that was never
+            # put in front of them is the failure this whole path guards against.
+            try:
+                offered = json.loads(convo.offered_slots_json or "[]")
+            except ValueError:
+                offered = []
+            if offered:
+                chosen = offered[0]
+            else:
+                availability = call("check_availability", {"days_ahead": 7})
+                if not availability["slots"]:
+                    return "That time just went. Want me to look at next week?", calls
+                chosen = availability["slots"][0]
 
         try:
             result = call("book_appointment", {
@@ -389,35 +466,54 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
 PERIODS = {"morning": (0, 12), "afternoon": (12, 17), "evening": (17, 24)}
 
 
-def _pick_offered_slot(convo: Conversation, text: str) -> str:
-    """Match "Saturday morning works" against the two times actually offered."""
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def _pick_offered_slot(convo: Conversation, text: str) -> tuple[str, str, str]:
+    """Match "Saturday morning works" against the two times actually offered.
+
+    Returns (slot, unmet_day, unmet_period). A buyer naming a day or a time of
+    day we did not offer must never be quietly booked into a different one --
+    saying "Saturday morning" to an offer of Friday 8 AM is not agreement to
+    Friday. When the request cannot be met from the offered pair the slot comes
+    back empty and the caller goes and looks for what was actually asked for.
+    """
     try:
         offered: list[str] = json.loads(convo.offered_slots_json or "[]")
     except ValueError:
-        return ""
+        return "", "", ""
     if not offered:
-        return ""
+        return "", "", ""
 
     lowered = text.lower()
     candidates = [(slot, datetime.fromisoformat(slot)) for slot in offered]
+    asked_day = next((d for d in WEEKDAYS if d in lowered), "")
+    asked_period = next((p for p in PERIODS if p in lowered), "")
 
-    by_day = [s for s, when in candidates if when.strftime("%A").lower() in lowered]
-    if len(by_day) == 1:
-        return by_day[0]
+    pool = [s for s, _ in candidates]
+    if asked_day:
+        on_day = [s for s, when in candidates if when.strftime("%A").lower() == asked_day]
+        if not on_day:
+            # They named a day we never offered. Go and look for it.
+            return "", asked_day, asked_period
+        pool = on_day
 
-    pool = by_day or [s for s, _ in candidates]
-    for period, (lo, hi) in PERIODS.items():
-        if period in lowered:
-            for slot in pool:
-                if lo <= datetime.fromisoformat(slot).hour < hi:
-                    return slot
+    if asked_period:
+        lo, hi = PERIODS[asked_period]
+        in_period = [s for s in pool if lo <= datetime.fromisoformat(s).hour < hi]
+        if not in_period:
+            return "", asked_day, asked_period
+        pool = in_period
+
+    if asked_day or asked_period:
+        return pool[0], "", ""
 
     # "the first one" / "the second" / "either".
     if re.search(r"\bfirst\b|\bearlier\b", lowered):
-        return pool[0]
+        return pool[0], "", ""
     if re.search(r"\bsecond\b|\blater\b", lowered):
-        return pool[-1]
-    return pool[0] if len(pool) == 1 else ""
+        return pool[-1], "", ""
+    return (pool[0], "", "") if len(pool) == 1 else ("", "", "")
 
 
 def _spread(slots: list[str]) -> tuple[str, str]:

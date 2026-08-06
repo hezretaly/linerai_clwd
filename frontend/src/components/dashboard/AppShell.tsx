@@ -46,12 +46,12 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
-      <nav className="flex w-56 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
+      <nav className="flex w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
         <div className="px-5 py-5">
-          <p className="text-sm font-semibold text-white">
+          <p className="text-sm font-semibold">
             {overview?.dealership.name ?? 'Liner'}
           </p>
-          <p className="mt-0.5 text-xs text-sidebar-foreground/70">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             {hoursLabel(overview?.dealership)}
           </p>
         </div>
@@ -66,16 +66,16 @@ export function AppShell() {
                 end={'end' in item ? item.end : false}
                 className={({ isActive }) =>
                   clsx(
-                    'flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors duration-150',
+                    'flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors duration-150',
                     isActive
-                      ? 'bg-sidebar-accent font-medium text-white'
-                      : 'hover:bg-sidebar-accent/60 hover:text-white',
+                      ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                      : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
                   )
                 }
               >
                 <span>{item.label}</span>
                 {count ? (
-                  <span className="rounded-full bg-sidebar-active px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  <span className="rounded-full bg-sidebar-primary px-1.5 py-0.5 text-[11px] font-semibold text-sidebar-primary-foreground">
                     {count}
                   </span>
                 ) : null}
@@ -84,12 +84,12 @@ export function AppShell() {
           })}
         </div>
 
-        <div className="border-t border-white/10 px-4 py-3">
-          <p className="text-sm text-white">{me?.user.name}</p>
-          <p className="text-xs text-sidebar-foreground/70 capitalize">{me?.user.role}</p>
+        <div className="border-t border-sidebar-border px-4 py-3">
+          <p className="text-sm font-medium">{me?.user.name}</p>
+          <p className="text-xs capitalize text-muted-foreground">{me?.user.role}</p>
           <button
             onClick={() => logout.mutate()}
-            className="mt-2 text-xs text-sidebar-foreground/70 underline hover:text-white"
+            className="mt-2 text-xs text-muted-foreground underline hover:text-foreground"
           >
             Sign out
           </button>

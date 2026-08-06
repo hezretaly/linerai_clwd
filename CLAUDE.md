@@ -19,7 +19,8 @@ feature reports itself as unavailable rather than simulating a result.
 | `make seed` | Rebuild the Riverside Auto fixture |
 | `make reset-db` | Delete the database and reseed |
 | `make smoke` | **The gate.** Full flow over HTTP, no browser, no credentials |
-| `make shots` | Screenshot every route to `.artifacts/` |
+| `make shots` | Screenshot every route to `.artifacts/` (needs the `[dev]` extra) |
+| `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
 | `make stop` | Kill anything on 8000 / 5173 / 8100 |
@@ -59,7 +60,25 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
 - **Guards run in every `LLM_MODE`.** If a stubbed turn can slip an unsourced
   price past them, the guard has a hole — that should fail offline, not live.
 - **One design token layer.** `frontend/src/styles/liner-theme.css` and nowhere
-  else. No component names a colour.
+  else. No component names a colour. It is shadcn/ui's classic theme, written
+  out by hand because `ui.shadcn.com` is unreachable through the egress proxy.
+  Two things there are load-bearing:
+  - Colours live on `:root` and reach Tailwind through **`@theme inline`**.
+    Moving them into a plain `@theme {}` block bakes them to static values and
+    silently kills the scoping below.
+  - `.theme-buyer` (applied by `components/BuyerTheme.tsx` to `/chat` and
+    `/call`) overrides only the accent family, so buyer surfaces keep the iOS
+    blue while every structural token still comes from classic. `/login` is a
+    dealer screen and stays neutral.
+  - `warning` and `success` are a deliberate extension: classic ships only
+    `destructive`, and a dealer has to tell confirmed from unconfirmed at a
+    glance on the calendar.
+- **`/` is a static document, not a React route.** `frontend/landing.html` is
+  the marketing page, served at the root by a small Vite plugin and byte-for-
+  byte as supplied. It carries its own reset, palette and animation JS, none of
+  which may be folded into the token layer: those loops never clean up and only
+  behave because the page unloads. The SPA owns `/chat`, `/call`, `/login` and
+  `/app/*`.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 

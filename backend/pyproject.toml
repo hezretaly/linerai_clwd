@@ -19,5 +19,10 @@ dependencies = [
     "anthropic>=0.40",
 ]
 
+[project.optional-dependencies]
+# Verification tooling only -- the app never launches a browser. `make install`
+# pulls this so `make shots` and `make e2e` work on a fresh clone.
+dev = ["playwright>=1.55"]
+
 [tool.setuptools.packages.find]
 include = ["app*"]
