@@ -17,6 +17,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
 
 DEV_SESSION_SECRET = "liner-dev-insecure-session-secret-change-me"
+DEV_SEED_PASSWORD = "liner-dev"
 
 
 class Settings(BaseSettings):
@@ -54,6 +55,13 @@ class Settings(BaseSettings):
     # --- Core --------------------------------------------------------------
     database_url: str = f"sqlite:///{BACKEND_DIR / 'liner.db'}"
     session_secret: str = DEV_SESSION_SECRET
+    # Seeded credentials, one per role. A manager sees every lead, the team page
+    # and the assistant settings; a rep sees the floor. Sharing one password
+    # across both would make the role distinction decorative, and on a public
+    # host it would mean handing a test user the manager account. Both default
+    # to the documented dev value and both are refused in production.
+    manager_password: str = DEV_SEED_PASSWORD
+    rep_password: str = DEV_SEED_PASSWORD
     session_cookie: str = "liner_session"
     demo_mode: bool = True
     email_allowlist: str = ""
@@ -80,6 +88,26 @@ def get_settings() -> Settings:
         raise RuntimeError(
             "SESSION_SECRET is still the development default while ENV=production. "
             "Set a real secret before deploying."
+        )
+    stale = [
+        name
+        for name, value in (
+            ("MANAGER_PASSWORD", settings.manager_password),
+            ("REP_PASSWORD", settings.rep_password),
+        )
+        if value == DEV_SEED_PASSWORD
+    ]
+    if settings.is_production and stale:
+        raise RuntimeError(
+            f"{' and '.join(stale)} still set to 'liner-dev' while ENV=production. "
+            "That password is printed in the README, so anyone who found the URL "
+            "would have the dashboard and every lead in it. Set real ones before "
+            "deploying."
+        )
+    if settings.is_production and settings.manager_password == settings.rep_password:
+        raise RuntimeError(
+            "MANAGER_PASSWORD and REP_PASSWORD are the same. Give the manager "
+            "account its own password, or the role split is decorative."
         )
     return settings
 

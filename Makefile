@@ -1,4 +1,4 @@
-.PHONY: help install dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
+.PHONY: help install build dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 UVICORN := backend/.venv/bin/uvicorn
@@ -12,6 +12,10 @@ help:
 install: ## Install backend and frontend dependencies
 	cd backend && uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 	cd frontend && npm install
+
+build: ## Build the frontend into frontend/dist (the API serves it in production)
+	cd frontend && npm run build
+	@echo "built -> frontend/dist. See docs/DEPLOY.md."
 
 stop: ## Kill anything bound to our ports
 	@for p in $(BACKEND_PORT) $(FRONTEND_PORT) $(FIXTURE_PORT); do \

@@ -124,6 +124,24 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "public, max-age=3600"},
         )
 
+    # Last, so its catch-all cannot shadow a real route. No-op until the
+    # frontend is built, which is what keeps `make dev` on Vite.
+    from app.static import mount_frontend
+
+    if mount_frontend(app):
+        log.info(
+            "Serving the built frontend from frontend/dist."
+            if settings.is_production
+            else "frontend/dist exists, so this process also serves it. In development "
+                 "use Vite on :5173 -- the build on :8000 is whatever `make build` last "
+                 "produced and does not hot-reload."
+        )
+    elif settings.is_production:
+        log.warning(
+            "ENV=production but frontend/dist is missing. The API will answer /api "
+            "and /ws only. Run `make build` to serve the site from this process."
+        )
+
     return app
 
 

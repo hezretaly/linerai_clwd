@@ -42,7 +42,14 @@ pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
-SEED_PASSWORD = "liner-dev"  # documented in CLAUDE.md; @example.invalid accounts only
+# One password per role, both from settings. On a laptop these are the
+# documented dev value; in production config.py refuses to boot until each has
+# been set to something real and the two differ.
+SEED_PASSWORD = settings.manager_password  # kept for scripts that import it
+
+
+def _password_for(role: str) -> str:
+    return settings.manager_password if role == "manager" else settings.rep_password
 
 
 def _hash(password: str) -> str:
@@ -217,7 +224,7 @@ def _seed_users(db: Session) -> list[User]:
     ]
     users = [
         User(
-            name=name, email=email, password_hash=_hash(SEED_PASSWORD),
+            name=name, email=email, password_hash=_hash(_password_for(role)),
             role=role, avatar_initials=initials, daily_cap=cap,
             notify_channel="email" if role == "manager" else "dashboard",
         )
@@ -512,7 +519,10 @@ def seed(db: Session | None = None) -> None:
             f"{db.query(Appointment).count()} appointments, "
             f"{db.query(Rail).count()} rails."
         )
-        print(f"Login: dana.mercer@example.invalid / {SEED_PASSWORD}")
+        print(
+            f"Manager: dana.mercer@example.invalid / {settings.manager_password}\n"
+            f"Rep:     marcus.vale@example.invalid / {settings.rep_password}"
+        )
     finally:
         if owns_session:
             db.close()

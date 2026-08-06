@@ -1,0 +1,37 @@
+# systemd unit for the Liner API. Copy to /etc/systemd/system/liner.service,
+# adjust User and WorkingDirectory, then:
+#
+#   systemctl daemon-reload && systemctl enable --now liner
+#   journalctl -u liner -f
+#
+# One worker, deliberately. The WebSocket connection manager is in-process, so
+# a second worker would serve dashboards that silently miss half the events.
+# The app logs a warning if WEB_CONCURRENCY is raised. Scaling past one worker
+# means moving events.py to Redis pub/sub first.
+
+[Unit]
+Description=Liner AI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=liner
+Group=liner
+WorkingDirectory=/srv/liner/backend
+EnvironmentFile=/srv/liner/.env
+ExecStart=/srv/liner/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=2
+
+# The process needs to write only the SQLite database and its WAL sidecars.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/liner/backend
+
+[Install]
+WantedBy=multi-user.target

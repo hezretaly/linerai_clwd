@@ -92,6 +92,14 @@ draft is built server-side from the lead's actual state (`_lead_draft` in
 everyone else a first touch that only says a car is "still here" when it is
 genuinely `status='available'` and not `rule_discuss=False`.
 
+**Production routing lives in `app/static.py`, not in nginx.** The rule that
+`/` is the landing document and `/chat` `/call` `/login` `/app/*` are the SPA
+existed only in the Vite dev plugin, which does not run in production. Writing
+it into a web-server config as well gives you two copies that drift, and the
+drift is silent — `/` serves the SPA, whose catch-all bounces to `/`, and the
+page is blank with nothing in any log. The API serves the built frontend itself;
+nginx has one `proxy_pass` and no `try_files`. See `docs/DEPLOY.md`.
+
 ## Bugs already fixed — don't reintroduce
 
 - **Four booking bugs, all the same shape: Liner confirming a time the buyer

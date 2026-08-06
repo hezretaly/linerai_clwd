@@ -27,10 +27,18 @@ feature reports itself as unavailable rather than simulating a result.
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
+| `make build` | Build the frontend into `frontend/dist` (the API serves it in production) |
 | `make stop` | Kill anything on 8000 / 5173 / 8100 |
 
 Ports: backend **8000**, frontend **5173**, fixture site **8100**.
-Login: `dana.mercer@example.invalid` / `liner-dev`.
+Logins: `dana.mercer@example.invalid` (manager) and `marcus.vale@example.invalid`
+(rep), both `liner-dev` in development. They come from `MANAGER_PASSWORD` and
+`REP_PASSWORD`; with `ENV=production` startup refuses to run until each is set
+to something real and the two differ.
+
+Deploying to a real host: **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**. One process
+serves the API, the WebSocket, the landing page and the SPA, so nginx needs a
+single `proxy_pass`.
 
 `make dev` kills those ports first — orphaned processes across sessions are the
 most common way this gets confusing.
