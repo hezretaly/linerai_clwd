@@ -91,6 +91,15 @@ export interface Lead {
   email_consent_at: string | null
   created_at: string
   captured_fields?: CapturedField[]
+  /* Folded on by the list endpoint. A lead has no stage column -- these are
+     derived from its conversations and appointments (api/leads.py). */
+  stage?: 'new' | 'qualifying' | 'qualified' | 'appointment'
+  flagged?: boolean
+  vehicle_of_interest?: Vehicle | null
+  appointment_count?: number
+  unconfirmed_count?: number
+  last_touch_at?: string
+  conversation_id?: string | null
   appointments?: Appointment[]
   conversations?: Conversation[]
   outreach?: Outreach[]
