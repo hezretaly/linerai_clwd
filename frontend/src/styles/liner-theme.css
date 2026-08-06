@@ -1,72 +1,232 @@
 @import "tailwindcss";
 
-/* Every design token lives here and nowhere else.
+@custom-variant dark (&:is(.dark *));
+
+/* Every design token lives here and nowhere else. No component names a colour.
  *
- * Names follow shadcn/ui's HSL conventions so the primitives in components/ui
- * stay drop-in compatible if we ever move to the shadcn CLI. The mockups'
- * hardcoded hex (#FFFFFF on every drawer, #C4241B, #FDF1E1, #E8F2FF) becomes
- * a semantic token here -- no component should ever name a colour. */
+ * This is shadcn/ui's classic (default) theme, neutral base, written out rather
+ * than pulled with the shadcn CLI -- ui.shadcn.com is unreachable through this
+ * environment's egress proxy. The primitives in components/ui already use
+ * shadcn's semantic class names, so nothing downstream had to change.
+ *
+ * STRUCTURE MATTERS. Raw values live on :root and are exposed to Tailwind via
+ * `@theme inline` below. Do not move the colours up into a plain `@theme {}`
+ * block: Tailwind v4 compiles those to static values, and the `.theme-buyer`
+ * scope further down would silently stop working. */
 
-@theme {
-  --color-background: hsl(0 0% 100%);
-  --color-foreground: hsl(222 22% 12%);
+:root {
+  --radius: 0.625rem;
 
-  --color-card: hsl(0 0% 100%);
-  --color-card-foreground: hsl(222 22% 12%);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
 
-  --color-muted: hsl(220 16% 96%);
-  --color-muted-foreground: hsl(220 9% 44%);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
 
-  --color-border: hsl(220 14% 90%);
-  --color-input: hsl(220 14% 90%);
-  --color-ring: hsl(211 100% 50%);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
 
-  /* iOS blue -- the one brand colour, carried over from the landing page. */
-  --color-primary: hsl(211 100% 50%);
-  --color-primary-foreground: hsl(0 0% 100%);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
 
-  --color-secondary: hsl(220 16% 96%);
-  --color-secondary-foreground: hsl(222 22% 12%);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
 
-  --color-accent: hsl(211 100% 96%);
-  --color-accent-foreground: hsl(211 100% 32%);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
 
-  --color-destructive: hsl(4 71% 44%);
-  --color-destructive-foreground: hsl(0 0% 100%);
-  --color-destructive-muted: hsl(4 71% 96%);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
 
-  --color-warning: hsl(33 90% 48%);
-  --color-warning-muted: hsl(36 84% 94%);
-  --color-warning-foreground: hsl(28 74% 26%);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
 
-  --color-success: hsl(152 58% 34%);
-  --color-success-muted: hsl(152 48% 95%);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
 
-  --color-sidebar: hsl(222 24% 11%);
-  --color-sidebar-foreground: hsl(220 14% 78%);
-  --color-sidebar-accent: hsl(222 20% 18%);
-  --color-sidebar-active: hsl(211 100% 62%);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
 
-  --radius-card: 0.75rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* --- Deliberate extension to classic ------------------------------------
+   * Classic ships `destructive` and nothing else, but a dealer has to tell
+   * confirmed from unconfirmed at a glance on a calendar grid, and the
+   * not-configured banner has to read as "attention" without reading as
+   * "error". Tuned down to sit with the neutral palette rather than the
+   * saturated amber/green the previous hand-rolled theme used. */
+  --warning: oklch(0.705 0.153 74.5);
+  --warning-muted: oklch(0.968 0.032 84.6);
+  --warning-foreground: oklch(0.451 0.108 63.5);
+
+  --success: oklch(0.596 0.115 163.2);
+  --success-muted: oklch(0.964 0.028 168.5);
+
+  --destructive-muted: oklch(0.969 0.021 17.4);
+}
+
+/* Written so enabling dark is a class plus a toggle, not a rewrite. Nothing
+ * sets `.dark` today and no route has been verified in it. */
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  --warning: oklch(0.769 0.188 70.08);
+  --warning-muted: oklch(0.3 0.05 74.5);
+  --warning-foreground: oklch(0.93 0.06 84.6);
+
+  --success: oklch(0.696 0.17 162.48);
+  --success-muted: oklch(0.28 0.05 163.2);
+
+  --destructive-muted: oklch(0.29 0.06 17.4);
+}
+
+/* --- Buyer surfaces -------------------------------------------------------
+ * /chat and /call keep the iOS blue the product is branded with; a
+ * consumer-facing chat should not look like an admin console. Only the accent
+ * family is overridden -- greys, borders, radii and every structural token
+ * still come from classic, so the two sides stay one system.
+ *
+ * /login is a dealer surface and deliberately does NOT get this. The landing
+ * page at `/` is a standalone document that never loads this file at all. */
+.theme-buyer {
+  --primary: oklch(0.598 0.196 253.6); /* #007AFF */
+  --primary-foreground: oklch(1 0 0);
+  --ring: oklch(0.598 0.196 253.6);
+  --accent: oklch(0.964 0.021 253.6);
+  --accent-foreground: oklch(0.47 0.17 253.6);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-muted: var(--destructive-muted);
+
+  --color-warning: var(--warning);
+  --color-warning-muted: var(--warning-muted);
+  --color-warning-foreground: var(--warning-foreground);
+
+  --color-success: var(--success);
+  --color-success-muted: var(--success-muted);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
     Roboto, Helvetica, Arial, sans-serif;
 }
 
-/* The buyer side keeps a warm iOS-message register; the dealer side stays
- * dense and quiet. Both read from the same tokens. */
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in oklch, var(--ring) 50%, transparent);
+  }
 
-html,
-body,
-#root {
-  height: 100%;
-}
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
 
-body {
-  font-family: var(--font-sans);
-  background: var(--color-background);
-  color: var(--color-foreground);
-  -webkit-font-smoothing: antialiased;
+  body {
+    font-family: var(--font-sans);
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+  }
 }
 
 /* One orchestrated motion moment per screen; everything else 150-250ms. */

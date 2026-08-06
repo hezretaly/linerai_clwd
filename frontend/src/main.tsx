@@ -1,13 +1,13 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 
 import './styles/liner-theme.css'
 
 import { AppShell } from './components/dashboard/AppShell'
+import { BuyerTheme } from './components/BuyerTheme'
 import { RequireAuth } from './routes/RequireAuth'
-import { Landing } from './routes/Landing'
 import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
 import { Call } from './routes/Call'
@@ -24,14 +24,27 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 })
 
+/**
+ * `/` is a standalone document served by Vite, not a route in here, so an
+ * unknown path has to *leave* the SPA. A client-side <Navigate to="/"> would
+ * re-enter this same catch-all and loop forever.
+ */
+function LeaveToLanding() {
+  useEffect(() => {
+    window.location.replace('/')
+  }, [])
+  return null
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/chat" element={<Chat />} />
-          <Route path="/call" element={<Call />} />
+          {/* Buyer surfaces keep the brand blue. /login is a dealer screen and
+              deliberately stays on classic. */}
+          <Route path="/chat" element={<BuyerTheme><Chat /></BuyerTheme>} />
+          <Route path="/call" element={<BuyerTheme><Call /></BuyerTheme>} />
           <Route path="/login" element={<Login />} />
 
           <Route
@@ -53,7 +66,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="team" element={<TeamPage />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<LeaveToLanding />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
