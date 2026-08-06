@@ -149,7 +149,7 @@ function LinerStatus() {
           {open} open conversation{open === 1 ? '' : 's'}
         </p>
         <Unavailable
-          className="mt-2.5"
+          className="mt-2.5 w-full"
           label="Pause Liner"
           why="Pausing is per conversation -- take one over from its thread. There is no dealership-wide switch."
         />

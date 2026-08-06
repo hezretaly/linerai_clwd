@@ -111,6 +111,38 @@ const PATHS = {
       <path d="M3 12h18M12 3a15 15 0 010 18 15 15 0 010-18z" />
     </>
   ),
+  voice: (
+    <>
+      <path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" />
+      <path d="M19 10v1a7 7 0 01-14 0v-1" />
+      <path d="M12 18v4M8 22h8" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0110 0v4" />
+    </>
+  ),
+  alert: (
+    <>
+      <path d="M12 9v4M12 17h.01" />
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+    </>
+  ),
+  check: <path d="M20 6L9 17l-5-5" />,
+  pencil: (
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z" />
+    </>
+  ),
+  box: (
+    <>
+      <path d="M3 12l2-5a2 2 0 012-1h10a2 2 0 012 1l2 5" />
+      <rect x="2" y="12" width="20" height="7" rx="2" />
+    </>
+  ),
 } as const
 
 export type IconName = keyof typeof PATHS

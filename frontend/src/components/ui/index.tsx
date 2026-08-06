@@ -257,7 +257,11 @@ export function Unavailable({
       title={why}
       aria-label={`${label} -- unavailable. ${why}`}
       className={clsx(
-        'inline-flex w-full cursor-not-allowed select-none items-center justify-center gap-1.5',
+        // Sized by its content, like the real button it stands in for. It used
+        // to force w-full, which stretched it across whole toolbars and made a
+        // disabled affordance the loudest thing on the row.
+        'inline-flex shrink-0 cursor-not-allowed select-none items-center justify-center gap-1.5',
+        'whitespace-nowrap',
         'rounded-md border border-dashed border-border bg-muted/30 font-medium text-muted-foreground',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         size === 'sm' ? 'h-8 px-3 text-xs' : 'h-9 px-3 text-xs',
