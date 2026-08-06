@@ -7,6 +7,7 @@ the mockups disagreed with themselves across pages (Conversations 4 vs 3, Leads
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends
@@ -30,6 +31,7 @@ from app.schemas.serialize import (
     conversation_out,
     dealership_out,
     escalation_out,
+    lead_out,
     vehicle_out,
 )
 
@@ -61,6 +63,14 @@ def overview(
         db.query(Conversation)
         .filter(Conversation.status.in_(["active", "handoff"]))
         .order_by(Conversation.started_at.desc())
+        .all()
+    )
+    # Nobody owns these yet. There is no round-robin in this system, so the
+    # queue is exactly "assigned to no one", oldest first -- not a rotation.
+    unclaimed_leads = (
+        db.query(Lead)
+        .filter(Lead.assigned_user_id.is_(None))
+        .order_by(Lead.created_at.asc())
         .all()
     )
 
@@ -102,9 +112,12 @@ def overview(
             "unconfirmed_appointments": [appointment_out(a, db) for a in unconfirmed],
             "unassigned_appointments": [appointment_out(a, db) for a in unassigned],
             "active_conversations": [conversation_out(c, db) for c in active_conversations[:8]],
+            "unclaimed_leads": [lead_out(lead, db) for lead in unclaimed_leads],
             "inventory_issues": inventory_issues,
         },
         "mix": _channel_mix(db, since),
+        "source_mix": _source_mix(db, since),
+        "by_hour": _by_hour(db, now, dealership),
     }
 
 
@@ -116,3 +129,65 @@ def _channel_mix(db: Session, since) -> list[dict]:
         .all()
     )
     return [{"channel": channel, "count": count} for channel, count in rows]
+
+
+def _source_mix(db: Session, since) -> list[dict]:
+    """Where leads came from -- `leads.source`, not the conversation channel.
+
+    The two are different axes and the overview shows both: a buyer can arrive
+    from the website and then be handled over voice.
+    """
+    rows = (
+        db.query(Lead.source, func.count(Lead.id))
+        .filter(Lead.created_at >= since)
+        .group_by(Lead.source)
+        .all()
+    )
+    return [{"source": source, "count": count} for source, count in rows]
+
+
+def _by_hour(db: Session, now, dealership: Dealership) -> list[dict]:
+    """Today's conversations bucketed by hour, each marked open or closed.
+
+    The point the chart makes is that Liner answers when the showroom cannot,
+    so every bucket carries whether the dealership was open at that hour. That
+    comes from `hours_json` -- never a hardcoded 8-to-6. Timestamps are naive
+    and already in the dealership's local frame, so `.hour` is the local hour.
+    """
+    day_names = [
+        "monday", "tuesday", "wednesday", "thursday",
+        "friday", "saturday", "sunday",
+    ]
+    hours = json.loads(dealership.hours_json or "{}")
+    window = hours.get(day_names[now.weekday()])
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    counts = _bucket(db, start_of_day)
+
+    def is_open(hour: int) -> bool:
+        if not window:
+            return False
+        return int(window["open"][:2]) <= hour < int(window["close"][:2])
+
+    return [
+        {"hour": h, "count": counts.get(h, 0), "open": is_open(h)}
+        for h in range(24)
+    ]
+
+
+def _bucket(db: Session, start_of_day) -> dict[int, int]:
+    """Bucket in Python rather than SQL.
+
+    `strftime` is SQLite-only and `date_part` is Postgres-only; the Postgres
+    door stays open, so neither goes in a query. Today's conversations are a
+    small enough set that the loop costs nothing.
+    """
+    rows = (
+        db.query(Conversation.started_at)
+        .filter(Conversation.started_at >= start_of_day)
+        .all()
+    )
+    counts: dict[int, int] = {}
+    for (started_at,) in rows:
+        counts[started_at.hour] = counts.get(started_at.hour, 0) + 1
+    return counts

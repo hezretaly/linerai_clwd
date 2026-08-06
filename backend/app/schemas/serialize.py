@@ -272,6 +272,26 @@ def escalation_out(e: Escalation, db: Session | None = None) -> dict:
     if db is not None and e.handoff_rule_id:
         rule = db.query(HandoffRule).filter_by(id=e.handoff_rule_id).one_or_none()
         out["rule"] = handoff_rule_out(rule) if rule else None
+    # The "Needs a person" table names the buyer, the car and the channel in
+    # one row -- a rep triages on those, not on a conversation id. All three
+    # hang off the conversation, so the row costs one extra join, not a
+    # denormalised column.
+    if db is not None:
+        convo = (
+            db.query(Conversation).filter_by(id=e.conversation_id).one_or_none()
+            if e.conversation_id else None
+        )
+        out["channel"] = convo.channel if convo else None
+        lead = (
+            db.query(Lead).filter_by(id=convo.lead_id).one_or_none()
+            if convo and convo.lead_id else None
+        )
+        out["lead"] = lead_out(lead, db) if lead else None
+        vehicle = (
+            db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
+            if convo and convo.focus_vehicle_id else None
+        )
+        out["vehicle"] = vehicle_out(vehicle) if vehicle else None
     return out
 
 
