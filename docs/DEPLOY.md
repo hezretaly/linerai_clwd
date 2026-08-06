@@ -44,6 +44,11 @@ will start anyway and silently pick one — the symptom is "my changes did
 nothing". Use a different `server_name`, or edit the existing file rather than
 adding a second.
 
+A **catch-all** site (`listen 80 default_server; server_name _;`) is not a
+conflict and does not need disabling: nginx prefers an exact `server_name` match
+over the default server, so naming your hostname in the Liner block wins for
+that hostname while the catch-all keeps answering everything else.
+
 ### Behind Cloudflare
 
 If the DNS record is proxied (orange cloud), **set SSL/TLS mode to Full or Full
@@ -209,8 +214,26 @@ sudo cp deploy/liner-bootstrap.nginx.conf /etc/nginx/sites-available/liner
 sudo sed -i 's/liner.example.com/YOUR-HOST/g' /etc/nginx/sites-available/liner
 sudo ln -sfn /etc/nginx/sites-available/liner /etc/nginx/sites-enabled/liner
 sudo nginx -t && sudo systemctl reload nginx
-curl -sI http://YOUR-HOST/ | head -1        # 200 -- the site is live over HTTP
+sudo systemctl status nginx --no-pager | head -3
+curl -sI http://127.0.0.1/ -H 'Host: YOUR-HOST' | head -1   # 200
 ```
+
+Two traps here, both of which look like the app failing when it isn't:
+
+**`reload` says "nginx.service is not active, cannot reload".** nginx is
+stopped, not misconfigured — almost always because an earlier config named a
+certificate that did not exist, so it failed to load and stayed down. `nginx -t`
+passing means the *current* config is fine; you still have to
+`sudo systemctl start nginx`. Anything else this host serves has been down that
+whole time too.
+
+**Curl the origin, not the public URL, while debugging.** Behind a proxied
+Cloudflare record with "Always Use HTTPS" on, `curl -sI http://YOUR-HOST/`
+returns a `301` from Cloudflare's edge without ever contacting your server — so
+you get a healthy-looking response from a box with nginx stopped.
+`curl -H 'Host: ...' http://127.0.0.1/` goes straight to nginx and tells you the
+truth. A `502` there means nginx is fine and the app is not: check
+`systemctl status liner` and `curl localhost:8000/api/health`.
 
 `ln -sfn` rather than `ln -s`, so re-running it after a failed attempt replaces
 the link instead of erroring with *"File exists"*.
