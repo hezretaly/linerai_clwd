@@ -39,6 +39,21 @@ export function relative(iso: string | null | undefined): string {
   return `${Math.round(hours / 24)}d ago`
 }
 
+/**
+ * How long something has been waiting, as `11h 01m`.
+ *
+ * Distinct from `relative` on purpose: "11h ago" describes when a thing
+ * happened, "11h 01m" is a stopwatch on a buyer who has not been answered,
+ * and the minutes matter to whoever is deciding what to pick up next.
+ */
+export function waited(iso: string | null | undefined): string {
+  if (!iso) return '--'
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
+  const hours = Math.floor(minutes / 60)
+  if (!hours) return `${minutes}m`
+  return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`
+}
+
 /** No page states its own hours -- every surface reads the dealership row. */
 export function hoursLabel(dealership: Dealership | undefined): string {
   if (!dealership) return ''

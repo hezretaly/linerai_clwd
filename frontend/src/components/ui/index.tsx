@@ -227,3 +227,60 @@ export function Spinner({ label = 'Loading' }: { label?: string }) {
     <div className="px-4 py-10 text-center text-sm text-muted-foreground">{label}...</div>
   )
 }
+
+/**
+ * A control the design calls for that this system cannot perform.
+ *
+ * The mockups draw a working product; parts of it have no endpoint behind them
+ * -- exporting, global search, a 30-day comparison, a round robin. Rendering
+ * those as ordinary buttons would be the one thing this codebase does not do,
+ * and deleting them would quietly lose the design intent. So the control keeps
+ * its place in the layout, renders visibly inert, and `why` says what is
+ * missing on hover. Uses a <span>, not a disabled <button>: a disabled button
+ * is skipped by the tab order, which takes the explanation with it.
+ */
+export function Unavailable({
+  label,
+  why,
+  className,
+  size = 'md',
+}: {
+  label: string
+  why: string
+  className?: string
+  size?: 'sm' | 'md'
+}) {
+  return (
+    <span
+      role="note"
+      tabIndex={0}
+      title={why}
+      aria-label={`${label} -- unavailable. ${why}`}
+      className={clsx(
+        'inline-flex w-full cursor-not-allowed select-none items-center justify-center gap-1.5',
+        'rounded-md border border-dashed border-border bg-muted/30 font-medium text-muted-foreground',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        size === 'sm' ? 'h-8 px-3 text-xs' : 'h-9 px-3 text-xs',
+        className,
+      )}
+    >
+      {label}
+      <span aria-hidden="true" className="text-[10px] opacity-70">
+        n/a
+      </span>
+    </span>
+  )
+}
+
+/**
+ * The block-level form of `Unavailable`, for a whole panel the design shows
+ * and this system has no data for.
+ */
+export function NotBacked({ title, why }: { title: string; why: string }) {
+  return (
+    <div className="rounded-md border border-dashed border-border bg-muted/30 px-4 py-6 text-center">
+      <p className="text-sm font-medium text-muted-foreground">{title}</p>
+      <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground/80">{why}</p>
+    </div>
+  )
+}

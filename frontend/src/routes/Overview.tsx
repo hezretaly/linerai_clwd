@@ -1,15 +1,44 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts'
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 import { api } from '../lib/api'
-import { dateTime, money, relative } from '../lib/format'
-import type { Overview } from '../lib/types'
-import { Badge, Card, Empty, Spinner } from '../components/ui'
-import { PageHeader } from '../components/dashboard/AppShell'
+import { relative, waited } from '../lib/format'
+import type { Appointment, Escalation, Lead, Overview } from '../lib/types'
+import { Card, Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
+import { Icon, type IconName } from '../components/Icon'
+import { PageIntro } from '../components/dashboard/AppShell'
 
-// Greyscale ramp with the brand blue reserved for the largest slice.
-const RAMP = ['var(--color-primary)', 'hsl(220 9% 55%)', 'hsl(220 14% 78%)']
+/** Neutral ramp from the token layer -- a share of a total is not a category. */
+const RAMP = [
+  'var(--color-ramp-1)',
+  'var(--color-ramp-2)',
+  'var(--color-ramp-3)',
+  'var(--color-ramp-4)',
+]
+
+const KPI_ICONS: Record<string, IconName> = {
+  conversations_handled: 'chat',
+  appointments_set: 'calendar',
+  leads_captured: 'leads',
+  needs_a_person: 'file',
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  chat: 'Website chat',
+  phone: 'Phone',
+  website: 'Website form',
+}
 
 export function OverviewPage() {
   const { data, isLoading } = useQuery({
@@ -19,166 +48,528 @@ export function OverviewPage() {
 
   if (isLoading || !data) return <Spinner />
 
-  const total = data.mix.reduce((sum, m) => sum + m.count, 0)
+  const escalations = data.queues.needs_a_person
+  const unconfirmed = data.queues.unconfirmed_appointments
+  // The mockup folds unconfirmed appointments into this queue as one summary
+  // row rather than giving them a panel: from a rep's side it is the same
+  // question -- who is waiting on a person -- so the count follows suit.
+  const waitingCount = escalations.length + (unconfirmed.length ? 1 : 0)
+  // The endpoint returns this queue oldest first.
+  const oldest = escalations[0]
 
   return (
-    <>
-      <PageHeader
+    <main className="p-4 md:p-6">
+      <PageIntro
         title="Overview"
         subtitle={`${data.dealership.name} -- ${data.dealership.address}`}
+        actions={
+          <>
+            <Unavailable
+              label="Today"
+              why="Every figure here is the last 24 hours. Nothing rolls conversations up by day, so there is no range to select."
+            />
+            <Unavailable
+              label="Export"
+              why="No export endpoint exists. The same data is available from /api/overview."
+            />
+          </>
+        }
       />
 
-      <div className="space-y-6 p-6">
-        <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {data.kpis.map((kpi) => (
-            <Card key={kpi.key} className="p-4">
-              <p className="text-sm text-muted-foreground">{kpi.label}</p>
-              <p className="mt-1 text-3xl font-semibold tabular-nums">{kpi.value}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{kpi.window}</p>
-            </Card>
-          ))}
-        </section>
-
-        <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
-            <header className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Needs a person</h2>
-              <Badge tone={data.queues.needs_a_person.length ? 'destructive' : 'neutral'}>
-                {data.queues.needs_a_person.length} open
-              </Badge>
-            </header>
-            {data.queues.needs_a_person.length === 0 ? (
-              <Empty title="Nothing waiting" hint="Liner is handling everything right now." />
-            ) : (
-              <ul className="divide-y divide-border">
-                {data.queues.needs_a_person.map((escalation) => (
-                  <li key={escalation.id} className="px-4 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">
-                          {escalation.rule?.label ?? 'Handoff'}
-                        </p>
-                        <p className="mt-0.5 truncate text-sm text-muted-foreground">
-                          {escalation.reason}
-                        </p>
-                      </div>
-                      <Link
-                        to={`/app/conversations/${escalation.conversation_id}`}
-                        className="shrink-0 text-sm text-primary hover:underline"
-                      >
-                        Open
-                      </Link>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {relative(escalation.created_at)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          <Card>
-            <header className="border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Where they came from</h2>
-            </header>
-            <div className="relative h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data.mix}
-                    dataKey="count"
-                    nameKey="channel"
-                    innerRadius={52}
-                    outerRadius={74}
-                    paddingAngle={2}
-                    stroke="none"
-                  >
-                    {data.mix.map((entry, index) => (
-                      <Cell key={entry.channel} fill={RAMP[index % RAMP.length]} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-2xl font-semibold tabular-nums">{total}</span>
-                <span className="text-xs text-muted-foreground">last 24h</span>
-              </div>
+      {/* ---- KPIs: four cards, the four the endpoint computes -------------- */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {data.kpis.map((kpi) => (
+          <Card key={kpi.key} className="shadow-sm">
+            <div className="flex items-center justify-between p-6 pb-2">
+              <h3 className="text-sm font-medium">{kpi.label}</h3>
+              <Icon
+                name={KPI_ICONS[kpi.key] ?? 'file'}
+                className="h-4 w-4 text-muted-foreground"
+              />
             </div>
-            <ul className="space-y-1 px-4 pb-4">
-              {data.mix.map((entry, index) => (
-                <li key={entry.channel} className="flex items-center gap-2 text-sm">
-                  <span
-                    className="h-2.5 w-2.5 rounded-full"
-                    style={{ background: RAMP[index % RAMP.length] }}
-                  />
-                  <span className="capitalize">{entry.channel}</span>
-                  <span className="ml-auto tabular-nums text-muted-foreground">
-                    {entry.count}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="p-6 pt-0">
+              <div className="tnum text-2xl font-bold">{kpi.value}</div>
+              {/* The mockup compares each figure to a 30-day average. Nothing
+                  stores a daily rollup, so the card states its own window
+                  rather than inventing a trend to sit under the number. */}
+              <p className="mt-1 text-xs text-muted-foreground">{kpi.window}</p>
+            </div>
           </Card>
+        ))}
+      </div>
+
+      {/* ---- Needs a person ----------------------------------------------- */}
+      <Card className="mt-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-6">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold leading-none tracking-tight">Needs a person</h3>
+              <span className="tnum inline-flex items-center rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground">
+                {waitingCount}
+              </span>
+            </div>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              {escalations.length
+                ? `Liner stopped and is holding. Oldest has waited ${waited(oldest?.created_at)}.`
+                : 'Liner has not stopped on anything.'}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Unavailable
+              label="Assign all to me"
+              why="An escalation is claimed one at a time, from its conversation. There is no bulk claim endpoint."
+            />
+            <Link
+              to="/app/conversations"
+              className="inline-flex h-9 items-center whitespace-nowrap rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            >
+              Open queue
+            </Link>
+          </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
-            <header className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Unconfirmed appointments</h2>
-              <Link to="/app/calendar" className="text-sm text-primary hover:underline">
-                Calendar
-              </Link>
-            </header>
-            {data.queues.unconfirmed_appointments.length === 0 ? (
-              <Empty title="All confirmed" />
-            ) : (
-              <ul className="divide-y divide-border">
-                {data.queues.unconfirmed_appointments.map((appointment) => (
-                  <li key={appointment.id} className="flex items-center gap-3 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{appointment.lead?.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {dateTime(appointment.starts_at)}
-                        {appointment.vehicle ? ` -- ${appointment.vehicle.title}` : ''}
-                      </p>
-                    </div>
-                    {!appointment.assigned_user_id && (
-                      <Badge tone="warning">Unassigned</Badge>
-                    )}
-                  </li>
+        {waitingCount === 0 ? (
+          <Empty title="Nothing waiting" hint="Liner is handling everything right now." />
+        ) : (
+          <div className="scroll-thin overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  {['Lead', 'Why it stopped', 'Vehicle', 'Channel', 'Waiting'].map((h) => (
+                    <th
+                      key={h}
+                      className="h-10 whitespace-nowrap px-4 text-left font-medium text-muted-foreground first:px-6"
+                    >
+                      {h}
+                    </th>
+                  ))}
+                  <th className="h-10 whitespace-nowrap px-6 text-right font-medium text-muted-foreground">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {escalations.map((e) => (
+                  <EscalationRow key={e.id} escalation={e} />
                 ))}
-              </ul>
-            )}
-          </Card>
+                {unconfirmed.length > 0 && <UnconfirmedRow appointments={unconfirmed} />}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
-          <Card>
-            <header className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Inventory needs attention</h2>
-              <Link to="/app/inventory" className="text-sm text-primary hover:underline">
-                Inventory
-              </Link>
-            </header>
-            {data.queues.inventory_issues.length === 0 ? (
-              <Empty title="Inventory is clean" />
-            ) : (
-              <ul className="divide-y divide-border">
-                {data.queues.inventory_issues.map((vehicle) => (
-                  <li key={vehicle.id} className="px-4 py-3">
-                    <p className="text-sm font-medium">{vehicle.title}</p>
-                    {/* The blast radius: this is the screen that sells the
-                        inventory page. */}
-                    <p className="mt-0.5 text-sm text-destructive">
-                      Liner offered this {vehicle.status} vehicle to {vehicle.quoted_to}{' '}
-                      {vehicle.quoted_to === 1 ? 'buyer' : 'buyers'} at {money(vehicle.price)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+      {/* ---- Charts -------------------------------------------------------- */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-7">
+        <Card className="shadow-sm lg:col-span-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
+            <div>
+              <h3 className="font-semibold leading-none tracking-tight">
+                Conversations by hour
+              </h3>
+              <p className="mt-1.5 text-sm text-muted-foreground">Today, midnight to now</p>
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-sm bg-primary" />
+                Closed hours
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-sm bg-border" />
+                Open hours
+              </span>
+            </div>
+          </div>
+          <div className="p-6 pt-0">
+            <HourChart data={data.by_hour} />
+          </div>
+        </Card>
+
+        <Card className="shadow-sm lg:col-span-3">
+          <div className="p-6 pb-3">
+            <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Last 24 hours, by the source on the lead
+            </p>
+          </div>
+          <div className="p-6 pt-0">
+            <SourceChart mix={data.source_mix} />
+          </div>
+        </Card>
+      </div>
+
+      {/* ---- Happening now + unclaimed -------------------------------------- */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-7">
+        <Card className="shadow-sm lg:col-span-4">
+          <div className="flex items-center justify-between border-b border-border p-6">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold leading-none tracking-tight">Happening now</h3>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
+                <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                Live
+              </span>
+            </div>
+            <Link
+              to="/app/conversations"
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              View all
+            </Link>
+          </div>
+          {data.queues.active_conversations.length === 0 ? (
+            <Empty title="Nothing open" hint="No conversation is active right now." />
+          ) : (
+            <div className="scroll-thin overflow-x-auto">
+              <table className="w-full text-sm">
+                <tbody>
+                  {data.queues.active_conversations.map((c) => (
+                    <tr
+                      key={c.id}
+                      className="border-b border-border transition-colors last:border-0 hover:bg-muted/50"
+                    >
+                      <td className="px-6 py-3">
+                        <div className="font-medium">{c.lead?.name || 'Unknown caller'}</div>
+                        <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground">
+                          {c.summary || `${c.message_count ?? 0} messages -- ${c.stage}`}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
+                          {c.channel}
+                        </span>
+                      </td>
+                      <td className="tnum whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
+                        {relative(c.started_at)}
+                      </td>
+                      <td className="px-6 py-3 text-right">
+                        <Link
+                          to={`/app/conversations/${c.id}`}
+                          className="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
+                        >
+                          {c.status === 'handoff' ? 'Take over' : 'Open'}
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card className="shadow-sm lg:col-span-3">
+          <div className="flex items-center justify-between border-b border-border p-6">
+            <div>
+              <h3 className="font-semibold leading-none tracking-tight">Unclaimed leads</h3>
+              {/* The mockup captions this "Round robin after 12 hours". There
+                  is no rotation in this system, so the panel describes what
+                  the queue actually is. */}
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Assigned to nobody, longest waiting first
+              </p>
+            </div>
+            <Link to="/app/leads" className="text-sm font-medium text-primary hover:underline">
+              Pool
+            </Link>
+          </div>
+          {data.queues.unclaimed_leads.length === 0 ? (
+            <Empty title="All claimed" hint="Every lead has an owner." />
+          ) : (
+            <div className="divide-y divide-border">
+              {data.queues.unclaimed_leads.slice(0, 6).map((lead) => (
+                <UnclaimedRow key={lead.id} lead={lead} />
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Not in the mockup's overview, kept because it is the one thing on this
+          screen a rep cannot find anywhere else: Liner has quoted a car that
+          has since left the lot, and somebody is expecting it. */}
+      {data.queues.inventory_issues.length > 0 && (
+        <Card className="mt-4 shadow-sm">
+          <div className="flex items-center justify-between border-b border-border p-6">
+            <div>
+              <h3 className="font-semibold leading-none tracking-tight">
+                Quoted, now unavailable
+              </h3>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Liner put these in front of a buyer before they left the lot
+              </p>
+            </div>
+            <Link to="/app/inventory" className="text-sm font-medium text-primary hover:underline">
+              Inventory
+            </Link>
+          </div>
+          <div className="divide-y divide-border">
+            {data.queues.inventory_issues.map((v) => (
+              <div key={v.id} className="flex items-center gap-3 px-6 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">{v.title}</div>
+                  <div className="truncate text-xs capitalize text-muted-foreground">
+                    {v.status} -- VIN ending {v.vin.slice(-6)}
+                  </div>
+                </div>
+                <span className="tnum rounded-md bg-destructive-muted px-2 py-0.5 text-xs font-medium text-destructive">
+                  quoted {v.mention_count}x
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </main>
+  )
+}
+
+function EscalationRow({ escalation }: { escalation: Escalation }) {
+  const lead = escalation.lead
+  const urgent = Date.now() - new Date(escalation.created_at).getTime() > 6 * 3600_000
+
+  return (
+    <tr className="border-b border-border transition-colors last:border-0 hover:bg-muted/50">
+      <td className="px-6 py-3">
+        <div className="font-medium">{lead?.name || 'Unknown caller'}</div>
+        <div className="tnum text-xs text-muted-foreground">
+          {lead?.phone || lead?.email || 'No contact captured'}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center rounded-md border border-destructive/30 bg-destructive-muted px-2 py-0.5 text-xs font-medium text-destructive">
+          {escalation.rule?.label ?? 'Handoff'}
+        </span>
+        <div className="mt-1 max-w-[15rem] text-xs text-muted-foreground">{escalation.reason}</div>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+        {escalation.vehicle?.title ?? '--'}
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
+          {escalation.channel ?? '--'}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <span
+          className={`tnum font-medium ${urgent ? 'text-destructive' : 'text-warning-foreground'}`}
+        >
+          {waited(escalation.created_at)}
+        </span>
+      </td>
+      <td className="px-6 py-3 text-right">
+        <Link
+          to={`/app/conversations/${escalation.conversation_id}`}
+          className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          Take over
+        </Link>
+      </td>
+    </tr>
+  )
+}
+
+/** Booked but never confirmed: one row for the lot, as the mockup has it. */
+function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
+  const [first, ...rest] = appointments
+  const oldest = appointments.reduce((a, b) => (a.created_at < b.created_at ? a : b))
+
+  return (
+    <tr className="border-b border-border transition-colors last:border-0 hover:bg-muted/50">
+      <td className="px-6 py-3">
+        <div className="font-medium">
+          {first.lead?.name || 'Unknown caller'}
+          {rest.length > 0 && <span className="text-muted-foreground"> +{rest.length}</span>}
+        </div>
+        <div className="text-xs text-muted-foreground">Unconfirmed appointments</div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center rounded-md border border-warning/30 bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning-foreground">
+          Not confirmed
+        </span>
+        <div className="mt-1 max-w-[15rem] text-xs text-muted-foreground">
+          Booked, and nobody has heard back
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
+        {first.vehicle?.title ?? '--'}
+      </td>
+      <td className="px-4 py-3">
+        <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">
+          Calendar
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <span className="tnum font-medium text-warning-foreground">
+          {waited(oldest.created_at)}
+        </span>
+      </td>
+      <td className="px-6 py-3 text-right">
+        <Link
+          to="/app/calendar"
+          className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
+        >
+          Confirm
+        </Link>
+      </td>
+    </tr>
+  )
+}
+
+function UnclaimedRow({ lead }: { lead: Lead }) {
+  const hours = (Date.now() - new Date(lead.created_at).getTime()) / 3600_000
+  const tone =
+    hours >= 8
+      ? 'bg-destructive-muted text-destructive'
+      : hours >= 4
+        ? 'bg-warning-muted text-warning-foreground'
+        : 'bg-muted text-muted-foreground'
+
+  return (
+    <div className="flex items-center gap-3 px-6 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{lead.name || 'Unknown caller'}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {SOURCE_LABELS[lead.source] ?? lead.source}
+          {lead.contact_risk && ' -- no email on file'}
         </div>
       </div>
-    </>
+      <span className={`tnum rounded-md px-2 py-0.5 text-xs font-medium ${tone}`}>
+        {waited(lead.created_at)}
+      </span>
+    </div>
+  )
+}
+
+/**
+ * Bars are coloured by whether the showroom was open -- which is the point the
+ * chart makes: the bars standing outside the pale ones are business Liner
+ * caught that a voicemail would have lost. Open/closed comes from the endpoint,
+ * which reads `hours_json`; this component never decides what "open" means.
+ */
+function HourChart({ data }: { data: Overview['by_hour'] }) {
+  const rows = data.map((d) => ({
+    ...d,
+    label: `${d.hour % 12 || 12}${d.hour < 12 ? 'a' : 'p'}`,
+  }))
+
+  return (
+    <div className="h-[260px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} margin={{ top: 4, right: 4, bottom: 0, left: -22 }}>
+          <XAxis
+            dataKey="label"
+            tickLine={false}
+            interval={2}
+            tick={{ fontSize: 11, fill: 'var(--color-muted-foreground)' }}
+            stroke="var(--color-border)"
+          />
+          <YAxis
+            allowDecimals={false}
+            tickLine={false}
+            axisLine={false}
+            tick={{ fontSize: 11, fill: 'var(--color-muted-foreground)' }}
+          />
+          <Tooltip
+            cursor={{ fill: 'var(--color-muted)' }}
+            contentStyle={{
+              borderRadius: 6,
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-popover)',
+              fontSize: 12,
+            }}
+            formatter={(value, _name, item) => [
+              `${value} ${value === 1 ? 'conversation' : 'conversations'}`,
+              (item?.payload as { open?: boolean } | undefined)?.open
+                ? 'Showroom open'
+                : 'Showroom closed',
+            ]}
+          />
+          <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={22}>
+            {rows.map((row) => (
+              <Cell
+                key={row.hour}
+                fill={row.open ? 'var(--color-border)' : 'var(--color-primary)'}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function SourceChart({ mix }: { mix: Overview['source_mix'] }) {
+  const total = mix.reduce((sum, m) => sum + m.count, 0)
+
+  if (!total) {
+    return (
+      <div className="flex h-[260px] items-center">
+        <NotBacked
+          title="No leads yet today"
+          why="This splits the last 24 hours by the source recorded on each lead."
+        />
+      </div>
+    )
+  }
+
+  const rows = [...mix].sort((a, b) => b.count - a.count)
+
+  return (
+    <div className="flex h-[260px] items-center gap-4">
+      <div className="relative h-full flex-1">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={rows}
+              dataKey="count"
+              nameKey="source"
+              innerRadius="62%"
+              outerRadius="92%"
+              stroke="none"
+              paddingAngle={1}
+            >
+              {rows.map((row, i) => (
+                <Cell key={row.source} fill={RAMP[i % RAMP.length]} />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={{
+                borderRadius: 6,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-popover)',
+                fontSize: 12,
+              }}
+              formatter={(value: number, name: string) => [
+                `${value} of ${total} -- ${Math.round((value / total) * 100)}%`,
+                SOURCE_LABELS[name] ?? name,
+              ]}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+        {/* The hole carries the denominator, so a slice is a share of something
+            without the reader going to the legend for it. */}
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <span className="tnum text-xl font-semibold">{total}</span>
+          <span className="text-[11px] text-muted-foreground">leads today</span>
+        </div>
+      </div>
+      <ul className="shrink-0 space-y-2 text-xs">
+        {rows.map((row, i) => (
+          <li key={row.source} className="flex items-center gap-2">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ background: RAMP[i % RAMP.length] }}
+            />
+            <span className="text-muted-foreground">
+              {SOURCE_LABELS[row.source] ?? row.source}
+            </span>
+            <span className="tnum ml-auto whitespace-nowrap pl-2 font-medium">
+              {Math.round((row.count / total) * 100)}%
+              <span className="ml-1.5 font-normal text-muted-foreground">({row.count})</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

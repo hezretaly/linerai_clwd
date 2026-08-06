@@ -50,7 +50,15 @@ def overview(
     conversations_handled = db.query(Conversation).filter(Conversation.started_at >= since).count()
     appointments_set = db.query(Appointment).filter(Appointment.created_at >= since).count()
     leads_captured = db.query(Lead).filter(Lead.created_at >= since).count()
-    open_escalations = db.query(Escalation).filter(Escalation.claimed_at.is_(None)).all()
+    # Oldest first: this is a triage queue, and the overview quotes the longest
+    # wait in its subheading. Without an explicit order the "oldest" is just
+    # whatever the database returned last.
+    open_escalations = (
+        db.query(Escalation)
+        .filter(Escalation.claimed_at.is_(None))
+        .order_by(Escalation.created_at.asc())
+        .all()
+    )
 
     unconfirmed = (
         db.query(Appointment)

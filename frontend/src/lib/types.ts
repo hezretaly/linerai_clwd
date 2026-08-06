@@ -186,6 +186,9 @@ export interface Escalation {
   claimed_at: string | null
   created_at: string
   rule?: HandoffRule | null
+  channel?: string | null
+  lead?: Lead | null
+  vehicle?: Vehicle | null
 }
 
 export interface KnowledgeEntry {
@@ -238,9 +241,12 @@ export interface Overview {
     unconfirmed_appointments: Appointment[]
     unassigned_appointments: Appointment[]
     active_conversations: Conversation[]
+    unclaimed_leads: Lead[]
     inventory_issues: Vehicle[]
   }
   mix: { channel: string; count: number }[]
+  source_mix: { source: string; count: number }[]
+  by_hour: { hour: number; count: number; open: boolean }[]
 }
 
 export interface Integration {

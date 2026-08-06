@@ -26,8 +26,13 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
 
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  /* Liner blue, #007AFF. Classic's primary is a near-black, but the agreed
+   * mockups put the brand blue on dealer surfaces too -- every primary button
+   * and inline link across the eight pages. Everything around it is still
+   * classic: the neutrals, borders, radius and type all come from the theme
+   * unmodified, so this is one token's difference, not a second palette. */
+  --primary: oklch(0.598 0.196 253.6);
+  --primary-foreground: oklch(1 0 0);
 
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -43,7 +48,7 @@
 
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.598 0.196 253.6);
 
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -74,6 +79,20 @@
   --success-muted: oklch(0.964 0.028 168.5);
 
   --destructive-muted: oklch(0.969 0.021 17.4);
+
+  /* The page behind the cards. Classic paints straight onto `background`;
+   * the mockups sit cards on a faintly cooler ground so the white card edges
+   * read without a heavier border. */
+  --canvas: oklch(0.985 0.002 247.9);
+
+  /* A neutral ramp for share-of-total charts, dark to light, largest slice
+   * first. Categorical hues would imply the categories mean something --
+   * a lead source is just a proportion. The lightest step stops short of
+   * white so the smallest slice still reads on a card. */
+  --ramp-1: oklch(0.205 0.004 285.9);
+  --ramp-2: oklch(0.457 0.004 285.9);
+  --ramp-3: oklch(0.669 0.006 286.3);
+  --ramp-4: oklch(0.865 0.006 286.3);
 }
 
 /* Written so enabling dark is a class plus a toggle, not a rewrite. Nothing
@@ -130,20 +149,30 @@
   --success-muted: oklch(0.28 0.05 163.2);
 
   --destructive-muted: oklch(0.29 0.06 17.4);
+
+  --canvas: oklch(0.145 0 0);
+
+  --ramp-1: oklch(0.92 0.004 285.9);
+  --ramp-2: oklch(0.72 0.004 285.9);
+  --ramp-3: oklch(0.52 0.006 286.3);
+  --ramp-4: oklch(0.35 0.006 286.3);
 }
 
 /* --- Buyer surfaces -------------------------------------------------------
- * /chat and /call keep the iOS blue the product is branded with; a
- * consumer-facing chat should not look like an admin console. Only the accent
- * family is overridden -- greys, borders, radii and every structural token
- * still come from classic, so the two sides stay one system.
+ * This scope used to carry the whole blue accent family, because the dealer
+ * side ran classic's near-black primary. The mockups put the brand blue on
+ * both sides, so primary and ring now come from :root and the override
+ * narrowed to `accent` -- the hover and selected-row tint. A buyer surface
+ * tints toward the brand; a dealer console stays neutral grey so a hovered
+ * table row never competes with a real status colour.
+ *
+ * The scope itself is still load-bearing, and so is `@theme inline` above it:
+ * fold the colours into a plain `@theme {}` block and Tailwind compiles them
+ * to static values, which kills this override with no error anywhere.
  *
  * /login is a dealer surface and deliberately does NOT get this. The landing
  * page at `/` is a standalone document that never loads this file at all. */
 .theme-buyer {
-  --primary: oklch(0.598 0.196 253.6); /* #007AFF */
-  --primary-foreground: oklch(1 0 0);
-  --ring: oklch(0.598 0.196 253.6);
   --accent: oklch(0.964 0.021 253.6);
   --accent-foreground: oklch(0.47 0.17 253.6);
 }
@@ -180,6 +209,13 @@
 
   --color-success: var(--success);
   --color-success-muted: var(--success-muted);
+
+  --color-canvas: var(--canvas);
+
+  --color-ramp-1: var(--ramp-1);
+  --color-ramp-2: var(--ramp-2);
+  --color-ramp-3: var(--ramp-3);
+  --color-ramp-4: var(--ramp-4);
 
   --color-border: var(--border);
   --color-input: var(--input);
@@ -227,6 +263,31 @@
     color: var(--foreground);
     -webkit-font-smoothing: antialiased;
   }
+}
+
+/* Tabular numerals anywhere a figure can change under the reader -- a KPI on
+ * the WebSocket, a waiting time, a countdown. Proportional digits reflow the
+ * column on every tick. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scroll regions inside cards, so a table's own scrollbar does not read as
+ * page chrome. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* One orchestrated motion moment per screen; everything else 150-250ms. */
