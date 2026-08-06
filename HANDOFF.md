@@ -144,6 +144,34 @@ separate base branch exists.
 **The working tree rolled back once mid-session**, losing a whole commit from git
 *and* disk. Commit in small steps and push after each meaningful chunk.
 
+## Embeddable chat widget — agreed, not built yet
+
+`dash/hastead_motors.html` is a fictional dealer site carrying the widget design:
+a launcher FAB with badge, a proactive nudge bubble, and a panel with two
+screens — a home menu of action cards, and the conversation itself. ~150 CSS
+rules, all `.lnr`-prefixed.
+
+**Decisions taken:**
+
+- **Ship it as a script tag from day one**, injecting into a **Shadow DOM** so
+  the host page's CSS cannot leak in and the widget's cannot leak out. Today it
+  is same-origin, so it just calls `/api/chat/*` directly and needs no CORS. When
+  a real dealer's site needs it later, the same artifact works with an absolute
+  URL plus their origin in `ALLOWED_ORIGINS` — no rewrite.
+- **Host the copied dealer site ourselves at `/demo`**, the same way `/` serves
+  the landing page: a standalone document via the `landingAtRoot` plugin pattern
+  in `vite.config.ts`. We will not have access to a real dealer's site.
+
+**What the home actions can honestly do.** Three map to real tools —
+"Check a vehicle" → `search_inventory`, "Book a test drive" → `book_appointment`,
+"Talk to a person" → `escalate_to_human`. **"Value my trade" has nothing behind
+it**: there is no valuation anywhere in this system, no VIN lookup, no number to
+give. It answers from the real trade-in `knowledge_entries` row ("bring it in,
+we appraise while you wait") and offers to book. Do not simulate a figure.
+
+Likewise the mockup's "Jordan is on call until 11" is invented staffing —
+availability comes from `hours_json`, and no table records who is on shift.
+
 ## Next task — port the dashboard mockups
 
 The seven dashboard pages were built from written descriptions, not from the
