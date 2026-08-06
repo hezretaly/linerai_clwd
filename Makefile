@@ -1,4 +1,4 @@
-.PHONY: help install build dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 UVICORN := backend/.venv/bin/uvicorn
@@ -36,6 +36,10 @@ dev: stop ## Run both servers in the background, logging to .logs/
 		> ../.logs/backend.log 2>&1 & echo "backend  -> .logs/backend.log"
 	cd frontend && npm run dev > ../.logs/frontend.log 2>&1 & echo "frontend -> .logs/frontend.log"
 	@sleep 3 && echo "http://localhost:$(FRONTEND_PORT)"
+
+set-password: ## Change one account's password in place: make set-password EMAIL=someone@...
+	@test -n "$(EMAIL)" || (echo "Usage: make set-password EMAIL=dana.mercer@example.invalid" && exit 1)
+	cd backend && ../$(PY) -m app.set_password $(EMAIL) $(ARGS)
 
 seed: ## Wipe and rebuild the Riverside Auto fixture
 	cd backend && ../$(PY) -m app.seed

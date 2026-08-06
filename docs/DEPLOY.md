@@ -167,9 +167,25 @@ the dashboard and every lead in it.
 
 That is a hard failure on purpose. The seeded password is published in this
 repo, and the dashboard holds every lead, transcript and contact detail in the
-system. There is no signup, no password reset and no per-user rotation — the
-only way to change a password is to reseed, which wipes the data. Treat these
-as demo credentials for people you have chosen, not as an access control system.
+system. There is still no signup and no self-service reset, so treat these as
+demo credentials for people you have chosen rather than as an access control
+system.
+
+**`MANAGER_PASSWORD` and `REP_PASSWORD` are read at seed time, not at login.**
+The hash lives in the `users` table, so editing `.env` afterwards changes what
+the startup guard checks and nothing else. Worse, the `.env` recipe above calls
+`openssl rand` each time it runs — so writing it twice mints new passwords and
+leaves the database holding a generation that no longer exists anywhere. If you
+cannot sign in with the value in `.env`, that is almost always why.
+
+To fix it without losing data:
+
+```bash
+cd /srv/liner && sudo -u liner make set-password EMAIL=dana.mercer@example.invalid
+```
+
+It prompts, so the password never reaches shell history or `ps`. `make reset-db`
+also works and rehashes every account, but deletes the database to do it.
 
 **The buyer surfaces are unauthenticated by design** — `/`, `/chat` and `/call`
 have to be, they are the public product. Anyone with the link can start a

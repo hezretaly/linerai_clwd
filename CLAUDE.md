@@ -22,6 +22,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make backend` / `make frontend` | One at a time, in the foreground |
 | `make seed` | Rebuild the Riverside Auto fixture |
 | `make reset-db` | Delete the database and reseed |
+| `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, no browser, no credentials |
 | `make shots` | Screenshot every route to `.artifacts/` (needs the `[dev]` extra) |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
