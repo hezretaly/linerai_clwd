@@ -19,24 +19,84 @@ ships with the frontend and cannot drift from it.
 
 ---
 
+## 0. If something is already running on this box
+
+Liner **serves its own copy of the landing page at `/`** — the same
+`frontend/landing.html`. So whichever hostname you point at it stops being
+served by whatever serves it today. Decide which you want before touching
+nginx:
+
+- **A subdomain** (`app.yourdomain.com` → Liner). Your existing site is not
+  touched at all. Recommended while you are still testing.
+- **The main domain** → Liner. You get the landing page *and* `/chat` and the
+  dashboard as one product, which is the intended shape. Your old site stops
+  being reachable — the files stay on disk, but nginx no longer serves them.
+
+See what is there before you add anything:
+
+```bash
+ls -l /etc/nginx/sites-enabled/
+sudo grep -r "server_name" /etc/nginx/sites-enabled/
+```
+
+If an existing file already claims the hostname you were about to use, nginx
+will start anyway and silently pick one — the symptom is "my changes did
+nothing". Use a different `server_name`, or edit the existing file rather than
+adding a second.
+
+### Behind Cloudflare
+
+If the DNS record is proxied (orange cloud), **set SSL/TLS mode to Full or Full
+(strict)** in the Cloudflare dashboard before enabling the nginx site. On
+*Flexible*, Cloudflare fetches your origin over plain HTTP, the port-80 server
+block answers `301 https://...`, Cloudflare follows it back to port 80, and you
+get `ERR_TOO_MANY_REDIRECTS` — a redirect loop that looks like the app is down.
+
+Certbot's HTTP-01 challenge also has to reach your origin. Easiest path: set the
+record to **DNS only** (grey cloud) for five minutes, run certbot, then turn the
+proxy back on. Alternatively skip certbot and install a Cloudflare **Origin
+Certificate**, which is what Full (strict) expects anyway.
+
+WebSockets and SSE both pass through the Cloudflare proxy, so the live dashboard
+and the streaming chat work — no extra setting needed.
+
 ## 1. Get the code onto the server
 
 ```bash
 sudo adduser --system --group --home /srv/liner liner
+sudo mkdir -p /srv/liner && sudo chown liner:liner /srv/liner
 sudo -u liner git clone -b claude/liner-ai-implementation-8xehez \
     https://github.com/hezretaly/linerai_clwd.git /srv/liner
 cd /srv/liner
 ```
 
-Needs Python 3.11+, Node 20+, and `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+Every later step runs as `liner` via `sudo -u liner`, because files the process
+writes at runtime (the SQLite database, its WAL sidecars) must belong to the
+user systemd runs it as. Building as yourself and running as `liner` produces a
+"readonly database" at the first write, which surfaces as a 500 on login.
+
+Needs Python 3.11+, Node 20+ and `uv`. Install `uv` **system-wide**, not into
+your own home directory — the next step runs as `liner`, and `sudo` resets
+`PATH` to `secure_path`, so a `uv` in `~/.local/bin` is invisible there and
+`make install` dies with `uv: command not found`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+sudo -u liner uv --version   # must print a version, not "command not found"
+```
 
 ## 2. Write `.env`
 
 `.env` is gitignored and never committed. Generate the secret rather than
 inventing one:
 
+`/srv/liner` belongs to the `liner` user, so your own shell cannot write into
+it. `sudo tee` puts the redirect on the privileged side of `sudo` — a plain
+`sudo cat > file` still fails, because the shell opens the file as *you* before
+`sudo` ever runs.
+
 ```bash
-cat > /srv/liner/.env <<EOF
+sudo tee /srv/liner/.env >/dev/null <<EOF
 ENV=production
 SESSION_SECRET=$(openssl rand -hex 32)
 
@@ -45,13 +105,28 @@ SESSION_SECRET=$(openssl rand -hex 32)
 MANAGER_PASSWORD=$(openssl rand -base64 12)
 REP_PASSWORD=$(openssl rand -base64 12)
 
+# CORS only, and only for cross-origin browsers. See below.
 ALLOWED_ORIGINS=https://liner.example.com
 
 # Leave this on. It is what stops a demo emailing a real prospect.
 DEMO_MODE=true
 EOF
-chmod 600 /srv/liner/.env && chown liner:liner /srv/liner/.env
+sudo chown liner:liner /srv/liner/.env
+sudo chmod 600 /srv/liner/.env
 ```
+
+The `$(...)` must stay unquoted here: the heredoc runs them in *your* shell and
+writes the results. Quoting the delimiter (`<<'EOF'`) would write the literal
+text `$(openssl rand -hex 32)` as your session secret. Check with
+`sudo grep SESSION_SECRET /srv/liner/.env` — you want 64 hex characters.
+
+**`ALLOWED_ORIGINS` is CORS and nothing else.** It is read in exactly one place,
+the CORS middleware in `app/main.py`. Because one process serves the site *and*
+the API, every request the browser makes is same-origin, and same-origin
+requests never consult CORS — so this value cannot lock you out, and getting it
+wrong will not break the dashboard. It starts to matter when something on a
+*different* origin calls this API: the embeddable chat widget on a real dealer's
+website. Set it to your real hostname anyway, so that day needs no debugging.
 
 Everything else keeps its default and reports itself as not-configured — the
 agent runs on the stub, email goes to the outbox, voice returns a typed 503.
