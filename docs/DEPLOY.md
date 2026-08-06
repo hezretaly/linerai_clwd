@@ -195,17 +195,44 @@ in-process, so a second worker serves dashboards that silently miss half their
 events. The app warns if `WEB_CONCURRENCY` is raised. Going wider means moving
 `events.py` to Redis pub/sub first.
 
-## 6. nginx
+## 6. nginx, in two passes
+
+**Do not apply `liner.nginx.conf` first.** It names certificate files, and nginx
+refuses to load a config whose `ssl_certificate` does not exist — so before
+certbot has run, `nginx -t` fails with *"cannot load certificate ... No such
+file or directory"*. Meanwhile certbot needs a working HTTP vhost to answer its
+challenge on. Start with the HTTP-only config, then swap.
 
 ```bash
+# Pass 1 -- plain HTTP, no certificate referenced
+sudo cp deploy/liner-bootstrap.nginx.conf /etc/nginx/sites-available/liner
+sudo sed -i 's/liner.example.com/YOUR-HOST/g' /etc/nginx/sites-available/liner
+sudo ln -sfn /etc/nginx/sites-available/liner /etc/nginx/sites-enabled/liner
+sudo nginx -t && sudo systemctl reload nginx
+curl -sI http://YOUR-HOST/ | head -1        # 200 -- the site is live over HTTP
+```
+
+`ln -sfn` rather than `ln -s`, so re-running it after a failed attempt replaces
+the link instead of erroring with *"File exists"*.
+
+At this point everything works except signing in: the session cookie is `Secure`
+under `ENV=production`, so a browser will not send it back over plain HTTP. The
+landing page and `/chat` are fine; `/login` will not stick until pass 2. That is
+the guard doing its job, not a bug.
+
+```bash
+# Pass 2 -- get the certificate, then apply the full config
+sudo certbot --nginx -d YOUR-HOST
 sudo cp deploy/liner.nginx.conf /etc/nginx/sites-available/liner
 sudo sed -i 's/liner.example.com/YOUR-HOST/g' /etc/nginx/sites-available/liner
-sudo ln -s /etc/nginx/sites-available/liner /etc/nginx/sites-enabled/
-sudo certbot --nginx -d YOUR-HOST
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Three things in that file are load-bearing:
+If `nginx -t` fails on pass 2, the certificate landed somewhere other than
+`/etc/letsencrypt/live/YOUR-HOST/`. Check with `sudo certbot certificates` and
+correct the two `ssl_certificate` paths.
+
+Three things in the full file are load-bearing:
 
 - **`proxy_buffering off`** — buyer chat streams over SSE. With buffering on,
   nginx holds every token until the reply finishes, which reads as the
