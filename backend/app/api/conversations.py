@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
@@ -27,7 +28,15 @@ def list_conversations(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
-    query = db.query(Conversation)
+    # A session where the buyer never said anything is not a conversation --
+    # opening the chat widget and closing it should not reach the dealer.
+    started = (
+        db.query(Message.conversation_id)
+        .filter(Message.role == "buyer")
+        .distinct()
+        .subquery()
+    )
+    query = db.query(Conversation).filter(Conversation.id.in_(select(started)))
     if status:
         query = query.filter(Conversation.status == status)
     if channel:
