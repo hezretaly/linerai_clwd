@@ -207,8 +207,18 @@ def main() -> int:
     escalated = any(e == "assistant_message" for e, _ in events)
     check("an out-the-door question was handled", escalated)
     conversation = call("GET", f"/api/conversations/{probe}")
-    check("it escalated and Liner stopped replying", conversation["agent_paused"] is True,
+    check("it escalated to a person", conversation["status"] == "handoff",
           f"status={conversation['status']}")
+    # Deliberately still answering. Escalation used to set agent_paused, so a
+    # buyer who asked one question a human had to answer got "someone is
+    # picking this up" to everything afterwards -- and with nobody watching the
+    # queue at 9pm that was the end of it. Only a rep pressing Take over stops
+    # Liner now.
+    check("but Liner keeps talking until a rep actually takes over",
+          conversation["agent_paused"] is False)
+    _, _, more = say(probe, content="ok. separately, do you take trade-ins?")
+    check("so a following question still gets answered",
+          any(e == "assistant_message" for e, _ in more))
 
     print("\n== adf lead import ==")
     raw_sample = call("GET", "/api/leads/import/adf/sample", stream=True).encode()

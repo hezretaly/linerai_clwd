@@ -117,6 +117,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   below its content. Rep-facing pages (overview, conversations, leads,
   calendar) get designed mobile layouts -- conversations is master/detail and
   calendar is an agenda. Admin pages just have to not overflow.
+- **Escalating notifies a rep; it does not gag Liner.** Only a rep pressing
+  Take over sets `agent_paused`. Stopping on escalation meant a buyer who asked
+  one question a human had to answer got "someone is picking this up" to
+  everything afterwards — and with nobody watching the queue at 9pm, that was
+  the end of the conversation. The buyer ends it, via `close_conversation`.
 - **Policy answers come from `knowledge_entries`, never from the model.**
   Trade-ins, the doc fee, deposits — the dealer wrote those, and a composed
   answer is one a buyer repeats back to a rep. `answer_from_knowledge` returns

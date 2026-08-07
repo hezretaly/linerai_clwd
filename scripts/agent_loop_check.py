@@ -219,6 +219,44 @@ def main() -> int:
         check("an unknown policy returns nothing rather than a plausible guess",
               calls[0]["result"].get("found") is False)
 
+        print("\n== a handoff does not end the conversation ==")
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "what's my out the door price?",
+                                 provider=FakeProvider([
+                                     call_tool("escalate_to_human",
+                                               rule_key="out_the_door_price",
+                                               reason="asked for an out-the-door total"),
+                                     say("I've asked a colleague for the exact number. "
+                                         "What's the best email to reach you on?"),
+                                 ]))
+        esc = calls[0]["result"]
+        check("a rep was notified", esc.get("escalated") is True)
+        db.refresh(convo)
+        # This was the bug: escalating gagged Liner, so every later message got
+        # "someone is picking this up" and the thread died with nobody watching.
+        check("but Liner is not gagged -- only a rep pressing Take over does that",
+              convo.agent_paused is False, f"agent_paused={convo.agent_paused}")
+        check("and it is told to ask for a way to reach them",
+              "ask for a name and an email" in esc.get("guidance", ""),
+              f"reachable={esc.get('buyer_reachable')}")
+
+        print("\n== the buyer ends it, and can have a summary ==")
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "that's all thanks", provider=FakeProvider([
+            call_tool("close_conversation",
+                      summary="Wanted a third row under 25k. Showed the Sienna and Sorento.",
+                      send_summary=True),
+            say("Sent -- have a good evening."),
+        ]))
+        closed = calls[0]["result"]
+        db.refresh(convo)
+        check("the conversation is closed with a summary", bool(convo.summary),
+              convo.summary[:50])
+        check("and stamped with an end time", convo.ended_at is not None)
+        check("an emailed summary with no address on file says so, rather than lying",
+              closed.get("emailed") is False and "no address on file" in closed.get("note", ""),
+              closed.get("note", "")[:60])
+
         print("\n== guards run on the live path too ==")
         convo = fresh_conversation(db)
         # A price with no search_inventory result behind it is exactly what the

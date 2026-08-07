@@ -27,12 +27,14 @@ from app.db import utcnow
 from app.events import emit
 from app.models import (
     Appointment,
+    Dealership,
     Conversation,
     Escalation,
     HandoffRule,
     KnowledgeEntry,
     Lead,
     Message,
+    Outreach,
     Vehicle,
     VehicleMention,
 )
@@ -222,6 +224,33 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
             },
             "required": ["question"],
+        },
+    },
+    {
+        "name": "close_conversation",
+        "description": (
+            "Call this ONLY when the buyer has said they are done -- 'that's all', "
+            "'thanks, bye', 'I'll think about it'. Never end a conversation yourself "
+            "because you have run out of things to say; ask a question instead. Before "
+            "calling it, offer to email them a summary of what you found, and pass "
+            "send_summary=true only if they say yes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": (
+                        "Two or three sentences a rep can read in five seconds: what "
+                        "they wanted, what you showed them, what happens next."
+                    ),
+                },
+                "send_summary": {
+                    "type": "boolean",
+                    "description": "True only if the buyer asked for it by email.",
+                },
+            },
+            "required": ["summary"],
         },
     },
     {
@@ -580,6 +609,72 @@ def save_captured_fields(db: Session, convo: Conversation, args: dict) -> dict:
     return result
 
 
+def close_conversation(
+    db: Session, convo: Conversation, args: dict, tool_call_id: str | None = None
+) -> dict:
+    """The buyer said they were done. Write the summary, optionally email it.
+
+    Idempotent on tool_call_id like the other side-effecting tools: a retried
+    turn must not send a second summary.
+    """
+    summary = (args.get("summary") or "").strip()
+    if not summary:
+        raise ToolError("close_conversation needs a summary of what happened.")
+
+    if convo.ended_at is not None:
+        return {"closed": True, "already_closed": True, "summary": convo.summary}
+
+    convo.summary = summary
+    convo.ended_at = utcnow()
+    # 'closed' only if nobody is waiting on it. An escalated thread stays in the
+    # dealer's queue even though the buyer has gone -- that is the whole point
+    # of the escalation, and a rep still owes them a call back.
+    if convo.status != "handoff":
+        convo.status = "closed"
+    db.commit()
+
+    result = {"closed": True, "summary": summary, "emailed": False}
+
+    if not args.get("send_summary"):
+        return result
+
+    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+    if lead is None or not lead.email:
+        result["note"] = (
+            "They asked for it by email but we have no address on file. Ask for one, "
+            "then call this again."
+        )
+        return result
+
+    from app.integrations.registry import get_email_sender
+
+    sender = get_email_sender()
+    record = Outreach(
+        lead_id=lead.id, channel="email", to_address=lead.email,
+        subject=f"Your conversation with {db.query(Dealership).first().name}",
+        body=summary, provider=sender.name, status="queued",
+    )
+    db.add(record)
+    db.commit()
+
+    # Delivery is the outbox unless Gmail is configured, and the buyer was just
+    # promised an email. Say which happened rather than reporting success.
+    result["emailed"] = True
+    result["delivered_externally"] = sender.delivers
+    result["to"] = lead.email
+    if not sender.delivers:
+        result["note"] = (
+            "Recorded, not delivered -- no email provider is configured. Tell the "
+            "buyer a colleague will send it rather than saying it is on its way."
+        )
+    emit(db, "outreach.sent", {
+        "outreach_id": record.id, "lead_id": lead.id, "to": lead.email,
+        "provider": record.provider, "delivered_externally": sender.delivers,
+        "conversation_id": convo.id, "appointment_id": None,
+    })
+    return result
+
+
 def escalate_to_human(
     db: Session, convo: Conversation, args: dict, tool_call_id: str | None = None
 ) -> dict:
@@ -607,7 +702,12 @@ def escalate_to_human(
     )
     db.add(escalation)
     convo.status = "handoff"
-    convo.agent_paused = True   # Liner stops replying until a rep takes over
+    # Deliberately NOT agent_paused. Escalating used to gag Liner immediately,
+    # so a buyer who asked one question a human had to answer got "someone is
+    # picking this up personally" to everything they said afterwards -- and
+    # since nobody is watching the queue at 9pm, that was the end of the
+    # conversation. Only a rep pressing Take over stops Liner
+    # (api/conversations.py), because only then is a person actually there.
     convo.stage = "escalated"
     if rule is not None:
         rule.fired_count += 1
@@ -621,7 +721,28 @@ def escalate_to_human(
         "reason": escalation.reason,
         "notify": rule.notify if rule else "dashboard",
     })
-    return {"escalation_id": escalation.id, "escalated": True, "rule_key": rule_key}
+
+    # A handoff with no way to reach the buyer is a lost lead, not a handoff.
+    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+    reachable = bool(lead and (lead.email or lead.phone))
+    guidance = (
+        "A colleague has been notified. Keep talking to the buyer -- you are not "
+        "finished and they are not on hold. Carry on with anything else you can "
+        "answer yourself."
+    )
+    if not reachable:
+        guidance += (
+            " We have no way to reach this buyer, so ask for a name and an email "
+            "address now, in one short sentence, so the rep can follow up if the "
+            "buyer leaves. Save it with save_captured_fields."
+        )
+    return {
+        "escalation_id": escalation.id,
+        "escalated": True,
+        "rule_key": rule_key,
+        "buyer_reachable": reachable,
+        "guidance": guidance,
+    }
 
 
 def answer_from_knowledge(db: Session, convo: Conversation, args: dict) -> dict:
@@ -719,6 +840,7 @@ EXECUTORS = {
 }
 
 SIDE_EFFECT_EXECUTORS = {
+    "close_conversation": close_conversation,
     "book_appointment": book_appointment,
     "escalate_to_human": escalate_to_human,
 }
