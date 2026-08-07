@@ -92,6 +92,13 @@ def main() -> int:
               all("name" in t and "function" not in t for t in schema))
         check("the system prompt was sent as instructions",
               bool(provider.seen_systems[-1].strip()))
+        # Every request, not just the last: an empty input is a 400 whose
+        # message names the SDK rather than the empty conversation.
+        check("no request was sent with an empty input",
+              all(len(m) > 0 for m in provider.seen_messages),
+              f"{len(provider.seen_messages)} requests")
+        check("the buyer's own message is in the first request",
+              any(m.get("role") == "user" for m in provider.seen_messages[0]))
 
         print("\n== a do-not-discuss vehicle never reaches the model ==")
         blocked = db.query(Vehicle).filter_by(rule_discuss=False).first()

@@ -77,6 +77,19 @@ def run_turn(
     system = build_system_prompt(db, dealership, live_settings(db))
 
     messages = _history(db, convo)
+    # The caller normally persists the buyer's message before getting here, so
+    # it is already the last entry. Depend on that and a caller who forgets
+    # sends an empty conversation, which the vendor rejects with a 400 about a
+    # missing `input` -- an error that says nothing about the real mistake.
+    text = (text or "").strip()
+    if text and (not messages or messages[-1] != {"role": "user", "content": text}):
+        messages.append({"role": "user", "content": text})
+    if not messages:
+        raise ValueError(
+            "run_turn called with no conversation and no text -- there is nothing "
+            "to send."
+        )
+
     calls: list[dict] = []
     attempt = 1
 

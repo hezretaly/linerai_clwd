@@ -61,10 +61,16 @@ def main() -> int:
     db = SessionLocal()
     try:
         from app.agent import loop
+        from app.agent.runner import record_buyer_message
 
         convo = Conversation(channel="chat", stage="opening")
         db.add(convo)
         db.commit()
+        # Persist the message exactly as the chat endpoint does. Skipping this
+        # sent an empty conversation and produced a 400 the real chat never
+        # hits -- a diagnostic that reproduces the wrong failure is worse than
+        # none, because it sends you fixing the wrong thing.
+        record_buyer_message(db, convo, question)
         reply, calls = loop.run_turn(db, convo, question)
     except Exception:
         print("\n-- FAILED. The full error follows; this is what the buyer saw as")

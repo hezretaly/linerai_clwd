@@ -128,6 +128,14 @@ class OpenAIProvider(Provider):
         self.model = settings.openai_model
 
     def complete(self, system: str, messages: list[dict]) -> Completion:
+        if not messages:
+            # The API answers this with 'One of "input" or "previous_response_id"
+            # ... must be provided', which reads as a client-library problem
+            # rather than "you sent an empty conversation".
+            raise ValueError(
+                "Refusing to call the model with an empty conversation. The "
+                "buyer's message was not persisted before the turn ran."
+            )
         request: dict = {
             "model": self.model,
             # `instructions` is the Responses API's system prompt.
