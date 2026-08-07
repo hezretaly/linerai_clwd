@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
@@ -66,6 +66,7 @@ export function ConversationsPage() {
 
   const conversations = useMemo(() => data?.conversations ?? [], [data])
   const selectedId = id ?? conversations[0]?.id
+  const openId = Boolean(id)
 
   const { data: detail } = useQuery({
     queryKey: ['conversations', selectedId],
@@ -123,11 +124,20 @@ export function ConversationsPage() {
   const groups: Group[] = ['Needs a person', 'Live now', 'Earlier today']
 
   return (
-    // The shell's top bar is h-14; the panes take the rest of the viewport so
-    // each one scrolls on its own rather than the page scrolling as a whole.
-    <div className="flex h-[calc(100vh-3.5rem)]">
+    // Desktop: the shell's top bar is h-14 and the panes take the rest of the
+    // viewport, so each scrolls on its own rather than the page scrolling as a
+    // whole. Phone: there is no room for two panes side by side, so it becomes
+    // master/detail -- the list until you pick a thread, then the thread with a
+    // way back. The URL already distinguishes them, so back is a real
+    // navigation and the hardware back button works.
+    <div className="flex flex-col md:h-[calc(100vh-3.5rem)] md:flex-row">
       {/* ---------- list pane ---------- */}
-      <div className="flex w-[336px] shrink-0 flex-col border-r border-border bg-background">
+      <div
+        className={clsx(
+          'flex flex-col border-r border-border bg-background md:w-[336px] md:shrink-0',
+          openId ? 'hidden md:flex' : 'flex',
+        )}
+      >
         <div className="border-b border-border p-4">
           <div className="mb-3 flex items-baseline gap-2">
             <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
@@ -213,7 +223,12 @@ export function ConversationsPage() {
       </div>
 
       {/* ---------- thread pane ---------- */}
-      <div className="flex min-w-0 flex-1 flex-col bg-canvas">
+      <div
+        className={clsx(
+          'min-w-0 flex-1 flex-col bg-canvas',
+          openId ? 'flex' : 'hidden md:flex',
+        )}
+      >
         {!detail ? (
           <Empty title="Select a conversation" />
         ) : (
@@ -224,14 +239,14 @@ export function ConversationsPage() {
               onTakeover={() => takeover.mutate()}
               onHandback={() => handback.mutate()}
             />
-            <div className="scroll-thin flex-1 overflow-y-auto p-6">
+            <div className="scroll-thin flex-1 p-4 md:overflow-y-auto md:p-6">
               <div className="mx-auto flex max-w-3xl flex-col gap-1">
                 {(detail.messages ?? []).map((m) => (
                   <Bubble key={m.id} message={m} />
                 ))}
               </div>
             </div>
-            <div className="border-t border-border bg-background p-4">
+            <div className="sticky bottom-0 border-t border-border bg-background p-4 md:static">
               {detail.agent_paused ? (
                 <Composer
                   name={detail.lead?.name ?? 'this buyer'}
@@ -360,15 +375,24 @@ function ThreadHeader({ conversation }: { conversation: Conversation }) {
     .join(' · ')
 
   return (
-    <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-5">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold">
+    <div className="sticky top-14 z-10 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:static md:px-5">
+      {/* Master/detail needs a way back on a phone. On desktop both panes are
+          visible, so it would be a button that undoes nothing. */}
+      <Link
+        to="/app/conversations"
+        aria-label="Back to conversations"
+        className="-ml-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground md:hidden"
+      >
+        <Icon name="back" className="h-5 w-5" />
+      </Link>
+      <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold sm:flex">
         {initials(name)}
       </div>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold leading-tight">{name}</div>
         <div className="truncate text-xs text-muted-foreground">{meta}</div>
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ml-auto hidden shrink-0 items-center gap-2 lg:flex">
         {/* The mockup's three header actions. None has an endpoint: a
             conversation has no snooze or done state, and assignment is a
             property of the lead, changed from the rail below. */}

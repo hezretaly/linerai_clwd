@@ -219,8 +219,14 @@ def main() -> int:
     check("the drop parsed", len(preview["prospects"]) >= 2, f"{len(preview['prospects'])} usable")
     check("a prospect with no way to be contacted was skipped, not imported",
           len(preview["errors"]) >= 1, f"{len(preview['errors'])} skipped")
+    # `make smoke` has to be runnable twice in a row, so a prospect already on
+    # file from an earlier run is expected. What must hold either way: the
+    # preview reports what it found and writes nothing itself.
+    total_after_preview = len(call("GET", "/api/leads")["leads"])
+    upload("/api/leads/import/adf/preview", "sample.adf.xml", raw_sample)
     check("nothing was written by the preview",
-          all(p["existing_lead"] is None for p in preview["prospects"]))
+          len(call("GET", "/api/leads")["leads"]) == total_after_preview,
+          f"{total_after_preview} leads before and after")
     matched = [p for p in preview["prospects"] if p["in_stock"]]
     check("a requested vehicle was matched against real inventory", len(matched) >= 1,
           matched[0]["in_stock"]["title"] if matched else "none matched")
@@ -228,21 +234,22 @@ def main() -> int:
     check("a vehicle we do not have is reported as not in inventory", len(unmatched) >= 1)
 
     committed = call("POST", "/api/leads/import/adf", {"prospects": preview["prospects"]})
-    check("leads were created", len(committed["created"]) == len(preview["prospects"]),
-          f"{len(committed['created'])} created")
+    landed = committed["created"] + committed["merged"]
+    check("every prospect landed as a lead", len(landed) == len(preview["prospects"]),
+          f"{len(committed['created'])} created, {len(committed['merged'])} merged")
     again = call("POST", "/api/leads/import/adf", {"prospects": preview["prospects"]})
     check("re-importing the same drop merges instead of duplicating",
           not again["created"] and len(again["merged"]) == len(preview["prospects"]),
           f"{len(again['created'])} created, {len(again['merged'])} merged")
 
-    imported = committed["created"][0]
+    imported = landed[0]
     fields = {f["key"]: f for f in imported["captured_fields"]}
     check("what the document said was captured", "comments" in fields)
     check("and it is marked as coming from the feed, not from a conversation",
           fields.get("comments", {}).get("provenance") == "adf",
           fields.get("comments", {}).get("provenance", "missing"))
 
-    with_car = next((c for c in committed["created"] if c["email"]), imported)
+    with_car = next((c for c in landed if c["email"]), imported)
     draft = call("GET", f"/api/leads/{with_car['id']}/outreach?draft=1")
     check("a lead-level draft was written", bool(draft["subject"] and draft["body"]),
           draft["kind"])

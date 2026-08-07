@@ -161,7 +161,7 @@ export function OverviewPage() {
 
       {/* ---- Charts -------------------------------------------------------- */}
       <div className="mt-4 grid gap-4 lg:grid-cols-7">
-        <Card className="shadow-sm lg:col-span-4">
+        <Card className="min-w-0 shadow-sm lg:col-span-4">
           <div className="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
             <div>
               <h3 className="font-semibold leading-none tracking-tight">
@@ -185,7 +185,7 @@ export function OverviewPage() {
           </div>
         </Card>
 
-        <Card className="shadow-sm lg:col-span-3">
+        <Card className="min-w-0 shadow-sm lg:col-span-3">
           <div className="p-6 pb-3">
             <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
             <p className="mt-1.5 text-sm text-muted-foreground">
@@ -200,7 +200,7 @@ export function OverviewPage() {
 
       {/* ---- Happening now + unclaimed -------------------------------------- */}
       <div className="mt-4 grid gap-4 lg:grid-cols-7">
-        <Card className="shadow-sm lg:col-span-4">
+        <Card className="min-w-0 shadow-sm lg:col-span-4">
           <div className="flex items-center justify-between border-b border-border p-6">
             <div className="flex items-center gap-2">
               <h3 className="font-semibold leading-none tracking-tight">Happening now</h3>
@@ -257,7 +257,7 @@ export function OverviewPage() {
           )}
         </Card>
 
-        <Card className="shadow-sm lg:col-span-3">
+        <Card className="min-w-0 shadow-sm lg:col-span-3">
           <div className="flex items-center justify-between border-b border-border p-6">
             <div>
               <h3 className="font-semibold leading-none tracking-tight">Unclaimed leads</h3>

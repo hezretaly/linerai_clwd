@@ -24,7 +24,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make reset-db` | Delete the database and reseed |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, no browser, no credentials |
-| `make shots` | Screenshot every route to `.artifacts/` (needs the `[dev]` extra) |
+| `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
@@ -52,7 +52,16 @@ it, sends outreach, and checks the expected events arrived on the WebSocket.
 
 `scripts/e2e_booking.py` goes further: two browser windows, buyer on the left
 tapping chips, dashboard on the right, asserting the KPI moves with no reload.
-Run it when you touch the frontend or the event path.
+Run it when you touch the frontend or the event path. **It expects a fresh
+seed** -- it asserts a name appears in a queue, and after several runs the
+queues fill up and truncate. `make reset-db` first. `make smoke` has no such
+requirement and must stay that way.
+
+`make shots` also runs every dealer route at 390px and **fails the run if the
+page scrolls sideways**. Reps and managers work from phones, so that is a real
+break: one element wider than the viewport makes the browser shrink-to-fit the
+whole document, so a single wide table renders every other element tiny. The
+failure names the offending element and its width.
 
 There is no pytest suite and no Playwright suite — deliberately (see below).
 
@@ -92,6 +101,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   which may be folded into the token layer: those loops never clean up and only
   behave because the page unloads. The SPA owns `/chat`, `/call`, `/login` and
   `/app/*`.
+- **Mobile is a supported surface, not an afterthought.** Reps work from
+  phones. Two rules keep it that way: a `<table>` never reflows, so any table
+  either scrolls inside its own `overflow-x-auto` card or has a card layout
+  below `md`; and a flex or grid child needs `min-w-0` before it will shrink
+  below its content. Rep-facing pages (overview, conversations, leads,
+  calendar) get designed mobile layouts -- conversations is master/detail and
+  calendar is an agenda. Admin pages just have to not overflow.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 

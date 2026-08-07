@@ -115,7 +115,20 @@ export function CalendarPage() {
         }
       />
 
-      <div className="p-6">
+      {/* A seven-day grid in 390px gives every appointment about 44px, which
+          renders as "De..." -- present, unreadable, unusable. On a phone the
+          same week becomes an agenda: the question a rep is asking there is
+          "what is on today", not "how does my week lay out". */}
+      <div className="p-4 md:hidden">
+        <Agenda
+          days={days}
+          appointments={data.appointments}
+          dealership={dealership}
+          onOpen={setOpenId}
+        />
+      </div>
+
+      <div className="hidden p-6 md:block">
         <Card className="overflow-hidden">
           <div className="grid grid-cols-[3.5rem_repeat(7,1fr)] border-b border-border">
             <div />
@@ -227,6 +240,94 @@ export function CalendarPage() {
 }
 
 /** Act 2 lives here: confirm, assign, reach out. */
+/**
+ * The phone view of the same week. One card per appointment under a day
+ * heading, in time order, with closed days stated rather than drawn as empty
+ * columns -- hours come from `hours_json`, so a closed Sunday says Closed
+ * instead of looking like a day with nothing booked.
+ */
+function Agenda({
+  days,
+  appointments,
+  dealership,
+  onOpen,
+}: {
+  days: Date[]
+  appointments: Appointment[]
+  dealership: Overview['dealership'] | undefined
+  onOpen: (id: string) => void
+}) {
+  const today = new Date().toDateString()
+
+  return (
+    <div className="space-y-3">
+      {days.map((day) => {
+        const mine = appointments
+          .filter((a) => new Date(a.starts_at).toDateString() === day.toDateString())
+          .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+        const open = isOpenOn(dealership, day)
+        // A closed day with nothing booked is not worth a row of its own.
+        if (!open && mine.length === 0) return null
+
+        return (
+          <Card key={day.toISOString()} className="overflow-hidden">
+            <div className="flex items-baseline justify-between border-b border-border bg-muted/40 px-4 py-2">
+              <span
+                className={clsx(
+                  'text-sm font-medium',
+                  day.toDateString() === today && 'text-primary',
+                )}
+              >
+                {day.toLocaleDateString('en-US', {
+                  weekday: 'long', month: 'short', day: 'numeric',
+                })}
+                {day.toDateString() === today && ' -- today'}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {!open ? 'Closed' : mine.length === 0 ? 'Nothing booked' : `${mine.length} booked`}
+              </span>
+            </div>
+
+            {mine.length > 0 && (
+              <ul className="divide-y divide-border">
+                {mine.map((appointment) => (
+                  <li key={appointment.id}>
+                    <button
+                      onClick={() => onOpen(appointment.id)}
+                      className="flex w-full items-baseline gap-3 px-4 py-3 text-left active:bg-muted"
+                    >
+                      <span className="tnum w-16 shrink-0 text-sm font-medium">
+                        {time(appointment.starts_at)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {appointment.lead?.name ?? 'Unknown'}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {appointment.vehicle?.title ?? 'No vehicle'}
+                          {appointment.assigned_to
+                            ? ` -- ${appointment.assigned_to.name}`
+                            : ' -- unassigned'}
+                        </span>
+                      </span>
+                      <Badge
+                        tone={appointment.status === 'confirmed' ? 'success' : 'warning'}
+                        className="shrink-0"
+                      >
+                        {appointment.status}
+                      </Badge>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        )
+      })}
+    </div>
+  )
+}
+
 function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const queryClient = useQueryClient()
   const [subject, setSubject] = useState('')

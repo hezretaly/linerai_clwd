@@ -36,7 +36,7 @@ make install && make reset-db && make dev
 | Frontend | shadcn classic theme. Eight dashboard pages, buyer chat, voice placeholder. |
 | `/` | The real marketing landing page, byte-for-byte as supplied. |
 | `make smoke` | 41 checks including WebSocket assertions. **The gate.** |
-| `make shots` | 13 routes, no console errors. |
+| `make shots` | 13 routes at desktop and at 390px, no console errors, no horizontal overflow. |
 | `make e2e` | Two browser windows: buyer books, dashboard KPI moves live. |
 
 ## Decisions that look arbitrary and get "tidied" — don't

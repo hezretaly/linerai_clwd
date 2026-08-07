@@ -56,10 +56,56 @@ DEALER = [
 ]
 
 
+# Reps and managers work from phones, so a route that overflows there is a real
+# break, not a cosmetic one. 390x844 is an iPhone 13/14/15 logical viewport --
+# the narrowest width worth designing for in 2026.
+PHONE = {"width": 390, "height": 844}
+DESKTOP = {"width": 1440, "height": 900}
+
+# Overflow is measured, not eyeballed. A table wider than the screen makes the
+# browser shrink-to-fit the whole document, so one wide element renders every
+# other page element tiny -- which reads as "the app looks wrong on mobile"
+# rather than "this table is too wide", and sends you looking in the wrong file.
+OVERFLOW_JS = """() => {
+    const root = document.documentElement;
+    const vw = root.clientWidth;
+    if (root.scrollWidth <= vw + 1) return {vw, worst: []};
+
+    // Only elements that actually push the *document* wider count. A wide table
+    // inside its own overflow-x-auto card is a deliberate choice, not a break,
+    // and flagging it sends you editing a file that is already correct.
+    const scrolls = (el) => {
+        for (let n = el.parentElement; n; n = n.parentElement) {
+            const o = getComputedStyle(n).overflowX;
+            if (o === 'auto' || o === 'scroll' || o === 'hidden') return true;
+        }
+        return false;
+    };
+
+    const worst = [];
+    root.querySelectorAll('*').forEach(el => {
+        const r = el.getBoundingClientRect();
+        // Too wide, or pushed past the right edge by a margin or an absolute
+        // offset. The second kind leaves every element narrower than the
+        // viewport while the document still scrolls, which is the harder one
+        // to find by eye.
+        if ((r.width > vw + 1 || r.right > vw + 1) && !scrolls(el)) {
+            const cls = el.className && el.className.baseVal !== undefined
+                ? el.className.baseVal : String(el.className || '');
+            worst.push({tag: el.tagName.toLowerCase(), cls: cls.slice(0, 60),
+                        w: Math.round(r.width), right: Math.round(r.right)});
+        }
+    });
+    worst.sort((a, b) => b.right - a.right);
+    return {vw, worst: worst.slice(0, 3), doc: root.scrollWidth};
+}"""
+
+
 async def main() -> int:
     from playwright.async_api import async_playwright
 
     OUT.mkdir(exist_ok=True)
+    (OUT / "mobile").mkdir(exist_ok=True)
     failures: list[str] = []
 
     async with async_playwright() as p:
@@ -67,7 +113,7 @@ async def main() -> int:
         browser = await p.chromium.launch(
             executable_path=executable, args=["--no-sandbox"]
         )
-        context = await browser.new_context(viewport={"width": 1440, "height": 900})
+        context = await browser.new_context(viewport=DESKTOP)
         page = await context.new_page()
 
         errors: list[str] = []
@@ -86,6 +132,8 @@ async def main() -> int:
             lambda r: bad_urls.append(r.url) if r.status >= 400 else None,
         )
         page.on("requestfailed", lambda r: bad_urls.append(r.url))
+
+        phone = False
 
         async def shot(route: str) -> None:
             errors.clear()
@@ -120,7 +168,24 @@ async def main() -> int:
             await page.wait_for_timeout(600)
 
             name = route.strip("/").replace("/", "-") or "landing"
-            await page.screenshot(path=OUT / f"{name}.png", full_page=True)
+            await page.screenshot(
+                path=(OUT / "mobile" if phone else OUT) / f"{name}.png", full_page=True
+            )
+
+            if phone:
+                over = await page.evaluate(OVERFLOW_JS)
+                if over["worst"]:
+                    w = over["worst"][0]
+                    failures.append(
+                        f"{route}: page scrolls sideways ({over['doc']}px in a "
+                        f"{over['vw']}px viewport) -- <{w['tag']}> is {w['w']}px "
+                        f"ending at {w['right']}px ({w['cls']})"
+                    )
+                elif over.get("doc", 0) > over["vw"] + 1:
+                    failures.append(
+                        f"{route}: page scrolls sideways ({over['doc']}px in a "
+                        f"{over['vw']}px viewport), no single element to blame"
+                    )
 
             body = await page.inner_text("body")
             if len(body.strip()) < 40:
@@ -165,6 +230,14 @@ async def main() -> int:
 
         print("\ndealer routes:")
         for route in DEALER:
+            await shot(route)
+
+        # Same session, narrower window. Signing in again is unnecessary and the
+        # cookie is what makes the dealer routes reachable at all.
+        phone = True
+        await page.set_viewport_size(PHONE)
+        print(f"\nmobile ({PHONE['width']}px):")
+        for route in ["/chat", *DEALER]:
             await shot(route)
 
         await browser.close()

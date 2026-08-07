@@ -180,7 +180,13 @@ export function Tabs({
   onChange: (id: string) => void
 }) {
   return (
-    <div className="flex gap-1 border-b border-border" role="tablist">
+    /* A tab row cannot wrap without the underline breaking across two lines,
+       so on a narrow screen it scrolls instead. `shrink-0` stops the labels
+       being squeezed into ellipses to fit. */
+    <div
+      className="scroll-thin flex gap-1 overflow-x-auto border-b border-border"
+      role="tablist"
+    >
       {tabs.map((tab) => (
         <button
           key={tab.id}
@@ -188,7 +194,7 @@ export function Tabs({
           aria-selected={active === tab.id}
           onClick={() => onChange(tab.id)}
           className={clsx(
-            '-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-150',
+            '-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-150',
             active === tab.id
               ? 'border-primary text-foreground'
               : 'border-transparent text-muted-foreground hover:text-foreground',

@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../../lib/api'
@@ -37,6 +38,8 @@ const NAV = [
 
 export function AppShell() {
   useDealerEvents()
+  const location = useLocation()
+  const [navOpen, setNavOpen] = useState(false)
 
   const { data: overview } = useQuery({
     queryKey: ['overview'],
@@ -45,14 +48,35 @@ export function AppShell() {
 
   const badges = overview?.badges
 
+  // Tapping a link has to close the drawer. Without this the destination
+  // renders behind a sheet that is still covering it, which reads as the tap
+  // having done nothing.
+  useEffect(() => setNavOpen(false), [location.pathname])
+
   return (
     <div className="min-h-full bg-canvas">
-      <aside className="fixed inset-y-0 left-0 z-40 flex w-14 flex-col border-r border-border bg-sidebar lg:w-60">
-        <div className="flex h-14 items-center gap-2.5 border-b border-border px-3 lg:px-4">
+      {/* Below lg the rail is a drawer, not a permanent strip: 56px of a 390px
+          phone is 14% of the screen given up on every page, and the icons are
+          unlabelled at that width anyway. */}
+      {navOpen && (
+        <button
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-40 bg-foreground/40 lg:hidden"
+        />
+      )}
+      <aside
+        className={clsx(
+          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-border bg-sidebar',
+          'transition-transform duration-200 lg:z-40 lg:translate-x-0',
+          navOpen ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <Icon name="chat" className="h-4 w-4" />
           </span>
-          <div className="hidden min-w-0 lg:block">
+          <div className="min-w-0">
             <div className="truncate text-sm font-semibold leading-tight">
               {overview?.dealership.name ?? 'Liner'}
             </div>
@@ -63,12 +87,11 @@ export function AppShell() {
         </div>
 
         <nav className="scroll-thin flex-1 overflow-y-auto px-2 py-3">
-          {(['Today', 'Manage'] as const).map((group, groupIndex) => (
+          {(['Today', 'Manage'] as const).map((group) => (
             <div key={group}>
-              <div className="hidden px-2 pb-1.5 pt-1 text-xs font-medium text-muted-foreground lg:block lg:pt-4 lg:first:pt-1">
+              <div className="px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground first:pt-1">
                 {group}
               </div>
-              {groupIndex > 0 && <div className="my-2 border-t border-border lg:hidden" />}
               {NAV.filter((item) => item.group === group).map((item) => {
                 const count = item.badge
                   ? badges?.[item.badge as keyof typeof badges]
@@ -89,11 +112,11 @@ export function AppShell() {
                     }
                   >
                     <Icon name={item.icon as IconName} className="h-4 w-4 shrink-0" />
-                    <span className="hidden lg:inline">{item.label}</span>
+                    <span>{item.label}</span>
                     {count ? (
                       <span
                         className={clsx(
-                          'tnum ml-auto hidden rounded-full px-1.5 py-0.5 text-[10px] lg:inline',
+                          'tnum ml-auto rounded-full px-1.5 py-0.5 text-[10px]',
                           item.tone === 'destructive'
                             ? 'bg-destructive font-semibold text-destructive-foreground'
                             : 'bg-muted font-medium text-muted-foreground',
@@ -113,8 +136,8 @@ export function AppShell() {
         <AccountFooter dealership={hoursLabel(overview?.dealership)} />
       </aside>
 
-      <div className="ml-14 lg:ml-60">
-        <TopBar />
+      <div className="lg:ml-60">
+        <TopBar onOpenNav={() => setNavOpen(true)} />
         <IntegrationBanner />
         <Outlet />
       </div>
@@ -136,8 +159,8 @@ function LinerStatus() {
   const open = data?.badges.conversations ?? 0
 
   return (
-    <div className="border-t border-border p-2 lg:p-3">
-      <div className="hidden rounded-md border border-border bg-background p-3 lg:block">
+    <div className="border-t border-border p-3">
+      <div className="rounded-md border border-border bg-background p-3">
         <div className="mb-1 flex items-center gap-2">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
@@ -177,14 +200,14 @@ function AccountFooter({ dealership }: { dealership: string }) {
   })
 
   return (
-    <div className="flex items-center gap-2.5 border-t border-border p-2 lg:px-4 lg:py-3">
+    <div className="flex items-center gap-2.5 border-t border-border px-4 py-3">
       <span
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
         title={dealership}
       >
         {initials(me?.user.name ?? '')}
       </span>
-      <div className="hidden min-w-0 lg:block">
+      <div className="min-w-0">
         <div className="truncate text-sm font-medium leading-tight">{me?.user.name}</div>
         <button
           onClick={() => logout.mutate()}
@@ -202,10 +225,17 @@ function AccountFooter({ dealership }: { dealership: string }) {
  * endpoint: there is no search index and no notification store. They render as
  * what they are rather than as dead chrome that looks clickable.
  */
-function TopBar() {
+function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const now = new Date()
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border bg-background/95 px-4 backdrop-blur md:px-6">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur md:gap-4 md:px-6">
+      <button
+        onClick={onOpenNav}
+        aria-label="Open menu"
+        className="-ml-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:hidden"
+      >
+        <Icon name="menu" className="h-5 w-5" />
+      </button>
       <div className="relative w-full max-w-sm">
         <Icon
           name="search"

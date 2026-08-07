@@ -38,7 +38,8 @@ export function TeamPage() {
               Auto-assign is round-robin over reps who are under their daily cap.
             </p>
           </header>
-          <table className="w-full text-sm">
+          <div className="scroll-thin overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2 font-medium">Name</th>
@@ -98,6 +99,7 @@ export function TeamPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
 
         <Card className="p-4">

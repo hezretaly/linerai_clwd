@@ -212,7 +212,17 @@ export function LeadsPage() {
         {visible.length === 0 ? (
           <Empty title="No leads match" hint="Try a different tab or filter." />
         ) : (
-          <div className="scroll-thin overflow-x-auto">
+          <>
+          {/* Below md the same rows render as cards. A rep on the floor needs
+              last touch and the vehicle at a glance, and in a scrolled table
+              those are the columns that fall off the right-hand edge -- so the
+              one screen they actually use would show name and stage only. */}
+          <ul className="divide-y divide-border md:hidden">
+            {visible.map((lead) => (
+              <LeadCard key={lead.id} lead={lead} onOpen={() => setOpenId(lead.id)} />
+            ))}
+          </ul>
+          <div className="scroll-thin hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
@@ -235,6 +245,7 @@ export function LeadsPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
@@ -284,6 +295,66 @@ function Counter({
         </span>
       </div>
     </Card>
+  )
+}
+
+function LeadCard({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
+  const [stageLabel, stageClass] = STAGE[lead.stage ?? 'new'] ?? STAGE.new
+
+  return (
+    <li>
+      <button onClick={onOpen} className="w-full px-4 py-3 text-left active:bg-muted">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+            {initials(lead.name)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate font-medium">{lead.name}</span>
+              <span
+                className={clsx(
+                  'tnum shrink-0 text-xs',
+                  ageClass(lead.last_touch_at),
+                )}
+              >
+                {relative(lead.last_touch_at ?? lead.created_at)}
+              </span>
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {lead.email || <span className="text-destructive">No email -- call back</span>}
+            </div>
+            {lead.vehicle_of_interest && (
+              <div className="mt-1 truncate text-xs">
+                {lead.vehicle_of_interest.title}
+                <span className="tnum ml-1.5 text-muted-foreground">
+                  {money(lead.vehicle_of_interest.price)}
+                </span>
+              </div>
+            )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <span
+                className={clsx(
+                  'inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium',
+                  stageClass,
+                )}
+              >
+                {stageLabel}
+              </span>
+              {lead.flagged && (
+                <span className="inline-flex items-center rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                  Needs a person
+                </span>
+              )}
+              <span className="text-[11px] text-muted-foreground">
+                {SOURCE_LABEL[lead.source] ?? lead.source}
+                {' -- '}
+                {lead.assigned_to ? lead.assigned_to.name : 'Unclaimed'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </button>
+    </li>
   )
 }
 

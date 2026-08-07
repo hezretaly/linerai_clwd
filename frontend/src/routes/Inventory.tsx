@@ -69,7 +69,7 @@ export function InventoryPage() {
         )}
 
         <Card>
-          <div className="flex items-center justify-between gap-4 px-4 pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-2">
             <Tabs
               active={tab}
               onChange={setTab}
@@ -95,7 +95,11 @@ export function InventoryPage() {
           {filtered.length === 0 ? (
             <Empty title="No vehicles match" />
           ) : (
-            <table className="w-full text-sm">
+            /* A table cannot reflow -- it sizes to its content whatever
+               `w-full` says. Inventory is an admin screen, so on a phone it
+               scrolls inside its own card rather than being redesigned. */
+            <div className="scroll-thin overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="px-4 py-2 font-medium">Vehicle</th>
@@ -154,6 +158,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
       </div>

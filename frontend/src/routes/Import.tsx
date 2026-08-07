@@ -110,7 +110,8 @@ export function ImportPage() {
           <Card className="p-4">
             <h2 className="text-sm font-semibold">Upload a CSV</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Columns: <code className="font-mono text-xs">{data.csv_columns}</code>
+              Columns:{' '}
+              <code className="break-all font-mono text-xs">{data.csv_columns}</code>
             </p>
             <input
               ref={fileInput}
