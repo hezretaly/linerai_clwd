@@ -75,10 +75,38 @@ sudo -u liner git clone -b claude/liner-ai-implementation-8xehez \
 cd /srv/liner
 ```
 
-Every later step runs as `liner` via `sudo -u liner`, because files the process
-writes at runtime (the SQLite database, its WAL sidecars) must belong to the
-user systemd runs it as. Building as yourself and running as `liner` produces a
-"readonly database" at the first write, which surfaces as a 500 on login.
+**Every later step runs as `liner` via `sudo -u liner`** — every one, including
+`make build`. Files the process writes at runtime (the SQLite database and its
+WAL sidecars) must belong to the user systemd runs it as, or the first write is
+a "readonly database" that surfaces as a 500 on login.
+
+Dropping the `sudo -u liner` even once leaves root-owned files that only bite
+later. The usual symptom is a build that cannot clean up after itself:
+
+```
+error during build:
+EACCES, Permission denied: /srv/liner/frontend/dist/assets
+    at Object.rmSync
+```
+
+That is not a build failure. `dist/` belongs to someone else, and removing a
+directory needs write permission on its *parent*. Delete and rebuild as the
+right user -- deleting rather than `chown`-ing, because it also clears any
+stale root-owned files inside:
+
+```bash
+sudo rm -rf /srv/liner/frontend/dist
+sudo -u liner make build
+```
+
+Then check nothing else is mis-owned, because the same slip breaks `git pull`
+and the database just as quietly:
+
+```bash
+find /srv/liner -not -user liner -not -path '*/node_modules/*' | head -20
+sudo chown -R liner:liner /srv/liner    # if that listed anything
+sudo chmod 600 /srv/liner/.env          # re-assert: it holds the API key
+```
 
 Needs Python 3.11+, Node 20+ and `uv`. Install `uv` **system-wide**, not into
 your own home directory — the next step runs as `liner`, and `sudo` resets
