@@ -100,6 +100,19 @@ drift is silent — `/` serves the SPA, whose catch-all bounces to `/`, and the
 page is blank with nothing in any log. The API serves the built frontend itself;
 nginx has one `proxy_pass` and no `try_files`. See `docs/DEPLOY.md`.
 
+**OpenAI goes through the Responses API, not chat completions.** The default
+model is a gpt-5.x *reasoning* model, and that rules the older endpoint out
+twice over: reasoning models reject `max_tokens` outright (it is
+`max_output_tokens` now), and function tools combined with a reasoning effort
+are restricted on `/v1/chat/completions` for models in that family. So tool
+definitions are flat, calls come back as `function_call` items, and results go
+back as `function_call_output`. Do not "simplify" it to chat completions.
+
+**Reasoning tokens come out of the reply's budget.** Too low an
+`OPENAI_MAX_OUTPUT_TOKENS` returns an *empty* message, not a short one. The
+provider logs a warning naming both settings when that happens rather than
+letting it read as the model having nothing to say.
+
 ## Bugs already fixed — don't reintroduce
 
 - **Four booking bugs, all the same shape: Liner confirming a time the buyer
@@ -118,6 +131,16 @@ nginx has one `proxy_pass` and no `try_files`. See `docs/DEPLOY.md`.
   `hours_json`.
 - **"The first one" resolved to the wrong car.** `conversations.last_results_json`
   records what the buyer was actually shown, in order.
+- **A failed agent turn killed the SSE stream silently.** The response has
+  already started by then, so raising cannot become a 503 — FastAPI says
+  "response already started" and the buyer watches a typing indicator that
+  never resolves. `chat.py` now emits an `error` event naming the missing
+  setting, and the buyer chat renders it.
+- **Unknown tool arguments were silently ignored.** A model calling
+  `search_inventory(need=...)` instead of `keywords=...` got the five cheapest
+  cars and quoted a price off one the buyer never asked about. `tools.execute`
+  now rejects any argument the schema does not declare, so the model is told
+  and retries.
 - **`api.upload()` sent multipart with `Content-Type: application/json`.** The
   `request()` wrapper set that header whenever a body existed, which strips the
   boundary only the browser knows and makes FastAPI see a body with no parts
@@ -131,7 +154,7 @@ returns it live and drives the amber banner in the dashboard.
 
 | Thing | State |
 |---|---|
-| Agent | **Stub by default** — a state machine over `conversations.stage` calling the real tools and writing the real rows, building replies from tool results. `agent/loop.py` holds the live Anthropic loop: **written, never executed**, no key available. |
+| Agent | **Stub by default; unscripted with a key.** `LLM_MODE=live` + `OPENAI_API_KEY` puts a real model on the same six tools and the same guards. Defaults to `gpt-5.4-nano` over the **Responses API** — it is a reasoning model, so chat completions is the wrong endpoint (see below). The HTTP call itself has never run here; everything either side of it is checked by `make agent-check`. |
 | Email | **Outbox.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `GmailSender` written and unverified. |
 | Voice | **Not configured, and not faked.** Session mint returns a typed 503 naming the missing keys. Tool relay and transcript endpoints are real and tested. A scripted transcript would look like it worked while proving nothing about latency, barge-in or audio. |
 | Scraper | **Works, against the fixture site** (`make fixture-site`). Real HTTP, real JSON-LD parsing, real diff/publish, manual edits survive re-ingest. No adapter for a real dealer site — that needs real URLs. |

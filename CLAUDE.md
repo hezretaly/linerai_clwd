@@ -23,7 +23,8 @@ feature reports itself as unavailable rather than simulating a result.
 | `make seed` | Rebuild the Riverside Auto fixture |
 | `make reset-db` | Delete the database and reseed |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
-| `make smoke` | **The gate.** Full flow over HTTP, no browser, no credentials |
+| `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
+| `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
@@ -81,6 +82,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `inferred`. A prompt is a request; an executor is a guarantee.
 - **Guards run in every `LLM_MODE`.** If a stubbed turn can slip an unsourced
   price past them, the guard has a hole — that should fail offline, not live.
+- **One turn loop, many vendors.** `agent/loop.py` never names a vendor; every
+  wire-format difference lives in `agent/providers.py`. A second copy of the
+  loop is how one vendor quietly stops running the guards.
+- **The live path is testable without a key.** `run_turn` takes an injectable
+  provider, and `agent/fake_provider.py` scripts one. Tool dispatch, tool
+  errors, the guard retry and the exact request body are all real in
+  `make agent-check`; only the HTTP call is absent.
 - **One design token layer.** `frontend/src/styles/liner-theme.css` and nowhere
   else. No component names a colour. It is shadcn/ui's classic theme, written
   out by hand because `ui.shadcn.com` is unreachable through the egress proxy.
@@ -117,7 +125,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 
 | Thing | State |
 |---|---|
-| Agent | **Stub by default.** A state machine over `conversations.stage` that calls the real tools and writes the real rows, building replies from tool results. `agent/loop.py` holds the live Anthropic loop — written, never executed, no key here. |
+| Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same six tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
 | Email | **Outbox.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `GmailSender` is written and unverified. |
 | Voice | **Not configured.** Session mint returns a typed 503. The tool relay and transcript endpoints are real and tested. There is no fake provider — a scripted transcript would look like it worked while proving nothing about latency, barge-in or audio. |
 | Scraper | **Works, against the fixture site.** Real HTTP, real JSON-LD parsing, real diff/publish. No adapter for any real dealer site exists yet — that needs real URLs. |

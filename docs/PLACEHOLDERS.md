@@ -5,11 +5,11 @@ never run against the real thing, because the credential or vendor it needs
 is not available.
 
 
-## anthropic
-
-- `backend/app/agent/loop.py:3` -- unverified. There is no ANTHROPIC_API_KEY in the build environment, so this code path has never executed. Its shape follows the Messages API tool-use contract, and the tool executors and guards it calls are the same ones the stub agent exercises -- but treat the loop itself as unreviewed until someone runs it with a real key.
-
 ## gmail
 
 - `backend/app/integrations/email/gmail.py:3` -- unverified. Requires a Google Workspace service account with domain-wide delegation plus GMAIL_IMPERSONATE, neither of which exists in this environment, so this code path has never been executed. The google-api client libraries are also not in pyproject.toml -- add them alongside the credentials. Until then ``check()`` raises and the app falls back to the outbox sender with a visible not-configured state.
+
+## llm
+
+- `backend/app/agent/loop.py:21` -- the vendor calls in providers.py have never run against a real endpoint -- there is no API key in this environment. The turn loop below, including tool dispatch, the malformed-argument path, the guard retry and the escalation, IS exercised on every `make smoke` run against a fake provider (scripts/agent_loop_check.py). So the plumbing is tested and the HTTP call is not. Expect to fix a wire-format detail on the first live run, not the shape of the conversation.
 

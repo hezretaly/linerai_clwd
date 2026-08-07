@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -19,8 +20,11 @@ from app.agent.runner import rails_for, record_buyer_message, run_agent_turn
 from app.api.settings import live_settings
 from app.db import SessionLocal, get_db
 from app.events import emit
+from app.integrations.base import NotConfigured
 from app.models import Conversation, Dealership, Rail
 from app.schemas.serialize import conversation_out, message_out, rail_out
+
+log = logging.getLogger("liner.chat")
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -112,7 +116,31 @@ async def send_message(
         session = SessionLocal()
         try:
             convo_local = session.query(Conversation).filter_by(id=convo_id).one()
-            message = await asyncio.to_thread(run_agent_turn, session, convo_local, text)
+            try:
+                message = await asyncio.to_thread(run_agent_turn, session, convo_local, text)
+            except NotConfigured as exc:
+                # LLM_MODE=live with no key, or a key the vendor rejected. The
+                # response has already started, so an exception here cannot
+                # become a 503 -- FastAPI raises "response already started" and
+                # the buyer watches a typing indicator that never resolves.
+                # Say it on the stream instead, and name the setting.
+                log.error("live agent unavailable: %s", exc.as_dict())
+                yield _sse("error", {
+                    "message": "The assistant is not available right now. "
+                               "Someone from the team will pick this up.",
+                    **exc.as_dict(),
+                })
+                yield _sse("done", {"stage": convo_local.stage})
+                return
+            except Exception as exc:  # a vendor outage, a rate limit, a timeout
+                log.exception("agent turn failed on conversation %s", convo_id)
+                yield _sse("error", {
+                    "message": "Something went wrong answering that. "
+                               "Someone from the team will pick this up.",
+                    "detail": str(exc)[:200],
+                })
+                yield _sse("done", {"stage": convo_local.stage})
+                return
             if message is None:
                 yield _sse("held", {"message": "Liner is holding this conversation."})
                 yield _sse("done", {"stage": convo_local.stage})

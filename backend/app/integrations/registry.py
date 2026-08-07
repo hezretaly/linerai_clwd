@@ -41,26 +41,49 @@ def get_voice_provider() -> VoiceProvider:
 
 
 def _llm_status() -> IntegrationStatus:
+    from app.agent.providers import PROVIDERS, provider_key_present, provider_key_setting
+
     live = settings.llm_mode == "live"
-    has_key = bool(settings.anthropic_api_key)
-    configured = live and has_key
+    provider = settings.llm_provider.lower()
+    known = provider in PROVIDERS
+    has_key = provider_key_present()
+    configured = live and known and has_key
+
     missing: list[str] = []
-    if not has_key:
-        missing.append("ANTHROPIC_API_KEY")
+    if not known:
+        missing.append("LLM_PROVIDER")
+    elif not has_key:
+        missing.append(provider_key_setting())
     if not live:
         missing.append("LLM_MODE=live")
+
+    if configured:
+        detail = f"Live {provider} tool loop on {_model_name(provider)}."
+    elif not known:
+        detail = (
+            f"LLM_PROVIDER={settings.llm_provider!r} is not one of "
+            f"{', '.join(sorted(PROVIDERS))}."
+        )
+    else:
+        detail = (
+            "Running the scripted stub agent. It calls the real tools and writes the "
+            "real rows, but the wording is canned and it cannot improvise. Set "
+            f"{provider_key_setting()} and LLM_MODE=live for free-form replies."
+        )
+
     return IntegrationStatus(
         key="llm",
         label="Language model",
         configured=configured,
-        impl="anthropic" if configured else "stub",
+        impl=provider if configured else "stub",
         missing=missing,
-        detail=(
-            "Live Anthropic tool loop."
-            if configured
-            else "Running the scripted stub agent. It calls the real tools and writes the "
-            "real rows, but the wording is canned and it cannot improvise."
-        ),
+        detail=detail,
+    )
+
+
+def _model_name(provider: str) -> str:
+    return {"openai": settings.openai_model, "anthropic": settings.anthropic_model}.get(
+        provider, "?"
     )
 
 

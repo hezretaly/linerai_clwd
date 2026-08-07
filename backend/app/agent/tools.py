@@ -542,9 +542,36 @@ SIDE_EFFECT_EXECUTORS = {
 }
 
 
+SCHEMAS = {t["name"]: set(t["input_schema"].get("properties", {})) for t in TOOL_DEFS}
+
+
+def _reject_unknown_args(name: str, args: dict) -> None:
+    """An argument the tool does not have is an error, not something to ignore.
+
+    A free-form model will invent a parameter name eventually -- calling
+    search_inventory with `need` instead of `keywords`, say. Dropping it
+    silently is the worst outcome available: the filter never applies, five
+    unrelated cars come back, and the model quotes a price off a vehicle the
+    buyer never asked about. Confidently wrong beats obviously broken only for
+    the demo, never for the buyer.
+
+    Told about it, the model retries with the right name in the next round.
+    """
+    allowed = SCHEMAS.get(name)
+    if allowed is None:
+        return
+    unknown = sorted(set(args) - allowed)
+    if unknown:
+        raise ToolError(
+            f"{name} has no argument {', '.join(repr(u) for u in unknown)}. "
+            f"It takes: {', '.join(sorted(allowed)) or 'no arguments'}."
+        )
+
+
 def execute(
     db: Session, convo: Conversation, name: str, args: dict, tool_call_id: str | None = None
 ) -> dict:
+    _reject_unknown_args(name, args)
     if name in SIDE_EFFECT_EXECUTORS:
         return SIDE_EFFECT_EXECUTORS[name](db, convo, args, tool_call_id)
     if name in EXECUTORS:

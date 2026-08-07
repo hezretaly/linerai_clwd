@@ -28,9 +28,23 @@ class Settings(BaseSettings):
     env: str = "development"
 
     # --- Agent -------------------------------------------------------------
-    # stub  : rail-driven state machine calling the real tools (no key needed)
-    # live  : the Anthropic tool loop
+    # stub : rail-driven state machine calling the real tools (no key needed)
+    # live : a real model driving the same tools, free-form
     llm_mode: str = "stub"
+    # Which vendor answers when llm_mode=live. Both drive the identical tools
+    # and pass the identical guards; only the wire format differs.
+    llm_provider: str = "openai"
+    openai_api_key: str = ""
+    # Overridable, because model names move faster than this file does.
+    openai_model: str = "gpt-5.4-nano"
+    # gpt-5.x are reasoning models: reasoning tokens are spent from the same
+    # budget as the reply, so too small a ceiling returns an empty message
+    # rather than a short one.
+    openai_max_output_tokens: int = 4096
+    # minimal | low | medium | high. A buyer is watching a spinner, and picking
+    # a car out of five search results is not a hard reasoning problem.
+    openai_reasoning_effort: str = "low"
+    openai_base_url: str = ""  # for an Azure or compatible endpoint
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
 

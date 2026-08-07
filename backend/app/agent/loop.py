@@ -1,43 +1,49 @@
-"""The live Anthropic tool loop.
+"""The live tool loop -- one buyer turn against a real model.
 
-# PLACEHOLDER(anthropic): unverified. There is no ANTHROPIC_API_KEY in the
-# build environment, so this code path has never executed. Its shape follows the
-# Messages API tool-use contract, and the tool executors and guards it calls are
-# the same ones the stub agent exercises -- but treat the loop itself as
-# unreviewed until someone runs it with a real key.
-#
-# Switching on: set ANTHROPIC_API_KEY and LLM_MODE=live. Nothing else changes.
+This is what makes the assistant *unscripted*. The stub agent walks
+``conversations.stage`` and assembles replies from tool results, so it can only
+answer questions someone anticipated. Here the model reads the conversation,
+decides which tools to call and writes its own words.
+
+What does **not** change when you switch it on:
+
+* **The tools.** Same six executors, same rows written. A do-not-discuss
+  vehicle is filtered inside ``search_inventory``, so it never reaches the
+  model regardless of what the model is told.
+* **The guards.** Every reply is checked for a price or a claim it cannot
+  source. One violation buys a corrective retry; a second escalates to a
+  human. That policy lives here, once, for every vendor.
+
+Vendor differences live in ``providers.py``. This file never names OpenAI or
+Anthropic, which is what stops a second vendor becoming a second copy of the
+loop with the guards quietly missing from it.
+
+# PLACEHOLDER(llm): the vendor calls in providers.py have never run against a
+# real endpoint -- there is no API key in this environment. The turn loop
+# below, including tool dispatch, the malformed-argument path, the guard retry
+# and the escalation, IS exercised on every `make smoke` run against a fake
+# provider (scripts/agent_loop_check.py). So the plumbing is tested and the
+# HTTP call is not. Expect to fix a wire-format detail on the first live run,
+# not the shape of the conversation.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 
 from sqlalchemy.orm import Session
 
 from app.agent import guards, tools
 from app.agent.prompts import build_system_prompt
+from app.agent.providers import Provider, get_provider
 from app.api.settings import live_settings
-from app.config import settings
-from app.integrations.base import NotConfigured
 from app.models import Conversation, Dealership, Message
 
 log = logging.getLogger("liner.agent")
 
+# A turn that has called tools six times is not converging, and every round is
+# another paid request with the buyer watching a spinner.
 MAX_TOOL_ROUNDS = 6
-
-
-def _client():
-    if not settings.anthropic_api_key:
-        raise NotConfigured(
-            "llm", ["ANTHROPIC_API_KEY"],
-            "LLM_MODE=live requires an Anthropic API key. Leave LLM_MODE=stub to run the "
-            "scripted agent instead.",
-        )
-    from anthropic import Anthropic
-
-    return Anthropic(api_key=settings.anthropic_api_key)
 
 
 def _history(db: Session, convo: Conversation) -> list[dict]:
@@ -58,9 +64,15 @@ def _history(db: Session, convo: Conversation) -> list[dict]:
     return history
 
 
-def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dict]]:
-    """One buyer turn against the live model. Returns (text, tool_calls)."""
-    client = _client()
+def run_turn(
+    db: Session, convo: Conversation, text: str, provider: Provider | None = None
+) -> tuple[str, list[dict]]:
+    """One buyer turn. Returns (reply, tool_calls).
+
+    ``provider`` is injectable so the loop can be driven offline against a fake
+    one. That is the only reason this path is testable without a key.
+    """
+    provider = provider or get_provider()
     dealership = db.query(Dealership).first()
     system = build_system_prompt(db, dealership, live_settings(db))
 
@@ -70,46 +82,38 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
 
     while True:
         rounds = 0
-        final_text = ""
+        completion = None
 
         while rounds < MAX_TOOL_ROUNDS:
             rounds += 1
-            response = client.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=1024,
-                system=system,
-                tools=tools.TOOL_DEFS,
-                messages=messages,
-            )
-
-            tool_uses = [b for b in response.content if getattr(b, "type", "") == "tool_use"]
-            text_blocks = [
-                b.text for b in response.content if getattr(b, "type", "") == "text"
-            ]
-            final_text = "\n".join(text_blocks).strip()
-
-            if not tool_uses:
+            completion = provider.complete(system, messages)
+            if not completion.tool_calls:
                 break
 
-            messages.append({"role": "assistant", "content": response.content})
-            results_block = []
-            for use in tool_uses:
+            results: list[tuple] = []
+            for call in completion.tool_calls:
                 try:
-                    result = tools.execute(db, convo, use.name, dict(use.input), use.id)
+                    result = tools.execute(db, convo, call.name, call.input, call.id)
                     is_error = False
                 except tools.ToolError as exc:
+                    # Handed back to the model rather than raised: an unknown
+                    # VIN or a slot outside opening hours is something it can
+                    # recover from in the next round.
                     result = {"error": str(exc)}
                     is_error = True
-                calls.append({"name": use.name, "input": dict(use.input), "result": result})
-                results_block.append({
-                    "type": "tool_result",
-                    "tool_use_id": use.id,
-                    "content": json.dumps(result, default=str),
-                    "is_error": is_error,
-                })
-            messages.append({"role": "user", "content": results_block})
+                calls.append({"name": call.name, "input": call.input, "result": result})
+                results.append((call, result, is_error))
 
-        # Guards run on every mode, live included.
+            provider.append_tool_round(messages, completion, results)
+        else:
+            log.warning(
+                "conversation %s hit %d tool rounds without settling", convo.id, MAX_TOOL_ROUNDS
+            )
+
+        final_text = (completion.text if completion else "").strip()
+
+        # Guards run in every mode, live included. If a live turn can slip an
+        # unsourced price past them, the guard has a hole.
         assistant_turns = sum(1 for m in messages if m.get("role") == "assistant")
         verdict = guards.run_guards(
             final_text,
@@ -135,7 +139,7 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
                 pass
             return verdict.text, calls
 
-        # First violation: one corrective retry.
+        # First violation: one corrective retry, with the specific complaint.
         log.info("guard retry on conversation %s: %s", convo.id, verdict.violations)
         attempt += 1
         messages.append({"role": "assistant", "content": final_text or "(empty)"})

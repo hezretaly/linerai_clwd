@@ -1,4 +1,4 @@
-.PHONY: help install build set-password dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 UVICORN := backend/.venv/bin/uvicorn
@@ -48,8 +48,14 @@ reset-db: ## Delete the database and reseed
 	rm -f backend/liner.db backend/liner.db-wal backend/liner.db-shm
 	cd backend && ../$(PY) -m app.seed
 
+agent-check: ## Drive the live loop against a fake provider (no API key needed)
+	$(PY) scripts/agent_loop_check.py
+
 smoke: ## Drive the whole booking flow over HTTP. No browser, no credentials.
 	$(PY) scripts/smoke.py
+	@# The live model path cannot be reached over HTTP without a key, so it is
+	@# exercised here against a fake provider instead of going unchecked.
+	$(PY) scripts/agent_loop_check.py
 
 e2e: ## Book through two browser windows and assert the dashboard reacts
 	$(PY) scripts/e2e_booking.py

@@ -96,6 +96,17 @@ export function Chat() {
             ...prev,
             { id: `held-${Date.now()}`, role: 'rep', content: String(data.message) },
           ])
+        } else if (event === 'error') {
+          // The turn failed after the response had already started -- a missing
+          // key, a vendor outage, a rate limit. Without this branch the buyer
+          // watches a typing indicator that never resolves, which is the worst
+          // way to fail: it looks like being ignored rather than like a fault.
+          clearTimeout(timer)
+          setTyping(false)
+          setBubbles((prev) => [
+            ...prev,
+            { id: `error-${Date.now()}`, role: 'rep', content: String(data.message) },
+          ])
         } else if (event === 'vehicles') {
           setVehicles(data.vehicles as VehicleCardData[])
         } else if (event === 'slots') {
