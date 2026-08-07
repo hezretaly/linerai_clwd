@@ -23,6 +23,16 @@ import json
 from app.agent.providers import Completion, Provider, ToolCall
 
 
+class ReasoningItem:
+    """Stands in for the SDK's ResponseReasoningItem: an opaque, non-dict
+    transcript entry with no .get() and no role."""
+
+    type = "reasoning"
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "<ReasoningItem>"
+
+
 class FakeProvider(Provider):
     """Replays ``script`` one entry per completion, then repeats the last."""
 
@@ -41,7 +51,8 @@ class FakeProvider(Provider):
         self.seen_systems.append(system)
         # Copied, because the loop mutates the list after this returns and a
         # shared reference would make every recorded turn look identical.
-        self.seen_messages.append([dict(m) for m in messages])
+        # Not dict(m): the list is not homogeneous -- see ReasoningItem below.
+        self.seen_messages.append(list(messages))
         index = min(self.calls, len(self.script) - 1)
         self.calls += 1
         return self.script[index]
@@ -52,6 +63,12 @@ class FakeProvider(Provider):
         # echoed back before its output: omit one and the next request fails
         # with "No tool call found for function call output with call_id",
         # which is exactly the bug this double exists to catch.
+        # A reasoning model returns its thinking alongside the tool call, and
+        # those items go back verbatim as opaque objects. Reproducing that here
+        # is the point: a fake that only ever appends tidy dicts is easier to
+        # write and lets a `.get()` on a non-dict reach production, which is
+        # exactly what happened.
+        messages.append(ReasoningItem())
         messages.extend(
             {"type": "function_call", "call_id": c.id, "name": c.name,
              "arguments": json.dumps(c.input, default=str)}

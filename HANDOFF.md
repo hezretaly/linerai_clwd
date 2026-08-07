@@ -113,6 +113,12 @@ back as `function_call_output`. Do not "simplify" it to chat completions.
 provider logs a warning naming both settings when that happens rather than
 letting it read as the model having nothing to say.
 
+**The live transcript is not a list of dicts.** Entries the loop builds are
+plain dicts, but a vendor's own turn goes back verbatim — and a reasoning model
+returns `ResponseReasoningItem` objects, which are pydantic models with no
+`.get()`. Those items have to be passed back (they carry the reasoning
+context), so use `_role_of()` in `loop.py` rather than assuming a dict.
+
 ## Bugs already fixed — don't reintroduce
 
 - **Four booking bugs, all the same shape: Liner confirming a time the buyer
@@ -131,6 +137,12 @@ letting it read as the model having nothing to say.
   `hours_json`.
 - **"The first one" resolved to the wrong car.** `conversations.last_results_json`
   records what the buyer was actually shown, in order.
+- **`.get()` on a reasoning item crashed every live turn.** The API returned
+  200, the model answered, and then the loop treated `response.output` as a
+  list of dicts. It read as a broken integration when the integration was
+  working perfectly. The fake provider now emits a non-dict transcript entry,
+  because a double that only produces tidy dicts is easier to write and lets
+  exactly this reach production.
 - **A failed agent turn killed the SSE stream silently.** The response has
   already started by then, so raising cannot become a 503 — FastAPI says
   "response already started" and the buyer watches a typing indicator that

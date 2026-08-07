@@ -46,6 +46,21 @@ log = logging.getLogger("liner.agent")
 MAX_TOOL_ROUNDS = 6
 
 
+def _role_of(item) -> str:
+    """The role of a transcript entry, whatever shape it is.
+
+    The list is not homogeneous. Entries we build are plain dicts, but a
+    vendor's own turn goes back verbatim -- and for a reasoning model that
+    includes ResponseReasoningItem objects, which are pydantic models with no
+    .get(). Assuming dicts here crashed every live turn *after* a successful
+    200 from the API, which made it look like the integration was broken when
+    it was working perfectly.
+    """
+    if isinstance(item, dict):
+        return item.get("role", "") or ""
+    return getattr(item, "role", "") or ""
+
+
 def _history(db: Session, convo: Conversation) -> list[dict]:
     rows = (
         db.query(Message)
@@ -82,7 +97,8 @@ def run_turn(
     # sends an empty conversation, which the vendor rejects with a 400 about a
     # missing `input` -- an error that says nothing about the real mistake.
     text = (text or "").strip()
-    if text and (not messages or messages[-1] != {"role": "user", "content": text}):
+    last = messages[-1] if messages else None
+    if text and last != {"role": "user", "content": text}:
         messages.append({"role": "user", "content": text})
     if not messages:
         raise ValueError(
@@ -127,7 +143,7 @@ def run_turn(
 
         # Guards run in every mode, live included. If a live turn can slip an
         # unsourced price past them, the guard has a hole.
-        assistant_turns = sum(1 for m in messages if m.get("role") == "assistant")
+        assistant_turns = sum(1 for m in messages if _role_of(m) == "assistant")
         verdict = guards.run_guards(
             final_text,
             [c["result"] for c in calls],

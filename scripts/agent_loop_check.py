@@ -28,6 +28,12 @@ from app.agent.providers import Completion, ToolCall, _openai_tools  # noqa: E40
 from app.db import SessionLocal  # noqa: E402
 from app.models import Conversation, Vehicle  # noqa: E402
 
+
+def kind(item) -> str:
+    """A transcript entry's type, whatever shape it is. The list is not
+    homogeneous: a reasoning model's own turn goes back as opaque objects."""
+    return item.get("type", "") if isinstance(item, dict) else getattr(item, "type", "")
+
 failures: list[str] = []
 
 
@@ -81,8 +87,8 @@ def main() -> int:
 
         print("\n== the input list the Responses API would receive ==")
         sent = provider.seen_messages[-1]
-        made = [m for m in sent if m.get("type") == "function_call"]
-        answered = [m for m in sent if m.get("type") == "function_call_output"]
+        made = [m for m in sent if kind(m) == "function_call"]
+        answered = [m for m in sent if kind(m) == "function_call_output"]
         check("the model's own function_call is echoed back", len(made) == 1)
         check("with one output per call_id -- omitting one is a 400",
               len(answered) == len(made), f"{len(answered)} outputs")
@@ -98,7 +104,14 @@ def main() -> int:
               all(len(m) > 0 for m in provider.seen_messages),
               f"{len(provider.seen_messages)} requests")
         check("the buyer's own message is in the first request",
-              any(m.get("role") == "user" for m in provider.seen_messages[0]))
+              any(isinstance(m, dict) and m.get("role") == "user"
+                  for m in provider.seen_messages[0]))
+        # The turn above survived a transcript containing a reasoning item.
+        # Treating every entry as a dict crashed *after* a successful 200 from
+        # the API, which reads as a broken integration rather than a bug here.
+        check("a reasoning item in the transcript does not break the turn",
+              any(kind(m) == "reasoning" for m in sent),
+              f"{sum(1 for m in sent if kind(m) == 'reasoning')} reasoning items survived")
 
         print("\n== a do-not-discuss vehicle never reaches the model ==")
         blocked = db.query(Vehicle).filter_by(rule_discuss=False).first()
