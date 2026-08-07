@@ -119,6 +119,26 @@ returns `ResponseReasoningItem` objects, which are pydantic models with no
 `.get()`. Those items have to be passed back (they carry the reasoning
 context), so use `_role_of()` in `loop.py` rather than assuming a dict.
 
+**The scraper is deferred, by decision.** No adapter for a real dealer site
+will be written here — you are supplying the scraper and its output. The
+contract it should hit is the CSV importer, which is already the working
+inventory path:
+
+* **Required:** `vin` (17 valid characters), `make`, `model`.
+* **Expected:** `year` (or `model_year`), `price` (or `list_price`,
+  `asking_price`), `mileage` (or `odometer`, `miles`), `body_style`, `seats`,
+  `trim`, `features` (`;`-separated), `status`.
+* **Refused:** `acquisition_cost`, `dealer_cost`, `invoice`, `margin`,
+  `profit`, `sale_price`, `salesperson_*`. Dropped before a row exists — see
+  `NEVER_IMPORT` in `ingest/csv_import.py`.
+* Rows not clearly `available` are skipped and counted, not offered.
+* A feature the body style cannot have is dropped and counted; the vehicle is
+  kept.
+
+Post it to `POST /api/ingest/csv` or hand the file to `/app/inventory/import`.
+Both go through review-then-publish, so nothing reaches the live table without
+a person looking at the diff.
+
 ## Bugs already fixed — don't reintroduce
 
 - **Four booking bugs, all the same shape: Liner confirming a time the buyer

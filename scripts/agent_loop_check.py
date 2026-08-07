@@ -92,11 +92,15 @@ def main() -> int:
         # broke the moment a bigger lot was seeded. The property that matters is
         # that every hit actually claims what was asked for, and that the cap
         # held -- true whatever is on the lot.
+        # Not a keyword match: `keywords` is an internal column and is
+        # deliberately absent from the payload, so asserting on it passed only
+        # by accident. Seats is the honest test of "has a third row", and it is
+        # a fact about the car rather than about how it was indexed.
         check("ranked on the need, not just the price cap",
-              all("third row" in f"{v.get('keywords', '')} "
-                                f"{' '.join(v.get('features', []))}".lower()
+              all((v.get("seats") or 0) >= 7
+                  or "third row" in " ".join(v.get("features", [])).lower()
                   for v in found),
-              ", ".join(v.get("model", "?") for v in found))
+              ", ".join(f"{v.get('model', '?')}/{v.get('seats')}" for v in found))
         check("the price cap held",
               all((v.get("price") or 0) <= 25000 for v in found))
 
