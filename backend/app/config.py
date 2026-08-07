@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     email_allowlist: str = ""
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     dealership_config: Path = BACKEND_DIR / "config" / "dealership.yaml"
+    # A sample lot, loaded on top of the curated fixtures by `make seed`. One
+    # copy, read from where it lives, rather than duplicated into the backend.
+    inventory_csv: Path = REPO_DIR / "dash" / "cars.csv"
 
     @property
     def origins(self) -> list[str]:

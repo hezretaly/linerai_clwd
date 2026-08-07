@@ -20,7 +20,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make install` | Backend venv + npm install |
 | `make dev` | Both servers in the background, logs to `.logs/` |
 | `make backend` / `make frontend` | One at a time, in the foreground |
-| `make seed` | Rebuild the Riverside Auto fixture |
+| `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
 | `make reset-db` | Delete the database and reseed |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
@@ -122,6 +122,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   one question a human had to answer got "someone is picking this up" to
   everything afterwards — and with nobody watching the queue at 9pm, that was
   the end of the conversation. The buyer ends it, via `close_conversation`.
+- **Cost columns never enter the database.** `NEVER_IMPORT` in
+  `ingest/csv_import.py` drops `acquisition_cost`, margin and salesperson
+  fields before a row is built. A DMS export carries what the dealership paid;
+  once it is a column it reaches `search_inventory`, and from there the model.
+  A prompt telling the model to ignore a field it can see is a request.
 - **Policy answers come from `knowledge_entries`, never from the model.**
   Trade-ins, the doc fee, deposits — the dealer wrote those, and a composed
   answer is one a buyer repeats back to a rep. `answer_from_knowledge` returns

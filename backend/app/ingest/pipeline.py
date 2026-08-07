@@ -208,8 +208,12 @@ def publish(db: Session, run: IngestRun) -> dict:
             photo_url=payload.get("photo_url") or f"/api/photos/{payload['vin']}.svg",
             listing_url=payload.get("listing_url") or "",
             status="available", source="scrape", ingest_run_id=run.id,
+            features_json=json.dumps(payload.get("features") or []),
+            # Features join the keyword haystack: a buyer types "heated seats",
+            # not a body style.
             keywords=" ".join(
-                str(payload.get(k) or "") for k in ("make", "model", "trim", "body_style")
+                [str(payload.get(k) or "") for k in ("make", "model", "trim", "body_style")]
+                + list(payload.get("features") or [])
             ).lower(),
         )
         db.add(vehicle)

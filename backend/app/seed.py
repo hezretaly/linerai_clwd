@@ -277,6 +277,31 @@ def _seed_vehicles(db: Session) -> list[Vehicle]:
     return vehicles
 
 
+def _seed_csv_inventory(db: Session) -> None:
+    """Load the sample lot on top of the curated fixtures, if it is present.
+
+    Deliberately additive. The fourteen hand-written vehicles carry the keywords
+    the rails and the smoke test depend on ("third row", the do-not-discuss
+    BMW), so replacing them would break the scripted flow. These add volume and
+    variety on top -- what a real lot looks like when you search it.
+
+    It goes through import_csv + publish rather than a second insert path, so
+    the sample data proves the importer works and appears in the import history
+    like any other run.
+    """
+    if not settings.inventory_csv.is_file():
+        return
+    from app.ingest.csv_import import import_csv
+    from app.ingest.pipeline import publish
+
+    run = import_csv(db, settings.inventory_csv.read_text(encoding="utf-8-sig"))
+    if run.status != "ready":
+        print(f"  inventory CSV not loaded: {run.status}")
+        return
+    applied = publish(db, run)
+    print(f"  loaded {applied['created']} vehicles from {settings.inventory_csv.name}")
+
+
 def _seed_settings(db: Session, manager: User) -> None:
     live = AssistantSettings(
         version=7, status="live", tone="warm", push_level="balanced",
@@ -521,6 +546,7 @@ def seed(db: Session | None = None) -> None:
         _seed_dealership(db)
         users = _seed_users(db)
         vehicles = _seed_vehicles(db)
+        _seed_csv_inventory(db)
         _seed_settings(db, users[0])
         _seed_rules_and_knowledge(db)
         _seed_rails(db)
