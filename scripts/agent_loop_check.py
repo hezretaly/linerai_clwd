@@ -286,6 +286,21 @@ def main() -> int:
         check("an unsourced price did not reach the buyer",
               "$18,400" not in reply, reply[:70])
 
+        # ...and the other half of that guard: the buyer's own budget, quoted
+        # back. This shipped broken -- every "what do you have under $20,000"
+        # tripped the guard twice and the buyer got the escalation line instead
+        # of an answer, on every single turn. The number is in the buyer's
+        # message and in the search that ran; it is not an invented price.
+        convo = fresh_conversation(db)
+        reply, calls = loop.run_turn(db, convo, "What do you have under $20,000?", provider=FakeProvider([
+            call_tool("search_inventory", max_price=20000),
+            say("A 2021 Toyota Corolla is the closest under $20,000 -- want the details?"),
+        ]))
+        check("the buyer's own budget, quoted back, is not an invented price",
+              "under $20,000" in reply, reply[:70])
+        check("and the search that grounded it really ran",
+              any(c["name"] == "search_inventory" for c in calls))
+
         return report()
     finally:
         db.close()

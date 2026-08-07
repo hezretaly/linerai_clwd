@@ -83,6 +83,12 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `inferred`. A prompt is a request; an executor is a guarantee.
 - **Guards run in every `LLM_MODE`.** If a stubbed turn can slip an unsourced
   price past them, the guard has a hole — that should fail offline, not live.
+  **Sourced means three things**, and dropping any one of them makes the guard
+  reject honest answers: a tool *result*, a tool *input* (`max_price=20000` —
+  describing the search it ran is not inventing a price), and a number the
+  *buyer* typed, but only where the reply restates it as a bound. A false
+  positive here is not cosmetic: the buyer sees the escalation line instead of
+  an answer, on every turn, and it reads as a dead bot.
 - **One turn loop, many vendors.** `agent/loop.py` never names a vendor; every
   wire-format difference lives in `agent/providers.py`. A second copy of the
   loop is how one vendor quietly stops running the guards.

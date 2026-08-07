@@ -106,6 +106,15 @@ def run_turn(
             "to send."
         )
 
+    # Everything the buyer has actually typed, captured before the retry loop
+    # can append anything. The corrective note below quotes the offending
+    # numbers back ("unsourced price $20,000"); folding that into the grounding
+    # set would let a second draft launder exactly the claim the first was
+    # rejected for.
+    buyer_text = " ".join(
+        m["content"] for m in messages if isinstance(m, dict) and m.get("role") == "user"
+    )
+
     calls: list[dict] = []
     attempt = 1
 
@@ -151,6 +160,8 @@ def run_turn(
             attempt=attempt,
             assistant_turns=assistant_turns,
             booked=convo.stage == "booked",
+            tool_inputs=[c["input"] for c in calls if isinstance(c["input"], dict)],
+            buyer_text=buyer_text,
         )
 
         if verdict.ok:

@@ -25,10 +25,32 @@ AVAILABILITY_RE = re.compile(
     re.IGNORECASE,
 )
 
-SAFE_FALLBACK = (
-    "I want to get that exactly right rather than guess -- let me bring in one of our "
-    "people to confirm the details for you."
+# A buyer restating their own constraint is not a claim about a car: "under
+# $20,000" is the question, not an offer. Numbers in these positions are checked
+# against what the buyer said and what was searched for, not only against what
+# came back.
+BOUND_RE = re.compile(
+    r"(?:under|below|beneath|less than|lower than|up to|at most|no more than|within|"
+    r"around|about|roughly|near|over|above|more than|at least|between|budget|"
+    r"max(?:imum)?|min(?:imum)?|cap|range of|from)\W{0,4}$",
+    re.IGNORECASE,
 )
+
+# What Liner says when it has to stop and get a person. Rotated by turn so two
+# in a row never read as the same canned line -- the tell that made a guard
+# misfire look like a broken bot. Each one asks for a contact, because an
+# escalation nobody can follow up on is just a dead end.
+SAFE_FALLBACKS = (
+    "Let me have someone here check that one for you. What's the best number or "
+    "email to reach you at?",
+    "I'd like a person on our team to confirm that before I answer. Can I get "
+    "your name and the best way to reach you?",
+    "Let me pull someone in on that one. What's a good number or email for you?",
+)
+
+
+def safe_fallback(seed: int = 0) -> str:
+    return SAFE_FALLBACKS[seed % len(SAFE_FALLBACKS)]
 
 VOICE_MAX_WORDS = 45
 
@@ -70,22 +92,52 @@ def sourced_numbers(tool_results: list[dict]) -> set[str]:
     return grounded
 
 
-def check_unsourced_facts(text: str, tool_results: list[dict]) -> list[str]:
+def check_unsourced_facts(
+    text: str,
+    tool_results: list[dict],
+    *,
+    tool_inputs: list[dict] | None = None,
+    buyer_text: str = "",
+) -> list[str]:
+    """Which numbers in ``text`` came from nowhere.
+
+    Three sources count as grounding, and leaving any of them out is what made
+    this guard reject every budget question:
+
+    * **Tool results** -- the price and mileage of a real car. Always grounding.
+    * **Tool inputs** -- ``search_inventory(max_price=20000)``. Describing the
+      search it just ran is not the same as inventing a price.
+    * **What the buyer said**, but only where the text is restating it as a
+      bound ("under $20,000"). The buyer typed that number and can see it on
+      screen. Confirming a price the buyer *guessed* at a specific car still
+      has to come from inventory, which is why the bound test is there.
+    """
     grounded = sourced_numbers(tool_results)
+    grounded |= sourced_numbers(list(tool_inputs or []))
+    asked = sourced_numbers([buyer_text]) if buyer_text else set()
     violations: list[str] = []
 
-    for raw in MONEY_RE.findall(text):
-        value = raw.replace(",", "").split(".")[0]
-        if value not in grounded:
-            violations.append(f"unsourced price ${raw}")
+    def bounded(at: int) -> bool:
+        return bool(BOUND_RE.search(text[:at]))
 
-    for raw in MILEAGE_RE.findall(text):
+    for match in MONEY_RE.finditer(text):
+        raw = match.group(1)
+        value = raw.replace(",", "").split(".")[0]
+        if value in grounded or (value in asked and bounded(match.start())):
+            continue
+        violations.append(f"unsourced price ${raw}")
+
+    for match in MILEAGE_RE.finditer(text):
+        raw = match.group(1)
         value = raw.replace(",", "")
-        if value not in grounded:
-            violations.append(f"unsourced mileage {raw}")
+        if value in grounded or (value in asked and bounded(match.start())):
+            continue
+        violations.append(f"unsourced mileage {raw}")
 
     for raw in YEAR_RE.findall(text):
-        if raw not in grounded:
+        # A model year the buyer named is theirs, wherever it appears -- "no,
+        # nothing from 2019 right now" is an honest answer, not a claim.
+        if raw not in grounded and raw not in asked:
             violations.append(f"unsourced model year {raw}")
 
     if AVAILABILITY_RE.search(text) and not tool_results:
@@ -117,8 +169,12 @@ def run_guards(
     attempt: int = 1,
     assistant_turns: int = 0,
     booked: bool = False,
+    tool_inputs: list[dict] | None = None,
+    buyer_text: str = "",
 ) -> GuardResult:
-    violations = check_unsourced_facts(text, tool_results)
+    violations = check_unsourced_facts(
+        text, tool_results, tool_inputs=tool_inputs, buyer_text=buyer_text
+    )
 
     if not check_turn_length(text, channel):
         violations.append("too long for voice")
@@ -129,7 +185,10 @@ def run_guards(
             return GuardResult(ok=False, text=text, violations=violations)
         # Second violation: stop trying and get a person.
         return GuardResult(
-            ok=False, text=SAFE_FALLBACK, violations=violations, should_escalate=True
+            ok=False,
+            text=safe_fallback(assistant_turns),
+            violations=violations,
+            should_escalate=True,
         )
 
     return GuardResult(
