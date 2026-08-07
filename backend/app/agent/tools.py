@@ -687,6 +687,23 @@ def escalate_to_human(
         if existing is not None:
             return {"escalation_id": existing.id, "already_escalated": True}
 
+    # One open handoff per conversation. The tool_call_id check above only
+    # makes a *retried* call idempotent; a second turn escalating for a second
+    # reason used to add a second unclaimed row. That is not a second job for a
+    # rep, it is the same conversation sitting in the queue twice -- and when a
+    # guard misfired every turn it stacked up a row per message.
+    open_row = (
+        db.query(Escalation)
+        .filter(Escalation.conversation_id == convo.id, Escalation.claimed_at.is_(None))
+        .order_by(Escalation.created_at.asc())
+        .first()
+    )
+    if open_row is not None:
+        convo.status = "handoff"
+        convo.stage = "escalated"
+        db.commit()
+        return {"escalation_id": open_row.id, "already_escalated": True}
+
     rule_key = args.get("rule_key") or ""
     rule = db.query(HandoffRule).filter_by(key=rule_key).one_or_none()
     if rule is not None and not rule.enabled:

@@ -26,7 +26,8 @@ from app.agent import loop  # noqa: E402
 from app.agent.fake_provider import FakeProvider, call_tool, say  # noqa: E402
 from app.agent.providers import Completion, ToolCall, _openai_tools  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
-from app.models import Conversation, Vehicle  # noqa: E402
+from app.models import Conversation, Escalation, Vehicle  # noqa: E402
+from app.schemas.serialize import conversation_out  # noqa: E402
 
 
 def kind(item) -> str:
@@ -258,6 +259,25 @@ def main() -> int:
         check("and it is told to ask for a way to reach them",
               "ask for a name and an email" in esc.get("guidance", ""),
               f"reachable={esc.get('buyer_reachable')}")
+
+        # Escalating again on the same conversation must not open a second
+        # unclaimed row. It used to, and conversation_out read that back with
+        # one_or_none() -- so a conversation escalated twice returned 500 for
+        # the whole conversations list, taking the dealer's main page down.
+        loop.run_turn(db, convo, "seriously, what's the total?", provider=FakeProvider([
+            call_tool("escalate_to_human", rule_key="out_the_door_price",
+                      reason="asked a second time"),
+            say("Still waiting on a colleague -- what's the best email for you?"),
+        ]))
+        open_rows = (
+            db.query(Escalation)
+            .filter(Escalation.conversation_id == convo.id, Escalation.claimed_at.is_(None))
+            .count()
+        )
+        check("escalating twice leaves one open handoff, not two",
+              open_rows == 1, f"open={open_rows}")
+        check("and the conversations list can still be serialised",
+              conversation_out(convo, db).get("open_escalation") is not None)
 
         print("\n== the buyer ends it, and can have a summary ==")
         convo = fresh_conversation(db)

@@ -186,10 +186,15 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
         lead = db.query(Lead).filter_by(id=c.lead_id).one_or_none() if c.lead_id else None
         out["lead"] = lead_out(lead, db) if lead else None
         out["message_count"] = db.query(Message).filter_by(conversation_id=c.id).count()
+        # Nothing stops a conversation having two unclaimed escalations, and
+        # one_or_none() here turned that into a 500 on the whole conversations
+        # list -- one poisoned row and the dealer's main page is gone. Show the
+        # first one raised; the rest are the same handoff asked for twice.
         escalation = (
             db.query(Escalation)
-            .filter_by(conversation_id=c.id, claimed_at=None)
-            .one_or_none()
+            .filter(Escalation.conversation_id == c.id, Escalation.claimed_at.is_(None))
+            .order_by(Escalation.created_at.asc())
+            .first()
         )
         out["open_escalation"] = escalation_out(escalation, db) if escalation else None
     if detail and db is not None:
