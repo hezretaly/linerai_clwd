@@ -122,6 +122,18 @@ KNOWLEDGE = [
      "tax and handle the title paperwork; plates go through your own DMV."),
     ("Hours and location", "We're at 4820 Riverside Parkway, Cedar Falls. Open Monday "
      "through Saturday, 8 AM to 8 PM. Closed Sunday."),
+    ("Test drives", "Test drives are walk-in or booked, and you'll need a valid licence "
+     "and proof of insurance. Allow about 30 minutes."),
+    ("Vehicle history", "Every vehicle comes with a free CarFax report, and we'll print "
+     "it for you before you sign anything."),
+    ("Inspection", "Every vehicle passes a 120-point inspection before it goes on the "
+     "lot. You're also welcome to have your own mechanic look at it."),
+    ("Returns", "There's a 3-day/300-mile exchange on every vehicle -- swap it for "
+     "something else on the lot, no restocking fee."),
+    ("Delivery", "We deliver within 100 miles of Cedar Falls for $199, or free on "
+     "vehicles over $20,000. Beyond that we can arrange transport at cost."),
+    ("Payment methods", "Cash, cashier's cheque, or financing through one of our "
+     "lenders. We don't take personal cheques or more than $5,000 in cash."),
 ]
 
 HANDOFF_RULES = [

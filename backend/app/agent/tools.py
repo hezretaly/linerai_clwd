@@ -142,6 +142,26 @@ TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "answer_from_knowledge",
+        "description": (
+            "Look up the dealership's own answer to a policy question -- trade-ins, doc "
+            "fee, deposits, financing, warranty, out-of-state buyers, hours. Use this "
+            "for anything about how the dealership operates. You have no policy "
+            "knowledge without it, and a wrong answer here is one a buyer repeats back "
+            "to a rep."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The buyer's question, in their own words.",
+                },
+            },
+            "required": ["question"],
+        },
+    },
+    {
         "name": "escalate_to_human",
         "description": (
             "Stop and hand the conversation to a person. Use for out-the-door price "
@@ -516,20 +536,94 @@ def escalate_to_human(
     return {"escalation_id": escalation.id, "escalated": True, "rule_key": rule_key}
 
 
+def answer_from_knowledge(db: Session, convo: Conversation, args: dict) -> dict:
+    """The dealership's own words on a policy question.
+
+    These questions -- trade-ins, the doc fee, deposits -- need no inventory
+    lookup and have exactly one right answer, which the dealer wrote. Without
+    this the model either invents one (the guards then stop the reply and
+    escalate, which is what "do you take trade-ins" was doing) or hands a
+    trivial question to a human.
+
+    Returning "no entry" is a real answer: it tells the model to escalate
+    rather than fill the gap itself.
+    """
+    question = (args.get("question") or "").strip()
+    if not question:
+        raise ToolError("answer_from_knowledge needs the buyer's question.")
+
+    entry = lookup_knowledge(db, question)
+    if entry is None:
+        return {
+            "found": False,
+            "topics": [e.topic for e in db.query(KnowledgeEntry).all()],
+            "guidance": (
+                "The dealership has no written answer to this. Do not compose one -- "
+                "say a colleague will confirm, and escalate if it matters to the sale."
+            ),
+        }
+
+    entry.use_count += 1
+    db.commit()
+    return {"found": True, "topic": entry.topic, "answer": entry.answer}
+
+
+def _terms(text: str) -> set[str]:
+    """Content words, with a trailing plural 's' stripped.
+
+    Crude on purpose -- it only has to make "deposit" match the "Deposits"
+    entry. A real stemmer is a dependency and a behaviour change for the sake
+    of a seven-row table.
+    """
+    out = set()
+    for word in re.findall(r"[a-z]+", text.lower()):
+        if word in STOPWORDS or len(word) < 2:
+            continue
+        out.add(word[:-1] if len(word) > 3 and word.endswith("s") else word)
+    return out
+
+
+# Words that carry no topic signal. Filtering on length instead drops "doc",
+# "fee", "tax" and "apr" -- the exact words a buyer uses for these questions --
+# while keeping "your", which then matches almost every entry.
+STOPWORDS = {
+    "a", "about", "an", "and", "any", "anything", "are", "at", "back", "be", "buy",
+    "can", "car", "could", "did", "do", "does", "for", "from", "get", "guys", "has",
+    "have", "how", "i", "if", "in", "is", "it", "its", "just", "me", "much", "my",
+    "of", "on", "or", "our", "so", "some", "take", "tell", "than", "that", "the",
+    "their", "them", "then", "there", "they", "this", "to", "us", "want", "was",
+    "we", "what", "whats", "when", "where", "which", "will", "with", "would",
+    "you", "your", "yours",
+}
+
+
 def lookup_knowledge(db: Session, question: str) -> KnowledgeEntry | None:
-    """Not a model-facing tool: knowledge is injected into the prompt. Used by
-    the stub agent to answer knowledge rails from the real table."""
-    words = {w for w in re.findall(r"[a-z]+", question.lower()) if len(w) > 3}
-    best, best_score = None, 0
+    """Shared by the stub agent's knowledge rails and the tool above.
+
+    A match on the *topic* is worth far more than a match anywhere in the
+    answer: every answer mentions the dealership, so answer-body overlap alone
+    picks a plausible-looking wrong entry. Asking about the doc fee and being
+    told the deposit policy is worse than not answering, because the buyer
+    repeats it to a rep.
+    """
+    words = _terms(question)
+    if not words:
+        return None
+
+    best, best_score = None, 0.0
     for entry in db.query(KnowledgeEntry).all():
-        haystack = set(re.findall(r"[a-z]+", f"{entry.topic} {entry.answer}".lower()))
-        score = len(words & haystack)
+        topic_words = _terms(entry.topic)
+        answer_words = _terms(entry.answer)
+        score = 3.0 * len(words & topic_words) + len(words & answer_words)
         if score > best_score:
             best, best_score = entry, score
-    return best if best_score >= 1 else None
+    # One incidental word in common is noise. Either the topic matched, or
+    # several distinct words did.
+    return best if best_score >= 3.0 else None
 
 
 EXECUTORS = {
+    "answer_from_knowledge": answer_from_knowledge,
     "search_inventory": search_inventory,
     "get_vehicle": get_vehicle,
     "check_availability": check_availability,

@@ -25,6 +25,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
 | `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
+| `make agent-ping` | **Debugging live mode.** One real call, the vendor's error printed in full |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
@@ -116,6 +117,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   below its content. Rep-facing pages (overview, conversations, leads,
   calendar) get designed mobile layouts -- conversations is master/detail and
   calendar is an agenda. Admin pages just have to not overflow.
+- **Policy answers come from `knowledge_entries`, never from the model.**
+  Trade-ins, the doc fee, deposits — the dealer wrote those, and a composed
+  answer is one a buyer repeats back to a rep. `answer_from_knowledge` returns
+  `found: false` rather than a near-miss, because a plausible wrong answer is
+  worse than none.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 

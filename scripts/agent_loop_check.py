@@ -135,6 +135,37 @@ def main() -> int:
               str(calls[0]["result"])[:70] if calls else "")
         check("and the turn still produced a reply", bool(reply))
 
+        print("\n== a policy question is answered from the dealership's own words ==")
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "do you take trade-ins?", provider=FakeProvider([
+            call_tool("answer_from_knowledge", question="do you take trade-ins?"),
+            say("Yes -- bring the title and we'll appraise it while you wait."),
+        ]))
+        knowledge = [c for c in calls if c["name"] == "answer_from_knowledge"]
+        check("the knowledge tool is reachable by the model", bool(knowledge))
+        check("and it found the dealer's answer",
+              bool(knowledge and knowledge[0]["result"].get("found")),
+              knowledge[0]["result"].get("topic", "") if knowledge else "")
+
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "doc fee?", provider=FakeProvider([
+            call_tool("answer_from_knowledge", question="what is your doc fee?"),
+            say("Our documentation fee is $189, the same on every vehicle."),
+        ]))
+        # The near-miss that made this worth fixing: "doc" and "fee" were being
+        # dropped as short words, so this returned the deposit policy.
+        check("a doc fee question does not return the deposit policy",
+              calls[0]["result"].get("topic") == "Doc fee",
+              calls[0]["result"].get("topic", "(none)"))
+
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "?", provider=FakeProvider([
+            call_tool("answer_from_knowledge", question="do you deliver to Alaska by hovercraft?"),
+            say("Let me get a colleague to confirm that one."),
+        ]))
+        check("an unknown policy returns nothing rather than a plausible guess",
+              calls[0]["result"].get("found") is False)
+
         print("\n== guards run on the live path too ==")
         convo = fresh_conversation(db)
         # A price with no search_inventory result behind it is exactly what the

@@ -18,7 +18,9 @@ dependencies = [
     "selectolax>=0.3.21",
     # Both live providers. Neither is imported at startup -- a missing package
     # must surface as a typed 503 naming the setting, not an ImportError.
-    "openai>=1.40",
+    # 1.68 is the floor that has client.responses -- an older release resolves
+    # fine and then AttributeErrors on the first live turn.
+    "openai>=1.68",
     "anthropic>=0.40",
     # ADF uploads are untrusted XML. stdlib ElementTree is still open to
     # entity-expansion DoS ("billion laughs"); defusedxml closes it.

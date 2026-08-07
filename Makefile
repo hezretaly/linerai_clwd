@@ -1,4 +1,4 @@
-.PHONY: help install build set-password agent-check dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 UVICORN := backend/.venv/bin/uvicorn
@@ -47,6 +47,9 @@ seed: ## Wipe and rebuild the Riverside Auto fixture
 reset-db: ## Delete the database and reseed
 	rm -f backend/liner.db backend/liner.db-wal backend/liner.db-shm
 	cd backend && ../$(PY) -m app.seed
+
+agent-ping: ## One real turn against the configured model, errors printed in full
+	$(PY) scripts/agent_ping.py
 
 agent-check: ## Drive the live loop against a fake provider (no API key needed)
 	$(PY) scripts/agent_loop_check.py

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -32,6 +33,13 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 # than appear. 400-900 ms of typing indicator happens on the client.
 STREAM_CHUNK_WORDS = 3
 STREAM_DELAY_S = 0.045
+
+# A knowledge answer comes back in milliseconds because it is a table lookup.
+# Arriving instantly reads as canned -- the buyer sees the reply before they
+# have finished reading their own message. This holds the typing indicator for
+# a beat first. It is a floor, not a sleep: a turn that took longer than this
+# (a live model call, a tool round) waits no extra time at all.
+MIN_THINKING_S = 0.7
 
 
 def _conversation(db: Session, conversation_id: str) -> Conversation:
@@ -113,6 +121,7 @@ async def send_message(
             return
 
         # The agent turn is synchronous DB work; keep the event loop free.
+        started = time.monotonic()
         session = SessionLocal()
         try:
             convo_local = session.query(Conversation).filter_by(id=convo_id).one()
@@ -147,6 +156,10 @@ async def send_message(
                 return
 
             payload = message_out(message)
+            elapsed = time.monotonic() - started
+            if elapsed < MIN_THINKING_S:
+                await asyncio.sleep(MIN_THINKING_S - elapsed)
+
             words = message.content.split(" ")
             for i in range(0, len(words), STREAM_CHUNK_WORDS):
                 yield _sse("token", {"text": " ".join(words[i:i + STREAM_CHUNK_WORDS]) + " "})
