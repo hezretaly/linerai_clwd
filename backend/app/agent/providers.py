@@ -110,7 +110,16 @@ class OpenAIProvider(Provider):
                 "LLM_MODE=live with LLM_PROVIDER=openai requires an OpenAI API key. "
                 "Leave LLM_MODE=stub to run the scripted agent instead.",
             )
-        from openai import OpenAI
+        try:
+            from openai import OpenAI
+        except ImportError:  # a git pull without `make install`
+            raise NotConfigured(
+                "llm", ["openai package"],
+                "The openai package is not installed in this environment. "
+                "Run `make install` (as the user the service runs as), then "
+                "restart. A bare ImportError here would surface to the buyer as "
+                "a generic failure with no clue what to do.",
+            ) from None
 
         kwargs: dict = {"api_key": settings.openai_api_key}
         if settings.openai_base_url:
@@ -189,7 +198,13 @@ class AnthropicProvider(Provider):
                 "LLM_MODE=live with LLM_PROVIDER=anthropic requires an Anthropic API key. "
                 "Leave LLM_MODE=stub to run the scripted agent instead.",
             )
-        from anthropic import Anthropic
+        try:
+            from anthropic import Anthropic
+        except ImportError:
+            raise NotConfigured(
+                "llm", ["anthropic package"],
+                "The anthropic package is not installed. Run `make install`.",
+            ) from None
 
         self.client = Anthropic(api_key=settings.anthropic_api_key)
         self.model = settings.anthropic_model
