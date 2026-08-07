@@ -31,7 +31,10 @@ export function Chat() {
   const [slots, setSlots] = useState<string[]>([])
   const [draft, setDraft] = useState('')
   const [typing, setTyping] = useState(false)
-  const [stubbed, setStubbed] = useState(false)
+  // What the server says is missing, rather than a vendor name written here.
+  // This used to hardcode ANTHROPIC_API_KEY and went stale the day the default
+  // provider changed, telling a tester to set a key the system no longer uses.
+  const [stubbed, setStubbed] = useState<string[] | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -46,7 +49,8 @@ export function Chat() {
       setBubbles([{ id: 'greeting', role: 'assistant', content: session.greeting }])
 
       const health = await api.get<IntegrationsPayload>('/api/integrations')
-      setStubbed(health.llm_mode !== 'live')
+      const llm = health.integrations.find((i) => i.key === 'llm')
+      setStubbed(llm && !llm.configured ? llm.missing : null)
     })()
   }, [])
 
@@ -137,9 +141,15 @@ export function Chat() {
 
       {stubbed && (
         <p className="border-b border-warning/30 bg-warning-muted px-5 py-2 text-xs text-warning-foreground">
-          Scripted assistant -- <code className="font-mono">ANTHROPIC_API_KEY</code> is not set.
-          It calls the real tools and books real appointments, but the wording is canned and it
-          can't improvise.
+          Scripted assistant --{' '}
+          {stubbed.map((key, i) => (
+            <span key={key}>
+              {i > 0 && ', '}
+              <code className="font-mono">{key}</code>
+            </span>
+          ))}{' '}
+          {stubbed.length === 1 ? 'is' : 'are'} not set. It calls the real tools and books real
+          appointments, but the wording is canned and it can't improvise.
         </p>
       )}
 
@@ -153,7 +163,7 @@ export function Chat() {
               className={clsx(
                 'max-w-[80%] rounded-2xl px-4 py-2.5 text-[15px] leading-snug whitespace-pre-wrap animate-fade-up',
                 bubble.role === 'buyer'
-                  ? 'bg-primary text-primary-foreground'
+                  ? 'bg-bubble-buyer text-bubble-buyer-foreground'
                   : bubble.role === 'rep'
                     ? 'border border-primary/30 bg-accent text-accent-foreground'
                     : 'bg-muted text-foreground',

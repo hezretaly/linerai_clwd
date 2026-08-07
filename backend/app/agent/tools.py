@@ -38,6 +38,58 @@ from app.models import (
 )
 
 MAX_RESULTS = 5
+
+# A buyer asks for "something German"; the inventory row records a make. This is
+# the mapping between the two, and it is curated rather than inferred -- there
+# is no country column on a vehicle and guessing one from a VIN's world
+# manufacturer identifier gets assembly plants, not marques. A make missing from
+# this table simply has no origin, which is a smaller error than a wrong one.
+ORIGIN_BY_MAKE = {
+    "audi": "german", "bmw": "german", "mercedes": "german",
+    "mercedes-benz": "german", "porsche": "german", "volkswagen": "german",
+    "vw": "german", "mini": "german",
+    "acura": "japanese", "honda": "japanese", "infiniti": "japanese",
+    "lexus": "japanese", "mazda": "japanese", "mitsubishi": "japanese",
+    "nissan": "japanese", "subaru": "japanese", "toyota": "japanese",
+    "genesis": "korean", "hyundai": "korean", "kia": "korean",
+    "buick": "american", "cadillac": "american", "chevrolet": "american",
+    "chrysler": "american", "dodge": "american", "ford": "american",
+    "gmc": "american", "jeep": "american", "lincoln": "american",
+    "ram": "american", "tesla": "american",
+    "jaguar": "british", "land rover": "british", "mg": "british",
+    "alfa romeo": "italian", "fiat": "italian", "maserati": "italian",
+    "volvo": "swedish",
+}
+
+# The words a buyer actually uses, mapped onto the values above.
+ORIGIN_ALIASES = {
+    "germany": "german", "german": "german", "euro": "european",
+    "european": "european", "europe": "european",
+    "japan": "japanese", "japanese": "japanese", "jdm": "japanese",
+    "korea": "korean", "korean": "korean",
+    "america": "american", "american": "american", "usa": "american",
+    "us": "american", "domestic": "american",
+    "britain": "british", "british": "british", "uk": "british",
+    "italy": "italian", "italian": "italian",
+    "sweden": "swedish", "swedish": "swedish",
+}
+
+# "European" is a family, not a single origin -- a buyer asking for one means
+# any of these.
+EUROPEAN = {"german", "british", "italian", "swedish"}
+
+
+def origin_of(make: str) -> str:
+    return ORIGIN_BY_MAKE.get((make or "").strip().lower(), "")
+
+
+def _origin_matches(make: str, wanted: str) -> bool:
+    origin = origin_of(make)
+    if not origin:
+        return False
+    if wanted == "european":
+        return origin in EUROPEAN
+    return origin == wanted
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -63,8 +115,19 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "max_price": {"type": "integer"},
                 "min_price": {"type": "integer"},
                 "min_year": {"type": "integer"},
+                "max_mileage": {
+                    "type": "integer",
+                    "description": "Miles on the clock, e.g. 100000 for 'under 100k miles'",
+                },
+                "min_mileage": {"type": "integer"},
                 "body_style": {"type": "string"},
                 "min_seats": {"type": "integer"},
+                "origin": {
+                    "type": "string",
+                    "description": "Where the marque is from, for 'something German'.",
+                    "enum": ["german", "japanese", "korean", "american", "british",
+                             "italian", "swedish", "european"],
+                },
             },
         },
     },
@@ -202,6 +265,7 @@ def _vehicle_payload(v: Vehicle) -> dict:
         "mileage": v.mileage,
         "body_style": v.body_style,
         "seats": v.seats,
+        "origin": origin_of(v.make),
         "features": json.loads(v.features_json or "[]"),
         "photo_url": v.photo_url,
         "status": v.status,
@@ -241,8 +305,17 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
         query = query.filter(Vehicle.body_style.ilike(f"%{args['body_style']}%"))
     if args.get("min_seats"):
         query = query.filter(Vehicle.seats >= int(args["min_seats"]))
+    if args.get("max_mileage"):
+        query = query.filter(Vehicle.mileage <= int(args["max_mileage"]))
+    if args.get("min_mileage"):
+        query = query.filter(Vehicle.mileage >= int(args["min_mileage"]))
 
     rows = query.order_by(Vehicle.price.asc()).all()
+
+    # Origin is not a column, so it filters in Python after the SQL narrows.
+    wanted_origin = ORIGIN_ALIASES.get((args.get("origin") or "").strip().lower(), "")
+    if wanted_origin:
+        rows = [v for v in rows if _origin_matches(v.make, wanted_origin)]
 
     keywords = (args.get("keywords") or "").lower().split()
     if keywords:
@@ -256,6 +329,21 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
 
     rows = rows[:MAX_RESULTS]
     _record_mentions(db, convo.id, rows)
+    if not rows:
+        # Liner was escalating "do you have anything German?" to a human rather
+        # than saying no. Nothing is a complete, correct answer, and it is the
+        # one a buyer can act on; the guidance says so because the model's
+        # instinct is to treat an empty hand as uncertainty.
+        return {
+            "count": 0,
+            "vehicles": [],
+            "guidance": (
+                "Nothing on the lot matches. Say so plainly, in your own words -- this "
+                "is a certain answer, not a gap in your knowledge, so do not hand it to "
+                "a person. Then offer the nearest thing: drop one filter and search "
+                "again, or ask what matters most to them."
+            ),
+        }
     return {"count": len(rows), "vehicles": [_vehicle_payload(v) for v in rows]}
 
 

@@ -115,10 +115,15 @@ def main() -> int:
 
         print("\n== a do-not-discuss vehicle never reaches the model ==")
         blocked = db.query(Vehicle).filter_by(rule_discuss=False).first()
+        restore = False
         if blocked is None:
+            # Borrowed, not taken. This used to flip a real vehicle and leave it
+            # flipped, so every `make smoke` quietly removed one more car from
+            # the lot -- on a live install too.
             blocked = db.query(Vehicle).first()
             blocked.rule_discuss = False
             db.commit()
+            restore = True
         convo = fresh_conversation(db)
         _, calls = loop.run_turn(db, convo, "anything", provider=FakeProvider([
             call_tool("search_inventory", keywords=f"{blocked.make} {blocked.model}"),
@@ -132,6 +137,34 @@ def main() -> int:
         check("but not the do-not-discuss one",
               blocked.vin not in [v["vin"] for v in returned],
               f"{blocked.year} {blocked.make} {blocked.model} withheld")
+        if restore:
+            blocked.rule_discuss = True
+            db.commit()
+
+        print("\n== a buyer asking by origin and mileage gets an answer, not a human ==")
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "anything german under 100k miles?",
+                                 provider=FakeProvider([
+                                     call_tool("search_inventory", origin="german",
+                                               max_mileage=100000),
+                                     say("We have two German cars under 100,000 miles."),
+                                 ]))
+        german = calls[0]["result"].get("vehicles", [])
+        check("origin is a real filter, not a keyword guess", bool(german),
+              ", ".join(f"{v['make']} {v['model']}" for v in german))
+        check("and every hit really is German",
+              all(v["origin"] == "german" for v in german))
+        check("the mileage cap applied",
+              all((v["mileage"] or 0) <= 100000 for v in german))
+
+        convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "any Ferraris?", provider=FakeProvider([
+            call_tool("search_inventory", origin="italian"),
+            say("Nothing Italian on the lot right now."),
+        ]))
+        check("an empty result tells the model to answer, not escalate",
+              "do not hand it to a person" in calls[0]["result"].get("guidance", ""),
+              f"count={calls[0]['result'].get('count')}")
 
         print("\n== an invented argument name is refused, not ignored ==")
         convo = fresh_conversation(db)
