@@ -307,6 +307,11 @@ def _seed_settings(db: Session, manager: User) -> None:
         version=7, status="live", tone="warm", push_level="balanced",
         price_mode="listed_only", financing_mode="refer_to_rep",
         after_hours_mode="full_service", booking_slot_length=30,
+        # .example is reserved by RFC 2606, the same reason the seeded addresses
+        # use .invalid: this is visibly a fixture and cannot resolve to a real
+        # finance portal. A live install leaves it empty until the dealer sets
+        # their own, and the overview card says so until they do.
+        credit_application_url="https://riversideauto.example/finance",
         greeting="Hi! I'm Liner, Riverside Auto's assistant. What are you looking for?",
         published_by=manager.id, published_at=utcnow() - timedelta(days=9),
     )
@@ -314,6 +319,7 @@ def _seed_settings(db: Session, manager: User) -> None:
         version=8, status="draft", tone="warm", push_level="assertive",
         price_mode="listed_only", financing_mode="refer_to_rep",
         after_hours_mode="full_service", booking_slot_length=30,
+        credit_application_url="https://riversideauto.example/finance",
         greeting="Hi! I'm Liner, Riverside Auto's assistant. What are you looking for?",
     )
     db.add_all([live, draft])
@@ -533,6 +539,26 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
                           quoted_price=pacifica.price))
     db.add(VehicleMention(conversation_id=devon_convo.id, vehicle_id=pacifica.id,
                           quoted_price=pacifica.price))
+
+    # Two finance applications a rep sent. Real outreach rows, counted by the
+    # same query as anything a rep sends today -- the overview card is not
+    # given a number, it adds these up. Without them the card reads zero on a
+    # fresh install and a working feature looks like a broken one.
+    for lead, rep, hours_ago in ((janet, marcus, 5), (amara, priya, 19)):
+        db.add(Outreach(
+            lead_id=lead.id, sent_by_user_id=rep.id, channel="email",
+            kind="credit_application", to_address=lead.email,
+            subject="Finance application -- Riverside Auto",
+            body=(
+                f"Hi {lead.name.split()[0]},\n\nHere is our finance application, which "
+                f"you can fill in before you come in so we are not doing paperwork while "
+                f"you are here:\n\nhttps://riversideauto.example/finance\n\n"
+                f"Best,\n{rep.name}\nRiverside Auto"
+            ),
+            provider="outbox", provider_message_id=f"outbox-seed-credit-{lead.id[:8]}",
+            status="sent", sent_at=now - timedelta(hours=hours_ago),
+            created_at=now - timedelta(hours=hours_ago),
+        ))
 
     db.commit()
 
