@@ -141,6 +141,12 @@ REP_PASSWORD=$(openssl rand -base64 12)
 # CORS only, and only for cross-origin browsers. See below.
 ALLOWED_ORIGINS=https://liner.example.com
 
+# How this install is reached from outside. Only links that leave the
+# building need it -- the tracked link in a credit application email. The
+# shipped nginx config passes Host through, so leaving this empty works;
+# set it and there is nothing left to infer.
+PUBLIC_BASE_URL=https://liner.example.com
+
 # Leave this on. It is what stops a demo emailing a real prospect.
 DEMO_MODE=true
 EOF

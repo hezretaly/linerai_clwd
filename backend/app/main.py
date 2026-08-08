@@ -75,6 +75,7 @@ def create_app() -> FastAPI:
         leads,
         outreach,
         overview,
+        redirect,
         settings as settings_api,
         team,
         voice,
@@ -101,6 +102,9 @@ def create_app() -> FastAPI:
 
     # No /api prefix: the socket lives at /ws/dealer.
     app.include_router(ws.router)
+    # Nor here: /r/<token> is a link a buyer follows from their inbox, and
+    # it has to be short enough to read in an email client's status bar.
+    app.include_router(redirect.router)
 
     @app.get("/api/photos/{vin}.svg")
     def vehicle_photo(vin: str) -> Response:

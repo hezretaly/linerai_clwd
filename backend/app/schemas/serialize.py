@@ -262,6 +262,13 @@ def outreach_out(o: Outreach) -> dict:
         "delivered_externally": o.provider not in {"", "outbox", "console"},
         "error": o.error,
         "sent_at": iso(o.sent_at),
+        # Clicks on the link we sent, not applications completed -- what
+        # happens on the dealer's own form never comes back to us.
+        "kind": o.kind,
+        "trackable": o.click_token is not None,
+        "opened": o.click_count > 0,
+        "click_count": o.click_count,
+        "first_clicked_at": iso(o.first_clicked_at),
         "created_at": iso(o.created_at),
     }
 

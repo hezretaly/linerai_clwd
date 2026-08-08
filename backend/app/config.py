@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # to the documented dev value and both are refused in production.
     manager_password: str = DEV_SEED_PASSWORD
     rep_password: str = DEV_SEED_PASSWORD
+    # How this install is reached from outside, e.g. https://liner.example.com.
+    # Only needed for links that leave the building: a tracked link in an email
+    # has to be absolute, and it is built from the request when this is empty.
+    # That is right behind the shipped nginx config (`proxy_set_header Host
+    # $host`) and wrong behind a proxy that drops Host -- which would put
+    # http://127.0.0.1:8000 in a buyer's inbox. Set it and the guessing stops.
+    public_base_url: str = ""
     session_cookie: str = "liner_session"
     demo_mode: bool = True
     email_allowlist: str = ""

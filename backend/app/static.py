@@ -28,7 +28,8 @@ DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 SPA_PREFIXES = ("/chat", "/call", "/login", "/app")
 
 # Never let a request walk out of dist/ via the catch-all.
-RESERVED = ("api", "ws")
+# /r is the outreach click hop -- a real route, not an SPA path.
+RESERVED = ("api", "ws", "r")
 
 
 def mount_frontend(app: FastAPI) -> bool:

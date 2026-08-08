@@ -11,6 +11,7 @@ clean seed with an empty .env.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import urllib.error
@@ -76,6 +77,19 @@ def call(method: str, path: str, body: dict | None = None, *, stream: bool = Fal
     except urllib.error.HTTPError as exc:
         raise AssertionError(f"{method} {path} -> {exc.code}: {exc.read().decode()[:300]}") from None
     return raw if stream else (json.loads(raw) if raw else {})
+
+
+def follow(url: str) -> tuple[int, str]:
+    """Open a link the way a buyer's browser would, without following on."""
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None
+
+    try:
+        with urllib.request.build_opener(NoRedirect).open(url, timeout=30) as response:
+            return response.status, response.headers.get("Location", "")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers.get("Location", "")
 
 
 def status_of(method: str, path: str, body: dict | None = None) -> tuple[int, str]:
@@ -324,10 +338,32 @@ def main() -> int:
           not any(w in draft["body"].lower() for w in ("apr", "% interest", "approved", "monthly payment")))
 
     before = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")["value"]
-    call("POST", f"/api/leads/{lead_for_credit['id']}/outreach",
-         {"subject": draft["subject"], "body": draft["body"], "kind": "credit_application"})
+    record = call("POST", f"/api/leads/{lead_for_credit['id']}/outreach",
+                  {"subject": draft["subject"], "body": draft["body"],
+                   "kind": "credit_application"})
+    # The dealer's own URL is invisible to us, so the send rewrites it to a hop
+    # we own. Without that the card could only ever count sends.
+    check("the link that goes out is one we can count",
+          record["trackable"] and "/r/" in record["body"], record["body"][-40:])
+    check("and nothing is counted before anyone clicks",
+          record["opened"] is False
+          and next(k for k in call("GET", "/api/overview")["kpis"]
+                   if k["key"] == "credit_apps")["value"] == before)
+
+    link = re.search(r"https?://\S+/r/\S+", record["body"]).group(0)
+    code, location = follow(link)
+    check("following it lands on the dealership's own application",
+          code == 302 and location == "https://riverside.example/finance",
+          f"{code} -> {location}")
     after = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")["value"]
-    check("sending one moves the card", after == before + 1, f"{before} -> {after}")
+    check("and the card counts the open", after == before + 1, f"{before} -> {after}")
+
+    follow(link)
+    again = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")["value"]
+    # One buyer opening the form twice has not done two things.
+    check("a second click does not count twice", again == after, f"{after} -> {again}")
+    check("an unknown token is a 404, not a redirect to nowhere",
+          follow(BASE + "/r/not-a-real-token")[0] == 404)
 
     print("\n== the overview drives the live panel ==")
     over = call("GET", "/api/overview")

@@ -588,7 +588,28 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
               {lead.outreach?.length ? (
                 lead.outreach.map((o) => (
                   <li key={o.id} className="rounded-md border border-border p-3">
-                    <p className="text-sm font-medium">{o.subject}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium">{o.subject}</p>
+                      {/* Only for a send that carried a link we can count. An
+                          email with nothing trackable in it is not "unopened". */}
+                      {o.trackable && (
+                        <span
+                          title={
+                            o.opened
+                              ? `Followed the link ${o.click_count} time${o.click_count === 1 ? '' : 's'}. Whether they finished the form happens on the dealership's own site and does not come back here.`
+                              : 'The link has not been followed yet.'
+                          }
+                          className={clsx(
+                            'shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium',
+                            o.opened
+                              ? 'border-success/30 bg-success-muted text-success'
+                              : 'border-border text-muted-foreground',
+                          )}
+                        >
+                          {o.opened ? 'Link opened' : 'Not opened'}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {o.channel === 'phone_logged' ? 'Call logged' : 'Email'} --{' '}
                       {dateTime(o.sent_at ?? o.created_at)}

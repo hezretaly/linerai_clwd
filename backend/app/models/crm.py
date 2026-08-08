@@ -155,6 +155,15 @@ class Outreach(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued")  # queued|sent|bounced|failed
     error: Mapped[str] = mapped_column(Text, default="")
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Click tracking, and only what a redirect can honestly know. A link to
+    # the dealer's own site is invisible to us, so the send rewrites it to a
+    # /r/<token> hop we own. No token means the body carried no trackable
+    # link -- a rep who deleted it, or a send made before this existed --
+    # which is different from a link nobody clicked.
+    click_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    click_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_clicked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_clicked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = created()
 
 

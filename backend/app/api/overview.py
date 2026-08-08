@@ -67,12 +67,25 @@ def overview(
         .filter(Outreach.created_at >= since, Outreach.status == "sent")
         .count()
     )
-    credit_apps = (
+    credit_sent = (
         db.query(Outreach)
         .filter(
             Outreach.created_at >= since,
             Outreach.status == "sent",
             Outreach.kind == "credit_application",
+        )
+        .count()
+    )
+    # The number that means something is how many were opened. Sending is the
+    # dealership's own activity; a buyer following the link is the buyer doing
+    # something, which is the only part that says the outreach worked.
+    credit_opened = (
+        db.query(Outreach)
+        .filter(
+            Outreach.created_at >= since,
+            Outreach.status == "sent",
+            Outreach.kind == "credit_application",
+            Outreach.click_count > 0,
         )
         .count()
     )
@@ -171,8 +184,11 @@ def overview(
             # configured there is nothing to send, and the card says that rather
             # than showing a zero that looks like a quiet day.
             {"key": "credit_apps", "label": "Credit applications",
-             "value": credit_apps,
-             "window": "last 24 hours" if credit_url else "no application link set",
+             "value": credit_opened,
+             "window": (
+                 f"opened, of {credit_sent} sent -- last 24 hours" if credit_url
+                 else "no application link set"
+             ),
              "unavailable": not credit_url},
         ],
         "leads_captured": leads_captured,

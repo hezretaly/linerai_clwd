@@ -167,10 +167,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   request that errored. When a normal badge and a failed send are the same
   colour the dashboard has lost its only way to say "this one broke".
 - **Nothing on the overview is a number that cannot be traced to a row.**
-  `credit_apps` counts `outreach.kind = 'credit_application'` that actually
-  sent. With no `credit_application_url` configured there is nothing to send,
-  so the draft refuses with a typed `not_configured` and the card says why
-  instead of showing a zero that reads as a quiet day.
+  `credit_apps` counts credit applications the buyer *opened*, not ones the
+  dealer sent -- a click is the buyer doing something, which is the only part
+  that says the outreach worked. A link to the dealer's own site is invisible
+  to us, so the send rewrites it to `/r/<token>` (`api/redirect.py`) and counts
+  that hop. It counts clicks, never completions: what happens on the dealer's
+  form never comes back. With no `credit_application_url` configured there is
+  nothing to send, so the draft refuses with a typed `not_configured` and the
+  card says why instead of showing a zero that reads as a quiet day.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 

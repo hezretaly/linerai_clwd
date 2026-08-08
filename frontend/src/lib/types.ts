@@ -170,6 +170,13 @@ export interface Outreach {
   status: 'queued' | 'sent' | 'bounced' | 'failed'
   /* False for the local outbox: the row exists, no mail was delivered. */
   delivered_externally: boolean
+  kind: string
+  /* The send carried a /r/<token> link, so a click can be counted at all.
+     False means there was nothing to follow -- not that nobody followed it. */
+  trackable: boolean
+  opened: boolean
+  click_count: number
+  first_clicked_at: string | null
   error: string
   sent_at: string | null
   created_at: string

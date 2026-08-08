@@ -22,11 +22,13 @@ small enough that round-tripping the reviewed rows costs nothing.
 
 from __future__ import annotations
 
+import secrets
+
 import re
 from datetime import timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -460,10 +462,36 @@ class SendBody(BaseModel):
     kind: str = "followup"
 
 
+def _track_links(request: Request, db: Session, record: Outreach) -> None:
+    """Rewrite the dealer's application URL to a hop we can count.
+
+    Done at send rather than at draft because the token belongs to the row, and
+    the row does not exist until now. The base comes from the request, so the
+    link matches the host the dealer is actually using -- hardcoding one is how
+    a staging box mails production links.
+
+    A rep who deleted the link from the draft gets no token, and that is the
+    honest outcome: there is nothing in that email to click.
+    """
+    from app.api.settings import live_settings
+
+    if record.kind != "credit_application":
+        return
+    target = (live_settings(db).credit_application_url or "").strip()
+    if not target or target not in record.body:
+        return
+
+    token = secrets.token_urlsafe(16)
+    base = (settings.public_base_url or str(request.base_url)).rstrip("/")
+    record.click_token = token
+    record.body = record.body.replace(target, f"{base}/r/{token}")
+
+
 @router.post("/{lead_id}/outreach")
 def send_lead_outreach(
     lead_id: str,
     payload: SendBody,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
@@ -483,6 +511,8 @@ def send_lead_outreach(
         provider=sender.name, status="queued",
     )
     db.add(record)
+    db.flush()
+    _track_links(request, db, record)
     db.commit()
 
     # An imported address is by definition not one we allow-listed. Refusing is
@@ -496,7 +526,8 @@ def send_lead_outreach(
         return outreach_out(record)
 
     try:
-        result = sender.send(lead.email, payload.subject, payload.body, reply_to=user.email)
+        # record.body, not payload.body: the tracked link is the one that goes.
+        result = sender.send(lead.email, payload.subject, record.body, reply_to=user.email)
         record.provider_message_id = result.message_id
         record.provider_thread_id = result.thread_id
         record.status = result.status

@@ -544,7 +544,11 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     # same query as anything a rep sends today -- the overview card is not
     # given a number, it adds these up. Without them the card reads zero on a
     # fresh install and a working feature looks like a broken one.
-    for lead, rep, hours_ago in ((janet, marcus, 5), (amara, priya, 19)):
+    # One of the two was opened. The card counts opens, so a fixture where
+    # every send was clicked would make the difference between "we sent it" and
+    # "they looked at it" invisible -- which is the whole reason it counts opens.
+    for lead, rep, hours_ago, clicks in ((janet, marcus, 5, 2), (amara, priya, 19, 0)):
+        token = f"seed{lead.id[:12].replace('-', '')}"
         db.add(Outreach(
             lead_id=lead.id, sent_by_user_id=rep.id, channel="email",
             kind="credit_application", to_address=lead.email,
@@ -552,12 +556,15 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
             body=(
                 f"Hi {lead.name.split()[0]},\n\nHere is our finance application, which "
                 f"you can fill in before you come in so we are not doing paperwork while "
-                f"you are here:\n\nhttps://riversideauto.example/finance\n\n"
+                f"you are here:\n\n/r/{token}\n\n"
                 f"Best,\n{rep.name}\nRiverside Auto"
             ),
             provider="outbox", provider_message_id=f"outbox-seed-credit-{lead.id[:8]}",
             status="sent", sent_at=now - timedelta(hours=hours_ago),
             created_at=now - timedelta(hours=hours_ago),
+            click_token=token, click_count=clicks,
+            first_clicked_at=now - timedelta(hours=hours_ago - 0.5) if clicks else None,
+            last_clicked_at=now - timedelta(hours=hours_ago - 1) if clicks else None,
         ))
 
     db.commit()

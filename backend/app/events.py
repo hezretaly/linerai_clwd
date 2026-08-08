@@ -27,6 +27,7 @@ EVENT_TYPES = {
     "appointment.assigned",
     "handoff.triggered",
     "outreach.sent",
+    "outreach.opened",
     "call.started",
     "call.ended",
 }
