@@ -306,6 +306,26 @@ def main() -> int:
         check("an unsourced price did not reach the buyer",
               "$18,400" not in reply, reply[:70])
 
+        # The retry note goes back as a user turn, because that is the only role
+        # every vendor takes mid-conversation. A model read it as the buyer
+        # objecting and opened with "You're right -- I shouldn't have mentioned
+        # a price before it was looked up", apologising to someone who never
+        # said that and never saw the draft.
+        convo = fresh_conversation(db)
+        retry = FakeProvider([
+            say("The Accord is $18,400."),
+            say("Let me look that up properly -- what's your budget?"),
+        ])
+        reply, _ = loop.run_turn(db, convo, "how much is the Accord?", provider=retry)
+        check("a corrected draft is replaced, not escalated",
+              "$18,400" not in reply and "budget" in reply, reply[:60])
+        note = " ".join(
+            str(m.get("content", "")) for m in retry.seen_messages[-1]
+            if isinstance(m, dict) and m.get("role") == "user"
+        )
+        check("and the retry note says it is not the buyer talking",
+              "not from the buyer" in note and "do not apologise" in note)
+
         # ...and the other half of that guard: the buyer's own budget, quoted
         # back. This shipped broken -- every "what do you have under $20,000"
         # tripped the guard twice and the buyer got the escalation line instead

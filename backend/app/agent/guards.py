@@ -197,11 +197,23 @@ def run_guards(
 
 
 def corrective_note(violations: list[str]) -> str:
+    """The retry instruction. It has to say it is not the buyer talking.
+
+    This goes back as a user-role turn, because that is the only role every
+    vendor accepts mid-conversation. A model read it as the buyer objecting and
+    opened its next reply with "You're right -- I shouldn't have mentioned a
+    price before it was looked up", apologising to someone who had said no such
+    thing and never saw the draft. That reads as a bot caught out, over a
+    correction the buyer was never part of.
+    """
     return (
-        "Your previous draft was rejected: "
+        "[SYSTEM NOTE -- not from the buyer. They never saw your last draft and "
+        "are still waiting for their first answer.] That draft was discarded: "
         + "; ".join(violations)
         + ". Every number you state must come from a tool result in this turn. "
-        "Look it up or leave it out."
+        "Look it up or leave it out. Now write the reply again as if for the "
+        "first time -- do not apologise, do not agree with anything, and do not "
+        "refer to this note or to the draft in any way."
     )
 
 

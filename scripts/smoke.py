@@ -216,6 +216,34 @@ def main() -> int:
     check("no already-booked time is offered", not (open_slots & taken),
           f"{len(open_slots)} offered")
 
+    print("\n== a refreshed buyer gets the whole thread back ==")
+    again = call("GET", f"/api/chat/sessions/{cid}")
+    check("the opening line comes back too -- it is never a message row",
+          bool(again.get("greeting")), (again.get("greeting") or "")[:40])
+    check("the messages are all there", len(again["messages"]) >= 4,
+          f"{len(again['messages'])} messages")
+    # The cars the buyer was shown are rebuilt from the reply's tool calls, so
+    # they have to still be on it.
+    shown = [
+        v for m in again["messages"] for c in m["tool_calls"]
+        if c["name"] in ("search_inventory", "get_vehicle")
+        for v in (c["result"].get("vehicles") or [])
+    ]
+    check("with the search results still attached to the reply", bool(shown),
+          f"{len(shown)} vehicles recoverable")
+    check("and a booking card, looked up again rather than replayed",
+          bool(again.get("booking")))
+    replayed = {
+        s["starts_at"] for d in (again.get("booking") or {"days": []})["days"]
+        for s in d["slots"]
+    }
+    still_taken = {
+        a["starts_at"] for a in call("GET", "/api/appointments")["appointments"]
+        if a["status"] in ("booked", "confirmed")
+    }
+    check("so a time booked since is not offered a second time",
+          not (replayed & still_taken), f"{len(replayed)} offered")
+
     print("\n== the form books through the executor, refusals and all ==")
     slot = card["days"][0]["slots"][0]["starts_at"]
     code, _ = status_of("POST", f"/api/chat/sessions/{cid}/book",

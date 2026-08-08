@@ -7,12 +7,6 @@ import type { BookingCardData, BookingResult } from '../components/BookingCard'
 import { money } from '../lib/format'
 import type { IntegrationsPayload, Rail } from '../lib/types'
 
-interface Bubble {
-  id: string
-  role: 'buyer' | 'assistant' | 'rep'
-  content: string
-}
-
 interface VehicleCardData {
   vin: string
   year: number
@@ -25,12 +19,44 @@ interface VehicleCardData {
   features?: string[]
 }
 
+/** The transcript is one ordered list, and a card is an entry in it.
+ *
+ *  Search results and the booking card used to live in their own state, render
+ *  under the whole thread, and get cleared on every send. So three cars the
+ *  buyer was asked to choose between vanished the moment they answered, and
+ *  every card that survived piled up at the bottom next to none of the
+ *  messages that produced them. Anything the buyer was shown stays where it
+ *  was shown. */
+type Item =
+  | { kind: 'text'; id: string; role: 'buyer' | 'assistant' | 'rep'; content: string }
+  | { kind: 'vehicles'; id: string; vehicles: VehicleCardData[] }
+  | { kind: 'booking'; id: string; data: BookingCardData }
+
+interface ChatMessage {
+  id: string
+  role: string
+  content: string
+  tool_calls: { name: string; result: Record<string, unknown> }[]
+}
+
+/** Survives a refresh. The conversation itself has always been on the server;
+ *  only this id was lost, and losing it started a new one from scratch. */
+const STORAGE_KEY = 'liner.chat.conversation'
+
+const SEARCH_TOOLS = new Set(['search_inventory', 'get_vehicle'])
+
+/** Mirrors _vehicles_from on the server: a search returns a list, a lookup
+ *  returns one car. */
+function vehiclesFrom(result: Record<string, unknown>): VehicleCardData[] {
+  if (Array.isArray(result.vehicles)) return result.vehicles as VehicleCardData[]
+  if (result.vin) return [result as unknown as VehicleCardData]
+  return []
+}
+
 export function Chat() {
   const [conversationId, setConversationId] = useState<string | null>(null)
-  const [bubbles, setBubbles] = useState<Bubble[]>([])
+  const [items, setItems] = useState<Item[]>([])
   const [rails, setRails] = useState<Rail[]>([])
-  const [vehicles, setVehicles] = useState<VehicleCardData[]>([])
-  const [booking, setBooking] = useState<BookingCardData | null>(null)
   const [draft, setDraft] = useState('')
   const [typing, setTyping] = useState(false)
   // What the server says is missing, rather than a vendor name written here.
@@ -41,41 +67,48 @@ export function Chat() {
 
   useEffect(() => {
     void (async () => {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored && (await resume(stored, setConversationId, setItems, setRails))) {
+        void loadIntegrations(setStubbed)
+        return
+      }
+
       const session = await api.post<{
         conversation_id: string
         greeting: string
         rails: Rail[]
       }>('/api/chat/sessions')
+      localStorage.setItem(STORAGE_KEY, session.conversation_id)
       setConversationId(session.conversation_id)
       setRails(session.rails)
-      setBubbles([{ id: 'greeting', role: 'assistant', content: session.greeting }])
-
-      const health = await api.get<IntegrationsPayload>('/api/integrations')
-      const llm = health.integrations.find((i) => i.key === 'llm')
-      setStubbed(llm && !llm.configured ? llm.missing : null)
+      setItems([{ kind: 'text', id: 'greeting', role: 'assistant', content: session.greeting }])
+      void loadIntegrations(setStubbed)
     })()
   }, [])
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
-  }, [bubbles, typing, vehicles, booking])
+  }, [items, typing])
 
-  // While the booking card is up its own chips are the ask, so the stage
+  // Only the newest booking card takes input. An older one is a list of times
+  // that have since moved on, and tapping it would submit a slot the buyer was
+  // offered several turns ago.
+  const liveBookingId = [...items].reverse().find((i) => i.kind === 'booking')?.id
+
+  // While a booking card is up its own controls are the ask, so the stage
   // followups ("Saturday morning works") would be the same question posed a
-  // second, worse way. The knowledge chips stay: they are about something
-  // else, and they are the way out of the card without typing.
-  const visibleRails = booking ? rails.filter((r) => r.kind === 'knowledge') : rails
+  // second, worse way. The knowledge chips stay: they are about something else,
+  // and they are the way out of the card without typing.
+  const visibleRails = liveBookingId ? rails.filter((r) => r.kind === 'knowledge') : rails
 
   const send = async (payload: { content?: string; rail_id?: string }, label: string) => {
     if (!conversationId || typing) return
 
-    setBubbles((prev) => [
+    setItems((prev) => [
       ...prev,
-      { id: `local-${Date.now()}`, role: 'buyer', content: label },
+      { kind: 'text', id: `local-${Date.now()}`, role: 'buyer', content: label },
     ])
     setDraft('')
-    setVehicles([])
-    setBooking(null)
 
     // 400-900ms before the indicator, so it reads as a person starting to type.
     const delay = 400 + Math.random() * 500
@@ -92,37 +125,47 @@ export function Chat() {
           streamed += String(data.text ?? '')
           if (!streamId) {
             streamId = `stream-${Date.now()}`
-            setBubbles((prev) => [
+            const id = streamId
+            setItems((prev) => [
               ...prev,
-              { id: streamId, role: 'assistant', content: streamed },
+              { kind: 'text', id, role: 'assistant', content: streamed },
             ])
           } else {
-            setBubbles((prev) =>
-              prev.map((b) => (b.id === streamId ? { ...b, content: streamed } : b)),
+            const id = streamId
+            setItems((prev) =>
+              prev.map((i) => (i.kind === 'text' && i.id === id ? { ...i, content: streamed } : i)),
             )
           }
-        } else if (event === 'held') {
-          clearTimeout(timer)
-          setTyping(false)
-          setBubbles((prev) => [
-            ...prev,
-            { id: `held-${Date.now()}`, role: 'rep', content: String(data.message) },
-          ])
-        } else if (event === 'error') {
+        } else if (event === 'held' || event === 'error') {
           // The turn failed after the response had already started -- a missing
           // key, a vendor outage, a rate limit. Without this branch the buyer
           // watches a typing indicator that never resolves, which is the worst
           // way to fail: it looks like being ignored rather than like a fault.
           clearTimeout(timer)
           setTyping(false)
-          setBubbles((prev) => [
+          setItems((prev) => [
             ...prev,
-            { id: `error-${Date.now()}`, role: 'rep', content: String(data.message) },
+            {
+              kind: 'text',
+              id: `${event}-${Date.now()}`,
+              role: 'rep',
+              content: String(data.message),
+            },
           ])
         } else if (event === 'vehicles') {
-          setVehicles(data.vehicles as VehicleCardData[])
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: 'vehicles',
+              id: `cars-${Date.now()}`,
+              vehicles: data.vehicles as VehicleCardData[],
+            },
+          ])
         } else if (event === 'booking') {
-          setBooking(data as unknown as BookingCardData)
+          setItems((prev) => [
+            ...prev,
+            { kind: 'booking', id: `book-${Date.now()}`, data: data as unknown as BookingCardData },
+          ])
         } else if (event === 'rails') {
           setRails(data.rails as Rail[])
         }
@@ -131,6 +174,24 @@ export function Chat() {
       clearTimeout(timer)
       setTyping(false)
     }
+  }
+
+  const onBooked = (bookingItemId: string) => (result: BookingResult) => {
+    setItems((prev) => [
+      ...prev.filter((i) => i.id !== bookingItemId),
+      {
+        kind: 'text',
+        id: result.buyer_message.id,
+        role: 'buyer',
+        content: result.buyer_message.content,
+      },
+      {
+        kind: 'text',
+        id: result.assistant_message.id,
+        role: 'assistant',
+        content: result.assistant_message.content,
+      },
+    ])
   }
 
   return (
@@ -162,25 +223,72 @@ export function Chat() {
       )}
 
       <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {bubbles.map((bubble) => (
-          <div
-            key={bubble.id}
-            className={clsx('flex', bubble.role === 'buyer' ? 'justify-end' : 'justify-start')}
-          >
-            <div
-              className={clsx(
-                'max-w-[80%] rounded-2xl px-4 py-2.5 text-[15px] leading-snug whitespace-pre-wrap animate-fade-up',
-                bubble.role === 'buyer'
-                  ? 'bg-bubble-buyer text-bubble-buyer-foreground'
-                  : bubble.role === 'rep'
-                    ? 'border border-primary/30 bg-accent text-accent-foreground'
-                    : 'bg-muted text-foreground',
-              )}
-            >
-              {bubble.content}
-            </div>
-          </div>
-        ))}
+        {items.map((item) => {
+          if (item.kind === 'text') {
+            return (
+              <div
+                key={item.id}
+                className={clsx('flex', item.role === 'buyer' ? 'justify-end' : 'justify-start')}
+              >
+                <div
+                  className={clsx(
+                    'max-w-[80%] rounded-2xl px-4 py-2.5 text-[15px] leading-snug whitespace-pre-wrap animate-fade-up',
+                    item.role === 'buyer'
+                      ? 'bg-bubble-buyer text-bubble-buyer-foreground'
+                      : item.role === 'rep'
+                        ? 'border border-primary/30 bg-accent text-accent-foreground'
+                        : 'bg-muted text-foreground',
+                  )}
+                >
+                  {item.content}
+                </div>
+              </div>
+            )
+          }
+
+          if (item.kind === 'vehicles') {
+            return (
+              <div key={item.id} className="space-y-2">
+                {item.vehicles.map((vehicle) => (
+                  <article
+                    key={vehicle.vin}
+                    className="flex gap-3 rounded-2xl border border-border bg-card p-3 animate-fade-up"
+                  >
+                    <img
+                      src={vehicle.photo_url}
+                      alt=""
+                      className="h-20 w-28 shrink-0 rounded-lg object-cover"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">
+                        {vehicle.year} {vehicle.make} {vehicle.model}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {money(vehicle.price)}
+                        {vehicle.mileage ? ` -- ${vehicle.mileage.toLocaleString()} mi` : ''}
+                      </p>
+                      {vehicle.features?.length ? (
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {vehicle.features.slice(0, 3).join(' - ')}
+                        </p>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )
+          }
+
+          return (
+            <BookingCard
+              key={item.id}
+              data={item.data}
+              conversationId={conversationId ?? ''}
+              stale={item.id !== liveBookingId}
+              onBooked={onBooked(item.id)}
+            />
+          )
+        })}
 
         {typing && (
           <div className="flex justify-start">
@@ -194,60 +302,6 @@ export function Chat() {
               ))}
             </div>
           </div>
-        )}
-
-        {vehicles.length > 0 && (
-          <div className="space-y-2">
-            {vehicles.map((vehicle) => (
-              <article
-                key={vehicle.vin}
-                className="flex gap-3 rounded-2xl border border-border bg-card p-3 animate-fade-up"
-              >
-                <img
-                  src={vehicle.photo_url}
-                  alt=""
-                  className="h-20 w-28 shrink-0 rounded-lg object-cover"
-                />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">
-                    {vehicle.year} {vehicle.make} {vehicle.model}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {money(vehicle.price)}
-                    {vehicle.mileage ? ` -- ${vehicle.mileage.toLocaleString()} mi` : ''}
-                  </p>
-                  {vehicle.features?.length ? (
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {vehicle.features.slice(0, 3).join(' - ')}
-                    </p>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        {booking && conversationId && (
-          <BookingCard
-            data={booking}
-            conversationId={conversationId}
-            onBooked={(result: BookingResult) => {
-              setBooking(null)
-              setBubbles((prev) => [
-                ...prev,
-                {
-                  id: result.buyer_message.id,
-                  role: 'buyer',
-                  content: result.buyer_message.content,
-                },
-                {
-                  id: result.assistant_message.id,
-                  role: 'assistant',
-                  content: result.assistant_message.content,
-                },
-              ])
-            }}
-          />
         )}
       </div>
 
@@ -295,4 +349,66 @@ export function Chat() {
       </form>
     </div>
   )
+}
+
+async function loadIntegrations(setStubbed: (missing: string[] | null) => void) {
+  const health = await api.get<IntegrationsPayload>('/api/integrations')
+  const llm = health.integrations.find((i) => i.key === 'llm')
+  setStubbed(llm && !llm.configured ? llm.missing : null)
+}
+
+/** Rebuild a thread the buyer already had. Returns false if that conversation
+ *  is gone -- a reseeded database, a cleared server -- so the caller opens a
+ *  new one instead of showing an error for something the buyer cannot fix. */
+async function resume(
+  id: string,
+  setConversationId: (id: string) => void,
+  setItems: (items: Item[]) => void,
+  setRails: (rails: Rail[]) => void,
+): Promise<boolean> {
+  let payload: {
+    id: string
+    greeting: string
+    messages: ChatMessage[]
+    rails: Rail[]
+    booking: BookingCardData | null
+  }
+  try {
+    payload = await api.get(`/api/chat/sessions/${id}`)
+  } catch {
+    localStorage.removeItem(STORAGE_KEY)
+    return false
+  }
+
+  const rebuilt: Item[] = [
+    { kind: 'text', id: 'greeting', role: 'assistant', content: payload.greeting },
+  ]
+  for (const message of payload.messages) {
+    if (message.content) {
+      rebuilt.push({
+        kind: 'text',
+        id: message.id,
+        role: message.role === 'buyer' ? 'buyer' : message.role === 'rep' ? 'rep' : 'assistant',
+        content: message.content,
+      })
+    }
+    // The cars the buyer was shown are recoverable because the reply carries
+    // the tool calls that produced them.
+    const shown = message.tool_calls
+      .filter((c) => SEARCH_TOOLS.has(c.name))
+      .flatMap((c) => vehiclesFrom(c.result))
+    if (shown.length > 0) {
+      rebuilt.push({ kind: 'vehicles', id: `cars-${message.id}`, vehicles: shown.slice(0, 3) })
+    }
+  }
+  // Times are not replayed from the transcript -- the server looked them up
+  // again, because a slot list from ten minutes ago may be gone.
+  if (payload.booking) {
+    rebuilt.push({ kind: 'booking', id: `book-${payload.id}`, data: payload.booking })
+  }
+
+  setConversationId(payload.id)
+  setItems(rebuilt)
+  setRails(payload.rails)
+  return true
 }

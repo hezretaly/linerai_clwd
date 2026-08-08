@@ -37,10 +37,15 @@ export interface BookingResult {
 export function BookingCard({
   data,
   conversationId,
+  stale = false,
   onBooked,
 }: {
   data: BookingCardData
   conversationId: string
+  /** A card further up the thread. Its times were open when it was drawn and
+   *  may not be now, so it stays readable and stops taking input rather than
+   *  submitting a slot the buyer was offered several turns ago. */
+  stale?: boolean
   onBooked: (result: BookingResult) => void
 }) {
   const [day, setDay] = useState<BookingDay | null>(data.days.length === 1 ? data.days[0] : null)
@@ -51,6 +56,8 @@ export function BookingCard({
   const [done, setDone] = useState(false)
 
   if (done || data.days.length === 0) return null
+
+  const frozen = saving || stale
 
   const submit = async () => {
     const next: Record<string, string> = {}
@@ -85,7 +92,12 @@ export function BookingCard({
   }
 
   return (
-    <section className="animate-fade-up rounded-2xl border border-border bg-card p-4">
+    <section
+      className={clsx(
+        'animate-fade-up rounded-2xl border border-border bg-card p-4',
+        stale && 'pointer-events-none opacity-60',
+      )}
+    >
       <div className="space-y-3">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -95,7 +107,7 @@ export function BookingCard({
             {data.days.map((d) => (
               <button
                 key={d.date}
-                disabled={saving}
+                disabled={frozen}
                 onClick={() => {
                   setDay(d)
                   setSlot(null)
@@ -123,7 +135,7 @@ export function BookingCard({
               {day.slots.map((s) => (
                 <button
                   key={s.starts_at}
-                  disabled={saving}
+                  disabled={frozen}
                   onClick={() => setSlot(s)}
                   className={clsx(
                     'rounded-full border px-4 py-2 text-sm font-medium transition-colors duration-150',
@@ -164,7 +176,7 @@ export function BookingCard({
                 <input
                   type={field.type}
                   value={form[field.key]}
-                  disabled={saving}
+                  disabled={frozen}
                   onChange={(e) => {
                     setForm({ ...form, [field.key]: e.target.value })
                     setErrors((prev) => ({ ...prev, [field.key]: '' }))
@@ -182,7 +194,7 @@ export function BookingCard({
             ))}
             <button
               onClick={() => void submit()}
-              disabled={saving}
+              disabled={frozen}
               className="w-full rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
             >
               {saving ? 'Booking...' : 'Book it'}

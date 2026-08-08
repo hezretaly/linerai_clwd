@@ -146,6 +146,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   instead, because the same question asked twice gets answered in the worse
   place. `book_appointment` owns the clash check: a card can sit on screen for
   minutes, so "still open" has to be re-decided at submit, not at render.
+- **The chat transcript is one ordered list, and a card is an entry in it.**
+  Search results and the booking card used to sit in their own state, render
+  under the whole thread and get cleared on every send, so three cars the buyer
+  was choosing between vanished the moment they answered. `Chat.tsx` keeps
+  `Item[]`; anything the buyer was shown stays where it was shown.
+- **A refresh keeps the conversation.** The id lives in `localStorage` and
+  `GET /api/chat/sessions/{id}` rebuilds the thread -- cars included, because
+  the reply carries the `tool_calls` that produced them. Availability is the
+  exception: it is looked up again, never replayed, since a slot list from ten
+  minutes ago is a list of times that may be gone.
+- **The guard's retry note is not the buyer talking.** It goes back as a user
+  turn because that is the only role every vendor takes mid-conversation, so it
+  has to say so in its own text. Without that a model opened its next reply with
+  "You're right -- I shouldn't have mentioned a price", apologising to someone
+  who said no such thing and never saw the rejected draft.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 

@@ -84,9 +84,35 @@ def start_session(channel: str = "chat", db: Session = Depends(get_db)) -> dict:
 
 @router.get("/sessions/{conversation_id}")
 def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
+    """The whole thread back, including the cards.
+
+    A refresh used to lose the conversation entirely. The messages were always
+    here; what was missing was everything the buyer had been *shown* -- the
+    search results and the booking card live in the reply's tool calls, so the
+    client can rebuild them from ``messages[].tool_calls`` rather than from
+    memory it no longer has.
+
+    Availability is the exception and is looked up again rather than replayed.
+    A slot list from ten minutes ago is a list of times that may be gone, and
+    re-offering one is how a buyer picks a time that no longer exists.
+    """
     convo = _conversation(db, conversation_id)
     out = conversation_out(convo, db, detail=True)
     out["rails"] = [rail_out(r) for r in rails_for(db, convo)]
+    # The opening line is client-side only -- it is never a message row -- so a
+    # rehydrated thread would start abruptly at the buyer's first question.
+    out["greeting"] = live_settings(db).greeting
+
+    out["booking"] = None
+    offered = any(
+        call.get("name") == "check_availability"
+        for message in out["messages"]
+        for call in message["tool_calls"]
+    )
+    if offered and convo.stage != "booked":
+        fresh = tools.check_availability(db, convo, {})
+        if fresh["slots"]:
+            out["booking"] = booking_card(fresh["slots"], fresh["slot_minutes"])
     return out
 
 
