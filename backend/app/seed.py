@@ -483,7 +483,7 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
         ("buyer", "What's the out-the-door price on the Accord?"),
         ("assistant", "That's a question for one of our people -- I've asked a rep to jump in "
                       "with the exact number including tax, title and fees."),
-    ], 2, status="handoff", paused=True, focus=accord)
+    ], 1.5, status="handoff", paused=True, focus=accord)
     capture(gil, "vehicle_interest", f"{accord.year} {accord.make} {accord.model}", "listing")
     capture(gil, "buying_signal", "asked for out-the-door price", "inferred")
     db.add(VehicleMention(conversation_id=gil_convo.id, vehicle_id=accord.id,
@@ -503,7 +503,7 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
                       f"value pick, {civic.mileage:,} miles."),
         ("buyer", "I'd be financing rather than paying cash."),
         ("assistant", "Understood -- a rep handles financing in person. When could you come in?"),
-    ], 20, status="active")
+    ], 0.6, status="active")
     capture(amara, "use_case", "40 mile commute", "typed")
     capture(amara, "financing", "financing rather than paying cash", "typed")
     capture(amara, "budget", "under $15k", "inferred")

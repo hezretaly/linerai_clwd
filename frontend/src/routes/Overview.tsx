@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -34,6 +35,15 @@ const KPI_ICONS: Record<string, IconName> = {
   needs_a_person: 'file',
 }
 
+/** Where each figure came from, so the card is a way in rather than a number
+ *  to go and look up somewhere else. */
+const KPI_LINKS: Record<string, string> = {
+  conversations_handled: '/app/conversations',
+  appointments_set: '/app/calendar',
+  leads_captured: '/app/leads',
+  needs_a_person: '/app/conversations?filter=flagged',
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   chat: 'Website chat',
   phone: 'Phone',
@@ -41,6 +51,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function OverviewPage() {
+  const [showAll, setShowAll] = useState(false)
   const { data, isLoading } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api.get<Overview>('/api/overview'),
@@ -57,9 +68,18 @@ export function OverviewPage() {
   // The endpoint returns this queue oldest first.
   const oldest = escalations[0]
 
+  // The server sends today's conversations newest-activity first and the
+  // two-hour mark to split them at, so "now" means the same thing here as it
+  // does in the query that built the list.
+  const today = data.queues.active_conversations
+  const recent = today.filter((c) => (c.last_activity_at ?? c.started_at) >= data.happening_now_since)
+  const earlier = today.filter((c) => !recent.includes(c))
+  const live = showAll ? today : recent
+
   return (
     <main className="p-4 md:p-6">
       <PageIntro
+        accent
         title="Overview"
         subtitle={`${data.dealership.name} -- ${data.dealership.address}`}
         actions={
@@ -81,7 +101,14 @@ export function OverviewPage() {
         {data.kpis.map((kpi) => (
           <Card key={kpi.key} className="shadow-sm">
             <div className="flex items-center justify-between p-6 pb-2">
-              <h3 className="text-sm font-medium">{kpi.label}</h3>
+              <h3 className="text-sm font-medium">
+                <Link
+                  to={KPI_LINKS[kpi.key] ?? '/app'}
+                  className="text-primary hover:underline"
+                >
+                  {kpi.label}
+                </Link>
+              </h3>
               <Icon
                 name={KPI_ICONS[kpi.key] ?? 'file'}
                 className="h-4 w-4 text-muted-foreground"
@@ -115,12 +142,8 @@ export function OverviewPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Unavailable
-              label="Assign all to me"
-              why="An escalation is claimed one at a time, from its conversation. There is no bulk claim endpoint."
-            />
             <Link
-              to="/app/conversations"
+              to="/app/conversations?filter=flagged"
               className="inline-flex h-9 items-center whitespace-nowrap rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
               Open queue
@@ -159,79 +182,66 @@ export function OverviewPage() {
         )}
       </Card>
 
-      {/* ---- Charts -------------------------------------------------------- */}
-      <div className="mt-4 grid gap-4 lg:grid-cols-7">
-        <Card className="min-w-0 shadow-sm lg:col-span-4">
-          <div className="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
-            <div>
-              <h3 className="font-semibold leading-none tracking-tight">
-                Conversations by hour
-              </h3>
-              <p className="mt-1.5 text-sm text-muted-foreground">Today, midnight to now</p>
-            </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm bg-primary" />
-                Closed hours
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm bg-border" />
-                Open hours
-              </span>
-            </div>
-          </div>
-          <div className="p-6 pt-0">
-            <HourChart data={data.by_hour} />
-          </div>
-        </Card>
-
-        <Card className="min-w-0 shadow-sm lg:col-span-3">
-          <div className="p-6 pb-3">
-            <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Last 24 hours, by the source on the lead
-            </p>
-          </div>
-          <div className="p-6 pt-0">
-            <SourceChart mix={data.source_mix} />
-          </div>
-        </Card>
-      </div>
-
       {/* ---- Happening now + unclaimed -------------------------------------- */}
       <div className="mt-4 grid gap-4 lg:grid-cols-7">
         <Card className="min-w-0 shadow-sm lg:col-span-4">
-          <div className="flex items-center justify-between border-b border-border p-6">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold leading-none tracking-tight">Happening now</h3>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
-                <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                Live
-              </span>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold leading-none tracking-tight">Happening now</h3>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                  Live
+                </span>
+              </div>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                {showAll ? 'Everything today' : 'Anything with a message in the last two hours'}
+              </p>
             </div>
-            <Link
-              to="/app/conversations"
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              View all
-            </Link>
+            <div className="flex items-center gap-3">
+              {earlier.length > 0 && (
+                <button
+                  onClick={() => setShowAll((was) => !was)}
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  {showAll ? 'Last two hours' : `Show today (${earlier.length} more)`}
+                </button>
+              )}
+              <Link
+                to="/app/conversations"
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                View all
+              </Link>
+            </div>
           </div>
-          {data.queues.active_conversations.length === 0 ? (
-            <Empty title="Nothing open" hint="No conversation is active right now." />
+          {live.length === 0 ? (
+            <Empty
+              title="Nothing open"
+              hint={
+                earlier.length
+                  ? 'Nothing in the last two hours. Show today for the rest.'
+                  : 'No conversation has been active today.'
+              }
+            />
           ) : (
             <div className="scroll-thin overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
-                  {data.queues.active_conversations.map((c) => (
+                  {live.map((c) => (
                     <tr
                       key={c.id}
                       className="border-b border-border transition-colors last:border-0 hover:bg-muted/50"
                     >
                       <td className="px-6 py-3">
-                        <div className="font-medium">{c.lead?.name || 'Unknown caller'}</div>
-                        <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground">
-                          {c.summary || `${c.message_count ?? 0} messages -- ${c.stage}`}
-                        </div>
+                        <Link to={`/app/conversations/${c.id}`} className="group block">
+                          <div className="font-medium text-primary group-hover:underline">
+                            {c.lead?.name || 'Unknown caller'}
+                          </div>
+                          <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground group-hover:text-foreground">
+                            {c.summary || `${c.message_count ?? 0} messages -- ${c.stage}`}
+                          </div>
+                        </Link>
                       </td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
@@ -281,6 +291,45 @@ export function OverviewPage() {
               ))}
             </div>
           )}
+        </Card>
+      </div>
+
+      {/* ---- Charts -------------------------------------------------------- */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-7">
+        <Card className="min-w-0 shadow-sm lg:col-span-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
+            <div>
+              <h3 className="font-semibold leading-none tracking-tight">
+                Conversations by hour
+              </h3>
+              <p className="mt-1.5 text-sm text-muted-foreground">Today, midnight to now</p>
+            </div>
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-sm bg-primary" />
+                Closed hours
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-sm bg-border" />
+                Open hours
+              </span>
+            </div>
+          </div>
+          <div className="p-6 pt-0">
+            <HourChart data={data.by_hour} />
+          </div>
+        </Card>
+
+        <Card className="min-w-0 shadow-sm lg:col-span-3">
+          <div className="p-6 pb-3">
+            <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Last 24 hours, by the source on the lead
+            </p>
+          </div>
+          <div className="p-6 pt-0">
+            <SourceChart mix={data.source_mix} />
+          </div>
         </Card>
       </div>
 

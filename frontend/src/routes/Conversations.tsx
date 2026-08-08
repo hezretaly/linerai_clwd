@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
@@ -57,7 +57,23 @@ export function ConversationsPage() {
   const queryClient = useQueryClient()
   const [reply, setReply] = useState('')
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<'all' | 'flagged' | 'live' | 'unclaimed'>('all')
+  // Arriving from the Overview's "Needs a person" panel should land on that
+  // filter, not on All -- otherwise the queue you clicked is buried in the
+  // full list and you have to find it again.
+  const [params, setParams] = useSearchParams()
+  const requested = params.get('filter')
+  const [filter, setFilter] = useState<'all' | 'flagged' | 'live' | 'unclaimed'>(
+    requested === 'flagged' || requested === 'live' || requested === 'unclaimed'
+      ? requested
+      : 'all',
+  )
+
+  // Keep the URL honest as the rep changes filters, so the view is linkable
+  // and the back button means something.
+  const chooseFilter = (next: 'all' | 'flagged' | 'live' | 'unclaimed') => {
+    setFilter(next)
+    setParams(next === 'all' ? {} : { filter: next }, { replace: true })
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['conversations'],
@@ -166,25 +182,25 @@ export function ConversationsPage() {
               count={flagged}
               tone="destructive"
               active={filter === 'flagged'}
-              onClick={() => setFilter('flagged')}
+              onClick={() => chooseFilter('flagged')}
             />
             <FilterChip
               label="All"
               count={conversations.length}
               active={filter === 'all'}
-              onClick={() => setFilter('all')}
+              onClick={() => chooseFilter('all')}
             />
             <FilterChip
               label="Live"
               count={live}
               active={filter === 'live'}
-              onClick={() => setFilter('live')}
+              onClick={() => chooseFilter('live')}
             />
             <FilterChip
               label="Unclaimed"
               count={unclaimed}
               active={filter === 'unclaimed'}
-              onClick={() => setFilter('unclaimed')}
+              onClick={() => chooseFilter('unclaimed')}
             />
             {/* "Mine" needs a rep filter the list endpoint does not take. */}
             <Unavailable

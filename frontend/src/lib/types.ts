@@ -252,12 +252,16 @@ export interface Overview {
     needs_a_person: Escalation[]
     unconfirmed_appointments: Appointment[]
     unassigned_appointments: Appointment[]
-    active_conversations: Conversation[]
+    /** Today's conversations, newest activity first. Split at
+     *  `happening_now_since` -- the panel shows the last two hours and
+     *  expands to the rest of the day. */
+    active_conversations: (Conversation & { last_activity_at?: string })[]
     unclaimed_leads: Lead[]
     inventory_issues: Vehicle[]
   }
   mix: { channel: string; count: number }[]
   source_mix: { source: string; count: number }[]
+  happening_now_since: string
   by_hour: { hour: number; count: number; open: boolean }[]
 }
 

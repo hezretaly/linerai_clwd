@@ -22,6 +22,7 @@ from app.models import (
     Dealership,
     Escalation,
     Lead,
+    Message,
     User,
     Vehicle,
     VehicleMention,
@@ -73,6 +74,33 @@ def overview(
         .order_by(Conversation.started_at.desc())
         .all()
     )
+    # "Happening now" is the last two hours; the panel expands to the rest of
+    # today. Both come from one list so the client splits rather than refetches.
+    #
+    # Ordered on last *activity*, not on start: a conversation opened at nine
+    # with a message two minutes ago is the most live thing on the screen, and
+    # sorting by started_at buried it under quieter, newer threads.
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = (
+        db.query(Conversation)
+        .filter(Conversation.started_at >= start_of_day)
+        .all()
+    )
+    last_activity = dict(
+        db.query(Message.conversation_id, func.max(Message.created_at))
+        .filter(Message.conversation_id.in_([c.id for c in today] or [""]))
+        .group_by(Message.conversation_id)
+        .all()
+    )
+
+    def activity_of(convo: Conversation):
+        return last_activity.get(convo.id) or convo.started_at
+
+    today.sort(key=activity_of, reverse=True)
+    day_payload = [
+        {**conversation_out(c, db), "last_activity_at": activity_of(c).isoformat()}
+        for c in today
+    ]
     # Nobody owns these yet. There is no round-robin in this system, so the
     # queue is exactly "assigned to no one", oldest first -- not a rotation.
     unclaimed_leads = (
@@ -119,10 +147,13 @@ def overview(
             "needs_a_person": [escalation_out(e, db) for e in open_escalations],
             "unconfirmed_appointments": [appointment_out(a, db) for a in unconfirmed],
             "unassigned_appointments": [appointment_out(a, db) for a in unassigned],
-            "active_conversations": [conversation_out(c, db) for c in active_conversations[:8]],
+            # The whole day, newest activity first. The client shows the
+            # last two hours and expands to the rest -- see happening_now_since.
+            "active_conversations": day_payload,
             "unclaimed_leads": [lead_out(lead, db) for lead in unclaimed_leads],
             "inventory_issues": inventory_issues,
         },
+        "happening_now_since": (now - timedelta(hours=2)).isoformat(),
         "mix": _channel_mix(db, since),
         "source_mix": _source_mix(db, since),
         "by_hour": _by_hour(db, now, dealership),

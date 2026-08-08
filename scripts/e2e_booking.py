@@ -75,7 +75,7 @@ async def main() -> int:
         await buyer.wait_for_timeout(3500)
 
         transcript = await buyer.inner_text("body")
-        check("liner confirmed a booking", "Booked" in transcript, last_line(transcript))
+        check("liner confirmed a booking", "booked in" in transcript, last_line(transcript))
         check("it quoted a real price", "$" in transcript)
         await buyer.screenshot(path=OUT / "e2e-buyer.png", full_page=True)
 

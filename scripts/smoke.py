@@ -261,7 +261,7 @@ def main() -> int:
           form["appointment"]["starts_at"])
     check("and the transcript reads as a conversation, not a form dump",
           "Sam Okafor" in form["buyer_message"]["content"]
-          and "Booked" in form["assistant_message"]["content"],
+          and "booked in" in form["assistant_message"]["content"],
           form["assistant_message"]["content"][:60])
     # The buyer typed those details, so provenance has to accept them as typed.
     # That check reads the buyer's messages, which is why the form writes one.
@@ -280,6 +280,22 @@ def main() -> int:
                               "email": "dana.two@example.invalid"})
     # Without this the second buyer books the same slot and turns up to nobody.
     check("a second buyer cannot take the same slot", code == 409, detail[:80])
+
+    print("\n== the overview drives the live panel ==")
+    over = call("GET", "/api/overview")
+    check("it says where 'now' ends, rather than the client deciding",
+          bool(over.get("happening_now_since")), over.get("happening_now_since", "")[:19])
+    day = over["queues"]["active_conversations"]
+    check("today's conversations carry their last activity",
+          all("last_activity_at" in c for c in day), f"{len(day)} today")
+    # Ordered on last activity, not on start: a thread opened this morning with
+    # a message a minute ago is the most live thing on the screen.
+    stamps = [c["last_activity_at"] for c in day]
+    check("newest activity first", stamps == sorted(stamps, reverse=True))
+    check("a live conversation is inside the two-hour window -- the panel that "
+          "shows live work must not open empty on a fresh seed",
+          any(c["last_activity_at"] >= over["happening_now_since"]
+              and c["status"] in ("active", "handoff") for c in day))
 
     print("\n== the appointment exists on the dealer side ==")
     appointments = call("GET", "/api/appointments")["appointments"]

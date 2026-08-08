@@ -27,6 +27,7 @@ from app.agent.runner import (
 )
 from app.agent.tools import when_label
 from app.api.settings import live_settings
+from app.config import settings
 from app.db import SessionLocal, get_db
 from app.events import emit
 from app.integrations.base import NotConfigured
@@ -306,10 +307,20 @@ def book_from_card(
         db, convo, f"{when_label(starts_at)} works. {contact}"
     )
 
+    # What actually happens next, and nothing beyond it. The appointment is
+    # created unassigned (book_appointment sets no rep) and confirming is a
+    # person pressing Confirm on the dashboard, so "a rep will pick this up and
+    # confirm" is the truth. The sentence about email is conditional on the
+    # sender that actually delivers: with EMAIL_SENDER=outbox nothing leaves
+    # the building, and promising a confirmation that never arrives is the one
+    # way a booked buyer stops trusting the whole thread.
     reply = (
-        f"Booked -- {when_label(starts_at)}. It's on the calendar and someone "
-        f"from the team will confirm with you before then."
+        f"You're booked in for {when_label(starts_at)}. It's on the calendar "
+        f"now -- one of our team picks it up from here and confirms with you "
+        f"before then."
     )
+    if settings.email_sender == "gmail":
+        reply += f" The confirmation goes to {body.email.strip()}."
     assistant_message = record_assistant_message(
         db, convo, reply, [{"name": "book_appointment", "input": {}, "result": result}]
     )

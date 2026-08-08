@@ -19,8 +19,11 @@ import { Icon, type IconName } from '../Icon'
 const NAV = [
   { to: '/app', label: 'Overview', icon: 'overview', end: true, group: 'Today',
     badge: null, tone: 'muted' },
+  // Blue, not red: this counts messages waiting to be read, and a red pill
+  // is the dashboard's word for something going wrong. Work that genuinely
+  // needs a person is the Overview's own queue.
   { to: '/app/conversations', label: 'Conversations', icon: 'chat', group: 'Today',
-    badge: 'conversations', tone: 'destructive' },
+    badge: 'conversations', tone: 'primary' },
   { to: '/app/leads', label: 'Leads', icon: 'leads', group: 'Today',
     badge: null, tone: 'muted' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
@@ -36,10 +39,24 @@ const NAV = [
   // landing page -- a worse answer than not offering the link.
 ] as const
 
+/** Remembered, because a rail you have to re-hide on every page load is not
+ *  hideable. Below lg it is a drawer and this does not apply. */
+const RAIL_KEY = 'liner.nav.collapsed'
+
 export function AppShell() {
   useDealerEvents()
   const location = useLocation()
   const [navOpen, setNavOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem(RAIL_KEY) === '1',
+  )
+
+  const toggleRail = () => {
+    setCollapsed((was) => {
+      localStorage.setItem(RAIL_KEY, was ? '0' : '1')
+      return !was
+    })
+  }
 
   const { data: overview } = useQuery({
     queryKey: ['overview'],
@@ -68,8 +85,9 @@ export function AppShell() {
       <aside
         className={clsx(
           'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-border bg-sidebar',
-          'transition-transform duration-200 lg:z-40 lg:translate-x-0',
+          'transition-transform duration-200 lg:z-40',
           navOpen ? 'translate-x-0' : '-translate-x-full',
+          collapsed ? 'lg:-translate-x-full' : 'lg:translate-x-0',
         )}
       >
         <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
@@ -84,6 +102,14 @@ export function AppShell() {
               <span className="font-semibold text-primary">Liner</span> AI
             </div>
           </div>
+          <button
+            onClick={toggleRail}
+            aria-label="Hide menu"
+            title="Hide menu"
+            className="ml-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:inline-flex"
+          >
+            <Icon name="back" className="h-4 w-4" />
+          </button>
         </div>
 
         <nav className="scroll-thin flex-1 overflow-y-auto px-2 py-3">
@@ -119,7 +145,9 @@ export function AppShell() {
                           'tnum ml-auto rounded-full px-1.5 py-0.5 text-[10px]',
                           item.tone === 'destructive'
                             ? 'bg-destructive font-semibold text-destructive-foreground'
-                            : 'bg-muted font-medium text-muted-foreground',
+                            : item.tone === 'primary'
+                              ? 'bg-primary font-semibold text-primary-foreground'
+                              : 'bg-muted font-medium text-muted-foreground',
                         )}
                       >
                         {count}
@@ -136,8 +164,8 @@ export function AppShell() {
         <AccountFooter dealership={hoursLabel(overview?.dealership)} />
       </aside>
 
-      <div className="lg:ml-60">
-        <TopBar onOpenNav={() => setNavOpen(true)} />
+      <div className={clsx('transition-[margin] duration-200', !collapsed && 'lg:ml-60')}>
+        <TopBar onOpenNav={() => setNavOpen(true)} onToggleRail={toggleRail} />
         <IntegrationBanner />
         <Outlet />
       </div>
@@ -225,14 +253,32 @@ function AccountFooter({ dealership }: { dealership: string }) {
  * endpoint: there is no search index and no notification store. They render as
  * what they are rather than as dead chrome that looks clickable.
  */
-function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
+function TopBar({
+  onOpenNav,
+  onToggleRail,
+}: {
+  onOpenNav: () => void
+  onToggleRail: () => void
+}) {
   const now = new Date()
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur md:gap-4 md:px-6">
+      {/* Two buttons rather than one that guesses the viewport: below lg the
+          rail is a drawer to open, at lg and up it is a strip to show or hide.
+          Reading window.innerWidth to decide would disagree with the CSS the
+          moment the window is resized. */}
       <button
         onClick={onOpenNav}
         aria-label="Open menu"
         className="-ml-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:hidden"
+      >
+        <Icon name="menu" className="h-5 w-5" />
+      </button>
+      <button
+        onClick={onToggleRail}
+        aria-label="Show or hide menu"
+        title="Show or hide menu"
+        className="-ml-1 hidden h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:inline-flex"
       >
         <Icon name="menu" className="h-5 w-5" />
       </button>
@@ -313,16 +359,32 @@ export function PageIntro({
   title,
   subtitle,
   actions,
+  accent = false,
 }: {
   title: string
   subtitle?: string
   actions?: React.ReactNode
+  /** Title in the brand colour with the subtitle in body text, rather than the
+   *  other way round. The address under it is a fact about the dealership, not
+   *  a caption, so it reads at full contrast. */
+  accent?: boolean
 }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
+        <h1
+          className={clsx(
+            'text-2xl font-semibold tracking-tight',
+            accent && 'text-primary',
+          )}
+        >
+          {title}
+        </h1>
+        {subtitle && (
+          <p className={clsx('mt-1 text-sm', accent ? 'text-foreground' : 'text-muted-foreground')}>
+            {subtitle}
+          </p>
+        )}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
