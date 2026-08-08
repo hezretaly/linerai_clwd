@@ -11,19 +11,33 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.agent.runner import rails_for, record_buyer_message, run_agent_turn
+from app.agent import tools
+from app.agent.runner import (
+    rails_for,
+    record_assistant_message,
+    record_buyer_message,
+    run_agent_turn,
+)
+from app.agent.tools import when_label
 from app.api.settings import live_settings
 from app.db import SessionLocal, get_db
 from app.events import emit
 from app.integrations.base import NotConfigured
-from app.models import Conversation, Dealership, Rail
-from app.schemas.serialize import conversation_out, message_out, rail_out
+from app.models import Appointment, Conversation, Dealership, Rail
+from app.schemas.serialize import (
+    appointment_out,
+    booking_card,
+    conversation_out,
+    message_out,
+    rail_out,
+)
 
 log = logging.getLogger("liner.chat")
 
@@ -176,14 +190,23 @@ async def send_message(
             if vehicles:
                 yield _sse("vehicles", {"vehicles": vehicles[:3]})
 
-            slots = [
-                s
-                for call in payload["tool_calls"]
-                if call.get("name") == "check_availability"
-                for s in (call.get("result", {}).get("slots") or [])[:2]
-            ]
-            if slots:
-                yield _sse("slots", {"slots": slots})
+            # A booking card, built from what check_availability actually
+            # returned. Two flat chips used to go out here and the buyer had to
+            # type the rest, which is where bookings were lost: the model then
+            # had to read a name, an email and a time back out of prose.
+            avail = next(
+                (
+                    call.get("result", {})
+                    for call in payload["tool_calls"]
+                    if call.get("name") == "check_availability"
+                ),
+                None,
+            )
+            if avail and avail.get("slots"):
+                yield _sse(
+                    "booking",
+                    booking_card(avail["slots"], avail.get("slot_minutes") or 30),
+                )
 
             session.refresh(convo_local)
             yield _sse("rails", {
@@ -199,6 +222,80 @@ async def send_message(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class BookingForm(BaseModel):
+    starts_at: str
+    name: str
+    email: str
+    phone: str = ""
+    vin: str | None = None
+
+
+@router.post("/sessions/{conversation_id}/book")
+def book_from_card(
+    conversation_id: str, body: BookingForm, db: Session = Depends(get_db)
+) -> dict:
+    """The booking card's submit. Books through the same executor the model uses.
+
+    Not a shortcut around the agent: ``book_appointment`` is where the hours
+    check, the slot-clash check, the email format rule and the lead matching
+    live, so a form that wrote its own Appointment row would be a second set of
+    rules to keep in step. The form's advantage is only that a tapped time and
+    a typed email arrive as fields instead of as prose the model has to parse
+    back out -- which is where bookings were being dropped.
+    """
+    convo = _conversation(db, conversation_id)
+
+    # Idempotent per (conversation, slot): a double-tapped submit or a retried
+    # request returns the appointment already made rather than a second one.
+    call_id = f"form-{convo.id}-{body.starts_at}"
+    try:
+        result = tools.execute(
+            db,
+            convo,
+            "book_appointment",
+            {
+                "starts_at": body.starts_at,
+                "name": body.name,
+                "email": body.email,
+                "phone": body.phone,
+                **({"vin": body.vin} if body.vin else {}),
+            },
+            call_id,
+        )
+    except tools.ToolError as exc:
+        # 409, not 500: the slot went, or the hours do not allow it. The card
+        # shows this text and asks again -- these are all things the buyer can
+        # act on, and none of them are a bug.
+        raise HTTPException(409, str(exc)) from None
+
+    starts_at = datetime.fromisoformat(result["starts_at"])
+    contact = " -- ".join(p for p in (body.name.strip(), body.email.strip(), body.phone.strip()) if p)
+    # Written as the buyer's own words on purpose. It keeps the transcript
+    # readable for the rep, gives the model the contact details on later turns,
+    # and it is what save_captured_fields checks against before it will accept
+    # a value as 'typed' rather than downgrading it to a guess.
+    buyer_message = record_buyer_message(
+        db, convo, f"{when_label(starts_at)} works. {contact}"
+    )
+
+    reply = (
+        f"Booked -- {when_label(starts_at)}. It's on the calendar and someone "
+        f"from the team will confirm with you before then."
+    )
+    assistant_message = record_assistant_message(
+        db, convo, reply, [{"name": "book_appointment", "input": {}, "result": result}]
+    )
+
+    appointment = db.query(Appointment).filter_by(id=result["appointment_id"]).one()
+    return {
+        "appointment": appointment_out(appointment, db),
+        "buyer_message": message_out(buyer_message),
+        "assistant_message": message_out(assistant_message),
+        "rails": [rail_out(r) for r in rails_for(db, convo)],
+        "stage": convo.stage,
+    }
 
 
 def _vehicles_from(result: dict) -> list[dict]:

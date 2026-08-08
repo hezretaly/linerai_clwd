@@ -377,3 +377,34 @@ def ingest_run_out(r: IngestRun) -> dict:
         "started_at": iso(r.started_at),
         "finished_at": iso(r.finished_at),
     }
+
+
+def booking_card(slots: list[str], slot_minutes: int) -> dict:
+    """Group check_availability's flat slot list into day -> times.
+
+    Deliberately built here from the tool *result* rather than asked of the
+    model, for the same reason rail chips are: a slot the model composed is a
+    second place it could offer a time the calendar does not have. This
+    reshapes what check_availability already returned and invents nothing --
+    if a time is not in that list it cannot appear on the card.
+    """
+    from app.agent.tools import clock_label
+
+    days: dict[str, dict] = {}
+    for iso in slots:
+        try:
+            when = datetime.fromisoformat(iso)
+        except ValueError:
+            continue
+        day = days.setdefault(
+            when.date().isoformat(),
+            {
+                "date": when.date().isoformat(),
+                "label": f"{when:%A}",
+                "short": f"{when:%a}",
+                "sub": f"{when:%b} {when.day}",
+                "slots": [],
+            },
+        )
+        day["slots"].append({"starts_at": iso, "label": clock_label(when)})
+    return {"slot_minutes": slot_minutes, "days": list(days.values())}

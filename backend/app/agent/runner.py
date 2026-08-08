@@ -96,6 +96,8 @@ def run_agent_turn(db: Session, convo: Conversation, text: str) -> Message | Non
             attempt=2,  # the stub has no retry: it is deterministic
             assistant_turns=assistant_turns,
             booked=convo.stage == "booked",
+            tool_inputs=[c["input"] for c in calls if isinstance(c.get("input"), dict)],
+            buyer_text=text,
         )
         if not verdict.ok:
             log.error(
@@ -104,6 +106,18 @@ def run_agent_turn(db: Session, convo: Conversation, text: str) -> Message | Non
             )
             reply = verdict.text
 
+    return record_assistant_message(db, convo, reply, calls)
+
+
+def record_assistant_message(
+    db: Session, convo: Conversation, reply: str, calls: list[dict]
+) -> Message:
+    """Persist one assistant turn and tell the dashboard about it.
+
+    Shared with the booking form, which books through the executor rather than
+    the model. Same row, same close-on-booked rule, same event -- a second copy
+    of this is how a conversation ends up booked but still showing as open.
+    """
     message = Message(
         conversation_id=convo.id,
         role="assistant",

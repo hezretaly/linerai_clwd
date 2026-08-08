@@ -78,6 +78,22 @@ def call(method: str, path: str, body: dict | None = None, *, stream: bool = Fal
     return raw if stream else (json.loads(raw) if raw else {})
 
 
+def status_of(method: str, path: str, body: dict | None = None) -> tuple[int, str]:
+    """Like call(), but a 4xx is the answer rather than a failure. The booking
+    card's refusals (no name, bad email, slot gone) are all things the buyer
+    acts on, so the gate has to be able to assert on them."""
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(
+        BASE + path, data=data, method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with opener.open(request, timeout=60) as response:
+            return response.status, response.read().decode()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode()
+
+
 def upload(path: str, filename: str, content: bytes) -> dict:
     """One multipart POST, hand-rolled -- smoke.py deliberately has no deps."""
     boundary = "----linersmoke"
@@ -157,10 +173,17 @@ def main() -> int:
     reply, state, _ = say(convo, rail_id=pick(state["rails"], "tell me about"))
     check("stage advanced to vehicle_focus", state["stage"] == "vehicle_focus", state["stage"])
 
-    reply, state, _ = say(convo, rail_id=pick(state["rails"], "see it this week"))
+    reply, state, events = say(convo, rail_id=pick(state["rails"], "see it this week"))
     check("stage advanced to slot_offered", state["stage"] == "slot_offered", state["stage"])
-    check("two concrete times offered, not 'when works for you'",
-          "which one works" in (reply["content"].lower() if reply else ""))
+    # The rule is that the buyer is handed concrete times and never asked an
+    # open-ended "when works for you?". Those times used to be listed in the
+    # reply text and are on the booking card now, so this follows them there
+    # rather than pinning the sentence they used to appear in.
+    offered = next((d for e, d in events if e == "booking"), None)
+    times = sum(len(d["slots"]) for d in (offered or {"days": []})["days"])
+    check("concrete times offered, not 'when works for you'",
+          times >= 2 and "when works for you" not in (reply["content"].lower() if reply else ""),
+          f"{times} times on the card")
 
     reply, state, _ = say(convo, rail_id=pick(state["rails"], "saturday morning", "works"))
     if state["stage"] != "booked":
@@ -168,6 +191,67 @@ def main() -> int:
             convo, content="I'm Jordan Reyes, and my email is jordan.reyes@example.com."
         )
     check("stage reached booked", state["stage"] == "booked", state["stage"])
+
+    print("\n== the booking card offers only times the calendar really has ==")
+    card_convo = call("POST", "/api/chat/sessions")
+    cid, crails = card_convo["conversation_id"], card_convo["rails"]
+    card = None
+    for words in (("third row",), ("tell me about",), ("see it this week",)):
+        _, state2, events = say(cid, rail_id=pick(crails, *words))
+        crails = state2["rails"]
+        card = next((d for e, d in events if e == "booking"), None)
+        if card:
+            break
+    check("check_availability produced a booking card", card is not None)
+    if card is None:
+        return report()
+    check("grouped into days with times under them",
+          all(d.get("slots") for d in card["days"]),
+          " / ".join(f"{d['short']}:{len(d['slots'])}" for d in card["days"][:4]))
+    open_slots = {s["starts_at"] for d in card["days"] for s in d["slots"]}
+    taken = {
+        a["starts_at"] for a in call("GET", "/api/appointments")["appointments"]
+        if a["status"] in ("booked", "confirmed")
+    }
+    check("no already-booked time is offered", not (open_slots & taken),
+          f"{len(open_slots)} offered")
+
+    print("\n== the form books through the executor, refusals and all ==")
+    slot = card["days"][0]["slots"][0]["starts_at"]
+    code, _ = status_of("POST", f"/api/chat/sessions/{cid}/book",
+                        {"starts_at": slot, "name": "", "email": "sam@example.invalid"})
+    check("a form with no name is refused", code == 409, str(code))
+    code, _ = status_of("POST", f"/api/chat/sessions/{cid}/book",
+                        {"starts_at": slot, "name": "Sam Okafor", "email": "not-an-email"})
+    check("and so is a malformed email", code == 409, str(code))
+
+    form = call("POST", f"/api/chat/sessions/{cid}/book", {
+        "starts_at": slot, "name": "Sam Okafor",
+        "email": "sam.okafor@example.invalid", "phone": "555-0161",
+    })
+    check("a complete form books", form["appointment"]["starts_at"] == slot,
+          form["appointment"]["starts_at"])
+    check("and the transcript reads as a conversation, not a form dump",
+          "Sam Okafor" in form["buyer_message"]["content"]
+          and "Booked" in form["assistant_message"]["content"],
+          form["assistant_message"]["content"][:60])
+    # The buyer typed those details, so provenance has to accept them as typed.
+    # That check reads the buyer's messages, which is why the form writes one.
+    check("the contact details are in the buyer's own words for provenance",
+          "sam.okafor@example.invalid" in form["buyer_message"]["content"])
+
+    again = call("POST", f"/api/chat/sessions/{cid}/book", {
+        "starts_at": slot, "name": "Sam Okafor", "email": "sam.okafor@example.invalid",
+    })
+    check("a double-tapped submit does not book twice",
+          again["appointment"]["id"] == form["appointment"]["id"])
+
+    other = call("POST", "/api/chat/sessions")["conversation_id"]
+    code, detail = status_of("POST", f"/api/chat/sessions/{other}/book",
+                             {"starts_at": slot, "name": "Dana Two",
+                              "email": "dana.two@example.invalid"})
+    # Without this the second buyer books the same slot and turns up to nobody.
+    check("a second buyer cannot take the same slot", code == 409, detail[:80])
 
     print("\n== the appointment exists on the dealer side ==")
     appointments = call("GET", "/api/appointments")["appointments"]

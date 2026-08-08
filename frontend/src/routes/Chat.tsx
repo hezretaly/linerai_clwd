@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 
 import { api, streamMessages } from '../lib/api'
+import { BookingCard } from '../components/BookingCard'
+import type { BookingCardData, BookingResult } from '../components/BookingCard'
 import { money } from '../lib/format'
 import type { IntegrationsPayload, Rail } from '../lib/types'
 
@@ -28,7 +30,7 @@ export function Chat() {
   const [bubbles, setBubbles] = useState<Bubble[]>([])
   const [rails, setRails] = useState<Rail[]>([])
   const [vehicles, setVehicles] = useState<VehicleCardData[]>([])
-  const [slots, setSlots] = useState<string[]>([])
+  const [booking, setBooking] = useState<BookingCardData | null>(null)
   const [draft, setDraft] = useState('')
   const [typing, setTyping] = useState(false)
   // What the server says is missing, rather than a vendor name written here.
@@ -56,7 +58,13 @@ export function Chat() {
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
-  }, [bubbles, typing, vehicles, slots])
+  }, [bubbles, typing, vehicles, booking])
+
+  // While the booking card is up its own chips are the ask, so the stage
+  // followups ("Saturday morning works") would be the same question posed a
+  // second, worse way. The knowledge chips stay: they are about something
+  // else, and they are the way out of the card without typing.
+  const visibleRails = booking ? rails.filter((r) => r.kind === 'knowledge') : rails
 
   const send = async (payload: { content?: string; rail_id?: string }, label: string) => {
     if (!conversationId || typing) return
@@ -67,7 +75,7 @@ export function Chat() {
     ])
     setDraft('')
     setVehicles([])
-    setSlots([])
+    setBooking(null)
 
     // 400-900ms before the indicator, so it reads as a person starting to type.
     const delay = 400 + Math.random() * 500
@@ -113,8 +121,8 @@ export function Chat() {
           ])
         } else if (event === 'vehicles') {
           setVehicles(data.vehicles as VehicleCardData[])
-        } else if (event === 'slots') {
-          setSlots(data.slots as string[])
+        } else if (event === 'booking') {
+          setBooking(data as unknown as BookingCardData)
         } else if (event === 'rails') {
           setRails(data.rails as Rail[])
         }
@@ -219,32 +227,33 @@ export function Chat() {
           </div>
         )}
 
-        {slots.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {slots.map((slot) => {
-              const when = new Date(slot)
-              const label = when.toLocaleString('en-US', {
-                weekday: 'long',
-                hour: 'numeric',
-                minute: '2-digit',
-              })
-              return (
-                <button
-                  key={slot}
-                  onClick={() => void send({ content: `${label} works for me.` }, `${label} works`)}
-                  className="rounded-full border border-primary bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-colors duration-150 hover:bg-primary hover:text-primary-foreground"
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
+        {booking && conversationId && (
+          <BookingCard
+            data={booking}
+            conversationId={conversationId}
+            onBooked={(result: BookingResult) => {
+              setBooking(null)
+              setBubbles((prev) => [
+                ...prev,
+                {
+                  id: result.buyer_message.id,
+                  role: 'buyer',
+                  content: result.buyer_message.content,
+                },
+                {
+                  id: result.assistant_message.id,
+                  role: 'assistant',
+                  content: result.assistant_message.content,
+                },
+              ])
+            }}
+          />
         )}
       </div>
 
-      {rails.length > 0 && (
+      {visibleRails.length > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-border px-5 pt-3">
-          {rails.map((rail) => (
+          {visibleRails.map((rail) => (
             <button
               key={rail.id}
               disabled={typing}

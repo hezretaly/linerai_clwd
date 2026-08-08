@@ -351,10 +351,11 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         convo.chosen_slot = ""
         convo.stage = "slot_offered"
         db.commit()
-        return (
-            f"I can do {_slot_label(first)} or {_slot_label(second)}. Which one works?",
-            calls,
-        )
+        # The booking card below this message already shows every open day
+        # and time, plus the boxes for their details. Listing two of them here
+        # as well is the same question asked twice, and the buyer answers the
+        # one that is harder to act on.
+        return ("Here's what's open this week -- pick whichever suits you.", calls)
 
     # ---- contact_capture -> book -----------------------------------------
     if next_stage in {"contact_capture", "booked"}:
@@ -395,13 +396,7 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
             convo.offered_slots_json = json.dumps([first, second])
             convo.stage = "slot_offered"
             db.commit()
-            if first == second:
-                return f"For {asked} I have {_slot_label(first)}. Does that work?", calls
-            return (
-                f"For {asked} I can do {_slot_label(first)} or {_slot_label(second)}. "
-                "Which suits you?",
-                calls,
-            )
+            return (f"Here's what I have {asked} -- take your pick.", calls)
 
         if chosen:
             convo.chosen_slot = chosen

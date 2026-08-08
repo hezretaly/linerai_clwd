@@ -57,15 +57,21 @@ async def main() -> int:
             await tap(buyer, label)
             print(f"  tapped: {label}")
 
-        # The contact-capture step needs a real address typed.
-        await buyer.fill('input[placeholder*="Ask about"]', "Saturday morning works for me.")
-        await buyer.press('input[placeholder*="Ask about"]', "Enter")
-        await buyer.wait_for_timeout(2500)
-        await buyer.fill(
-            'input[placeholder*="Ask about"]',
-            "I'm Priya Sharma, and my email is priya.sharma@example.com.",
-        )
-        await buyer.press('input[placeholder*="Ask about"]', "Enter")
+        # The booking card: a day, a time, then the contact fields. This is the
+        # path a buyer actually takes now -- typing a time still works, but the
+        # card is what check_availability puts in front of them.
+        await buyer.wait_for_selector("text=Pick a day", timeout=15000)
+        await buyer.locator("section button").nth(1).click()
+        await buyer.wait_for_timeout(400)
+        await buyer.locator("section button.rounded-full").first.click()
+        await buyer.wait_for_timeout(400)
+        check("the card asks for details only after a time is picked",
+              await buyer.locator('input[type="email"]').count() == 1)
+
+        await buyer.fill('section input[type="text"]', "Priya Sharma")
+        await buyer.fill('input[type="email"]', "priya.sharma@example.com")
+        await buyer.fill('input[type="tel"]', "555-0148")
+        await buyer.click('button:has-text("Book it")')
         await buyer.wait_for_timeout(3500)
 
         transcript = await buyer.inner_text("body")

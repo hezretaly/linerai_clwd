@@ -401,6 +401,17 @@ def _dealership_hours(db: Session) -> dict:
 DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
+def clock_label(when: datetime) -> str:
+    """"10:00 AM" -- no leading zero, and no %-I, which is glibc-only."""
+    return f"{(when.hour % 12) or 12}:{when.minute:02d} {'AM' if when.hour < 12 else 'PM'}"
+
+
+def when_label(when: datetime) -> str:
+    """"Tuesday 12 August at 10:00 AM". Naive datetimes here are dealership-local
+    already, so this formats the frame it is given and converts nothing."""
+    return f"{when:%A} {when.day} {when:%B} at {clock_label(when)}"
+
+
 def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
     """Open slots from the calendar and the dealership's hours. 8 AM - 8 PM,
     closed Sunday -- read from the config row, never hardcoded."""
@@ -488,6 +499,25 @@ def book_appointment(
     if not (int(window["open"][:2]) <= starts_at.hour < int(window["close"][:2])):
         raise ToolError(
             f"That is outside our hours ({window['open']} to {window['close']})."
+        )
+
+    # Nothing here checked the slot was still free. check_availability filters
+    # taken slots, but that answer ages: a buyer looking at a picked time on a
+    # booking card can sit on it for minutes, and the model can offer a time it
+    # read several turns ago. Two buyers then get the same 10 AM and one of
+    # them turns up to nobody. The executor is the guarantee, so it checks.
+    clash = (
+        db.query(Appointment)
+        .filter(
+            Appointment.starts_at == starts_at,
+            Appointment.status.in_(["booked", "confirmed"]),
+        )
+        .first()
+    )
+    if clash is not None:
+        raise ToolError(
+            f"{when_label(starts_at)} was taken while you were deciding. "
+            "Call check_availability again and offer what is still open."
         )
 
     lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None

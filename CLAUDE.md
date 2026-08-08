@@ -138,6 +138,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   answer is one a buyer repeats back to a rep. `answer_from_knowledge` returns
   `found: false` rather than a near-miss, because a plausible wrong answer is
   worse than none.
+- **The booking card is built from a tool result, never composed.** When
+  `check_availability` runs, the buyer gets days, times and contact fields
+  (`BookingCard.tsx`); the card can only offer what that tool returned, and its
+  submit goes through `book_appointment` like any other caller. Reply text must
+  not list the times as well -- the stub and the prompt both point at the card
+  instead, because the same question asked twice gets answered in the worse
+  place. `book_appointment` owns the clash check: a card can sit on screen for
+  minutes, so "still open" has to be re-decided at submit, not at render.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 
