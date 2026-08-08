@@ -69,7 +69,7 @@ export function TeamPage() {
                       {member.todays_appointments}/{member.daily_cap}
                     </span>
                     {member.at_capacity && (
-                      <Badge tone="warning" className="ml-2">
+                      <Badge tone="primary" className="ml-2">
                         At cap
                       </Badge>
                     )}

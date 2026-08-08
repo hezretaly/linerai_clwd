@@ -145,7 +145,7 @@ export function LeadsPage() {
           label="Appointments set"
           value={counts.booked}
           note={counts.unconfirmed ? `${counts.unconfirmed} unconfirmed` : 'all confirmed'}
-          tone={counts.unconfirmed ? 'warning' : 'muted'}
+          tone={counts.unconfirmed ? 'primary' : 'muted'}
         />
         {/* The mockup says "no phone on file". Inverted here: with SMS out of
             scope, an email is the only way this product can reach anyone. */}

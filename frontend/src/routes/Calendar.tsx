@@ -210,7 +210,7 @@ export function CalendarPage() {
                           'absolute overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] animate-cell-fill',
                           appointment.status === 'confirmed'
                             ? 'border-success/30 bg-success-muted text-success'
-                            : 'border-warning/30 bg-warning-muted text-warning-foreground',
+                            : 'border-primary/30 bg-accent text-primary',
                         )}
                       >
                         <p className="truncate font-medium">{appointment.lead?.name}</p>
@@ -311,7 +311,7 @@ function Agenda({
                         </span>
                       </span>
                       <Badge
-                        tone={appointment.status === 'confirmed' ? 'success' : 'warning'}
+                        tone={appointment.status === 'confirmed' ? 'success' : 'primary'}
                         className="shrink-0"
                       >
                         {appointment.status}
@@ -396,14 +396,14 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
       ) : (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge tone={appointment.status === 'confirmed' ? 'success' : 'warning'}>
+            <Badge tone={appointment.status === 'confirmed' ? 'success' : 'primary'}>
               {appointment.status}
             </Badge>
             <Badge tone="neutral">booked by {appointment.booked_by}</Badge>
             {appointment.assigned_to ? (
               <Badge tone="primary">{appointment.assigned_to.name}</Badge>
             ) : (
-              <Badge tone="warning">Unassigned</Badge>
+              <Badge tone="primary">Unassigned</Badge>
             )}
           </div>
 

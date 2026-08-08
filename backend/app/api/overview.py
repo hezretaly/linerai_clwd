@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -211,7 +211,63 @@ def overview(
         "happening_now_since": (now - timedelta(hours=2)).isoformat(),
         "mix": _channel_mix(db, since),
         "source_mix": _source_mix(db, since),
-        "by_hour": _by_hour(db, now, dealership),
+        "by_hour": _by_hour(db, dealership, start_of_day, now),
+    }
+
+
+# What a range selector on the charts may ask for. Anything else is a typo,
+# and answering a typo with "today" quietly shows the wrong window.
+RANGES = {
+    "today": "Today, midnight to now",
+    "yesterday": "Yesterday",
+    "week": "Last 7 days",
+    "month": "Last 30 days",
+}
+
+
+def _window(now, key: str):
+    """(start, end) for a range key. Naive and dealership-local throughout --
+    these are the same clock the conversations were stamped with."""
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if key == "yesterday":
+        return midnight - timedelta(days=1), midnight
+    if key == "week":
+        return midnight - timedelta(days=6), now
+    if key == "month":
+        return midnight - timedelta(days=29), now
+    return midnight, now
+
+
+@router.get("/overview/trends")
+def trends(
+    range: str = "today",
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
+) -> dict:
+    """The two charts over a chosen window.
+
+    Separate from /api/overview on purpose. The KPIs and queues are one first
+    paint and stay that way; changing the chart range must not refetch the
+    whole dashboard, and the counts on the cards must not silently start
+    meaning "last month" because someone moved a chart selector.
+    """
+    if range not in RANGES:
+        raise HTTPException(400, f"range must be one of: {', '.join(RANGES)}")
+
+    now = utcnow()
+    start, end = _window(now, range)
+    return {
+        "range": range,
+        "label": RANGES[range],
+        "days": max((end.date() - start.date()).days, 1),
+        "conversations": (
+            db.query(Conversation)
+            .filter(Conversation.started_at >= start, Conversation.started_at < end)
+            .count()
+        ),
+        "by_hour": _by_hour(db, dealership, start, end),
+        "source_mix": _source_mix(db, start, end),
     }
 
 
@@ -225,43 +281,51 @@ def _channel_mix(db: Session, since) -> list[dict]:
     return [{"channel": channel, "count": count} for channel, count in rows]
 
 
-def _source_mix(db: Session, since) -> list[dict]:
+def _source_mix(db: Session, start, end=None) -> list[dict]:
     """Where leads came from -- `leads.source`, not the conversation channel.
 
     The two are different axes and the overview shows both: a buyer can arrive
     from the website and then be handled over voice.
     """
-    rows = (
-        db.query(Lead.source, func.count(Lead.id))
-        .filter(Lead.created_at >= since)
-        .group_by(Lead.source)
-        .all()
-    )
+    query = db.query(Lead.source, func.count(Lead.id)).filter(Lead.created_at >= start)
+    if end is not None:
+        query = query.filter(Lead.created_at < end)
+    rows = query.group_by(Lead.source).all()
     return [{"source": source, "count": count} for source, count in rows]
 
 
-def _by_hour(db: Session, now, dealership: Dealership) -> list[dict]:
-    """Today's conversations bucketed by hour, each marked open or closed.
+def _by_hour(db: Session, dealership: Dealership, start, end) -> list[dict]:
+    """Conversations in the window bucketed by hour of day, open or closed.
 
     The point the chart makes is that Liner answers when the showroom cannot,
     so every bucket carries whether the dealership was open at that hour. That
     comes from `hours_json` -- never a hardcoded 8-to-6. Timestamps are naive
     and already in the dealership's local frame, so `.hour` is the local hour.
+
+    Over more than a day, `open` is "open at that hour on most days in the
+    window". A Sunday in a seven-day window does not make 10 AM a closed hour,
+    and requiring every day would paint the whole week closed.
     """
     day_names = [
         "monday", "tuesday", "wednesday", "thursday",
         "friday", "saturday", "sunday",
     ]
     hours = json.loads(dealership.hours_json or "{}")
-    window = hours.get(day_names[now.weekday()])
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    counts = _bucket(db, start_of_day)
+    days = []
+    cursor = start.date()
+    while cursor < end.date() or cursor == start.date():
+        days.append(hours.get(day_names[cursor.weekday()]))
+        cursor += timedelta(days=1)
+
+    counts = _bucket(db, start, end)
 
     def is_open(hour: int) -> bool:
-        if not window:
-            return False
-        return int(window["open"][:2]) <= hour < int(window["close"][:2])
+        open_on = sum(
+            1 for window in days
+            if window and int(window["open"][:2]) <= hour < int(window["close"][:2])
+        )
+        return open_on * 2 > len(days)
 
     return [
         {"hour": h, "count": counts.get(h, 0), "open": is_open(h)}
@@ -269,7 +333,7 @@ def _by_hour(db: Session, now, dealership: Dealership) -> list[dict]:
     ]
 
 
-def _bucket(db: Session, start_of_day) -> dict[int, int]:
+def _bucket(db: Session, start, end) -> dict[int, int]:
     """Bucket in Python rather than SQL.
 
     `strftime` is SQLite-only and `date_part` is Postgres-only; the Postgres
@@ -278,7 +342,7 @@ def _bucket(db: Session, start_of_day) -> dict[int, int]:
     """
     rows = (
         db.query(Conversation.started_at)
-        .filter(Conversation.started_at >= start_of_day)
+        .filter(Conversation.started_at >= start, Conversation.started_at < end)
         .all()
     )
     counts: dict[int, int] = {}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -49,6 +49,79 @@ const KPI_LINKS: Record<string, string> = {
   credit_apps: '/app/leads',
 }
 
+type TrendRange = 'today' | 'yesterday' | 'week' | 'month'
+
+interface Trend {
+  range: TrendRange
+  label: string
+  days: number
+  conversations: number
+  by_hour: { hour: number; count: number; open: boolean }[]
+  source_mix: { source: string; count: number }[]
+}
+
+const RANGE_LABELS: [TrendRange, string][] = [
+  ['today', 'Today'],
+  ['yesterday', 'Yesterday'],
+  ['week', 'Week'],
+  ['month', 'Month'],
+]
+
+/** Title, window and the range picker, shared by both charts so the two never
+ *  drift into describing their windows differently. */
+function TrendHeader({
+  title,
+  subtitle,
+  range,
+  onRange,
+  legend = false,
+}: {
+  title: string
+  subtitle: string
+  range: TrendRange
+  onRange: (next: TrendRange) => void
+  legend?: boolean
+}) {
+  return (
+    <div className="p-6 pb-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-semibold leading-none tracking-tight">{title}</h3>
+          <p className="mt-1.5 text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+        <div className="inline-flex shrink-0 rounded-lg border border-border p-0.5">
+          {RANGE_LABELS.map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => onRange(key)}
+              className={clsx(
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                range === key
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {legend && (
+        <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-primary" />
+            Closed hours
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-border" />
+            Open hours
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   chat: 'Website chat',
   phone: 'Phone',
@@ -58,6 +131,19 @@ const SOURCE_LABELS: Record<string, string> = {
 export function OverviewPage() {
   const [showAll, setShowAll] = useState(false)
   const [showAllLeads, setShowAllLeads] = useState(false)
+  // One selector per chart rather than one for both: a rep looking at where
+  // leads came from this month is often still looking at today's hours.
+  const [hourRange, setHourRange] = useState<TrendRange>('today')
+  const [sourceRange, setSourceRange] = useState<TrendRange>('today')
+
+  const { data: hourTrend } = useQuery({
+    queryKey: ['trends', hourRange],
+    queryFn: () => api.get<Trend>(`/api/overview/trends?range=${hourRange}`),
+  })
+  const { data: sourceTrend } = useQuery({
+    queryKey: ['trends', sourceRange],
+    queryFn: () => api.get<Trend>(`/api/overview/trends?range=${sourceRange}`),
+  })
   const { data, isLoading } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api.get<Overview>('/api/overview'),
@@ -143,7 +229,12 @@ export function OverviewPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-6">
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-semibold leading-none tracking-tight">Needs a person</h3>
+              <Link
+                to="/app/conversations?filter=flagged"
+                className="font-semibold leading-none tracking-tight text-primary hover:underline"
+              >
+                Needs a person
+              </Link>
               <span className="tnum inline-flex items-center rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
                 {waitingCount}
               </span>
@@ -320,89 +411,58 @@ export function OverviewPage() {
       {/* ---- Charts -------------------------------------------------------- */}
       <div className="mt-4 grid gap-4 lg:grid-cols-7">
         <Card className="min-w-0 shadow-sm lg:col-span-3">
-          <div className="p-6 pb-3">
-            <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Last 24 hours, by the source on the lead
-            </p>
-          </div>
+          <TrendHeader
+            title="Where leads came from"
+            subtitle="By the source on the lead"
+            range={sourceRange}
+            onRange={setSourceRange}
+          />
           <div className="p-6 pt-0">
-            <SourceChart mix={data.source_mix} />
+            <SourceChart
+              mix={sourceTrend?.source_mix ?? data.source_mix}
+              caption={sourceTrend ? `leads, ${sourceTrend.label.toLowerCase()}` : 'leads today'}
+            />
           </div>
         </Card>
         <Card className="min-w-0 shadow-sm lg:col-span-4">
-          <div className="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
-            <div>
-              <h3 className="font-semibold leading-none tracking-tight">
-                Conversations by hour
-              </h3>
-              <p className="mt-1.5 text-sm text-muted-foreground">Today, midnight to now</p>
-            </div>
-            <div className="flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm bg-primary" />
-                Closed hours
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-sm bg-border" />
-                Open hours
-              </span>
-            </div>
-          </div>
+          <TrendHeader
+            title="Conversations by hour"
+            subtitle={
+              hourTrend
+                ? `${hourTrend.label} -- ${hourTrend.conversations} conversation${hourTrend.conversations === 1 ? '' : 's'}`
+                : 'Today, midnight to now'
+            }
+            range={hourRange}
+            onRange={setHourRange}
+            legend
+          />
           <div className="p-6 pt-0">
-            <HourChart data={data.by_hour} />
+            <HourChart data={hourTrend?.by_hour ?? data.by_hour} />
           </div>
         </Card>
-
       </div>
 
-      {/* Not in the mockup's overview, kept because it is the one thing on this
-          screen a rep cannot find anywhere else: Liner has quoted a car that
-          has since left the lot, and somebody is expecting it. */}
-      {data.queues.inventory_issues.length > 0 && (
-        <Card className="mt-4 shadow-sm">
-          <div className="flex items-center justify-between border-b border-border p-6">
-            <div>
-              <h3 className="font-semibold leading-none tracking-tight">
-                Quoted, now unavailable
-              </h3>
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                Liner put these in front of a buyer before they left the lot
-              </p>
-            </div>
-            <Link to="/app/inventory" className="text-sm font-medium text-primary hover:underline">
-              Inventory
-            </Link>
-          </div>
-          <div className="divide-y divide-border">
-            {data.queues.inventory_issues.map((v) => (
-              <div key={v.id} className="flex items-center gap-3 px-6 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium">{v.title}</div>
-                  <div className="truncate text-xs capitalize text-muted-foreground">
-                    {v.status} -- VIN ending {v.vin.slice(-6)}
-                  </div>
-                </div>
-                <span className="tnum rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-primary">
-                  quoted {v.mention_count}x
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
     </main>
   )
 }
 
 function EscalationRow({ escalation }: { escalation: Escalation }) {
+  const navigate = useNavigate()
   const lead = escalation.lead
   const urgent = Date.now() - new Date(escalation.created_at).getTime() > 6 * 3600_000
+  const thread = `/app/conversations/${escalation.conversation_id}`
 
+  // A <tr> cannot be a link, so the row navigates on click. The Take over
+  // button inside it stops the event, or clicking it would fire both.
   return (
-    <tr className="border-b border-border transition-colors last:border-0 hover:bg-muted/50">
+    <tr
+      onClick={() => navigate(thread)}
+      className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
+    >
       <td className="px-6 py-3">
-        <div className="font-medium">{lead?.name || 'Unknown caller'}</div>
+        <div className="font-medium text-primary group-hover:underline">
+          {lead?.name || 'Unknown caller'}
+        </div>
         <div className="tnum text-xs text-muted-foreground">
           {lead?.phone || lead?.email || 'No contact captured'}
         </div>
@@ -431,7 +491,8 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
       </td>
       <td className="px-6 py-3 text-right">
         <Link
-          to={`/app/conversations/${escalation.conversation_id}`}
+          to={thread}
+          onClick={(e) => e.stopPropagation()}
           className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
         >
           Take over
@@ -568,7 +629,17 @@ function HourChart({ data }: { data: Overview['by_hour'] }) {
   )
 }
 
-function SourceChart({ mix }: { mix: Overview['source_mix'] }) {
+function SourceChart({
+  mix,
+  caption,
+}: {
+  mix: Overview['source_mix']
+  /** The hole says what the denominator is. With a range picker above it,
+   *  "leads today" was a caption that stopped being true the moment anyone
+   *  chose a different window. Named `caption` rather than `window`, which is
+   *  a DOM global and typechecks cleanly while meaning nothing. */
+  caption: string
+}) {
   const total = mix.reduce((sum, m) => sum + m.count, 0)
 
   if (!total) {
@@ -620,7 +691,7 @@ function SourceChart({ mix }: { mix: Overview['source_mix'] }) {
             without the reader going to the legend for it. */}
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
           <span className="tnum text-xl font-semibold">{total}</span>
-          <span className="text-[11px] text-muted-foreground">leads today</span>
+          <span className="text-[11px] text-muted-foreground">{caption}</span>
         </div>
       </div>
       <ul className="shrink-0 space-y-2 text-xs">

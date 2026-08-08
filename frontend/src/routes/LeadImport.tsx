@@ -393,7 +393,7 @@ function ProspectRow({
             <span className="text-xs text-muted-foreground">via {prospect.provider}</span>
           )}
           {prospect.existing_lead && (
-            <Badge tone="warning">Already on file -- will merge</Badge>
+            <Badge tone="primary">Already on file -- will merge</Badge>
           )}
         </div>
 

@@ -144,7 +144,7 @@ export function InventoryPage() {
                     <td className="px-4 py-2.5">
                       <div className="flex flex-wrap gap-1">
                         {!vehicle.rules.discuss && <Badge tone="primary">Do not discuss</Badge>}
-                        {vehicle.rules.hold_price && <Badge tone="warning">Price firm</Badge>}
+                        {vehicle.rules.hold_price && <Badge tone="primary">Price firm</Badge>}
                         {vehicle.rules.mention_warranty && <Badge tone="neutral">Warranty</Badge>}
                         {vehicle.manual_fields.length > 0 && (
                           <Badge tone="primary">Edited</Badge>

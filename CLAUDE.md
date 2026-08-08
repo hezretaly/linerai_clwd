@@ -175,7 +175,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   form never comes back. With no `credit_application_url` configured there is
   nothing to send, so the draft refuses with a typed `not_configured` and the
   card says why instead of showing a zero that reads as a quiet day.
-- **Every count comes from `/api/overview`.** No page counts for itself.
+- **Every count comes from `/api/overview`.** No page counts for itself. The
+  two charts are the exception and have their own `/api/overview/trends?range=`,
+  so moving a chart's window cannot silently change what the KPI cards mean.
+  An unknown range is a 400 -- answering a typo with "today" shows the wrong
+  window under the right caption.
 - **Hours come from `hours_json`.** No page states its own.
 
 ## What is real and what is not

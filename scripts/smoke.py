@@ -365,6 +365,28 @@ def main() -> int:
     check("an unknown token is a 404, not a redirect to nowhere",
           follow(BASE + "/r/not-a-real-token")[0] == 404)
 
+    print("\n== the charts answer for a chosen window ==")
+    for key, expect in (("today", "Today"), ("yesterday", "Yesterday"),
+                        ("week", "Last 7"), ("month", "Last 30")):
+        trend = call("GET", f"/api/overview/trends?range={key}")
+        ok = (
+            trend["label"].startswith(expect)
+            and len(trend["by_hour"]) == 24
+            and trend["range"] == key
+        )
+        check(f"range={key} answers for its own window", ok, trend["label"])
+    # A typo must not quietly answer for today -- that shows the wrong window
+    # under the right caption, which is worse than an error.
+    check("an unknown range is refused rather than defaulted",
+          status_of("GET", "/api/overview/trends?range=fortnight")[0] == 400)
+    # Over a week a Sunday must not paint the whole week closed, and the hours
+    # still come from hours_json rather than a hardcoded 8-to-6.
+    week = call("GET", "/api/overview/trends?range=week")
+    open_hours = [h["hour"] for h in week["by_hour"] if h["open"]]
+    check("a week still knows the showroom's opening hours",
+          bool(open_hours) and len(open_hours) < 24,
+          f"open {open_hours[0]}:00-{open_hours[-1]}:00" if open_hours else "none")
+
     print("\n== the overview drives the live panel ==")
     over = call("GET", "/api/overview")
     check("it says where 'now' ends, rather than the client deciding",

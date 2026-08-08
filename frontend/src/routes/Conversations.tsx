@@ -41,7 +41,7 @@ function tagsOf(c: Conversation): [string, string][] {
   }
   tags.push([SOURCE_LABEL[c.lead?.source ?? 'chat'] ?? 'Website', 'muted'])
   if (!c.lead?.assigned_user_id) tags.push(['Unclaimed', 'muted'])
-  if (c.lead && c.lead.contact_risk) tags.push(['No email', 'warning'])
+  if (c.lead && c.lead.contact_risk) tags.push(['No email', 'primary'])
   return tags
 }
 

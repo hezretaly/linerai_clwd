@@ -54,6 +54,11 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(RAIL_KEY) === '1',
   )
+  // Pointing at the strip opens it; leaving closes it again. Collapsed stays
+  // the remembered state -- hovering does not un-collapse it, so the rail is
+  // back to a strip the moment the pointer moves away.
+  const [peeking, setPeeking] = useState(false)
+  const open = !collapsed || peeking
 
   const toggleRail = () => {
     setCollapsed((was) => {
@@ -87,23 +92,25 @@ export function AppShell() {
         />
       )}
       <aside
+        onMouseEnter={() => collapsed && setPeeking(true)}
+        onMouseLeave={() => setPeeking(false)}
         className={clsx(
           'fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-sidebar',
           'transition-all duration-200 lg:z-40 lg:translate-x-0',
           navOpen ? 'w-60 translate-x-0' : 'w-60 -translate-x-full',
-          collapsed ? 'lg:w-14' : 'lg:w-60',
+          collapsed ? (peeking ? 'lg:w-60 lg:shadow-xl' : 'lg:w-14') : 'lg:w-60',
         )}
       >
         <div
           className={clsx(
             'flex h-14 items-center gap-2.5 border-b border-border px-4',
-            collapsed && 'lg:justify-center lg:px-0',
+            !open && 'lg:justify-center lg:px-0',
           )}
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <Icon name="chat" className="h-4 w-4" />
           </span>
-          <div className={clsx('min-w-0', collapsed && 'lg:hidden')}>
+          <div className={clsx('min-w-0', !open && 'lg:hidden')}>
             <div className="truncate text-sm font-semibold leading-tight">
               {overview?.dealership.name ?? 'Liner'}
             </div>
@@ -118,7 +125,7 @@ export function AppShell() {
             className={clsx(
               'ml-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-md',
               'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-              collapsed ? 'lg:hidden' : 'lg:inline-flex',
+              open ? 'lg:inline-flex' : 'lg:hidden',
             )}
           >
             <Icon name="back" className="h-4 w-4" />
@@ -128,11 +135,11 @@ export function AppShell() {
         <nav className="scroll-thin flex-1 overflow-y-auto px-2 py-3">
           {(['Today', 'Manage'] as const).map((group) => (
             <div key={group}>
-              {collapsed && <div className="mx-2 my-3 hidden border-t border-border lg:block" />}
+              {!open && <div className="mx-2 my-3 hidden border-t border-border lg:block" />}
               <div
                 className={clsx(
                   'px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground first:pt-1',
-                  collapsed && 'lg:hidden',
+                  !open && 'lg:hidden',
                 )}
               >
                 {group}
@@ -150,7 +157,7 @@ export function AppShell() {
                     className={({ isActive }) =>
                       clsx(
                         'relative mb-0.5 flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors',
-                        collapsed ? 'px-2.5 lg:justify-center lg:px-0' : 'px-2.5',
+                        open ? 'px-2.5' : 'px-2.5 lg:justify-center lg:px-0',
                         isActive
                           ? 'bg-accent text-accent-foreground'
                           : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
@@ -158,7 +165,7 @@ export function AppShell() {
                     }
                   >
                     <Icon name={item.icon as IconName} className="h-4 w-4 shrink-0" />
-                    <span className={clsx(collapsed && 'lg:hidden')}>{item.label}</span>
+                    <span className={clsx(!open && 'lg:hidden')}>{item.label}</span>
                     {count ? (
                       <span
                         className={clsx(
@@ -167,9 +174,9 @@ export function AppShell() {
                             ? 'bg-primary font-semibold text-primary-foreground'
                             : 'bg-muted font-medium text-muted-foreground',
                           // At strip width it rides the corner of the icon.
-                          collapsed
-                            ? 'ml-auto lg:absolute lg:right-0.5 lg:top-0.5 lg:ml-0 lg:px-1 lg:leading-tight'
-                            : 'ml-auto',
+                          open
+                            ? 'ml-auto'
+                            : 'ml-auto lg:absolute lg:right-0.5 lg:top-0.5 lg:ml-0 lg:px-1 lg:leading-tight',
                         )}
                       >
                         {count}
@@ -182,8 +189,8 @@ export function AppShell() {
           ))}
         </nav>
 
-        <LinerStatus collapsed={collapsed} />
-        <AccountFooter dealership={hoursLabel(overview?.dealership)} collapsed={collapsed} />
+        <LinerStatus collapsed={!open} />
+        <AccountFooter dealership={hoursLabel(overview?.dealership)} collapsed={!open} />
       </aside>
 
       <div className={clsx('transition-[margin] duration-200', collapsed ? 'lg:ml-14' : 'lg:ml-60')}>
