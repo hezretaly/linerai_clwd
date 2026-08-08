@@ -66,6 +66,60 @@ DESKTOP = {"width": 1440, "height": 900}
 # browser shrink-to-fit the whole document, so one wide element renders every
 # other page element tiny -- which reads as "the app looks wrong on mobile"
 # rather than "this table is too wide", and sends you looking in the wrong file.
+# Warm colour on the overview. Status on this page is blue; a red or amber pill
+# next to it reads as an alert, and every one of them has had to be found by
+# eye and reported twice. Computed styles come back as oklch(), so the hue is
+# readable directly -- warm is roughly 0-110 degrees.
+#
+# The banner that names unconfigured integrations is deliberately amber and is
+# skipped: that one *is* a warning, and it is the mechanism that stops a demo
+# looking configured when it is not.
+WARM_JS = """() => {
+    const warm = (v) => {
+        const m = v.match(/oklch\\(([\\d.]+) ([\\d.]+) ([\\d.]+)/);
+        if (!m) return false;
+        const [, l, c, h] = m.map(Number);
+        return c > 0.04 && h >= 0 && h <= 110 && l < 0.98;
+    };
+    const out = [];
+    document.querySelectorAll('main *').forEach(el => {
+        if (el.children.length || !el.offsetParent) return;
+        const s = getComputedStyle(el);
+        if (warm(s.color) || warm(s.backgroundColor)) {
+            out.push({text: (el.textContent || '').trim().slice(0, 30), color: s.color});
+        }
+    });
+    return out;
+}"""
+
+# Warm colour on the overview. The dashboard's rule is that a warm hue means
+# something is wrong -- everything else is blue -- and this drifted back twice
+# because a status pill in amber reads as red next to the rest of the page and
+# nobody notices in a diff. Hue is read off the computed oklch, so a token
+# renamed or re-tinted still gets caught.
+#
+# The integration banner is exempt: "not configured" is exactly the case warm
+# is reserved for, and it is the honesty mechanism this whole system runs on.
+WARM_JS = """() => {
+    const warm = (v) => {
+        const m = v.match(/oklch\\(([\\d.]+) ([\\d.]+) ([\\d.]+)/);
+        if (!m) return false;
+        const [, l, c, h] = m.map(Number);
+        // Chroma below this is grey with a hue that means nothing.
+        return c > 0.04 && (h < 100 || h > 340) && l < 0.85;
+    };
+    const exempt = (el) => el.closest('[data-warm-ok]') !== null;
+    const out = [];
+    document.querySelectorAll('main *').forEach(el => {
+        if (el.children.length || exempt(el)) return;
+        const s = getComputedStyle(el);
+        if (!warm(s.color) && !warm(s.backgroundColor)) return;
+        const t = (el.textContent || '').trim().slice(0, 30);
+        if (t) out.push(t);
+    });
+    return [...new Set(out)];
+}"""
+
 OVERFLOW_JS = """() => {
     const root = document.documentElement;
     const vw = root.clientWidth;
@@ -173,6 +227,20 @@ async def main() -> int:
             )
 
             if phone:
+                if route == "/app":
+                    warm = await page.evaluate(WARM_JS)
+                    if warm:
+                        failures.append(
+                            f"{route}: warm status colour -- "
+                            + "; ".join(f"{w['text']!r} {w['color']}" for w in warm[:3])
+                        )
+                if route == "/app":
+                    warm = await page.evaluate(WARM_JS)
+                    if warm:
+                        failures.append(
+                            f"{route}: warm colour where the dashboard is blue -- "
+                            + ", ".join(repr(w) for w in warm[:4])
+                        )
                 over = await page.evaluate(OVERFLOW_JS)
                 if over["worst"]:
                     w = over["worst"][0]

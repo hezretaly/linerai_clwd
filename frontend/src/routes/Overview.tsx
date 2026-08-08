@@ -57,6 +57,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export function OverviewPage() {
   const [showAll, setShowAll] = useState(false)
+  const [showAllLeads, setShowAllLeads] = useState(false)
   const { data, isLoading } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api.get<Overview>('/api/overview'),
@@ -80,6 +81,7 @@ export function OverviewPage() {
   const recent = today.filter((c) => (c.last_activity_at ?? c.started_at) >= data.happening_now_since)
   const earlier = today.filter((c) => !recent.includes(c))
   const live = showAll ? today : recent
+  const unclaimed = data.queues.unclaimed_leads
 
   return (
     <main className="p-4 md:p-6">
@@ -279,7 +281,7 @@ export function OverviewPage() {
         </Card>
 
         <Card className="min-w-0 shadow-sm">
-          <div className="flex items-center justify-between border-b border-border p-6">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
               <h3 className="font-semibold leading-none tracking-tight">Unclaimed leads</h3>
               {/* The mockup captions this "Round robin after 12 hours". There
@@ -289,15 +291,25 @@ export function OverviewPage() {
                 Assigned to nobody, longest waiting first
               </p>
             </div>
-            <Link to="/app/leads" className="text-sm font-medium text-primary hover:underline">
-              Pool
-            </Link>
+            <div className="flex items-center gap-3">
+              {unclaimed.length > 2 && (
+                <button
+                  onClick={() => setShowAllLeads((was) => !was)}
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  {showAllLeads ? 'Show fewer' : `Show all (${unclaimed.length - 2} more)`}
+                </button>
+              )}
+              <Link to="/app/leads" className="text-sm font-medium text-primary hover:underline">
+                Pool
+              </Link>
+            </div>
           </div>
-          {data.queues.unclaimed_leads.length === 0 ? (
+          {unclaimed.length === 0 ? (
             <Empty title="All claimed" hint="Every lead has an owner." />
           ) : (
             <div className="divide-y divide-border">
-              {data.queues.unclaimed_leads.slice(0, 2).map((lead) => (
+              {(showAllLeads ? unclaimed : unclaimed.slice(0, 2)).map((lead) => (
                 <UnclaimedRow key={lead.id} lead={lead} />
               ))}
             </div>
@@ -411,7 +423,8 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <span
-          className={`tnum font-medium ${urgent ? 'text-primary' : 'text-warning-foreground'}`}
+          className={clsx('tnum text-primary', urgent ? 'font-semibold' : 'font-medium')}
+          title={urgent ? 'Waiting longer than the rule allows' : undefined}
         >
           {waited(escalation.created_at)}
         </span>
@@ -443,7 +456,7 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
         <div className="text-xs text-muted-foreground">Unconfirmed appointments</div>
       </td>
       <td className="px-4 py-3">
-        <span className="inline-flex items-center rounded-md border border-warning/30 bg-warning-muted px-2 py-0.5 text-xs font-medium text-warning-foreground">
+        <span className="inline-flex items-center rounded-md border border-primary/30 bg-accent px-2 py-0.5 text-xs font-medium text-primary">
           Not confirmed
         </span>
         <div className="mt-1 max-w-[15rem] text-xs text-muted-foreground">
@@ -459,7 +472,7 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
         </span>
       </td>
       <td className="whitespace-nowrap px-4 py-3">
-        <span className="tnum font-medium text-warning-foreground">
+        <span className="tnum font-medium text-primary">
           {waited(oldest.created_at)}
         </span>
       </td>
@@ -477,12 +490,9 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
 
 function UnclaimedRow({ lead }: { lead: Lead }) {
   const hours = (Date.now() - new Date(lead.created_at).getTime()) / 3600_000
-  const tone =
-    hours >= 8
-      ? 'bg-accent text-primary'
-      : hours >= 4
-        ? 'bg-warning-muted text-warning-foreground'
-        : 'bg-muted text-muted-foreground'
+  // Waiting long enough to matter, or not. A third colour in between was
+  // amber, which reads as an alert next to blue everywhere else.
+  const tone = hours >= 4 ? 'bg-accent font-semibold text-primary' : 'bg-muted text-muted-foreground'
 
   return (
     <div className="flex items-center gap-3 px-6 py-3">
