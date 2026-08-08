@@ -236,12 +236,21 @@ export interface AssistantSettings {
   after_hours_mode: string
   greeting: string
   booking_slot_length: number
+  credit_application_url: string
   published_by: string | null
   published_at: string | null
   updated_at: string | null
 }
 
-export interface Kpi { key: string; label: string; value: number; window: string }
+export interface Kpi {
+  key: string
+  label: string
+  value: number
+  window: string
+  /** The count is real but the feature behind it is not set up, so the window
+   *  line says why instead of a zero reading as a quiet day. */
+  unavailable?: boolean
+}
 
 export interface Overview {
   dealership: Dealership
@@ -313,7 +322,7 @@ export interface AdfPreview {
 }
 
 export interface LeadDraft {
-  kind: 'reminder' | 'follow_up'
+  kind: 'reminder' | 'follow_up' | 'credit_application'
   to: string
   subject: string
   body: string

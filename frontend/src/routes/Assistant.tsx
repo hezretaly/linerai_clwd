@@ -135,6 +135,27 @@ function Behaviour({ data }: { data: SettingsPayload }) {
           {current.booking_slot_length} minutes
         </p>
       </div>
+
+      <div>
+        <p className="text-sm font-medium">Credit application link</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The dealership's own finance application. Until this is set there is nothing
+          to send, so the action on a lead says so rather than mailing an invitation
+          to apply nowhere -- and the overview's Credit applications card says the same.
+        </p>
+        <input
+          type="url"
+          defaultValue={current.credit_application_url}
+          placeholder="https://..."
+          onBlur={(e) => {
+            const next = e.target.value.trim()
+            if (next !== current.credit_application_url) {
+              patch.mutate({ credit_application_url: next })
+            }
+          }}
+          className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      </div>
     </div>
   )
 }

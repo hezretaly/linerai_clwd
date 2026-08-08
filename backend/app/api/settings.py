@@ -69,6 +69,7 @@ class SettingsPatch(BaseModel):
     after_hours_mode: str | None = None
     greeting: str | None = None
     booking_slot_length: int | None = None
+    credit_application_url: str | None = None
 
 
 @router.patch("/assistant-settings")
@@ -87,6 +88,7 @@ def patch_assistant_settings(
             discount_pct=live.discount_pct, financing_mode=live.financing_mode,
             after_hours_mode=live.after_hours_mode, greeting=live.greeting,
             booking_slot_length=live.booking_slot_length,
+            credit_application_url=live.credit_application_url,
         )
         db.add(draft)
 

@@ -45,8 +45,8 @@ export function InventoryPage() {
 
       <div className="space-y-6 p-6">
         {stale.length > 0 && (
-          <Card className="border-destructive/30 bg-destructive-muted p-4">
-            <h2 className="text-sm font-semibold text-destructive">
+          <Card className="border-primary/30 bg-accent p-4">
+            <h2 className="text-sm font-semibold text-primary">
               Liner has been quoting vehicles that are no longer available
             </h2>
             <ul className="mt-2 space-y-1">
@@ -137,13 +137,13 @@ export function InventoryPage() {
                       {miles(vehicle.mileage)}
                     </td>
                     <td className="px-4 py-2.5">
-                      <Badge tone={vehicle.status === 'available' ? 'success' : 'destructive'}>
+                      <Badge tone={vehicle.status === 'available' ? 'success' : 'primary'}>
                         {vehicle.status}
                       </Badge>
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex flex-wrap gap-1">
-                        {!vehicle.rules.discuss && <Badge tone="destructive">Do not discuss</Badge>}
+                        {!vehicle.rules.discuss && <Badge tone="primary">Do not discuss</Badge>}
                         {vehicle.rules.hold_price && <Badge tone="warning">Price firm</Badge>}
                         {vehicle.rules.mention_warranty && <Badge tone="neutral">Warranty</Badge>}
                         {vehicle.manual_fields.length > 0 && (

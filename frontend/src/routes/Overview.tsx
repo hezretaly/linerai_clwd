@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import clsx from 'clsx'
 import { useQuery } from '@tanstack/react-query'
 import {
   Bar,
@@ -29,19 +30,23 @@ const RAMP = [
 ]
 
 const KPI_ICONS: Record<string, IconName> = {
-  conversations_handled: 'chat',
+  chat: 'chat',
+  email: 'mail',
+  calls: 'phone',
   appointments_set: 'calendar',
-  leads_captured: 'leads',
-  needs_a_person: 'file',
+  needs_a_person: 'user',
+  credit_apps: 'file',
 }
 
 /** Where each figure came from, so the card is a way in rather than a number
  *  to go and look up somewhere else. */
 const KPI_LINKS: Record<string, string> = {
-  conversations_handled: '/app/conversations',
+  chat: '/app/conversations?channel=chat',
+  email: '/app/leads',
+  calls: '/app/conversations?channel=voice',
   appointments_set: '/app/calendar',
-  leads_captured: '/app/leads',
   needs_a_person: '/app/conversations?filter=flagged',
+  credit_apps: '/app/leads',
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -97,31 +102,37 @@ export function OverviewPage() {
       />
 
       {/* ---- KPIs: four cards, the four the endpoint computes -------------- */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {data.kpis.map((kpi) => (
-          <Card key={kpi.key} className="shadow-sm">
-            <div className="flex items-center justify-between p-6 pb-2">
-              <h3 className="text-sm font-medium">
-                <Link
-                  to={KPI_LINKS[kpi.key] ?? '/app'}
-                  className="text-primary hover:underline"
+          <Link
+            key={kpi.key}
+            to={KPI_LINKS[kpi.key] ?? '/app'}
+            className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Card className="h-full shadow-sm transition-colors hover:border-primary">
+              <div className="flex items-center justify-between p-6 pb-2">
+                <h3 className="text-sm font-medium text-primary">{kpi.label}</h3>
+                <Icon
+                  name={KPI_ICONS[kpi.key] ?? 'file'}
+                  className="h-4 w-4 text-muted-foreground"
+                />
+              </div>
+              <div className="p-6 pt-0">
+                <div className="tnum text-2xl font-bold">{kpi.value}</div>
+                {/* The mockup compares each figure to a 30-day average. Nothing
+                    stores a daily rollup, so the card states its own window
+                    rather than inventing a trend to sit under the number. */}
+                <p
+                  className={clsx(
+                    'mt-1 text-xs',
+                    kpi.unavailable ? 'text-warning-foreground' : 'text-muted-foreground',
+                  )}
                 >
-                  {kpi.label}
-                </Link>
-              </h3>
-              <Icon
-                name={KPI_ICONS[kpi.key] ?? 'file'}
-                className="h-4 w-4 text-muted-foreground"
-              />
-            </div>
-            <div className="p-6 pt-0">
-              <div className="tnum text-2xl font-bold">{kpi.value}</div>
-              {/* The mockup compares each figure to a 30-day average. Nothing
-                  stores a daily rollup, so the card states its own window
-                  rather than inventing a trend to sit under the number. */}
-              <p className="mt-1 text-xs text-muted-foreground">{kpi.window}</p>
-            </div>
-          </Card>
+                  {kpi.window}
+                </p>
+              </div>
+            </Card>
+          </Link>
         ))}
       </div>
 
@@ -131,7 +142,7 @@ export function OverviewPage() {
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-semibold leading-none tracking-tight">Needs a person</h3>
-              <span className="tnum inline-flex items-center rounded-full bg-destructive px-2 py-0.5 text-xs font-semibold text-destructive-foreground">
+              <span className="tnum inline-flex items-center rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
                 {waitingCount}
               </span>
             </div>
@@ -182,9 +193,9 @@ export function OverviewPage() {
         )}
       </Card>
 
-      {/* ---- Happening now + unclaimed -------------------------------------- */}
-      <div className="mt-4 grid gap-4 lg:grid-cols-7">
-        <Card className="min-w-0 shadow-sm lg:col-span-4">
+      {/* ---- Happening now, then unclaimed: a line each ---------------------- */}
+      <div className="mt-4 space-y-4">
+        <Card className="min-w-0 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
               <div className="flex items-center gap-2">
@@ -228,7 +239,7 @@ export function OverviewPage() {
             <div className="scroll-thin overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
-                  {live.map((c) => (
+                  {live.slice(0, showAll ? undefined : 2).map((c) => (
                     <tr
                       key={c.id}
                       className="border-b border-border transition-colors last:border-0 hover:bg-muted/50"
@@ -267,7 +278,7 @@ export function OverviewPage() {
           )}
         </Card>
 
-        <Card className="min-w-0 shadow-sm lg:col-span-3">
+        <Card className="min-w-0 shadow-sm">
           <div className="flex items-center justify-between border-b border-border p-6">
             <div>
               <h3 className="font-semibold leading-none tracking-tight">Unclaimed leads</h3>
@@ -286,7 +297,7 @@ export function OverviewPage() {
             <Empty title="All claimed" hint="Every lead has an owner." />
           ) : (
             <div className="divide-y divide-border">
-              {data.queues.unclaimed_leads.slice(0, 6).map((lead) => (
+              {data.queues.unclaimed_leads.slice(0, 2).map((lead) => (
                 <UnclaimedRow key={lead.id} lead={lead} />
               ))}
             </div>
@@ -296,6 +307,17 @@ export function OverviewPage() {
 
       {/* ---- Charts -------------------------------------------------------- */}
       <div className="mt-4 grid gap-4 lg:grid-cols-7">
+        <Card className="min-w-0 shadow-sm lg:col-span-3">
+          <div className="p-6 pb-3">
+            <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Last 24 hours, by the source on the lead
+            </p>
+          </div>
+          <div className="p-6 pt-0">
+            <SourceChart mix={data.source_mix} />
+          </div>
+        </Card>
         <Card className="min-w-0 shadow-sm lg:col-span-4">
           <div className="flex flex-wrap items-start justify-between gap-3 p-6 pb-3">
             <div>
@@ -320,17 +342,6 @@ export function OverviewPage() {
           </div>
         </Card>
 
-        <Card className="min-w-0 shadow-sm lg:col-span-3">
-          <div className="p-6 pb-3">
-            <h3 className="font-semibold leading-none tracking-tight">Where leads came from</h3>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Last 24 hours, by the source on the lead
-            </p>
-          </div>
-          <div className="p-6 pt-0">
-            <SourceChart mix={data.source_mix} />
-          </div>
-        </Card>
       </div>
 
       {/* Not in the mockup's overview, kept because it is the one thing on this
@@ -360,7 +371,7 @@ export function OverviewPage() {
                     {v.status} -- VIN ending {v.vin.slice(-6)}
                   </div>
                 </div>
-                <span className="tnum rounded-md bg-destructive-muted px-2 py-0.5 text-xs font-medium text-destructive">
+                <span className="tnum rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-primary">
                   quoted {v.mention_count}x
                 </span>
               </div>
@@ -385,7 +396,7 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
         </div>
       </td>
       <td className="px-4 py-3">
-        <span className="inline-flex items-center rounded-md border border-destructive/30 bg-destructive-muted px-2 py-0.5 text-xs font-medium text-destructive">
+        <span className="inline-flex items-center rounded-md border border-primary/30 bg-accent px-2 py-0.5 text-xs font-medium text-primary">
           {escalation.rule?.label ?? 'Handoff'}
         </span>
         <div className="mt-1 max-w-[15rem] text-xs text-muted-foreground">{escalation.reason}</div>
@@ -400,7 +411,7 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <span
-          className={`tnum font-medium ${urgent ? 'text-destructive' : 'text-warning-foreground'}`}
+          className={`tnum font-medium ${urgent ? 'text-primary' : 'text-warning-foreground'}`}
         >
           {waited(escalation.created_at)}
         </span>
@@ -468,7 +479,7 @@ function UnclaimedRow({ lead }: { lead: Lead }) {
   const hours = (Date.now() - new Date(lead.created_at).getTime()) / 3600_000
   const tone =
     hours >= 8
-      ? 'bg-destructive-muted text-destructive'
+      ? 'bg-accent text-primary'
       : hours >= 4
         ? 'bg-warning-muted text-warning-foreground'
         : 'bg-muted text-muted-foreground'

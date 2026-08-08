@@ -15,6 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_dealership
+from app.api.settings import live_settings
 from app.db import get_db, utcnow
 from app.models import (
     Appointment,
@@ -23,6 +24,7 @@ from app.models import (
     Escalation,
     Lead,
     Message,
+    Outreach,
     User,
     Vehicle,
     VehicleMention,
@@ -48,7 +50,33 @@ def overview(
     now = utcnow()
     since = now - timedelta(hours=24)
 
-    conversations_handled = db.query(Conversation).filter(Conversation.started_at >= since).count()
+    def convos_on(channel: str) -> int:
+        return (
+            db.query(Conversation)
+            .filter(Conversation.started_at >= since, Conversation.channel == channel)
+            .count()
+        )
+
+    chats = convos_on("chat")
+    calls = convos_on("voice")
+    # Real rows, and only the ones that actually went. A queued or failed send
+    # is not an email the buyer received, and counting it would make the card
+    # read best when delivery is broken.
+    emails_sent = (
+        db.query(Outreach)
+        .filter(Outreach.created_at >= since, Outreach.status == "sent")
+        .count()
+    )
+    credit_apps = (
+        db.query(Outreach)
+        .filter(
+            Outreach.created_at >= since,
+            Outreach.status == "sent",
+            Outreach.kind == "credit_application",
+        )
+        .count()
+    )
+    credit_url = (live_settings(db).credit_application_url or "").strip()
     appointments_set = db.query(Appointment).filter(Appointment.created_at >= since).count()
     leads_captured = db.query(Lead).filter(Lead.created_at >= since).count()
     # Oldest first: this is a triage queue, and the overview quotes the longest
@@ -126,17 +154,28 @@ def overview(
         "dealership": dealership_out(dealership),
         "generated_at": now.isoformat(),
         "kpis": [
-            {"key": "conversations_handled", "label": "Conversations handled",
-             "value": conversations_handled, "window": "last 24 hours"},
+            {"key": "chat", "label": "Chats",
+             "value": chats, "window": "last 24 hours"},
+            {"key": "email", "label": "Emails sent",
+             "value": emails_sent, "window": "last 24 hours"},
+            # Voice conversations. The count is real -- the seed has them and the
+            # transcript endpoints work -- but no voice vendor is configured, so
+            # nothing new arrives here until one is. The banner says so.
+            {"key": "calls", "label": "Calls",
+             "value": calls, "window": "last 24 hours"},
             {"key": "appointments_set", "label": "Appointments set",
              "value": appointments_set, "window": "last 24 hours"},
-            {"key": "leads_captured", "label": "Leads captured",
-             "value": leads_captured, "window": "last 24 hours"},
-            # Replaces the mockups' "Credit applications", which implied a flow
-            # that is explicitly out of scope (§12, §18.4).
             {"key": "needs_a_person", "label": "Needs a person",
              "value": len(open_escalations), "window": "open now"},
+            # Counts applications a rep actually sent. With no application URL
+            # configured there is nothing to send, and the card says that rather
+            # than showing a zero that looks like a quiet day.
+            {"key": "credit_apps", "label": "Credit applications",
+             "value": credit_apps,
+             "window": "last 24 hours" if credit_url else "no application link set",
+             "unavailable": not credit_url},
         ],
+        "leads_captured": leads_captured,
         "badges": {
             "conversations": len(active_conversations),
             "appointments": len(unconfirmed),

@@ -29,7 +29,7 @@ const NAV = [
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
     badge: 'appointments', tone: 'muted' },
   { to: '/app/inventory', label: 'Inventory', icon: 'inventory', group: 'Manage',
-    badge: 'inventory', tone: 'destructive' },
+    badge: 'inventory', tone: 'primary' },
   { to: '/app/assistant', label: 'Liner setup', icon: 'sliders', group: 'Manage',
     badge: null, tone: 'muted' },
   { to: '/app/team', label: 'Team', icon: 'user', group: 'Manage',
@@ -39,8 +39,12 @@ const NAV = [
   // landing page -- a worse answer than not offering the link.
 ] as const
 
-/** Remembered, because a rail you have to re-hide on every page load is not
- *  hideable. Below lg it is a drawer and this does not apply. */
+/** Remembered, because a rail you have to re-collapse on every page load is
+ *  not collapsible. Below lg it is a drawer and this does not apply.
+ *
+ *  Collapsed is a 14-unit icon strip, not nothing: hiding the rail entirely
+ *  cost the badge counts, which are the one thing on it that changes -- a rep
+ *  glances at the strip to see whether anything is waiting. */
 const RAIL_KEY = 'liner.nav.collapsed'
 
 export function AppShell() {
@@ -84,17 +88,22 @@ export function AppShell() {
       )}
       <aside
         className={clsx(
-          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r border-border bg-sidebar',
-          'transition-transform duration-200 lg:z-40',
-          navOpen ? 'translate-x-0' : '-translate-x-full',
-          collapsed ? 'lg:-translate-x-full' : 'lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex flex-col border-r border-border bg-sidebar',
+          'transition-all duration-200 lg:z-40 lg:translate-x-0',
+          navOpen ? 'w-60 translate-x-0' : 'w-60 -translate-x-full',
+          collapsed ? 'lg:w-14' : 'lg:w-60',
         )}
       >
-        <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
+        <div
+          className={clsx(
+            'flex h-14 items-center gap-2.5 border-b border-border px-4',
+            collapsed && 'lg:justify-center lg:px-0',
+          )}
+        >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <Icon name="chat" className="h-4 w-4" />
           </span>
-          <div className="min-w-0">
+          <div className={clsx('min-w-0', collapsed && 'lg:hidden')}>
             <div className="truncate text-sm font-semibold leading-tight">
               {overview?.dealership.name ?? 'Liner'}
             </div>
@@ -106,7 +115,11 @@ export function AppShell() {
             onClick={toggleRail}
             aria-label="Hide menu"
             title="Hide menu"
-            className="ml-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:inline-flex"
+            className={clsx(
+              'ml-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-md',
+              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              collapsed ? 'lg:hidden' : 'lg:inline-flex',
+            )}
           >
             <Icon name="back" className="h-4 w-4" />
           </button>
@@ -115,7 +128,13 @@ export function AppShell() {
         <nav className="scroll-thin flex-1 overflow-y-auto px-2 py-3">
           {(['Today', 'Manage'] as const).map((group) => (
             <div key={group}>
-              <div className="px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground first:pt-1">
+              {collapsed && <div className="mx-2 my-3 hidden border-t border-border lg:block" />}
+              <div
+                className={clsx(
+                  'px-2 pb-1.5 pt-4 text-xs font-medium text-muted-foreground first:pt-1',
+                  collapsed && 'lg:hidden',
+                )}
+              >
                 {group}
               </div>
               {NAV.filter((item) => item.group === group).map((item) => {
@@ -130,7 +149,8 @@ export function AppShell() {
                     title={item.label}
                     className={({ isActive }) =>
                       clsx(
-                        'mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors',
+                        'relative mb-0.5 flex items-center gap-2.5 rounded-md py-2 text-sm font-medium transition-colors',
+                        collapsed ? 'px-2.5 lg:justify-center lg:px-0' : 'px-2.5',
                         isActive
                           ? 'bg-accent text-accent-foreground'
                           : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
@@ -138,16 +158,18 @@ export function AppShell() {
                     }
                   >
                     <Icon name={item.icon as IconName} className="h-4 w-4 shrink-0" />
-                    <span>{item.label}</span>
+                    <span className={clsx(collapsed && 'lg:hidden')}>{item.label}</span>
                     {count ? (
                       <span
                         className={clsx(
-                          'tnum ml-auto rounded-full px-1.5 py-0.5 text-[10px]',
-                          item.tone === 'destructive'
-                            ? 'bg-destructive font-semibold text-destructive-foreground'
-                            : item.tone === 'primary'
-                              ? 'bg-primary font-semibold text-primary-foreground'
-                              : 'bg-muted font-medium text-muted-foreground',
+                          'tnum rounded-full px-1.5 py-0.5 text-[10px]',
+                          item.tone === 'primary'
+                            ? 'bg-primary font-semibold text-primary-foreground'
+                            : 'bg-muted font-medium text-muted-foreground',
+                          // At strip width it rides the corner of the icon.
+                          collapsed
+                            ? 'ml-auto lg:absolute lg:right-0.5 lg:top-0.5 lg:ml-0 lg:px-1 lg:leading-tight'
+                            : 'ml-auto',
                         )}
                       >
                         {count}
@@ -160,11 +182,11 @@ export function AppShell() {
           ))}
         </nav>
 
-        <LinerStatus />
-        <AccountFooter dealership={hoursLabel(overview?.dealership)} />
+        <LinerStatus collapsed={collapsed} />
+        <AccountFooter dealership={hoursLabel(overview?.dealership)} collapsed={collapsed} />
       </aside>
 
-      <div className={clsx('transition-[margin] duration-200', !collapsed && 'lg:ml-60')}>
+      <div className={clsx('transition-[margin] duration-200', collapsed ? 'lg:ml-14' : 'lg:ml-60')}>
         <TopBar onOpenNav={() => setNavOpen(true)} onToggleRail={toggleRail} />
         <IntegrationBanner />
         <Outlet />
@@ -179,12 +201,25 @@ export function AppShell() {
  * set when a rep takes over -- and there is no dealership-wide kill switch
  * behind it, so the button says so instead of pretending to throw one.
  */
-function LinerStatus() {
+function LinerStatus({ collapsed }: { collapsed: boolean }) {
   const { data } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api.get<Overview>('/api/overview'),
   })
   const open = data?.badges.conversations ?? 0
+
+  if (collapsed) {
+    // At strip width the card has nowhere to go, but the fact it carries --
+    // Liner is answering -- is worth one dot.
+    return (
+      <div className="hidden justify-center border-t border-border py-3 lg:flex">
+        <span className="relative flex h-2.5 w-2.5" title={`Liner is answering -- ${open} open`}>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div className="border-t border-border p-3">
@@ -209,7 +244,7 @@ function LinerStatus() {
   )
 }
 
-function AccountFooter({ dealership }: { dealership: string }) {
+function AccountFooter({ dealership, collapsed }: { dealership: string; collapsed: boolean }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -228,14 +263,19 @@ function AccountFooter({ dealership }: { dealership: string }) {
   })
 
   return (
-    <div className="flex items-center gap-2.5 border-t border-border px-4 py-3">
+    <div
+      className={clsx(
+        'flex items-center gap-2.5 border-t border-border px-4 py-3',
+        collapsed && 'lg:justify-center lg:px-0',
+      )}
+    >
       <span
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground"
-        title={dealership}
+        title={collapsed ? `${me?.user.name ?? ''} -- ${dealership}` : dealership}
       >
         {initials(me?.user.name ?? '')}
       </span>
-      <div className="min-w-0">
+      <div className={clsx('min-w-0', collapsed && 'lg:hidden')}>
         <div className="truncate text-sm font-medium leading-tight">{me?.user.name}</div>
         <button
           onClick={() => logout.mutate()}

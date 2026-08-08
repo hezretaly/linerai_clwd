@@ -224,10 +224,10 @@ export function CalendarPage() {
 
             {showNowLine && nowTop > 0 && nowTop < (closeHour - openHour) * HOUR_PX && (
               <div
-                className="pointer-events-none absolute left-14 right-0 border-t-2 border-destructive"
+                className="pointer-events-none absolute left-14 right-0 border-t-2 border-primary"
                 style={{ top: nowTop }}
               >
-                <span className="absolute -top-2 -left-2 h-3 w-3 rounded-full bg-destructive" />
+                <span className="absolute -top-2 -left-2 h-3 w-3 rounded-full bg-primary" />
               </div>
             )}
           </div>
@@ -510,7 +510,7 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
                   <li key={item.id} className="rounded-lg border border-border p-3">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium">{item.subject}</p>
-                      <Badge tone={item.status === 'sent' ? 'success' : 'destructive'}>
+                      <Badge tone={item.status === 'sent' ? 'success' : 'primary'}>
                         {item.status}
                       </Badge>
                     </div>

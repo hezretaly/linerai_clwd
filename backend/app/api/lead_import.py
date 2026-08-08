@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_dealership
+from app.integrations.base import NotConfigured
 from app.config import settings
 from app.db import get_db, utcnow
 from app.events import emit
@@ -296,6 +297,46 @@ def _upcoming(db: Session, lead: Lead) -> Appointment | None:
     )
 
 
+def _credit_draft(db: Session, lead: Lead, dealership: Dealership, sender: User) -> dict:
+    """An invitation to start the dealer's own finance application.
+
+    The link is the whole point, so with no link configured this refuses rather
+    than mailing a buyer an invitation to apply nowhere. Nothing here quotes a
+    rate, a term or an approval -- none of that exists in this system, and a
+    number in a finance email is one a buyer holds you to.
+    """
+    from app.api.settings import live_settings
+
+    url = (live_settings(db).credit_application_url or "").strip()
+    if not url:
+        raise NotConfigured(
+            integration="credit_application",
+            missing=["Credit application URL"],
+            detail=(
+                "No finance application link is set, so there is nothing to send. Add "
+                "the dealership's own application URL on the Liner setup page."
+            ),
+        )
+
+    first_name = (lead.name or "there").split()[0] if lead.name else "there"
+    return {
+        "kind": "credit_application",
+        "to": lead.email,
+        "subject": f"Finance application -- {dealership.name}",
+        "body": (
+            f"Hi {first_name},\n\n"
+            f"Here is our finance application, which you can fill in before you come "
+            f"in so we are not doing paperwork while you are here:\n\n{url}\n\n"
+            f"It takes a few minutes. Nothing is decided by filling it in -- one of "
+            f"our team goes through the numbers with you in person.\n\n"
+            f"Any questions, call {dealership.phone}.\n\n"
+            f"Best,\n{sender.name}\n{dealership.name}"
+        ),
+        "appointment_id": None,
+        "note": "",
+    }
+
+
 def _lead_draft(
     db: Session, lead: Lead, dealership: Dealership, sender: User
 ) -> dict:
@@ -393,12 +434,15 @@ def _get_lead(db: Session, lead_id: str) -> Lead:
 def lead_outreach(
     lead_id: str,
     draft: int = Query(0),
+    kind: str = Query("followup"),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     lead = _get_lead(db, lead_id)
     if draft:
+        if kind == "credit_application":
+            return _credit_draft(db, lead, dealership, user)
         return _lead_draft(db, lead, dealership, user)
     rows = (
         db.query(Outreach)
@@ -413,6 +457,7 @@ class SendBody(BaseModel):
     subject: str
     body: str
     appointment_id: str | None = None
+    kind: str = "followup"
 
 
 @router.post("/{lead_id}/outreach")
@@ -433,7 +478,8 @@ def send_lead_outreach(
     sender = get_email_sender()
     record = Outreach(
         appointment_id=payload.appointment_id, lead_id=lead.id, sent_by_user_id=user.id,
-        channel="email", to_address=lead.email, subject=payload.subject, body=payload.body,
+        channel="email", kind=payload.kind, to_address=lead.email,
+        subject=payload.subject, body=payload.body,
         provider=sender.name, status="queued",
     )
     db.add(record)

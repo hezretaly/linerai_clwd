@@ -54,6 +54,10 @@ class AssistantSettings(Base):
     after_hours_mode: Mapped[str] = mapped_column(String(30), default="full_service")
     greeting: Mapped[str] = mapped_column(Text, default="")
     booking_slot_length: Mapped[int] = mapped_column(Integer, default=30)
+    # The dealer's own finance application. Empty by default and empty is
+    # meaningful: with no link there is nothing to send, so the action says
+    # so rather than mailing a buyer an invitation to apply nowhere.
+    credit_application_url: Mapped[str] = mapped_column(String(500), default="")
     published_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

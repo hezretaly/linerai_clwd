@@ -281,6 +281,54 @@ def main() -> int:
     # Without this the second buyer books the same slot and turns up to nobody.
     check("a second buyer cannot take the same slot", code == 409, detail[:80])
 
+    print("\n== credit applications are real sends, or nothing ==")
+    over0 = call("GET", "/api/overview")
+    keys = [k["key"] for k in over0["kpis"]]
+    check("the six cards the dashboard asks for",
+          keys == ["chat", "email", "calls", "appointments_set", "needs_a_person",
+                   "credit_apps"], ", ".join(keys))
+    lead_for_credit = next(
+        (lead for lead in call("GET", "/api/leads")["leads"] if lead["email"]), None
+    )
+    check("a lead with an address to send to", lead_for_credit is not None)
+    if lead_for_credit is None:
+        return report()
+
+    # Clear the link first: with nothing to send to, the draft must refuse
+    # rather than mail an invitation to apply nowhere.
+    call("PATCH", "/api/assistant-settings", {"credit_application_url": ""})
+    call("POST", "/api/assistant-settings/publish")
+    code, detail = status_of(
+        "GET", f"/api/leads/{lead_for_credit['id']}/outreach?draft=1&kind=credit_application"
+    )
+    check("with no link configured the draft is refused, not invented", code == 503, str(code))
+    check("and it names the setting that is missing", "not_configured" in detail, detail[:60])
+    card = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")
+    # Not asserting the count is zero: an application sent before the link was
+    # cleared is still a real send, and pretending otherwise would be the same
+    # kind of lie as inventing one.
+    check("the card says why rather than leaving the number unexplained",
+          card["unavailable"] and "link" in card["window"], card["window"])
+
+    call("PATCH", "/api/assistant-settings",
+         {"credit_application_url": "https://riverside.example/finance"})
+    call("POST", "/api/assistant-settings/publish")
+    draft = call("GET",
+                 f"/api/leads/{lead_for_credit['id']}/outreach?draft=1&kind=credit_application")
+    check("with a link it drafts one", draft["kind"] == "credit_application", draft["subject"])
+    check("carrying the dealer's own link, not an invented one",
+          "https://riverside.example/finance" in draft["body"])
+    # A finance email that quotes a rate is one the buyer holds you to, and no
+    # rate exists anywhere in this system.
+    check("and no rate, term or approval",
+          not any(w in draft["body"].lower() for w in ("apr", "% interest", "approved", "monthly payment")))
+
+    before = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")["value"]
+    call("POST", f"/api/leads/{lead_for_credit['id']}/outreach",
+         {"subject": draft["subject"], "body": draft["body"], "kind": "credit_application"})
+    after = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")["value"]
+    check("sending one moves the card", after == before + 1, f"{before} -> {after}")
+
     print("\n== the overview drives the live panel ==")
     over = call("GET", "/api/overview")
     check("it says where 'now' ends, rather than the client deciding",

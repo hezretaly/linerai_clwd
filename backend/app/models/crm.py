@@ -143,6 +143,9 @@ class Outreach(Base):
     lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), nullable=True)
     sent_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     channel: Mapped[str] = mapped_column(String(20), default="email")  # email | phone_logged
+    # What this send *was*, so the overview can count one kind without
+    # inferring it from the subject line. followup | reminder | credit_application
+    kind: Mapped[str] = mapped_column(String(30), default="followup", index=True)
     to_address: Mapped[str] = mapped_column(String(255), default="")
     subject: Mapped[str] = mapped_column(String(255), default="")
     body: Mapped[str] = mapped_column(Text, default="")

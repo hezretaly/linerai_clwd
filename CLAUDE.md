@@ -161,6 +161,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   has to say so in its own text. Without that a model opened its next reply with
   "You're right -- I shouldn't have mentioned a price", apologising to someone
   who said no such thing and never saw the rejected draft.
+- **Red means something went wrong, and nothing else.** Status badges, counts
+  and tags on dealer pages are `primary`; `destructive` is reserved for a
+  failure a rep has to act on -- a rejected import row, a send that bounced, a
+  request that errored. When a normal badge and a failed send are the same
+  colour the dashboard has lost its only way to say "this one broke".
+- **Nothing on the overview is a number that cannot be traced to a row.**
+  `credit_apps` counts `outreach.kind = 'credit_application'` that actually
+  sent. With no `credit_application_url` configured there is nothing to send,
+  so the draft refuses with a typed `not_configured` and the card says why
+  instead of showing a zero that reads as a quiet day.
 - **Every count comes from `/api/overview`.** No page counts for itself.
 - **Hours come from `hours_json`.** No page states its own.
 

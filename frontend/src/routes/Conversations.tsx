@@ -37,7 +37,7 @@ function groupOf(c: Conversation): Group {
 function tagsOf(c: Conversation): [string, string][] {
   const tags: [string, string][] = []
   if (c.open_escalation) {
-    tags.push([c.open_escalation.rule?.label ?? 'Needs a person', 'destructive'])
+    tags.push([c.open_escalation.rule?.label ?? 'Needs a person', 'primary'])
   }
   tags.push([SOURCE_LABEL[c.lead?.source ?? 'chat'] ?? 'Website', 'muted'])
   if (!c.lead?.assigned_user_id) tags.push(['Unclaimed', 'muted'])
@@ -46,7 +46,7 @@ function tagsOf(c: Conversation): [string, string][] {
 }
 
 const TAG_STYLE: Record<string, string> = {
-  destructive: 'border-destructive/30 bg-destructive/10 text-destructive',
+  primary: 'border-primary/30 bg-primary/10 text-primary',
   warning: 'border-warning/30 bg-warning/10 text-warning',
   muted: 'border-border text-muted-foreground',
 }
@@ -180,7 +180,7 @@ export function ConversationsPage() {
             <FilterChip
               label="Needs a person"
               count={flagged}
-              tone="destructive"
+              tone="primary"
               active={filter === 'flagged'}
               onClick={() => chooseFilter('flagged')}
             />
@@ -295,7 +295,7 @@ function FilterChip({
 }: {
   label: string
   count: number
-  tone?: 'destructive'
+  tone?: 'primary'
   active: boolean
   onClick: () => void
 }) {
@@ -306,8 +306,8 @@ function FilterChip({
         'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
         active
           ? 'border-foreground bg-foreground text-background'
-          : tone === 'destructive'
-            ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15'
+          : tone === 'primary'
+            ? 'border-primary/30 bg-primary/10 text-primary hover:bg-accent'
             : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
       )}
     >
@@ -328,7 +328,7 @@ function ListRow({
 }) {
   const name = conversation.lead?.name ?? 'Unknown caller'
   const accent = conversation.open_escalation
-    ? 'before:bg-destructive'
+    ? 'before:bg-primary'
     : conversation.status === 'active'
       ? 'before:bg-success'
       : 'before:bg-transparent'
@@ -460,7 +460,7 @@ function ThreadBanner({
   if (!escalation) return null
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-destructive/20 bg-destructive/10 px-5 py-3 text-destructive">
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-primary/20 bg-primary/10 px-5 py-3 text-primary">
       <Icon name="alert" className="h-4 w-4 shrink-0" />
       <div className="min-w-0">
         <div className="text-sm font-medium">

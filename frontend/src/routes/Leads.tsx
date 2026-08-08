@@ -28,7 +28,7 @@ const SOURCE_LABEL: Record<string, string> = {
 function ageClass(iso: string | undefined): string {
   if (!iso) return 'text-muted-foreground'
   const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000
-  if (hours >= 8) return 'font-medium text-destructive'
+  if (hours >= 8) return 'font-medium text-primary'
   if (hours >= 4) return 'font-medium text-warning'
   return 'text-muted-foreground'
 }
@@ -134,7 +134,7 @@ export function LeadsPage() {
           label="Unclaimed"
           value={counts.unclaimed}
           note={counts.stale ? `${counts.stale} over 8h` : 'none stale'}
-          tone={counts.stale ? 'destructive' : 'muted'}
+          tone={counts.stale ? 'primary' : 'muted'}
         />
         <Counter
           label="Qualified or better"
@@ -276,7 +276,7 @@ function Counter({
   label: string
   value: number
   note: string
-  tone?: 'muted' | 'warning' | 'destructive'
+  tone?: 'muted' | 'warning' | 'primary'
 }) {
   return (
     <Card className="p-4 shadow-sm">
@@ -286,7 +286,7 @@ function Counter({
         <span
           className={clsx(
             'text-xs',
-            tone === 'destructive' && 'text-destructive',
+            tone === 'primary' && 'text-primary',
             tone === 'warning' && 'text-warning',
             tone === 'muted' && 'text-muted-foreground',
           )}
@@ -321,7 +321,7 @@ function LeadCard({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
               </span>
             </div>
             <div className="truncate text-xs text-muted-foreground">
-              {lead.email || <span className="text-destructive">No email -- call back</span>}
+              {lead.email || <span className="text-primary">No email -- call back</span>}
             </div>
             {lead.vehicle_of_interest && (
               <div className="mt-1 truncate text-xs">
@@ -341,7 +341,7 @@ function LeadCard({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
                 {stageLabel}
               </span>
               {lead.flagged && (
-                <span className="inline-flex items-center rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                <span className="inline-flex items-center rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                   Needs a person
                 </span>
               )}
@@ -375,14 +375,14 @@ function Row({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
             <div className="flex items-center gap-1.5">
               <span className="truncate font-medium">{lead.name}</span>
               {lead.flagged && (
-                <span className="inline-flex shrink-0 items-center rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
+                <span className="inline-flex shrink-0 items-center rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                   Needs a person
                 </span>
               )}
             </div>
             <div className="truncate text-xs text-muted-foreground">
               {lead.email || (
-                <span className="text-destructive">No email -- call back</span>
+                <span className="text-primary">No email -- call back</span>
               )}
             </div>
           </div>
@@ -428,7 +428,9 @@ function Row({ lead, onOpen }: { lead: Lead; onOpen: () => void }) {
 }
 
 function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
-  const [composing, setComposing] = useState(false)
+  // Which draft is open, not merely whether one is: a rep can be writing a
+  // follow-up or a credit application, and they are different documents.
+  const [composing, setComposing] = useState<string | null>(null)
   const { data: lead } = useQuery({
     queryKey: ['leads', id],
     queryFn: () => api.get<Lead>(`/api/leads/${id}`),
@@ -439,7 +441,7 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
     <Sheet
       open={Boolean(id)}
       onClose={() => {
-        setComposing(false)
+        setComposing(null)
         onClose()
       }}
       title={
@@ -553,9 +555,23 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-medium text-muted-foreground">Outreach</h3>
               {lead.email ? (
-                <Button size="sm" onClick={() => setComposing((v) => !v)}>
-                  {composing ? 'Cancel' : 'Write to them'}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => setComposing(composing === 'followup' ? null : 'followup')}
+                  >
+                    {composing === 'followup' ? 'Cancel' : 'Write to them'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() =>
+                      setComposing(composing === 'credit_application' ? null : 'credit_application')
+                    }
+                  >
+                    {composing === 'credit_application' ? 'Cancel' : 'Credit application'}
+                  </Button>
+                </div>
               ) : (
                 <Unavailable
                   label="Write to them"
@@ -564,7 +580,9 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
               )}
             </div>
 
-            {composing && <Composer lead={lead} onDone={() => setComposing(false)} />}
+            {composing && (
+              <Composer lead={lead} kind={composing} onDone={() => setComposing(null)} />
+            )}
 
             <ul className="mt-2 space-y-2">
               {lead.outreach?.length ? (
@@ -610,13 +628,26 @@ function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => void })
  *
  * The rep can edit it before sending. What they send is what is stored.
  */
-function Composer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+function Composer({
+  lead,
+  kind = 'followup',
+  onDone,
+}: {
+  lead: Lead
+  /** followup | credit_application. The server builds a different draft for
+   *  each and stores which one was sent, so the overview can count credit
+   *  applications without reading subject lines. */
+  kind?: string
+  onDone: () => void
+}) {
   const queryClient = useQueryClient()
   const [draft, setDraft] = useState<{ subject: string; body: string } | null>(null)
 
-  const { data: seed } = useQuery({
-    queryKey: ['leads', lead.id, 'draft'],
-    queryFn: () => api.get<LeadDraft>(`/api/leads/${lead.id}/outreach?draft=1`),
+  const { data: seed, error: draftError } = useQuery({
+    queryKey: ['leads', lead.id, 'draft', kind],
+    queryFn: () =>
+      api.get<LeadDraft>(`/api/leads/${lead.id}/outreach?draft=1&kind=${kind}`),
+    retry: false,
   })
 
   const send = useMutation({
@@ -625,6 +656,7 @@ function Composer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
         subject: draft?.subject ?? seed?.subject,
         body: draft?.body ?? seed?.body,
         appointment_id: seed?.appointment_id ?? null,
+        kind,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['leads', lead.id] })
@@ -633,6 +665,17 @@ function Composer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
     },
   })
 
+  // A credit application with no link configured cannot be drafted at all.
+  // The server says which setting is missing; repeating that is more use
+  // than a spinner that never resolves.
+  const missing = (draftError as ApiError | null)?.notConfigured
+  if (missing) {
+    return (
+      <div className="mt-2 rounded-md border border-warning/30 bg-warning-muted p-3">
+        <p className="text-sm text-warning-foreground">{missing.detail}</p>
+      </div>
+    )
+  }
   if (!seed) return <Spinner label="Drafting" />
 
   const value = draft ?? { subject: seed.subject, body: seed.body }
@@ -643,7 +686,9 @@ function Composer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
       <p className="text-xs text-muted-foreground">
         {seed.kind === 'reminder'
           ? 'Reminder for their booked visit. Sent when you click, not on a schedule.'
-          : 'First follow-up. It only offers a car that is genuinely on the lot.'}
+          : seed.kind === 'credit_application'
+            ? "The dealership's own finance application. It quotes no rate, term or approval -- none of that exists here."
+            : 'First follow-up. It only offers a car that is genuinely on the lot.'}
       </p>
 
       <input

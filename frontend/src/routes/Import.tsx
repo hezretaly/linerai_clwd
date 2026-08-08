@@ -101,7 +101,7 @@ export function ImportPage() {
               </div>
             )}
             {notConfigured && (
-              <p className="mt-2 text-sm text-destructive">
+              <p className="mt-2 text-sm text-primary">
                 Missing: {notConfigured.missing.join(', ')}
               </p>
             )}
@@ -259,7 +259,7 @@ export function ImportPage() {
                         item.status === 'published'
                           ? 'success'
                           : item.status === 'failed'
-                            ? 'destructive'
+                            ? 'primary'
                             : 'warning'
                       }
                     >

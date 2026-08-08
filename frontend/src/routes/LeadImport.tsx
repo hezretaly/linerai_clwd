@@ -156,7 +156,7 @@ export function LeadImportPage() {
           </div>
 
           {uploadError && (
-            <p className="mt-3 rounded-md border border-destructive/25 bg-destructive-muted px-3 py-2 text-sm text-destructive">
+            <p className="mt-3 rounded-md border border-primary/25 bg-accent px-3 py-2 text-sm text-primary">
               {uploadError.message}
             </p>
           )}
@@ -189,7 +189,7 @@ export function LeadImportPage() {
           </header>
 
           {commitError && (
-            <p className="border-b border-border px-4 py-2 text-sm text-destructive">
+            <p className="border-b border-border px-4 py-2 text-sm text-primary">
               {commitError.message}
             </p>
           )}
@@ -422,7 +422,7 @@ function ProspectRow({
             <span className="text-muted-foreground">Not in inventory</span>
           ) : null}
           {prospect.in_stock && !prospect.in_stock.rules.discuss && (
-            <Badge tone="destructive">Do not discuss</Badge>
+            <Badge tone="primary">Do not discuss</Badge>
           )}
           {prospect.timeframe && (
             <span className="text-muted-foreground">Timeframe: {prospect.timeframe}</span>

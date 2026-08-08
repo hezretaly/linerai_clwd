@@ -356,6 +356,7 @@ def settings_out(s: AssistantSettings) -> dict:
         "after_hours_mode": s.after_hours_mode,
         "greeting": s.greeting,
         "booking_slot_length": s.booking_slot_length,
+        "credit_application_url": s.credit_application_url,
         "published_by": s.published_by,
         "published_at": iso(s.published_at),
         "updated_at": iso(s.updated_at),
