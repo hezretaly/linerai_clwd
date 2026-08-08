@@ -118,6 +118,25 @@ export function AppShell() {
               <span className="font-semibold text-primary">Liner</span> AI
             </div>
           </div>
+          <button
+            onClick={toggleRail}
+            aria-label="Pin or unpin the menu"
+            aria-pressed={!collapsed}
+            title={
+              collapsed
+                ? 'Keep the menu open'
+                : 'Let the menu collapse to a strip that opens on hover'
+            }
+            className={clsx(
+              'ml-auto hidden h-6 w-6 shrink-0 items-center justify-center rounded transition-colors',
+              collapsed
+                ? 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                : 'bg-accent text-accent-foreground',
+              open ? 'lg:inline-flex' : 'lg:hidden',
+            )}
+          >
+            <Icon name="sidebar" className="h-3.5 w-3.5" />
+          </button>
         </div>
 
         <nav className="scroll-thin flex-1 overflow-y-auto px-2 py-3">
@@ -182,7 +201,7 @@ export function AppShell() {
       </aside>
 
       <div className={clsx('transition-[margin] duration-200', collapsed ? 'lg:ml-14' : 'lg:ml-60')}>
-        <TopBar onOpenNav={() => setNavOpen(true)} onToggleRail={toggleRail} />
+        <TopBar onOpenNav={() => setNavOpen(true)} />
         <IntegrationBanner />
         <Outlet />
       </div>
@@ -288,20 +307,12 @@ function AccountFooter({ dealership, collapsed }: { dealership: string; collapse
  * endpoint: there is no search index and no notification store. They render as
  * what they are rather than as dead chrome that looks clickable.
  */
-function TopBar({
-  onOpenNav,
-  onToggleRail,
-}: {
-  onOpenNav: () => void
-  onToggleRail: () => void
-}) {
+function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const now = new Date()
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur md:gap-4 md:px-6">
-      {/* Two buttons rather than one that guesses the viewport: below lg the
-          rail is a drawer to open, at lg and up it is a strip to show or hide.
-          Reading window.innerWidth to decide would disagree with the CSS the
-          moment the window is resized. */}
+      {/* Mobile only. At lg and up the rail pins itself from its own header --
+          one control, next to the thing it controls. */}
       <button
         onClick={onOpenNav}
         aria-label="Open menu"
@@ -309,14 +320,7 @@ function TopBar({
       >
         <Icon name="menu" className="h-5 w-5" />
       </button>
-      <button
-        onClick={onToggleRail}
-        aria-label="Pin or unpin the menu"
-        title="Pin the menu open, or leave it as a strip that opens on hover"
-        className="-ml-1 hidden h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:inline-flex"
-      >
-        <Icon name="sidebar" className="h-5 w-5" />
-      </button>
+
       <div className="relative w-full max-w-sm">
         <Icon
           name="search"

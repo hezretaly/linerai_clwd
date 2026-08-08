@@ -261,7 +261,7 @@ export function OverviewPage() {
               onClick={() => setShowAllFlagged((was) => !was)}
               className="text-sm font-medium text-primary hover:underline"
             >
-              {showAllFlagged ? 'Show fewer' : `Show all (${escalations.length - 2} more)`}
+              {showAllFlagged ? 'Collapse' : 'Expand'}
             </button>
           )}
         </div>
@@ -324,7 +324,7 @@ export function OverviewPage() {
                   onClick={() => setShowAll((was) => !was)}
                   className="text-sm font-medium text-primary hover:underline"
                 >
-                  {showAll ? 'Last two hours' : `Show today (${earlier.length} more)`}
+                  {showAll ? 'Collapse' : 'Expand'}
                 </button>
               )}
             </div>
@@ -334,7 +334,7 @@ export function OverviewPage() {
               title="Nothing open"
               hint={
                 earlier.length
-                  ? 'Nothing in the last two hours. Show today for the rest.'
+                  ? 'Nothing in the last two hours. Expand for the rest of today.'
                   : 'No conversation has been active today.'
               }
             />
@@ -349,7 +349,7 @@ export function OverviewPage() {
                       className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
                     >
                       <td className="px-6 py-3">
-                        <div className="font-medium text-primary group-hover:underline">
+                        <div className="font-medium group-hover:underline">
                           {c.lead?.name || 'Unknown caller'}
                         </div>
                         <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground">
@@ -403,7 +403,7 @@ export function OverviewPage() {
                   onClick={() => setShowAllLeads((was) => !was)}
                   className="text-sm font-medium text-primary hover:underline"
                 >
-                  {showAllLeads ? 'Show fewer' : `Show all (${unclaimed.length - 2} more)`}
+                  {showAllLeads ? 'Collapse' : 'Expand'}
                 </button>
               )}
             </div>
@@ -472,7 +472,7 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
       className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
     >
       <td className="px-6 py-3">
-        <div className="font-medium text-primary group-hover:underline">
+        <div className="font-medium group-hover:underline">
           {lead?.name || 'Unknown caller'}
         </div>
         <div className="tnum text-xs text-muted-foreground">
@@ -526,7 +526,7 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
       className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
     >
       <td className="px-6 py-3">
-        <div className="font-medium text-primary group-hover:underline">
+        <div className="font-medium group-hover:underline">
           {first.lead?.name || 'Unknown caller'}
           {rest.length > 0 && <span className="text-muted-foreground"> +{rest.length}</span>}
         </div>
@@ -581,7 +581,7 @@ function UnclaimedRow({ lead }: { lead: Lead }) {
       className="group flex cursor-pointer items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
     >
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-primary group-hover:underline">
+        <div className="text-sm font-medium group-hover:underline">
           {lead.name || 'Unknown caller'}
         </div>
         <div className="truncate text-xs text-muted-foreground">
