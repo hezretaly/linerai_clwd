@@ -233,6 +233,14 @@ export function OverviewPage() {
   const waitingCount = escalations.length + (unconfirmed.length ? 1 : 0)
   // The endpoint returns this queue oldest first.
   const oldest = escalations[0]
+  // Everything this panel can show: the flagged conversations plus the single
+  // summary row for unconfirmed appointments. That row used to sit outside the
+  // cap, so the panel showed three and the expander stayed hidden until a
+  // third escalation arrived.
+  const queueRows = escalations.length + (unconfirmed.length ? 1 : 0)
+  const shownEscalations = showAllFlagged
+    ? escalations
+    : escalations.slice(0, unconfirmed.length ? 1 : 2)
 
   // The server sends today's conversations newest-activity first and the
   // two-hour mark to split them at, so "now" means the same thing here as it
@@ -319,7 +327,7 @@ export function OverviewPage() {
                 : 'Liner has not stopped on anything.'}
             </p>
           </div>
-          {escalations.length > 2 && (
+          {queueRows > 2 && (
             <button
               onClick={() => setShowAllFlagged((was) => !was)}
               className="text-sm font-medium text-primary hover:underline"
@@ -350,7 +358,7 @@ export function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {(showAllFlagged ? escalations : escalations.slice(0, 2)).map((e) => (
+                {shownEscalations.map((e) => (
                   <EscalationRow key={e.id} escalation={e} />
                 ))}
                 {unconfirmed.length > 0 && <UnconfirmedRow appointments={unconfirmed} />}
@@ -462,17 +470,11 @@ export function OverviewPage() {
                           {c.channel}
                         </span>
                       </td>
-                      <td className="tnum whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">
-                        {relative(c.started_at)}
+                      <td className={WAIT_COL}>
+                        <Waited value={relative(c.last_activity_at ?? c.started_at)} />
                       </td>
-                      <td className="px-6 py-3 text-right">
-                        <Link
-                          to={`/app/conversations/${c.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
-                        >
-                          {c.status === 'handoff' ? 'Take over' : 'Open'}
-                        </Link>
+                      <td className={ACTION_COL}>
+                        <TakeOver to={`/app/conversations/${c.id}`} />
                       </td>
                     </tr>
                   ))}
@@ -523,6 +525,42 @@ export function OverviewPage() {
   )
 }
 
+/* The three queue panels share their last two columns so they line up down the
+ * page. A rep scans that right edge -- how long, and what to press -- and three
+ * panels each choosing their own widths made it a ragged column. */
+const WAIT_COL = 'w-28 whitespace-nowrap px-4 py-3 text-right'
+const ACTION_COL = 'w-32 px-6 py-3 text-right'
+
+/** How long something has been waiting, as a bubble. Grey, not accent: it is a
+ *  fact about the row, not a thing to press. */
+function Waited({ value, big = false, title }: { value: string; big?: boolean; title?: string }) {
+  return (
+    <span
+      title={title}
+      className={clsx(
+        'tnum inline-flex items-center justify-center rounded-full bg-muted text-foreground',
+        big ? 'px-3 py-1 text-sm font-semibold' : 'px-2.5 py-0.5 text-xs font-medium',
+      )}
+    >
+      {value}
+    </span>
+  )
+}
+
+/** One action across all three panels. A rep does the same thing with a flagged
+ *  conversation, a live one and an unclaimed lead: they take it over. */
+function TakeOver({ to }: { to: string }) {
+  return (
+    <Link
+      to={to}
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex h-8 items-center whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+    >
+      Take over
+    </Link>
+  )
+}
+
 function EscalationRow({ escalation }: { escalation: Escalation }) {
   const navigate = useNavigate()
   const lead = escalation.lead
@@ -558,22 +596,15 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
           {escalation.channel ?? '--'}
         </span>
       </td>
-      <td className="whitespace-nowrap px-4 py-3">
-        <span
-          className={clsx('tnum', urgent ? 'font-semibold' : 'font-medium')}
+      <td className={WAIT_COL}>
+        <Waited
+          value={waited(escalation.created_at)}
+          big
           title={urgent ? 'Waiting longer than the rule allows' : undefined}
-        >
-          {waited(escalation.created_at)}
-        </span>
+        />
       </td>
-      <td className="px-6 py-3 text-right">
-        <Link
-          to={thread}
-          onClick={(e) => e.stopPropagation()}
-          className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-        >
-          Take over
-        </Link>
+      <td className={ACTION_COL}>
+        <TakeOver to={thread} />
       </td>
     </tr>
   )
@@ -584,10 +615,15 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
   const navigate = useNavigate()
   const [first, ...rest] = appointments
   const oldest = appointments.reduce((a, b) => (a.created_at < b.created_at ? a : b))
+  // The thread that booked it, so taking over lands on the buyer rather than a
+  // month view. An appointment a rep entered by hand has no conversation.
+  const thread = first.conversation_id
+    ? `/app/conversations/${first.conversation_id}`
+    : '/app/calendar'
 
   return (
     <tr
-      onClick={() => navigate('/app/calendar')}
+      onClick={() => navigate(thread)}
       className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
     >
       <td className="px-6 py-3">
@@ -613,17 +649,11 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
           Calendar
         </span>
       </td>
-      <td className="whitespace-nowrap px-4 py-3">
-        <span className="tnum font-medium">{waited(oldest.created_at)}</span>
+      <td className={WAIT_COL}>
+        <Waited value={waited(oldest.created_at)} big />
       </td>
-      <td className="px-6 py-3 text-right">
-        <Link
-          to="/app/calendar"
-          onClick={(e) => e.stopPropagation()}
-          className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
-        >
-          Confirm
-        </Link>
+      <td className={ACTION_COL}>
+        <TakeOver to={thread} />
       </td>
     </tr>
   )
@@ -631,17 +661,16 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
 
 function UnclaimedRow({ lead }: { lead: Lead }) {
   const navigate = useNavigate()
-  const hours = (Date.now() - new Date(lead.created_at).getTime()) / 3600_000
-  // Waiting long enough to matter, or not. A third colour in between was
-  // amber, which reads as an alert next to blue everywhere else.
-  const tone = hours >= 4 ? 'bg-accent font-semibold text-primary' : 'bg-muted text-muted-foreground'
+  // A lead that never chatted -- an ADF import -- has no thread to take over,
+  // so the row and its action both go to the lead list rather than nowhere.
+  const thread = lead.conversation_id
+    ? `/app/conversations/${lead.conversation_id}`
+    : '/app/leads'
 
   return (
     <div
-      onClick={() =>
-        navigate(lead.conversation_id ? `/app/conversations/${lead.conversation_id}` : '/app/leads')
-      }
-      className="group flex cursor-pointer items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
+      onClick={() => navigate(thread)}
+      className="group flex cursor-pointer items-center py-3 pl-6 transition-colors hover:bg-muted/50"
     >
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium group-hover:underline">
@@ -652,9 +681,16 @@ function UnclaimedRow({ lead }: { lead: Lead }) {
           {lead.contact_risk && ' -- no email on file'}
         </div>
       </div>
-      <span className={`tnum rounded-md px-2 py-0.5 text-xs font-medium ${tone}`}>
-        {waited(lead.created_at)}
-      </span>
+      {/* The same widths *and* the same padding as the tables above. The
+          padding has to live in these cells, not on the row: on the row it
+          inset the right edge by another 24px and the columns stopped lining
+          up between panels. */}
+      <div className="w-28 shrink-0 px-4 text-right">
+        <Waited value={waited(lead.created_at)} />
+      </div>
+      <div className="w-32 shrink-0 px-6 text-right">
+        <TakeOver to={thread} />
+      </div>
     </div>
   )
 }
