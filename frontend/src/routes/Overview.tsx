@@ -60,6 +60,15 @@ interface Trend {
   source_mix: { source: string; count: number }[]
 }
 
+/** The pie's hole is a circle. "Today, midnight to now" does not fit in one,
+ *  so the denominator gets its own short form. */
+const SHORT_RANGE: Record<TrendRange, string> = {
+  today: 'leads today',
+  yesterday: 'leads yesterday',
+  week: 'leads this week',
+  month: 'leads this month',
+}
+
 const RANGE_LABELS: [TrendRange, string][] = [
   ['today', 'Today'],
   ['yesterday', 'Yesterday'],
@@ -129,8 +138,10 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function OverviewPage() {
+  const navigate = useNavigate()
   const [showAll, setShowAll] = useState(false)
   const [showAllLeads, setShowAllLeads] = useState(false)
+  const [showAllFlagged, setShowAllFlagged] = useState(false)
   // One selector per chart rather than one for both: a rep looking at where
   // leads came from this month is often still looking at today's hours.
   const [hourRange, setHourRange] = useState<TrendRange>('today')
@@ -245,14 +256,14 @@ export function OverviewPage() {
                 : 'Liner has not stopped on anything.'}
             </p>
           </div>
-          <div className="flex gap-2">
-            <Link
-              to="/app/conversations?filter=flagged"
-              className="inline-flex h-9 items-center whitespace-nowrap rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          {escalations.length > 2 && (
+            <button
+              onClick={() => setShowAllFlagged((was) => !was)}
+              className="text-sm font-medium text-primary hover:underline"
             >
-              Open queue
-            </Link>
-          </div>
+              {showAllFlagged ? 'Show fewer' : `Show all (${escalations.length - 2} more)`}
+            </button>
+          )}
         </div>
 
         {waitingCount === 0 ? (
@@ -276,7 +287,7 @@ export function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {escalations.map((e) => (
+                {(showAllFlagged ? escalations : escalations.slice(0, 2)).map((e) => (
                   <EscalationRow key={e.id} escalation={e} />
                 ))}
                 {unconfirmed.length > 0 && <UnconfirmedRow appointments={unconfirmed} />}
@@ -292,7 +303,12 @@ export function OverviewPage() {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold leading-none tracking-tight">Happening now</h3>
+                <Link
+                  to="/app/conversations"
+                  className="font-semibold leading-none tracking-tight text-primary hover:underline"
+                >
+                  Happening now
+                </Link>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
                   <span className="h-1.5 w-1.5 rounded-full bg-success" />
                   Live
@@ -311,12 +327,6 @@ export function OverviewPage() {
                   {showAll ? 'Last two hours' : `Show today (${earlier.length} more)`}
                 </button>
               )}
-              <Link
-                to="/app/conversations"
-                className="text-sm font-medium text-primary hover:underline"
-              >
-                View all
-              </Link>
             </div>
           </div>
           {live.length === 0 ? (
@@ -335,17 +345,16 @@ export function OverviewPage() {
                   {live.slice(0, showAll ? undefined : 2).map((c) => (
                     <tr
                       key={c.id}
-                      className="border-b border-border transition-colors last:border-0 hover:bg-muted/50"
+                      onClick={() => navigate(`/app/conversations/${c.id}`)}
+                      className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
                     >
                       <td className="px-6 py-3">
-                        <Link to={`/app/conversations/${c.id}`} className="group block">
-                          <div className="font-medium text-primary group-hover:underline">
-                            {c.lead?.name || 'Unknown caller'}
-                          </div>
-                          <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground group-hover:text-foreground">
-                            {c.summary || `${c.message_count ?? 0} messages -- ${c.stage}`}
-                          </div>
-                        </Link>
+                        <div className="font-medium text-primary group-hover:underline">
+                          {c.lead?.name || 'Unknown caller'}
+                        </div>
+                        <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground">
+                          {c.summary || `${c.message_count ?? 0} messages -- ${c.stage}`}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center rounded-md border border-border px-2 py-0.5 text-xs capitalize text-muted-foreground">
@@ -358,6 +367,7 @@ export function OverviewPage() {
                       <td className="px-6 py-3 text-right">
                         <Link
                           to={`/app/conversations/${c.id}`}
+                          onClick={(e) => e.stopPropagation()}
                           className="inline-flex h-8 items-center whitespace-nowrap rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
                         >
                           {c.status === 'handoff' ? 'Take over' : 'Open'}
@@ -374,7 +384,12 @@ export function OverviewPage() {
         <Card className="min-w-0 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
-              <h3 className="font-semibold leading-none tracking-tight">Unclaimed leads</h3>
+              <Link
+                to="/app/conversations?filter=unclaimed"
+                className="font-semibold leading-none tracking-tight text-primary hover:underline"
+              >
+                Unclaimed leads
+              </Link>
               {/* The mockup captions this "Round robin after 12 hours". There
                   is no rotation in this system, so the panel describes what
                   the queue actually is. */}
@@ -391,9 +406,6 @@ export function OverviewPage() {
                   {showAllLeads ? 'Show fewer' : `Show all (${unclaimed.length - 2} more)`}
                 </button>
               )}
-              <Link to="/app/leads" className="text-sm font-medium text-primary hover:underline">
-                Pool
-              </Link>
             </div>
           </div>
           {unclaimed.length === 0 ? (
@@ -420,7 +432,7 @@ export function OverviewPage() {
           <div className="p-6 pt-0">
             <SourceChart
               mix={sourceTrend?.source_mix ?? data.source_mix}
-              caption={sourceTrend ? `leads, ${sourceTrend.label.toLowerCase()}` : 'leads today'}
+              caption={SHORT_RANGE[sourceRange]}
             />
           </div>
         </Card>
@@ -504,13 +516,17 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
 
 /** Booked but never confirmed: one row for the lot, as the mockup has it. */
 function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
+  const navigate = useNavigate()
   const [first, ...rest] = appointments
   const oldest = appointments.reduce((a, b) => (a.created_at < b.created_at ? a : b))
 
   return (
-    <tr className="border-b border-border transition-colors last:border-0 hover:bg-muted/50">
+    <tr
+      onClick={() => navigate('/app/calendar')}
+      className="group cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-muted/50"
+    >
       <td className="px-6 py-3">
-        <div className="font-medium">
+        <div className="font-medium text-primary group-hover:underline">
           {first.lead?.name || 'Unknown caller'}
           {rest.length > 0 && <span className="text-muted-foreground"> +{rest.length}</span>}
         </div>
@@ -540,6 +556,7 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
       <td className="px-6 py-3 text-right">
         <Link
           to="/app/calendar"
+          onClick={(e) => e.stopPropagation()}
           className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
         >
           Confirm
@@ -550,15 +567,23 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
 }
 
 function UnclaimedRow({ lead }: { lead: Lead }) {
+  const navigate = useNavigate()
   const hours = (Date.now() - new Date(lead.created_at).getTime()) / 3600_000
   // Waiting long enough to matter, or not. A third colour in between was
   // amber, which reads as an alert next to blue everywhere else.
   const tone = hours >= 4 ? 'bg-accent font-semibold text-primary' : 'bg-muted text-muted-foreground'
 
   return (
-    <div className="flex items-center gap-3 px-6 py-3">
+    <div
+      onClick={() =>
+        navigate(lead.conversation_id ? `/app/conversations/${lead.conversation_id}` : '/app/leads')
+      }
+      className="group flex cursor-pointer items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
+    >
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{lead.name || 'Unknown caller'}</div>
+        <div className="text-sm font-medium text-primary group-hover:underline">
+          {lead.name || 'Unknown caller'}
+        </div>
         <div className="truncate text-xs text-muted-foreground">
           {SOURCE_LABELS[lead.source] ?? lead.source}
           {lead.contact_risk && ' -- no email on file'}

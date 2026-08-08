@@ -139,6 +139,12 @@ const PATHS = {
     </>
   ),
   back: <path d="M15 18l-6-6 6-6" />,
+  sidebar: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M9 3v18" />
+    </>
+  ),
   pencil: (
     <>
       <path d="M12 20h9" />

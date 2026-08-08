@@ -118,18 +118,6 @@ export function AppShell() {
               <span className="font-semibold text-primary">Liner</span> AI
             </div>
           </div>
-          <button
-            onClick={toggleRail}
-            aria-label="Hide menu"
-            title="Hide menu"
-            className={clsx(
-              'ml-auto hidden h-8 w-8 shrink-0 items-center justify-center rounded-md',
-              'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-              open ? 'lg:inline-flex' : 'lg:hidden',
-            )}
-          >
-            <Icon name="back" className="h-4 w-4" />
-          </button>
         </div>
 
         <nav className="scroll-thin flex-1 overflow-y-auto px-2 py-3">
@@ -323,11 +311,11 @@ function TopBar({
       </button>
       <button
         onClick={onToggleRail}
-        aria-label="Show or hide menu"
-        title="Show or hide menu"
+        aria-label="Pin or unpin the menu"
+        title="Pin the menu open, or leave it as a strip that opens on hover"
         className="-ml-1 hidden h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground lg:inline-flex"
       >
-        <Icon name="menu" className="h-5 w-5" />
+        <Icon name="sidebar" className="h-5 w-5" />
       </button>
       <div className="relative w-full max-w-sm">
         <Icon

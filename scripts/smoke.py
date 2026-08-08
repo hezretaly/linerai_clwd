@@ -365,6 +365,19 @@ def main() -> int:
     check("an unknown token is a 404, not a redirect to nowhere",
           follow(BASE + "/r/not-a-real-token")[0] == 404)
 
+    print("\n== an unclaimed lead can be opened from the overview ==")
+    pool = call("GET", "/api/overview")["queues"]["unclaimed_leads"]
+    check("the queue carries a thread to open, not just a name",
+          all("conversation_id" in lead for lead in pool),
+          f"{sum(1 for lead in pool if lead.get('conversation_id'))}/{len(pool)} have one")
+    linked = [lead for lead in pool if lead.get("conversation_id")]
+    if linked:
+        # A lead imported from ADF never chatted, so a missing id is a real
+        # state -- but an id that is present has to resolve.
+        check("and that thread really exists",
+              call("GET", f"/api/conversations/{linked[0]['conversation_id']}")["id"]
+              == linked[0]["conversation_id"])
+
     print("\n== the charts answer for a chosen window ==")
     for key, expect in (("today", "Today"), ("yesterday", "Yesterday"),
                         ("week", "Last 7"), ("month", "Last 30")):

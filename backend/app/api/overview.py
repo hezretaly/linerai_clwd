@@ -150,6 +150,17 @@ def overview(
         .order_by(Lead.created_at.asc())
         .all()
     )
+    # Their thread, so the panel row can open the conversation rather than a
+    # profile. One query for the lot -- a row each would be a query each.
+    convo_of = {}
+    if unclaimed_leads:
+        for lead_id, convo_id in (
+            db.query(Conversation.lead_id, Conversation.id)
+            .filter(Conversation.lead_id.in_([lead.id for lead in unclaimed_leads]))
+            .order_by(Conversation.started_at.desc())
+            .all()
+        ):
+            convo_of.setdefault(lead_id, convo_id)
 
     # Blast radius: vehicles no longer available that Liner has quoted (§18.2).
     stale_rows = (
@@ -205,7 +216,10 @@ def overview(
             # The whole day, newest activity first. The client shows the
             # last two hours and expands to the rest -- see happening_now_since.
             "active_conversations": day_payload,
-            "unclaimed_leads": [lead_out(lead, db) for lead in unclaimed_leads],
+            "unclaimed_leads": [
+                {**lead_out(lead, db), "conversation_id": convo_of.get(lead.id)}
+                for lead in unclaimed_leads
+            ],
             "inventory_issues": inventory_issues,
         },
         "happening_now_since": (now - timedelta(hours=2)).isoformat(),
