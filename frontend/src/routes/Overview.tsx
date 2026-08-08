@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
 import { relative, waited } from '../lib/format'
 import type { Appointment, Escalation, Lead, Overview } from '../lib/types'
 import { Card, Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
@@ -49,7 +49,22 @@ const KPI_LINKS: Record<string, string> = {
   credit_apps: '/app/leads',
 }
 
-type TrendRange = 'today' | 'yesterday' | 'week' | 'month'
+type TrendRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom'
+
+/** A named window, or two dates. `to` empty means a single day -- picking
+ *  one date should not require typing it twice. */
+interface TrendChoice {
+  range: TrendRange
+  from: string
+  to: string
+}
+
+const TODAY: TrendChoice = { range: 'today', from: '', to: '' }
+
+function trendQuery({ range, from, to }: TrendChoice): string {
+  if (range !== 'custom') return `range=${range}`
+  return `from=${from}${to ? `&to=${to}` : ''}`
+}
 
 interface Trend {
   range: TrendRange
@@ -67,6 +82,7 @@ const SHORT_RANGE: Record<TrendRange, string> = {
   yesterday: 'leads yesterday',
   week: 'leads this week',
   month: 'leads this month',
+  custom: 'leads',
 }
 
 const RANGE_LABELS: [TrendRange, string][] = [
@@ -74,6 +90,7 @@ const RANGE_LABELS: [TrendRange, string][] = [
   ['yesterday', 'Yesterday'],
   ['week', 'Week'],
   ['month', 'Month'],
+  ['custom', 'Dates'],
 ]
 
 /** Title, window and the range picker, shared by both charts so the two never
@@ -81,16 +98,22 @@ const RANGE_LABELS: [TrendRange, string][] = [
 function TrendHeader({
   title,
   subtitle,
-  range,
-  onRange,
+  choice,
+  onChoice,
+  error,
   legend = false,
 }: {
   title: string
   subtitle: string
-  range: TrendRange
-  onRange: (next: TrendRange) => void
+  choice: TrendChoice
+  onChoice: (next: TrendChoice) => void
+  /** What the server said about these dates. It owns the rules -- a range that
+   *  is backwards or a year long is refused there, and repeating that logic
+   *  here would give two answers to the same question. */
+  error?: string
   legend?: boolean
 }) {
+  const today = new Date().toISOString().slice(0, 10)
   return (
     <div className="p-6 pb-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -102,10 +125,16 @@ function TrendHeader({
           {RANGE_LABELS.map(([key, label]) => (
             <button
               key={key}
-              onClick={() => onRange(key)}
+              onClick={() =>
+                onChoice(
+                  key === 'custom'
+                    ? { range: 'custom', from: choice.from || today, to: choice.to }
+                    : { range: key, from: '', to: '' },
+                )
+              }
               className={clsx(
                 'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                range === key
+                choice.range === key
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:text-foreground',
               )}
@@ -115,6 +144,36 @@ function TrendHeader({
           ))}
         </div>
       </div>
+
+      {choice.range === 'custom' && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="date"
+            value={choice.from}
+            max={today}
+            onChange={(e) => onChoice({ ...choice, from: e.target.value })}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          />
+          <span className="text-xs text-muted-foreground">to</span>
+          <input
+            type="date"
+            value={choice.to}
+            min={choice.from}
+            max={today}
+            onChange={(e) => onChoice({ ...choice, to: e.target.value })}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+          />
+          {choice.to && (
+            <button
+              onClick={() => onChoice({ ...choice, to: '' })}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              One day
+            </button>
+          )}
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       {legend && (
         <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
@@ -144,16 +203,20 @@ export function OverviewPage() {
   const [showAllFlagged, setShowAllFlagged] = useState(false)
   // One selector per chart rather than one for both: a rep looking at where
   // leads came from this month is often still looking at today's hours.
-  const [hourRange, setHourRange] = useState<TrendRange>('today')
-  const [sourceRange, setSourceRange] = useState<TrendRange>('today')
+  const [hourChoice, setHourChoice] = useState<TrendChoice>(TODAY)
+  const [sourceChoice, setSourceChoice] = useState<TrendChoice>(TODAY)
 
-  const { data: hourTrend } = useQuery({
-    queryKey: ['trends', hourRange],
-    queryFn: () => api.get<Trend>(`/api/overview/trends?range=${hourRange}`),
+  const { data: hourTrend, error: hourError } = useQuery({
+    queryKey: ['trends', trendQuery(hourChoice)],
+    queryFn: () => api.get<Trend>(`/api/overview/trends?${trendQuery(hourChoice)}`),
+    enabled: hourChoice.range !== 'custom' || Boolean(hourChoice.from),
+    retry: false,
   })
-  const { data: sourceTrend } = useQuery({
-    queryKey: ['trends', sourceRange],
-    queryFn: () => api.get<Trend>(`/api/overview/trends?range=${sourceRange}`),
+  const { data: sourceTrend, error: sourceError } = useQuery({
+    queryKey: ['trends', trendQuery(sourceChoice)],
+    queryFn: () => api.get<Trend>(`/api/overview/trends?${trendQuery(sourceChoice)}`),
+    enabled: sourceChoice.range !== 'custom' || Boolean(sourceChoice.from),
+    retry: false,
   })
   const { data, isLoading } = useQuery({
     queryKey: ['overview'],
@@ -297,8 +360,46 @@ export function OverviewPage() {
         )}
       </Card>
 
-      {/* ---- Happening now, then unclaimed: a line each ---------------------- */}
+      {/* ---- Unclaimed, then happening now: a line each -------------------- */}
       <div className="mt-4 space-y-4">
+        <Card className="min-w-0 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
+            <div>
+              <Link
+                to="/app/conversations?filter=unclaimed"
+                className="font-semibold leading-none tracking-tight text-primary hover:underline"
+              >
+                Unclaimed leads
+              </Link>
+              {/* The mockup captions this "Round robin after 12 hours". There
+                  is no rotation in this system, so the panel describes what
+                  the queue actually is. */}
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Assigned to nobody, longest waiting first
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {unclaimed.length > 2 && (
+                <button
+                  onClick={() => setShowAllLeads((was) => !was)}
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  {showAllLeads ? 'Collapse' : 'Expand'}
+                </button>
+              )}
+            </div>
+          </div>
+          {unclaimed.length === 0 ? (
+            <Empty title="All claimed" hint="Every lead has an owner." />
+          ) : (
+            <div className="divide-y divide-border">
+              {(showAllLeads ? unclaimed : unclaimed.slice(0, 2)).map((lead) => (
+                <UnclaimedRow key={lead.id} lead={lead} />
+              ))}
+            </div>
+          )}
+        </Card>
+
         <Card className="min-w-0 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
@@ -380,44 +481,6 @@ export function OverviewPage() {
             </div>
           )}
         </Card>
-
-        <Card className="min-w-0 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
-            <div>
-              <Link
-                to="/app/conversations?filter=unclaimed"
-                className="font-semibold leading-none tracking-tight text-primary hover:underline"
-              >
-                Unclaimed leads
-              </Link>
-              {/* The mockup captions this "Round robin after 12 hours". There
-                  is no rotation in this system, so the panel describes what
-                  the queue actually is. */}
-              <p className="mt-1.5 text-sm text-muted-foreground">
-                Assigned to nobody, longest waiting first
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              {unclaimed.length > 2 && (
-                <button
-                  onClick={() => setShowAllLeads((was) => !was)}
-                  className="text-sm font-medium text-primary hover:underline"
-                >
-                  {showAllLeads ? 'Collapse' : 'Expand'}
-                </button>
-              )}
-            </div>
-          </div>
-          {unclaimed.length === 0 ? (
-            <Empty title="All claimed" hint="Every lead has an owner." />
-          ) : (
-            <div className="divide-y divide-border">
-              {(showAllLeads ? unclaimed : unclaimed.slice(0, 2)).map((lead) => (
-                <UnclaimedRow key={lead.id} lead={lead} />
-              ))}
-            </div>
-          )}
-        </Card>
       </div>
 
       {/* ---- Charts -------------------------------------------------------- */}
@@ -425,14 +488,15 @@ export function OverviewPage() {
         <Card className="min-w-0 shadow-sm lg:col-span-3">
           <TrendHeader
             title="Where leads came from"
-            subtitle="By the source on the lead"
-            range={sourceRange}
-            onRange={setSourceRange}
+            subtitle={sourceTrend?.label ?? 'By the source on the lead'}
+            choice={sourceChoice}
+            onChoice={setSourceChoice}
+            error={(sourceError as ApiError | null)?.message}
           />
           <div className="p-6 pt-0">
             <SourceChart
               mix={sourceTrend?.source_mix ?? data.source_mix}
-              caption={SHORT_RANGE[sourceRange]}
+              caption={SHORT_RANGE[sourceChoice.range]}
             />
           </div>
         </Card>
@@ -444,8 +508,9 @@ export function OverviewPage() {
                 ? `${hourTrend.label} -- ${hourTrend.conversations} conversation${hourTrend.conversations === 1 ? '' : 's'}`
                 : 'Today, midnight to now'
             }
-            range={hourRange}
-            onRange={setHourRange}
+            choice={hourChoice}
+            onChoice={setHourChoice}
+            error={(hourError as ApiError | null)?.message}
             legend
           />
           <div className="p-6 pt-0">
@@ -495,7 +560,7 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <span
-          className={clsx('tnum text-primary', urgent ? 'font-semibold' : 'font-medium')}
+          className={clsx('tnum', urgent ? 'font-semibold' : 'font-medium')}
           title={urgent ? 'Waiting longer than the rule allows' : undefined}
         >
           {waited(escalation.created_at)}
@@ -549,9 +614,7 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
         </span>
       </td>
       <td className="whitespace-nowrap px-4 py-3">
-        <span className="tnum font-medium text-primary">
-          {waited(oldest.created_at)}
-        </span>
+        <span className="tnum font-medium">{waited(oldest.created_at)}</span>
       </td>
       <td className="px-6 py-3 text-right">
         <Link
@@ -671,8 +734,8 @@ function SourceChart({
     return (
       <div className="flex h-[260px] items-center">
         <NotBacked
-          title="No leads yet today"
-          why="This splits the last 24 hours by the source recorded on each lead."
+          title={`No ${caption}`}
+          why="This splits the chosen window by the source recorded on each lead."
         />
       </div>
     )

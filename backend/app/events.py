@@ -24,6 +24,7 @@ EVENT_TYPES = {
     "lead.qualified",
     "appointment.booked",
     "appointment.confirmed",
+    "appointment.cancelled",
     "appointment.assigned",
     "handoff.triggered",
     "outreach.sent",

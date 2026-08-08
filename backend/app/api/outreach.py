@@ -52,6 +52,33 @@ def confirm(
     return appointment_out(appointment, db)
 
 
+@router.post("/{appointment_id}/cancel")
+def cancel(
+    appointment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Cancel is a transition the model has always allowed and nothing offered.
+
+    Without it a slot booked once is gone for good: book_appointment refuses a
+    clash against booked and confirmed rows, so a mistaken booking blocks that
+    time forever. It also made `make smoke` non-repeatable -- each run took a
+    slot out of the fixture's week and never gave it back, and after enough
+    runs there was nothing left to offer and the booking flow failed.
+    """
+    appointment = get_appointment(db, appointment_id)
+    assert_transition(appointment.status, "cancelled")
+    appointment.status = "cancelled"
+    db.commit()
+    emit(db, "appointment.cancelled", {
+        "appointment_id": appointment.id,
+        "lead_id": appointment.lead_id,
+        "starts_at": appointment.starts_at.isoformat(),
+        "by": user.id,
+    })
+    return appointment_out(appointment, db)
+
+
 class AssignBody(BaseModel):
     user_id: str | None = None
     auto: bool = False

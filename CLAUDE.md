@@ -57,7 +57,10 @@ tapping chips, dashboard on the right, asserting the KPI moves with no reload.
 Run it when you touch the frontend or the event path. **It expects a fresh
 seed** -- it asserts a name appears in a queue, and after several runs the
 queues fill up and truncate. `make reset-db` first. `make smoke` has no such
-requirement and must stay that way.
+requirement and must stay that way -- it books appointments and then cancels
+them, because `book_appointment` refuses a clash and the fixture's week only
+holds about twenty slots. A run that kept them would poison the next one, which
+is exactly what happened once.
 
 `make shots` also runs every dealer route at 390px and **fails the run if the
 page scrolls sideways**. Reps and managers work from phones, so that is a real

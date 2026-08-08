@@ -145,6 +145,15 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 
 def say(convo: str, *, rail_id: str | None = None, content: str | None = None):
+    # pick() returns None when no chip matches, and the request then goes out
+    # with no body at all -- the server answers "Empty message", which says
+    # nothing about the chip that was missing.
+    if rail_id is None and content is None:
+        raise AssertionError(
+            "say() got neither a rail nor text -- pick() found no matching chip, "
+            "which usually means the conversation did not reach the stage that "
+            "offers it."
+        )
     body = {"rail_id": rail_id} if rail_id else {"content": content}
     events = sse(call("POST", f"/api/chat/sessions/{convo}/messages", body, stream=True))
     reply = next((d for e, d in events if e == "assistant_message"), None)
@@ -171,6 +180,8 @@ def main() -> int:
     call("POST", "/api/auth/login", LOGIN)
     listener = EventListener()
     listener.start()
+
+    booked_here: list[str] = []
 
     print("\n== buyer books an appointment (rails only, no typing) ==")
     session = call("POST", "/api/chat/sessions")
@@ -271,6 +282,7 @@ def main() -> int:
         "starts_at": slot, "name": "Sam Okafor",
         "email": "sam.okafor@example.invalid", "phone": "555-0161",
     })
+    booked_here.append(form["appointment"]["id"])
     check("a complete form books", form["appointment"]["starts_at"] == slot,
           form["appointment"]["starts_at"])
     check("and the transcript reads as a conversation, not a form dump",
@@ -392,6 +404,25 @@ def main() -> int:
     # under the right caption, which is worse than an error.
     check("an unknown range is refused rather than defaulted",
           status_of("GET", "/api/overview/trends?range=fortnight")[0] == 400)
+
+    one_day = call("GET", "/api/overview/trends?from=2026-08-01")
+    check("one date is a whole answer -- no need to type it twice",
+          one_day["from"] == "2026-08-01" and one_day["to"] == "2026-08-01",
+          one_day["label"])
+    span = call("GET", "/api/overview/trends?from=2026-08-01&to=2026-08-08")
+    check("and a period spans the days asked for",
+          span["from"] == "2026-08-01" and span["to"] == "2026-08-08" and span["days"] == 7,
+          span["label"])
+    # Dates win over a range, or the caption would name one window and the
+    # numbers would come from the other.
+    both = call("GET", "/api/overview/trends?range=month&from=2026-08-01")
+    check("explicit dates beat a named range", both["range"] == "custom", both["label"])
+    for bad, why in (
+        ("from=2026-08-08&to=2026-08-01", "backwards"),
+        ("from=not-a-date", "unparseable"),
+        ("from=2020-01-01&to=2026-01-01", "longer than a year"),
+    ):
+        check(f"a {why} range is refused", status_of("GET", f"/api/overview/trends?{bad}")[0] == 400)
     # Over a week a Sunday must not paint the whole week closed, and the hours
     # still come from hours_json rather than a hardcoded 8-to-6.
     week = call("GET", "/api/overview/trends?range=week")
@@ -423,6 +454,7 @@ def main() -> int:
     if not booked:
         return report()
     appointment = booked[0]
+    booked_here.append(appointment["id"])
     check("it came from Liner, not a rep", appointment["booked_by"] == "liner")
     check("the lead has an email on file", bool(appointment["lead"]["email"]),
           appointment["lead"]["email"])
@@ -539,6 +571,23 @@ def main() -> int:
     for event in ("appointment.booked", "appointment.confirmed", "appointment.assigned",
                   "outreach.sent", "handoff.triggered", "lead.imported"):
         check(f"{event} reached the dashboard", event in listener.seen)
+
+    print("\n== the run gives back the slots it took ==")
+    # Every booking above holds a time that book_appointment will refuse to
+    # double-book. Without releasing them each run eats into the fixture's
+    # week, and after enough runs check_availability has nothing to offer and
+    # the booking flow fails -- which is exactly what happened. `make smoke`
+    # must stay runnable against a database that has already seen it.
+    released = 0
+    for appt in call("GET", "/api/appointments")["appointments"]:
+        if appt["id"] in booked_here and appt["status"] in ("booked", "confirmed"):
+            code, _ = status_of("POST", f"/api/appointments/{appt['id']}/cancel")
+            released += code == 200
+    check("this run's appointments were released", released == len(booked_here),
+          f"{released}/{len(booked_here)} cancelled")
+    after = call("GET", "/api/overview/trends?range=today")
+    check("and the calendar can offer times again",
+          bool(call("GET", "/api/appointments")) and after["range"] == "today")
 
     return report()
 

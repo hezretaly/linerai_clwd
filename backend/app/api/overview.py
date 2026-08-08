@@ -8,9 +8,9 @@ the mockups disagreed with themselves across pages (Conversations 4 vs 3, Leads
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -239,6 +239,11 @@ RANGES = {
 }
 
 
+# A chart over more than a year of hourly buckets is a query nobody asked for
+# by accident, and a typo in a date field is how you ask for it.
+MAX_SPAN_DAYS = 366
+
+
 def _window(now, key: str):
     """(start, end) for a range key. Naive and dealership-local throughout --
     these are the same clock the conversations were stamped with."""
@@ -252,9 +257,41 @@ def _window(now, key: str):
     return midnight, now
 
 
+def _custom_window(now, first: str, last: str):
+    """(start, end, label) for an explicit date, or a date to a date.
+
+    `to` defaults to `from`, so one date is a legal answer -- picking a single
+    day is the common case and should not need the same date typed twice. The
+    end is exclusive midnight of the day after, or a range ending today would
+    stop at 00:00 and show nothing.
+    """
+    try:
+        start_date = date.fromisoformat(first)
+        end_date = date.fromisoformat(last) if last else start_date
+    except ValueError:
+        raise HTTPException(400, "from and to must be dates, as YYYY-MM-DD") from None
+
+    if end_date < start_date:
+        raise HTTPException(400, "`from` is after `to`.")
+    if (end_date - start_date).days + 1 > MAX_SPAN_DAYS:
+        raise HTTPException(400, f"That is more than {MAX_SPAN_DAYS} days.")
+
+    start = datetime.combine(start_date, time.min)
+    end = min(datetime.combine(end_date, time.min) + timedelta(days=1), now)
+    if start_date == end_date:
+        label = f"{start_date:%a} {start_date.day} {start_date:%B}"
+    elif start_date.year == end_date.year:
+        label = f"{start_date.day} {start_date:%b} to {end_date.day} {end_date:%b}"
+    else:
+        label = f"{start_date.day} {start_date:%b %Y} to {end_date.day} {end_date:%b %Y}"
+    return start, end, label
+
+
 @router.get("/overview/trends")
 def trends(
     range: str = "today",
+    from_: str = Query("", alias="from"),
+    to: str = Query(""),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     dealership: Dealership = Depends(get_dealership),
@@ -266,14 +303,25 @@ def trends(
     whole dashboard, and the counts on the cards must not silently start
     meaning "last month" because someone moved a chart selector.
     """
-    if range not in RANGES:
-        raise HTTPException(400, f"range must be one of: {', '.join(RANGES)}")
-
     now = utcnow()
-    start, end = _window(now, range)
+    if from_:
+        # Explicit dates win. Sending both a range and a from would otherwise
+        # answer for one of them silently, and the caption would name the other.
+        start, end, label = _custom_window(now, from_, to)
+        range = "custom"
+    else:
+        if range not in RANGES:
+            raise HTTPException(
+                400, f"range must be one of: {', '.join(RANGES)}, or pass from/to"
+            )
+        start, end = _window(now, range)
+        label = RANGES[range]
+
     return {
         "range": range,
-        "label": RANGES[range],
+        "label": label,
+        "from": start.date().isoformat(),
+        "to": (end - timedelta(microseconds=1)).date().isoformat(),
         "days": max((end.date() - start.date()).days, 1),
         "conversations": (
             db.query(Conversation)
