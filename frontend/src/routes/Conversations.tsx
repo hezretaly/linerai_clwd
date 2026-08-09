@@ -7,6 +7,12 @@ import { api, ApiError } from '../lib/api'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData } from '../components/BookingCard'
 import { PROVENANCE_LABEL, initials, money, time, waited } from '../lib/format'
+import {
+  CONVERSATION_FILTERS,
+  counts as countBy,
+  matches,
+} from '../lib/conversationFilters'
+import type { ConversationFilter } from '../lib/conversationFilters'
 import type { Conversation, Message, TeamMember } from '../lib/types'
 import { Empty, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
@@ -29,8 +35,10 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type Group = 'Needs a person' | 'Live now'
 
-const FILTERS = ['all', 'flagged', 'unclaimed', 'live', 'mine', 'declined', 'appointed'] as const
-type Filter = (typeof FILTERS)[number]
+/** Shared with the cross-channel list, so the two pages cannot disagree about
+ *  what Appointed counts. */
+const FILTERS = CONVERSATION_FILTERS
+type Filter = ConversationFilter
 
 /** Which group a thread belongs in, or none -- a closed thread with nobody
  *  waiting is not something to look at, so it falls out of the grouped list
@@ -147,34 +155,14 @@ export function ConversationsPage({
 
   if (isLoading) return <Spinner />
 
-  const flagged = conversations.filter((c) => c.open_escalation).length
-  const live = conversations.filter((c) => c.status === 'active').length
-  const unclaimed = conversations.filter((c) => !c.lead?.assigned_user_id).length
   // Assignment lives on the lead, and the list already returns it on every
   // row, so "Mine" needs no new endpoint -- only knowing who is signed in.
-  const isMine = (c: Conversation) => Boolean(me && c.lead?.assigned_user_id === me.id)
-  const mine = conversations.filter(isMine).length
-  const declined = conversations.filter((c) => c.outcome === 'declined').length
-  // Appointed is derived, not stored: the stage is what a completed booking
-  // sets, so there is no second place for it to disagree with the calendar.
-  const appointed = conversations.filter((c) => c.stage === 'booked').length
+  const {
+    flagged, live, unclaimed, mine, declined, appointed,
+  } = countBy(conversations, me?.id)
 
   const visible = conversations
-    .filter((c) =>
-      filter === 'mine'
-        ? isMine(c)
-        : filter === 'declined'
-        ? c.outcome === 'declined'
-        : filter === 'appointed'
-        ? c.stage === 'booked'
-        : filter === 'flagged'
-        ? c.open_escalation
-        : filter === 'live'
-          ? c.status === 'active'
-          : filter === 'unclaimed'
-            ? !c.lead?.assigned_user_id
-            : true,
-    )
+    .filter((c) => matches(c, filter, me?.id))
     .filter((c) =>
       query
         ? `${c.lead?.name ?? ''} ${c.lead?.email ?? ''} ${c.lead?.phone ?? ''} ${c.summary}`

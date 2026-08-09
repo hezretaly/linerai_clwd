@@ -627,6 +627,27 @@ def main() -> int:
     check("the list rows do not pay for it",
           "recap" not in call("GET", "/api/conversations")["conversations"][0])
 
+    print("\n== the cross-channel list can be sliced without opening anything ==")
+    listed = call("GET", "/api/conversations")["conversations"]
+    stamps = [c.get("last_activity_at") for c in listed]
+    check("every row says when it was last active", all(stamps), f"{sum(map(bool, stamps))}/{len(stamps)}")
+    # Sorting on started_at put a thread that opened this morning and went
+    # quiet above one a buyer is typing in right now.
+    check("and the list leads with the most recent", stamps == sorted(stamps, reverse=True))
+    focused = [c for c in listed if c["focus_vehicle_id"]]
+    check("a thread with a car carries it, so the list can show a column",
+          all(c.get("focus_vehicle", {}).get("title") for c in focused),
+          f"{len(focused)} with a focus vehicle")
+    # The four states a manager filters by have to be separable from the row
+    # alone -- that is the whole page.
+    for name, hits in (
+        ("appointed", [c for c in listed if c["stage"] == "booked"]),
+        ("declined", [c for c in listed if c["outcome"] == "declined"]),
+        ("in progress", [c for c in listed if c["status"] != "closed"]),
+        ("needs a person", [c for c in listed if c["open_escalation"]]),
+    ):
+        check(f"'{name}' is answerable from the list rows", bool(hits), f"{len(hits)} rows")
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's

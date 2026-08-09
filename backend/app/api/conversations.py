@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from datetime import datetime
@@ -12,8 +12,8 @@ from app.agent.tools import when_label
 from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.events import emit
-from app.models import Conversation, Escalation, Message, User
-from app.schemas.serialize import booking_card, conversation_out, message_out
+from app.models import Conversation, Escalation, Message, User, Vehicle
+from app.schemas.serialize import booking_card, conversation_out, message_out, vehicle_out
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -45,8 +45,44 @@ def list_conversations(
         query = query.filter(Conversation.status == status)
     if channel:
         query = query.filter(Conversation.channel == channel)
-    rows = query.order_by(Conversation.started_at.desc()).all()
-    return {"conversations": [conversation_out(c, db) for c in rows]}
+    rows = query.all()
+
+    # One grouped query, not one per row. Sorting on started_at put a thread
+    # that opened this morning and has been silent since above one that a buyer
+    # is typing in right now, which is the wrong way round for a list whose
+    # whole job is "what is happening".
+    last_activity = dict(
+        db.query(Message.conversation_id, func.max(Message.created_at))
+        .filter(Message.conversation_id.in_([c.id for c in rows] or [""]))
+        .group_by(Message.conversation_id)
+        .all()
+    )
+
+    def activity_of(convo: Conversation) -> datetime:
+        return last_activity.get(convo.id) or convo.started_at
+
+    # Same trick for the car each thread settled on: the list shows it in a
+    # column, and looking it up per row would be a query each on a page that
+    # already makes several.
+    focus_ids = {c.focus_vehicle_id for c in rows if c.focus_vehicle_id}
+    focus = {
+        v.id: vehicle_out(v)
+        for v in (
+            db.query(Vehicle).filter(Vehicle.id.in_(focus_ids)).all() if focus_ids else []
+        )
+    }
+
+    rows.sort(key=activity_of, reverse=True)
+    return {
+        "conversations": [
+            {
+                **conversation_out(c, db),
+                "last_activity_at": activity_of(c).isoformat(),
+                "focus_vehicle": focus.get(c.focus_vehicle_id or ""),
+            }
+            for c in rows
+        ]
+    }
 
 
 @router.get("/{conversation_id}")

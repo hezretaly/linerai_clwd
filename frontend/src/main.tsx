@@ -1,7 +1,7 @@
 import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
 
 import './styles/liner-theme.css'
 
@@ -13,6 +13,7 @@ import { Chat } from './routes/Chat'
 import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
 import { ConversationRedirect, ConversationsPage } from './routes/Conversations'
+import { ConversationListPage } from './routes/ConversationList'
 import { EmailPage } from './routes/Email'
 import { LeadsPage } from './routes/Leads'
 import { LeadImportPage } from './routes/LeadImport'
@@ -58,10 +59,10 @@ createRoot(document.getElementById('root')!).render(
             }
           >
             <Route index element={<OverviewPage />} />
-            {/* Three pages over one component: chat and calls are the same
-                list filtered by channel. /app/conversations is kept as a
-                redirect because the overview, the seed and any bookmark still
-                point at it. */}
+            {/* Chat and Calls are one component filtered by channel: working
+                pages, master/detail, built for reading a thread and replying.
+                /app/conversations is the page above them -- both channels, no
+                transcript, filtered rather than opened. */}
             <Route
               path="chat"
               element={<ConversationsPage channel="chat" title="Chat" basePath="/app/chat" />}
@@ -79,7 +80,7 @@ createRoot(document.getElementById('root')!).render(
               element={<ConversationsPage channel="voice" title="Calls" basePath="/app/calls" />}
             />
             <Route path="email" element={<EmailPage />} />
-            <Route path="conversations" element={<Navigate to="/app/chat" replace />} />
+            <Route path="conversations" element={<ConversationListPage />} />
             <Route path="conversations/:id" element={<ConversationRedirect />} />
             <Route path="leads" element={<LeadsPage />} />
             <Route path="leads/import" element={<LeadImportPage />} />

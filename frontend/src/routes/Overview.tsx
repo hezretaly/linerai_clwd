@@ -45,7 +45,8 @@ const KPI_LINKS: Record<string, string> = {
   email: '/app/leads',
   calls: '/app/calls',
   appointments_set: '/app/calendar',
-  needs_a_person: '/app/chat?filter=flagged',
+  // Both channels: an escalation on a call does not appear on the chat page.
+  needs_a_person: '/app/conversations?filter=flagged',
   credit_apps: '/app/leads',
 }
 

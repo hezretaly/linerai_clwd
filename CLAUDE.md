@@ -192,6 +192,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   An unknown range is a 400 -- answering a typo with "today" shows the wrong
   window under the right caption.
 - **Hours come from `hours_json`.** No page states its own.
+- **One definition of every conversation filter.** `lib/conversationFilters.ts`
+  owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the
+  cross-channel Conversations list all read it. They were three copies of the
+  same ternary chain, which is exactly how Appointed ends up counting
+  `stage === 'booked'` on one page and an appointment row on another: a manager
+  gets two numbers for one question and no way to tell which is wrong.
+- **Chat and Calls work a thread; Conversations sees all of them.**
+  `/app/chat` and `/app/calls` are one component filtered by channel —
+  master/detail, built for reading and replying. `/app/conversations` is the
+  page above: both channels, no transcript, sliced by state rather than
+  opened. A row there opens the thread on its own channel via
+  `/app/conversations/:id`, which asks the API which channel it is rather than
+  guessing chat. **Leads still exists**, under Manage: a lead imported from an
+  ADF document never had a conversation, so it appears on no list above and
+  would otherwise be invisible.
 
 ## What is real and what is not
 

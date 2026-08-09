@@ -48,6 +48,7 @@ DEALER = [
     "/app/chat",
     "/app/calls",
     "/app/email",
+    "/app/conversations",
     "/app/leads",
     "/app/leads/import",
     "/app/calendar",

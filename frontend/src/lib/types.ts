@@ -131,6 +131,10 @@ export interface Conversation {
   focus_vehicle?: Vehicle | null
   started_at: string
   ended_at: string | null
+  /* When anyone last said anything. List responses only, and what they are
+     ordered by -- a thread opened this morning and silent since should not sit
+     above one a buyer is typing in now. */
+  last_activity_at?: string
   /* The last thing Liner said, or the sign-off close_conversation wrote. It
      backs the one-line preview in the list, not the Summary panel. */
   summary: string
