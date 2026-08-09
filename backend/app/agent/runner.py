@@ -145,7 +145,12 @@ def record_assistant_message(
     if convo.stage == "booked":
         convo.status = "closed"
         convo.ended_at = utcnow()
-    convo.summary = _summarise(reply)
+    # close_conversation runs during this same turn and writes a real summary.
+    # Overwriting it with the sign-off line ("Take care -- we're here when you
+    # need us") threw away the one summary in the system that was actually a
+    # summary, on every conversation that ended properly.
+    if not any(c["name"] == "close_conversation" for c in calls):
+        convo.summary = _summarise(reply)
     db.commit()
     db.refresh(message)
 

@@ -141,6 +141,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   answer is one a buyer repeats back to a rep. `answer_from_knowledge` returns
   `found: false` rather than a near-miss, because a plausible wrong answer is
   worse than none.
+- **The rail's Summary is `recap`, not `summary`.** `conversations.summary` is
+  whatever Liner said last, and printing that under a heading saying Summary
+  made a reply look like a recap of the thread. `app/recap.py` composes the
+  real one from rows — who, which car, what was captured, the appointment, the
+  open escalation — so it can be checked against the data instead of trusted.
+  Deterministic on purpose: a model-written summary is a second place a fact
+  can be invented, and there is no model at all in stub mode. `summary` still
+  backs the one-line preview in the list.
 - **The booking card is built from a tool result, never composed.** When
   `check_availability` runs, the buyer gets days, times and contact fields
   (`BookingCard.tsx`); the card can only offer what that tool returned, and its

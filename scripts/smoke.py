@@ -609,6 +609,24 @@ def main() -> int:
     })
     check("nor skip the email rule", code == 409, str(code))
 
+    print("\n== the summary panel summarises, rather than quoting the last line ==")
+    # `summary` is whatever Liner said last. The rail used to print it under a
+    # heading saying Summary, which made a reply look like a recap of the
+    # thread. `recap` is composed from rows, so it can be checked against them.
+    recapped = call("GET", f"/api/conversations/{rep_convo}")
+    check("a recap comes back on the detail response", bool(recapped.get("recap")),
+          repr(recapped.get("recap"))[:90])
+    check("and it is not just the last message",
+          recapped["recap"] != recapped["summary"])
+    check("it names the buyer and where the thread got to",
+          "Rep Booked" in recapped["recap"] and "Booked for" in recapped["recap"],
+          recapped["recap"][:90])
+    check("a declined thread says so", "client decline"
+          in call("GET", f"/api/conversations/{fresh}")["recap"].lower(),
+          call("GET", f"/api/conversations/{fresh}")["recap"][:90])
+    check("the list rows do not pay for it",
+          "recap" not in call("GET", "/api/conversations")["conversations"][0])
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's

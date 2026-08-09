@@ -131,7 +131,12 @@ export interface Conversation {
   focus_vehicle?: Vehicle | null
   started_at: string
   ended_at: string | null
+  /* The last thing Liner said, or the sign-off close_conversation wrote. It
+     backs the one-line preview in the list, not the Summary panel. */
   summary: string
+  /* Composed server-side from rows -- who, which car, what was captured, where
+     it got to. Detail responses only. */
+  recap?: string
   /* How it ended, when that is worth knowing: '' while running or simply
      finished, 'declined' when the buyer said no. */
   outcome: string

@@ -206,6 +206,10 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
             .all()
         )
         out["messages"] = [message_out(m) for m in msgs]
+        # Detail only: it costs four queries, and no list row shows it.
+        from app.recap import conversation_recap
+
+        out["recap"] = conversation_recap(db, c)
         if c.focus_vehicle_id:
             v = db.query(Vehicle).filter_by(id=c.focus_vehicle_id).one_or_none()
             out["focus_vehicle"] = vehicle_out(v) if v else None

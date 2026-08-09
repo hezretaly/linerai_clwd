@@ -317,7 +317,7 @@ export function ConversationsPage({
               onClick={() => chooseFilter('mine')}
             />
             <FilterChip
-              label="Declined"
+              label="Client declined"
               count={declined}
               active={filter === 'declined'}
               onClick={() => chooseFilter('declined')}
@@ -554,14 +554,14 @@ function ThreadHeader({
       <div className="ml-auto hidden shrink-0 items-center gap-2 lg:flex">
         {conversation.outcome === 'declined' ? (
           <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs font-medium text-muted-foreground">
-            Declined
+            Client declined
           </span>
         ) : (
           <button
             onClick={onDecline}
             className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-destructive hover:bg-destructive hover:text-destructive-foreground"
           >
-            Declined
+            Client declined
           </button>
         )}
         {conversation.stage === 'booked' ? (
@@ -811,12 +811,12 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
 
       <div className="border-b border-border p-5">
         <div className="mb-2 text-xs font-medium text-muted-foreground">Summary</div>
-        {/* Liner's own summary of the thread, which is what a rep wants before
-            they read it. The captured fields that used to sit here are on the
-            lead, and an empty "Nothing captured yet" spent a panel saying
-            nothing. */}
-        {conversation.summary ? (
-          <p className="text-sm leading-relaxed">{conversation.summary}</p>
+        {/* `recap`, not `summary`: the latter is whatever Liner said last, which
+            is a reply and not a summary of anything. This is composed on the
+            server from rows -- who, which car, what was captured, where it got
+            to -- so it answers what a rep wants before they read the thread. */}
+        {conversation.recap ? (
+          <p className="text-sm leading-relaxed">{conversation.recap}</p>
         ) : (
           <p className="text-sm text-muted-foreground">
             Nothing said yet -- the transcript beside this is empty.
