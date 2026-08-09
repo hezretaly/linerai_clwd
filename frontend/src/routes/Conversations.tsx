@@ -8,7 +8,7 @@ import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData } from '../components/BookingCard'
 import { PROVENANCE_LABEL, initials, money, time, waited } from '../lib/format'
 import type { Conversation, Message, TeamMember } from '../lib/types'
-import { Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
+import { Empty, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 
 /* The three-pane layout from the mockup. The list groups by what a rep is
@@ -295,9 +295,12 @@ export function ConversationsPage({
               active={filter === 'flagged'}
               onClick={() => chooseFilter('flagged')}
             />
+            {/* Emphasised like Needs attention: a lead nobody owns is work
+                waiting, same as a thread Liner stopped on. */}
             <FilterChip
               label="Unclaimed"
               count={unclaimed}
+              tone="primary"
               active={filter === 'unclaimed'}
               onClick={() => chooseFilter('unclaimed')}
             />
@@ -766,10 +769,7 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
         <div className="text-base font-semibold leading-tight">
           {lead?.name ?? 'Unknown caller'}
         </div>
-        <div className="mb-3 mt-0.5 text-xs text-muted-foreground">
-          {conversation.channel === 'voice' ? 'Voice call' : 'Website chat'} ·{' '}
-          {conversation.message_count ?? 0} messages
-        </div>
+        <div className="mb-3" />
         {contact.map((row) => (
           <div key={row.icon} className="flex items-center gap-2 py-1 text-sm">
             <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -810,40 +810,17 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
       )}
 
       <div className="border-b border-border p-5">
-        <div className="mb-3 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          Captured by Liner
-          <Icon name="check" className="h-3.5 w-3.5 text-success" strokeWidth={2.5} />
-        </div>
-        {lead?.captured_fields?.length ? (
-          <>
-            <div className="space-y-1.5">
-              {lead.captured_fields.map((f) => (
-                <div key={f.id} className="flex items-baseline gap-2 text-sm">
-                  <span className="w-[70px] shrink-0 text-xs capitalize text-muted-foreground">
-                    {f.key.replace(/_/g, ' ')}
-                  </span>
-                  {/* Inferred values render italic. The difference between
-                      reporting what we know and laundering a guess into a fact
-                      a rep repeats on the phone. */}
-                  <span className={clsx('min-w-0 flex-1', !f.verified && 'italic text-muted-foreground')}>
-                    {f.value}
-                  </span>
-                  {!f.verified && (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
-                      {PROVENANCE_LABEL[f.provenance]}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            {lead.captured_fields.some((f) => !f.verified) && (
-              <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-                Italic fields were inferred, not stated. Check before using them on a call.
-              </p>
-            )}
-          </>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">What this is about</div>
+        {/* Liner's own summary of the thread, which is what a rep wants before
+            they read it. The captured fields that used to sit here are on the
+            lead, and an empty "Nothing captured yet" spent a panel saying
+            nothing. */}
+        {conversation.summary ? (
+          <p className="text-sm leading-relaxed">{conversation.summary}</p>
         ) : (
-          <p className="text-sm text-muted-foreground">Nothing captured yet.</p>
+          <p className="text-sm text-muted-foreground">
+            Nothing said yet -- the transcript beside this is empty.
+          </p>
         )}
       </div>
 
@@ -860,13 +837,6 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
         </p>
       </div>
 
-      <div className="p-5">
-        <div className="mb-3 text-xs font-medium text-muted-foreground">History</div>
-        <NotBacked
-          title="No activity timeline"
-          why="Nothing records per-lead events over time. The transcript beside this is the full history the system holds."
-        />
-      </div>
     </aside>
   )
 }

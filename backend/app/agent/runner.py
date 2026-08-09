@@ -109,6 +109,22 @@ def run_agent_turn(db: Session, convo: Conversation, text: str) -> Message | Non
     return record_assistant_message(db, convo, reply, calls)
 
 
+def _summarise(reply: str) -> str:
+    """The thread's one-line summary, cut at a word.
+
+    This is the last thing Liner said until the buyer ends the conversation,
+    at which point close_conversation writes a real one. Slicing at 200
+    characters cut mid-word -- "the Mazda3 -- it's" -- which reads as broken
+    text rather than as a truncated sentence, and it is shown to a rep on the
+    conversation rail.
+    """
+    text = " ".join((reply or "").split())
+    if len(text) <= 200:
+        return text
+    cut = text[:200].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return f"{cut}..."
+
+
 def record_assistant_message(
     db: Session, convo: Conversation, reply: str, calls: list[dict]
 ) -> Message:
@@ -129,7 +145,7 @@ def record_assistant_message(
     if convo.stage == "booked":
         convo.status = "closed"
         convo.ended_at = utcnow()
-    convo.summary = reply[:200]
+    convo.summary = _summarise(reply)
     db.commit()
     db.refresh(message)
 
