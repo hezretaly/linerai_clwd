@@ -52,7 +52,7 @@ export function AppShell() {
   const location = useLocation()
   const [navOpen, setNavOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem(RAIL_KEY) === '1',
+    () => localStorage.getItem(RAIL_KEY) !== '0',
   )
   // Pointing at the strip opens it; leaving closes it again. Collapsed stays
   // the remembered state -- hovering does not un-collapse it, so the rail is

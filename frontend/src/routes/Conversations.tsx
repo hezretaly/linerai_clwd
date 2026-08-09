@@ -25,12 +25,18 @@ const SOURCE_LABEL: Record<string, string> = {
   website: 'Website form',
 }
 
-type Group = 'Needs a person' | 'Live now' | 'Earlier today'
+type Group = 'Needs a person' | 'Live now'
 
-function groupOf(c: Conversation): Group {
+const FILTERS = ['all', 'flagged', 'unclaimed', 'live', 'mine'] as const
+type Filter = (typeof FILTERS)[number]
+
+/** Which group a thread belongs in, or none -- a closed thread with nobody
+ *  waiting is not something to look at, so it falls out of the grouped list
+ *  rather than into a bucket named after when it happened. */
+function groupOf(c: Conversation): Group | null {
   if (c.open_escalation) return 'Needs a person'
   if (c.status === 'active' || c.agent_paused) return 'Live now'
-  return 'Earlier today'
+  return null
 }
 
 /** Tags are derived, never stored -- each one restates something on the row. */
@@ -62,18 +68,23 @@ export function ConversationsPage() {
   // full list and you have to find it again.
   const [params, setParams] = useSearchParams()
   const requested = params.get('filter')
-  const [filter, setFilter] = useState<'all' | 'flagged' | 'live' | 'unclaimed'>(
-    requested === 'flagged' || requested === 'live' || requested === 'unclaimed'
-      ? requested
-      : 'all',
+  const [filter, setFilter] = useState<Filter>(
+    FILTERS.includes(requested as Filter) ? (requested as Filter) : 'all',
   )
 
   // Keep the URL honest as the rep changes filters, so the view is linkable
   // and the back button means something.
-  const chooseFilter = (next: 'all' | 'flagged' | 'live' | 'unclaimed') => {
+  const chooseFilter = (next: Filter) => {
     setFilter(next)
     setParams(next === 'all' ? {} : { filter: next }, { replace: true })
   }
+
+  const { data: whoami } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: TeamMember }>('/api/auth/me'),
+    retry: false,
+  })
+  const me = whoami?.user
 
   const { data, isLoading } = useQuery({
     queryKey: ['conversations'],
@@ -118,10 +129,16 @@ export function ConversationsPage() {
   const flagged = conversations.filter((c) => c.open_escalation).length
   const live = conversations.filter((c) => c.status === 'active').length
   const unclaimed = conversations.filter((c) => !c.lead?.assigned_user_id).length
+  // Assignment lives on the lead, and the list already returns it on every
+  // row, so "Mine" needs no new endpoint -- only knowing who is signed in.
+  const isMine = (c: Conversation) => Boolean(me && c.lead?.assigned_user_id === me.id)
+  const mine = conversations.filter(isMine).length
 
   const visible = conversations
     .filter((c) =>
-      filter === 'flagged'
+      filter === 'mine'
+        ? isMine(c)
+        : filter === 'flagged'
         ? c.open_escalation
         : filter === 'live'
           ? c.status === 'active'
@@ -137,7 +154,9 @@ export function ConversationsPage() {
         : true,
     )
 
-  const groups: Group[] = ['Needs a person', 'Live now', 'Earlier today']
+  // Two groups, both of them things happening now. "Earlier today" was a
+  // bucket for everything else, which is not a reason to look at a thread.
+  const groups: Group[] = ['Needs a person', 'Live now']
 
   return (
     // Desktop: the shell's top bar is h-14 and the panes take the rest of the
@@ -147,96 +166,8 @@ export function ConversationsPage() {
     // way back. The URL already distinguishes them, so back is a real
     // navigation and the hardware back button works.
     <div className="flex flex-col md:h-[calc(100vh-3.5rem)] md:flex-row">
-      {/* ---------- list pane ---------- */}
-      <div
-        className={clsx(
-          'flex flex-col border-r border-border bg-background md:w-[336px] md:shrink-0',
-          openId ? 'hidden md:flex' : 'flex',
-        )}
-      >
-        <div className="border-b border-border p-4">
-          <div className="mb-3 flex items-baseline gap-2">
-            <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
-            <span className="tnum text-xs text-muted-foreground">
-              {conversations.length} open
-            </span>
-          </div>
-
-          <div className="relative mb-3">
-            <Icon
-              name="search"
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, email, phone..."
-              className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-1.5">
-            <FilterChip
-              label="Needs a person"
-              count={flagged}
-              tone="primary"
-              active={filter === 'flagged'}
-              onClick={() => chooseFilter('flagged')}
-            />
-            <FilterChip
-              label="All"
-              count={conversations.length}
-              active={filter === 'all'}
-              onClick={() => chooseFilter('all')}
-            />
-            <FilterChip
-              label="Live"
-              count={live}
-              active={filter === 'live'}
-              onClick={() => chooseFilter('live')}
-            />
-            <FilterChip
-              label="Unclaimed"
-              count={unclaimed}
-              active={filter === 'unclaimed'}
-              onClick={() => chooseFilter('unclaimed')}
-            />
-            {/* "Mine" needs a rep filter the list endpoint does not take. */}
-            <Unavailable
-              label="Mine"
-              size="sm"
-              why="The conversation list cannot be filtered by assignee yet. Assignment lives on the lead, and /api/conversations takes only status and channel."
-            />
-          </div>
-        </div>
-
-        <div className="scroll-thin flex-1 overflow-y-auto">
-          {visible.length === 0 ? (
-            <Empty title="Nothing matches" hint="Try a different filter or search." />
-          ) : (
-            groups.map((group) => {
-              const rows = visible.filter((c) => groupOf(c) === group)
-              if (!rows.length) return null
-              return (
-                <div key={group}>
-                  <div className="sticky top-0 z-10 border-b border-border bg-muted/60 px-4 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur">
-                    {group}
-                  </div>
-                  {rows.map((c) => (
-                    <ListRow
-                      key={c.id}
-                      conversation={c}
-                      active={c.id === selectedId}
-                      onSelect={() => navigate(`/app/conversations/${c.id}`)}
-                    />
-                  ))}
-                </div>
-              )
-            })
-          )}
-        </div>
-      </div>
+      {/* ---------- context rail ---------- */}
+      {detail && <ContextRail conversation={detail} />}
 
       {/* ---------- thread pane ---------- */}
       <div
@@ -280,8 +211,99 @@ export function ConversationsPage() {
         )}
       </div>
 
-      {/* ---------- context rail ---------- */}
-      {detail && <ContextRail conversation={detail} />}
+      {/* ---------- list pane ---------- */}
+      <div
+        className={clsx(
+          'flex flex-col border-l border-border bg-background md:w-[336px] md:shrink-0',
+          openId ? 'hidden md:flex' : 'flex',
+        )}
+      >
+        <div className="border-b border-border p-4">
+          <div className="mb-3 flex items-baseline gap-2">
+            <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
+            <span className="tnum text-xs text-muted-foreground">
+              {conversations.length} open
+            </span>
+          </div>
+
+          <div className="relative mb-3">
+            <Icon
+              name="search"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name, email, phone..."
+              className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            <FilterChip
+              label="All"
+              count={conversations.length}
+              active={filter === 'all'}
+              onClick={() => chooseFilter('all')}
+            />
+            <FilterChip
+              label="Needs attention"
+              count={flagged}
+              tone="primary"
+              active={filter === 'flagged'}
+              onClick={() => chooseFilter('flagged')}
+            />
+            <FilterChip
+              label="Unclaimed"
+              count={unclaimed}
+              active={filter === 'unclaimed'}
+              onClick={() => chooseFilter('unclaimed')}
+            />
+            <FilterChip
+              label="Live"
+              count={live}
+              active={filter === 'live'}
+              onClick={() => chooseFilter('live')}
+            />
+            <FilterChip
+              label="Mine"
+              count={mine}
+              active={filter === 'mine'}
+              onClick={() => chooseFilter('mine')}
+            />
+</div>
+        </div>
+
+        <div className="scroll-thin flex-1 overflow-y-auto">
+          {visible.length === 0 ? (
+            <Empty title="Nothing matches" hint="Try a different filter or search." />
+          ) : (
+            groups.map((group) => {
+              const rows = visible.filter((c) => groupOf(c) === group)
+              if (!rows.length) return null
+              return (
+                <div key={group}>
+                  {/* Both groups are reasons to look now, so both read as
+                      headings rather than as the grey separators they were. */}
+                  <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-accent px-4 py-1.5 text-xs font-semibold text-primary backdrop-blur">
+                    {group}
+                    <span className="tnum ml-auto font-medium opacity-70">{rows.length}</span>
+                  </div>
+                  {rows.map((c) => (
+                    <ListRow
+                      key={c.id}
+                      conversation={c}
+                      active={c.id === selectedId}
+                      onSelect={() => navigate(`/app/conversations/${c.id}`)}
+                    />
+                  ))}
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -610,7 +632,7 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
   const assignee = team?.members.find((m) => m.id === lead?.assigned_user_id)
 
   return (
-    <aside className="scroll-thin hidden w-[300px] shrink-0 overflow-y-auto border-l border-border bg-background xl:block">
+    <aside className="scroll-thin hidden w-[300px] shrink-0 overflow-y-auto border-r border-border bg-background xl:block">
       <div className="border-b border-border p-5">
         <div className="text-base font-semibold leading-tight">
           {lead?.name ?? 'Unknown caller'}
