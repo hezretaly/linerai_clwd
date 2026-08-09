@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 
-import { api, ApiError } from '../lib/api'
+import { ApiError } from '../lib/api'
 
 export interface BookingSlot {
   starts_at: string
@@ -34,19 +34,27 @@ export interface BookingResult {
  *  cannot be offered. The submit goes through `book_appointment`, which is
  *  where the hours and clash rules live -- this is a nicer way to reach the
  *  same executor, not a way around it. */
+export interface BookingSubmission {
+  starts_at: string
+  name: string
+  email: string
+  phone: string
+}
+
 export function BookingCard({
   data,
-  conversationId,
   stale = false,
-  onBooked,
+  submit: send,
 }: {
   data: BookingCardData
-  conversationId: string
   /** A card further up the thread. Its times were open when it was drawn and
    *  may not be now, so it stays readable and stops taking input rather than
    *  submitting a slot the buyer was offered several turns ago. */
   stale?: boolean
-  onBooked: (result: BookingResult) => void
+  /** Who to send it to. The buyer's chat posts to the public endpoint; a rep
+   *  booking from the dashboard posts to theirs. Both land on the same
+   *  `book_appointment` executor, so the card does not need to know which. */
+  submit: (payload: BookingSubmission) => Promise<void>
 }) {
   const [day, setDay] = useState<BookingDay | null>(data.days.length === 1 ? data.days[0] : null)
   const [slot, setSlot] = useState<BookingSlot | null>(null)
@@ -70,12 +78,8 @@ export function BookingCard({
 
     setSaving(true)
     try {
-      const result = await api.post<BookingResult>(
-        `/api/chat/sessions/${conversationId}/book`,
-        { starts_at: slot.starts_at, ...form },
-      )
+      await send({ starts_at: slot.starts_at, ...form })
       setDone(true)
-      onBooked(result)
     } catch (error) {
       // 409 is the slot going while the buyer typed, or a time outside hours.
       // Show what the server said and send them back to pick again -- both are

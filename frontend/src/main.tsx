@@ -1,7 +1,7 @@
 import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import './styles/liner-theme.css'
 
@@ -12,7 +12,8 @@ import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
 import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
-import { ConversationsPage } from './routes/Conversations'
+import { ConversationRedirect, ConversationsPage } from './routes/Conversations'
+import { EmailPage } from './routes/Email'
 import { LeadsPage } from './routes/Leads'
 import { LeadImportPage } from './routes/LeadImport'
 import { CalendarPage } from './routes/Calendar'
@@ -57,8 +58,29 @@ createRoot(document.getElementById('root')!).render(
             }
           >
             <Route index element={<OverviewPage />} />
-            <Route path="conversations" element={<ConversationsPage />} />
-            <Route path="conversations/:id" element={<ConversationsPage />} />
+            {/* Three pages over one component: chat and calls are the same
+                list filtered by channel. /app/conversations is kept as a
+                redirect because the overview, the seed and any bookmark still
+                point at it. */}
+            <Route
+              path="chat"
+              element={<ConversationsPage channel="chat" title="Chat" basePath="/app/chat" />}
+            />
+            <Route
+              path="chat/:id"
+              element={<ConversationsPage channel="chat" title="Chat" basePath="/app/chat" />}
+            />
+            <Route
+              path="calls"
+              element={<ConversationsPage channel="voice" title="Calls" basePath="/app/calls" />}
+            />
+            <Route
+              path="calls/:id"
+              element={<ConversationsPage channel="voice" title="Calls" basePath="/app/calls" />}
+            />
+            <Route path="email" element={<EmailPage />} />
+            <Route path="conversations" element={<Navigate to="/app/chat" replace />} />
+            <Route path="conversations/:id" element={<ConversationRedirect />} />
             <Route path="leads" element={<LeadsPage />} />
             <Route path="leads/import" element={<LeadImportPage />} />
             <Route path="calendar" element={<CalendarPage />} />

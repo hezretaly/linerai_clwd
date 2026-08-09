@@ -283,9 +283,14 @@ export function Chat() {
             <BookingCard
               key={item.id}
               data={item.data}
-              conversationId={conversationId ?? ''}
               stale={item.id !== liveBookingId}
-              onBooked={onBooked(item.id)}
+              submit={async (payload) => {
+                const result = await api.post<BookingResult>(
+                  `/api/chat/sessions/${conversationId}/book`,
+                  payload,
+                )
+                onBooked(item.id)(result)
+              }}
             />
           )
         })}

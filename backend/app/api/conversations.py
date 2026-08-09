@@ -5,11 +5,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datetime import datetime
+
+from app.agent import tools
+from app.agent.tools import when_label
 from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.events import emit
 from app.models import Conversation, Escalation, Message, User
-from app.schemas.serialize import conversation_out, message_out
+from app.schemas.serialize import booking_card, conversation_out, message_out
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -92,6 +96,104 @@ def handback(
     convo = _get(db, conversation_id)
     convo.agent_paused = False
     convo.status = "active"
+    db.commit()
+    return conversation_out(convo, db, detail=True)
+
+
+@router.post("/{conversation_id}/decline")
+def decline(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """The buyer said no. Closes the thread and records *why* it closed.
+
+    Separate from the generic close because "closed" already covers a buyer
+    who booked, a buyer who wandered off and a buyer who declined, and a queue
+    that cannot tell them apart cannot be filtered on any of them.
+    """
+    convo = _get(db, conversation_id)
+    convo.outcome = "declined"
+    convo.status = "closed"
+    convo.agent_paused = True
+    convo.ended_at = convo.ended_at or utcnow()
+
+    # A declined thread is not still waiting for a person.
+    for escalation in (
+        db.query(Escalation)
+        .filter(Escalation.conversation_id == convo.id, Escalation.claimed_at.is_(None))
+        .all()
+    ):
+        escalation.claimed_by_user_id = user.id
+        escalation.claimed_at = utcnow()
+
+    db.commit()
+    emit(db, "conversation.declined", {"conversation_id": convo.id, "by": user.id})
+    return conversation_out(convo, db, detail=True)
+
+
+@router.get("/{conversation_id}/availability")
+def availability(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """The same day/time card the buyer is offered, for a rep booking on their
+    behalf. Looked up now, never replayed -- see api/chat.py."""
+    convo = _get(db, conversation_id)
+    fresh = tools.check_availability(db, convo, {})
+    return booking_card(fresh["slots"], fresh["slot_minutes"])
+
+
+class RepBooking(BaseModel):
+    starts_at: str
+    name: str
+    email: str
+    phone: str = ""
+
+
+@router.post("/{conversation_id}/book")
+def book_for_buyer(
+    conversation_id: str,
+    body: RepBooking,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """A rep books the appointment themselves, through the buyer's executor.
+
+    Not a second booking path: `book_appointment` owns the hours rule, the
+    clash check and the lead matching, so a rep who books here is held to
+    exactly what Liner is held to. Only `booked_by` differs, because who made
+    the appointment is a fact worth keeping.
+    """
+    convo = _get(db, conversation_id)
+    try:
+        # The executor directly, not tools.execute: that path validates argument
+        # names against the schema the *model* is given, and `booked_by` is
+        # deliberately not in it -- Liner must not be able to claim a rep made
+        # the booking. Same function, same rules, one argument the model cannot
+        # reach.
+        result = tools.book_appointment(
+            db,
+            convo,
+            {
+                "starts_at": body.starts_at, "name": body.name,
+                "email": body.email, "phone": body.phone, "booked_by": "rep",
+            },
+            # Keyed on the conversation, not the rep: two reps booking the
+            # same slot for two different buyers must clash, and a repeat
+            # submit for this buyer must return what was already made.
+            f"rep-{convo.id}-{body.starts_at}",
+        )
+    except tools.ToolError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+    message = Message(
+        conversation_id=convo.id, role="rep",
+        content=f"Booked {when_label(datetime.fromisoformat(result['starts_at']))} "
+                f"for {body.name}.",
+    )
+    db.add(message)
     db.commit()
     return conversation_out(convo, db, detail=True)
 

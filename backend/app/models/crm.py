@@ -69,6 +69,11 @@ class Conversation(Base):
     started_at: Mapped[datetime] = created()
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")
+    # How it ended, when that is worth knowing. "" while it is still running or
+    # simply ran out; "declined" when the buyer said no. Separate from status
+    # because "closed" already means several different things and a queue that
+    # cannot tell them apart cannot be filtered.
+    outcome: Mapped[str] = mapped_column(String(20), default="")
 
 
 class Message(Base):

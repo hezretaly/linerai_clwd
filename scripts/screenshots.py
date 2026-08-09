@@ -45,7 +45,9 @@ PENDING_ASSETS: list[str] = []
 UNREACHABLE_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"]
 DEALER = [
     "/app",
-    "/app/conversations",
+    "/app/chat",
+    "/app/calls",
+    "/app/email",
     "/app/leads",
     "/app/leads/import",
     "/app/calendar",

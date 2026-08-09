@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
+import { BookingCard } from '../components/BookingCard'
+import type { BookingCardData } from '../components/BookingCard'
 import { PROVENANCE_LABEL, initials, money, time, waited } from '../lib/format'
 import type { Conversation, Message, TeamMember } from '../lib/types'
 import { Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
@@ -27,7 +29,7 @@ const SOURCE_LABEL: Record<string, string> = {
 
 type Group = 'Needs a person' | 'Live now'
 
-const FILTERS = ['all', 'flagged', 'unclaimed', 'live', 'mine'] as const
+const FILTERS = ['all', 'flagged', 'unclaimed', 'live', 'mine', 'declined', 'appointed'] as const
 type Filter = (typeof FILTERS)[number]
 
 /** Which group a thread belongs in, or none -- a closed thread with nobody
@@ -57,11 +59,23 @@ const TAG_STYLE: Record<string, string> = {
   muted: 'border-border text-muted-foreground',
 }
 
-export function ConversationsPage() {
+/** One page, three channels. Chat and Calls are the same list filtered by
+ *  `conversations.channel`; nothing else differs, so a second copy of this
+ *  file would only be a second place for the two to drift apart. */
+export function ConversationsPage({
+  channel,
+  title,
+  basePath,
+}: {
+  channel: 'chat' | 'voice'
+  title: string
+  basePath: string
+}) {
   const { id } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [reply, setReply] = useState('')
+  const [booking, setBooking] = useState(false)
   const [query, setQuery] = useState('')
   // Arriving from the Overview's "Needs a person" panel should land on that
   // filter, not on All -- otherwise the queue you clicked is buried in the
@@ -91,7 +105,10 @@ export function ConversationsPage() {
     queryFn: () => api.get<{ conversations: Conversation[] }>('/api/conversations'),
   })
 
-  const conversations = useMemo(() => data?.conversations ?? [], [data])
+  const conversations = useMemo(
+    () => (data?.conversations ?? []).filter((c) => c.channel === channel),
+    [data, channel],
+  )
   const selectedId = id ?? conversations[0]?.id
   const openId = Boolean(id)
 
@@ -116,6 +133,10 @@ export function ConversationsPage() {
     mutationFn: () => api.post(`/api/conversations/${selectedId}/handback`),
     onSuccess: invalidate,
   })
+  const decline = useMutation({
+    mutationFn: () => api.post(`/api/conversations/${selectedId}/decline`),
+    onSuccess: invalidate,
+  })
   const send = useMutation({
     mutationFn: () => api.post(`/api/conversations/${selectedId}/messages`, { content: reply }),
     onSuccess: () => {
@@ -133,11 +154,19 @@ export function ConversationsPage() {
   // row, so "Mine" needs no new endpoint -- only knowing who is signed in.
   const isMine = (c: Conversation) => Boolean(me && c.lead?.assigned_user_id === me.id)
   const mine = conversations.filter(isMine).length
+  const declined = conversations.filter((c) => c.outcome === 'declined').length
+  // Appointed is derived, not stored: the stage is what a completed booking
+  // sets, so there is no second place for it to disagree with the calendar.
+  const appointed = conversations.filter((c) => c.stage === 'booked').length
 
   const visible = conversations
     .filter((c) =>
       filter === 'mine'
         ? isMine(c)
+        : filter === 'declined'
+        ? c.outcome === 'declined'
+        : filter === 'appointed'
+        ? c.stage === 'booked'
         : filter === 'flagged'
         ? c.open_escalation
         : filter === 'live'
@@ -157,6 +186,10 @@ export function ConversationsPage() {
   // Two groups, both of them things happening now. "Earlier today" was a
   // bucket for everything else, which is not a reason to look at a thread.
   const groups: Group[] = ['Needs a person', 'Live now']
+  // Declined and appointed threads are finished, so neither live group would
+  // hold them and the list would come back empty. Those two filters are a flat
+  // list -- the filter itself is the heading.
+  const grouped = !['declined', 'appointed'].includes(filter)
 
   return (
     // Desktop: the shell's top bar is h-14 and the panes take the rest of the
@@ -180,7 +213,15 @@ export function ConversationsPage() {
           <Empty title="Select a conversation" />
         ) : (
           <>
-            <ThreadHeader conversation={detail} />
+            <ThreadHeader
+              conversation={detail}
+              backTo={basePath}
+              onDecline={() => decline.mutate()}
+              onBook={() => setBooking(true)}
+            />
+            {booking && (
+              <RepBooking conversationId={detail.id} onDone={() => setBooking(false)} />
+            )}
             <ThreadBanner
               conversation={detail}
               onTakeover={() => takeover.mutate()}
@@ -220,7 +261,7 @@ export function ConversationsPage() {
       >
         <div className="border-b border-border p-4">
           <div className="mb-3 flex items-baseline gap-2">
-            <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
+            <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
             <span className="tnum text-xs text-muted-foreground">
               {conversations.length} open
             </span>
@@ -272,12 +313,33 @@ export function ConversationsPage() {
               active={filter === 'mine'}
               onClick={() => chooseFilter('mine')}
             />
+            <FilterChip
+              label="Declined"
+              count={declined}
+              active={filter === 'declined'}
+              onClick={() => chooseFilter('declined')}
+            />
+            <FilterChip
+              label="Appointed"
+              count={appointed}
+              active={filter === 'appointed'}
+              onClick={() => chooseFilter('appointed')}
+            />
 </div>
         </div>
 
         <div className="scroll-thin flex-1 overflow-y-auto">
           {visible.length === 0 ? (
             <Empty title="Nothing matches" hint="Try a different filter or search." />
+          ) : !grouped ? (
+            visible.map((c) => (
+              <ListRow
+                key={c.id}
+                conversation={c}
+                active={c.id === selectedId}
+                onSelect={() => navigate(`${basePath}/${c.id}`)}
+              />
+            ))
           ) : (
             groups.map((group) => {
               const rows = visible.filter((c) => groupOf(c) === group)
@@ -295,7 +357,7 @@ export function ConversationsPage() {
                       key={c.id}
                       conversation={c}
                       active={c.id === selectedId}
-                      onSelect={() => navigate(`/app/conversations/${c.id}`)}
+                      onSelect={() => navigate(`${basePath}/${c.id}`)}
                     />
                   ))}
                 </div>
@@ -401,7 +463,63 @@ function ListRow({
   )
 }
 
-function ThreadHeader({ conversation }: { conversation: Conversation }) {
+/** A rep booking on the buyer's behalf: the same day/time/contact card the
+ *  buyer is shown, posted to the rep endpoint. Both land on the same
+ *  `book_appointment` executor, so the hours rule and the clash check hold
+ *  whoever presses the button -- only `booked_by` differs. */
+function RepBooking({
+  conversationId,
+  onDone,
+}: {
+  conversationId: string
+  onDone: () => void
+}) {
+  const queryClient = useQueryClient()
+  const { data, error } = useQuery({
+    queryKey: ['availability', conversationId],
+    queryFn: () => api.get<BookingCardData>(`/api/conversations/${conversationId}/availability`),
+    retry: false,
+  })
+
+  return (
+    <div className="border-b border-border bg-muted/40 p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm font-medium">Book this buyer in</p>
+        <button onClick={onDone} className="text-xs text-muted-foreground hover:text-foreground">
+          Cancel
+        </button>
+      </div>
+      {error ? (
+        <p className="text-sm text-destructive">{(error as ApiError).message}</p>
+      ) : !data ? (
+        <Spinner label="Checking the calendar" />
+      ) : (
+        <BookingCard
+          data={data}
+          submit={async (payload) => {
+            await api.post(`/api/conversations/${conversationId}/book`, payload)
+            void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+            void queryClient.invalidateQueries({ queryKey: ['overview'] })
+            onDone()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function ThreadHeader({
+  conversation,
+  backTo,
+  onDecline,
+  onBook,
+}: {
+  conversation: Conversation
+  /** Back out to this channel's own list, not to a shared one. */
+  backTo: string
+  onDecline: () => void
+  onBook: () => void
+}) {
   const name = conversation.lead?.name ?? 'Unknown caller'
   const vehicle = conversation.focus_vehicle?.title
   const meta = [
@@ -417,7 +535,7 @@ function ThreadHeader({ conversation }: { conversation: Conversation }) {
       {/* Master/detail needs a way back on a phone. On desktop both panes are
           visible, so it would be a button that undoes nothing. */}
       <Link
-        to="/app/conversations"
+        to={backTo}
         aria-label="Back to conversations"
         className="-ml-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground md:hidden"
       >
@@ -431,19 +549,30 @@ function ThreadHeader({ conversation }: { conversation: Conversation }) {
         <div className="truncate text-xs text-muted-foreground">{meta}</div>
       </div>
       <div className="ml-auto hidden shrink-0 items-center gap-2 lg:flex">
-        {/* The mockup's three header actions. None has an endpoint: a
-            conversation has no snooze or done state, and assignment is a
-            property of the lead, changed from the rail below. */}
-        <Unavailable
-          label="Snooze"
-          size="sm"
-          why="Conversations have no snooze state. status is active, handoff or closed and nothing schedules a return."
-        />
-        <Unavailable
-          label="Mark done"
-          size="sm"
-          why="Nothing closes a conversation from here. It closes itself when a booking completes."
-        />
+        {conversation.outcome === 'declined' ? (
+          <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs font-medium text-muted-foreground">
+            Declined
+          </span>
+        ) : (
+          <button
+            onClick={onDecline}
+            className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
+          >
+            Declined
+          </button>
+        )}
+        {conversation.stage === 'booked' ? (
+          <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs font-medium text-muted-foreground">
+            Appointment set
+          </span>
+        ) : (
+          <button
+            onClick={onBook}
+            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            Appointment set
+          </button>
+        )}
       </div>
     </div>
   )
@@ -740,4 +869,21 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
       </div>
     </aside>
   )
+}
+
+/** `/app/conversations/:id` predates the split into three pages, and the
+ *  overview, the seed and any bookmark still point at it. Which page a thread
+ *  belongs to depends on its channel, so this asks before redirecting rather
+ *  than guessing chat and landing a call in the wrong list. */
+export function ConversationRedirect() {
+  const { id } = useParams()
+  const { data, isLoading } = useQuery({
+    queryKey: ['conversations', id],
+    queryFn: () => api.get<Conversation>(`/api/conversations/${id}`),
+    retry: false,
+  })
+
+  if (isLoading) return <Spinner />
+  const page = data?.channel === 'voice' ? 'calls' : 'chat'
+  return <Navigate to={data ? `/app/${page}/${id}` : '/app/chat'} replace />
 }

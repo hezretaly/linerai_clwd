@@ -41,11 +41,11 @@ const KPI_ICONS: Record<string, IconName> = {
 /** Where each figure came from, so the card is a way in rather than a number
  *  to go and look up somewhere else. */
 const KPI_LINKS: Record<string, string> = {
-  chat: '/app/conversations?channel=chat',
+  chat: '/app/chat',
   email: '/app/leads',
-  calls: '/app/conversations?channel=voice',
+  calls: '/app/calls',
   appointments_set: '/app/calendar',
-  needs_a_person: '/app/conversations?filter=flagged',
+  needs_a_person: '/app/chat?filter=flagged',
   credit_apps: '/app/leads',
 }
 
@@ -312,7 +312,7 @@ export function OverviewPage() {
           <div>
             <div className="flex items-center gap-2">
               <Link
-                to="/app/conversations?filter=flagged"
+                to="/app/chat?filter=flagged"
                 className="font-semibold leading-none tracking-tight text-primary hover:underline"
               >
                 Needs a person
@@ -374,7 +374,7 @@ export function OverviewPage() {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
               <Link
-                to="/app/conversations?filter=unclaimed"
+                to="/app/chat?filter=unclaimed"
                 className="font-semibold leading-none tracking-tight text-primary hover:underline"
               >
                 Unclaimed leads
@@ -413,7 +413,7 @@ export function OverviewPage() {
             <div>
               <div className="flex items-center gap-2">
                 <Link
-                  to="/app/conversations"
+                  to="/app/chat"
                   className="font-semibold leading-none tracking-tight text-primary hover:underline"
                 >
                   Happening now

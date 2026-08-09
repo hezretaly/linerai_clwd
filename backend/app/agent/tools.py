@@ -550,7 +550,9 @@ def book_appointment(
         starts_at=starts_at,
         duration_min=live_settings(db).booking_slot_length,
         status="booked",
-        booked_by="liner",
+        # Who made it. A rep booking on the phone is not Liner booking, and
+        # the overview counts them the same but the calendar should not.
+        booked_by=str(args.get("booked_by") or "liner"),
         conversation_id=convo.id,
         tool_call_id=tool_call_id,
     )

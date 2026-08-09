@@ -572,6 +572,43 @@ def main() -> int:
                   "outreach.sent", "handoff.triggered", "lead.imported"):
         check(f"{event} reached the dashboard", event in listener.seen)
 
+    print("\n== a rep can decline, or book on the buyer's behalf ==")
+    fresh = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(fresh, content="Just looking, thanks")
+    declined = call("POST", f"/api/conversations/{fresh}/decline")
+    check("declining records why it closed, not just that it did",
+          declined["outcome"] == "declined" and declined["status"] == "closed",
+          f"{declined['status']}/{declined['outcome']}")
+    check("and it stops waiting for a person",
+          declined["open_escalation"] is None)
+
+    rep_convo = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(rep_convo, content="Can someone book me in?")
+    card = call("GET", f"/api/conversations/{rep_convo}/availability")
+    check("a rep is offered the same card the buyer gets", bool(card["days"]),
+          f"{sum(len(d['slots']) for d in card['days'])} times")
+    rep_slot = card["days"][0]["slots"][0]["starts_at"]
+    booked_by_rep = call("POST", f"/api/conversations/{rep_convo}/book", {
+        "starts_at": rep_slot, "name": "Rep Booked", "email": "rep.booked@example.invalid",
+    })
+    check("the rep booking lands on the thread", booked_by_rep["stage"] == "booked",
+          booked_by_rep["stage"])
+    made = [a for a in call("GET", "/api/appointments")["appointments"]
+            if a["conversation_id"] == rep_convo]
+    check("and the appointment records who made it",
+          len(made) == 1 and made[0]["booked_by"] == "rep",
+          made[0]["booked_by"] if made else "none")
+    booked_here.append(made[0]["id"])
+    # Same executor as the buyer's card, so the same rules bind a rep.
+    code, detail = status_of("POST", f"/api/conversations/{fresh}/book", {
+        "starts_at": rep_slot, "name": "Someone Else", "email": "else@example.invalid",
+    })
+    check("a rep cannot double-book a slot either", code == 409, detail[:60])
+    code, _ = status_of("POST", f"/api/conversations/{rep_convo}/book", {
+        "starts_at": card["days"][1]["slots"][0]["starts_at"], "name": "X", "email": "not-email",
+    })
+    check("nor skip the email rule", code == 409, str(code))
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's

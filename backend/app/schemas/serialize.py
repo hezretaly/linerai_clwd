@@ -181,6 +181,7 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
         "started_at": iso(c.started_at),
         "ended_at": iso(c.ended_at),
         "summary": c.summary,
+        "outcome": c.outcome,
     }
     if db is not None:
         lead = db.query(Lead).filter_by(id=c.lead_id).one_or_none() if c.lead_id else None

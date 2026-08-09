@@ -132,6 +132,9 @@ export interface Conversation {
   started_at: string
   ended_at: string | null
   summary: string
+  /* How it ended, when that is worth knowing: '' while running or simply
+     finished, 'declined' when the buyer said no. */
+  outcome: string
   message_count?: number
   messages?: Message[]
   open_escalation?: Escalation | null

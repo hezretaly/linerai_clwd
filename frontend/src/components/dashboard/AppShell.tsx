@@ -19,11 +19,15 @@ import { Icon, type IconName } from '../Icon'
 const NAV = [
   { to: '/app', label: 'Overview', icon: 'overview', end: true, group: 'Today',
     badge: null, tone: 'muted' },
-  // Blue, not red: this counts messages waiting to be read, and a red pill
-  // is the dashboard's word for something going wrong. Work that genuinely
-  // needs a person is the Overview's own queue.
-  { to: '/app/conversations', label: 'Conversations', icon: 'chat', group: 'Today',
+  // One channel per page. The badge sits on Chat because that is where the
+  // count comes from -- blue, not red: it counts messages waiting to be read,
+  // and red is this dashboard's word for something going wrong.
+  { to: '/app/chat', label: 'Chat', icon: 'chat', group: 'Today',
     badge: 'conversations', tone: 'primary' },
+  { to: '/app/calls', label: 'Calls', icon: 'phone', group: 'Today',
+    badge: null, tone: 'muted' },
+  { to: '/app/email', label: 'Email', icon: 'mail', group: 'Today',
+    badge: null, tone: 'muted' },
   { to: '/app/leads', label: 'Leads', icon: 'leads', group: 'Today',
     badge: null, tone: 'muted' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
