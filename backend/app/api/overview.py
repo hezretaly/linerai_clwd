@@ -317,12 +317,17 @@ def trends(
         start, end = _window(now, range)
         label = RANGES[range]
 
+    first_day = start.date()
+    last_day = (end - timedelta(microseconds=1)).date()
     return {
         "range": range,
         "label": label,
-        "from": start.date().isoformat(),
-        "to": (end - timedelta(microseconds=1)).date().isoformat(),
-        "days": max((end.date() - start.date()).days, 1),
+        "from": first_day.isoformat(),
+        "to": last_day.isoformat(),
+        # Calendar days the window covers, counting both ends. Deriving it from
+        # `end` instead made a range ending today one day shorter than the same
+        # range asked for tomorrow, because `end` is clamped to now.
+        "days": (last_day - first_day).days + 1,
         "conversations": (
             db.query(Conversation)
             .filter(Conversation.started_at >= start, Conversation.started_at < end)

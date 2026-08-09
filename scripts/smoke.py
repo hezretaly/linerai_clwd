@@ -411,7 +411,7 @@ def main() -> int:
           one_day["label"])
     span = call("GET", "/api/overview/trends?from=2026-08-01&to=2026-08-08")
     check("and a period spans the days asked for",
-          span["from"] == "2026-08-01" and span["to"] == "2026-08-08" and span["days"] == 7,
+          span["from"] == "2026-08-01" and span["to"] == "2026-08-08" and span["days"] == 8,
           span["label"])
     # Dates win over a range, or the caption would name one window and the
     # numbers would come from the other.
