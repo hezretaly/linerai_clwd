@@ -29,17 +29,13 @@ const NAV = [
   { to: '/app/email', label: 'Email', icon: 'mail', group: 'Today',
     badge: null, tone: 'muted' },
   // Both channels in one filterable list -- what came in, what booked, what
-  // was declined. Chat and Calls are for working a thread; this is for seeing
-  // all of them.
+  // was declined -- plus the leads that never had a conversation at all, which
+  // would otherwise appear nowhere. Chat and Calls are for working a thread;
+  // this is for seeing all of them.
   { to: '/app/conversations', label: 'Conversations', icon: 'inbox', group: 'Today',
     badge: null, tone: 'muted' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
     badge: 'appointments', tone: 'muted' },
-  // Under Manage rather than Today: a lead imported from an ADF document has
-  // no conversation, so it appears on no list above -- but a rep works from
-  // the conversation queue, not from this.
-  { to: '/app/leads', label: 'Leads', icon: 'leads', group: 'Manage',
-    badge: null, tone: 'muted' },
   { to: '/app/inventory', label: 'Inventory', icon: 'inventory', group: 'Manage',
     badge: 'inventory', tone: 'primary' },
   { to: '/app/assistant', label: 'Liner setup', icon: 'sliders', group: 'Manage',

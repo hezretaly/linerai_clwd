@@ -204,9 +204,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   page above: both channels, no transcript, sliced by state rather than
   opened. A row there opens the thread on its own channel via
   `/app/conversations/:id`, which asks the API which channel it is rather than
-  guessing chat. **Leads still exists**, under Manage: a lead imported from an
-  ADF document never had a conversation, so it appears on no list above and
-  would otherwise be invisible.
+  guessing chat. **There is no Leads page.** A lead that never had a
+  conversation — an ADF import — is a row on the same list, and the two kinds
+  stay separate in the code (`Row` is a union, not a lead dressed as a
+  conversation). What cannot apply is answered false rather than fudged: a
+  lead is never Live because nothing is running, and never declined because
+  nobody said no. Its row opens the lead drawer instead of a transcript that
+  does not exist. Everything held on a buyer — captured fields, appointments,
+  outreach, the follow-up and credit-application composers — lives in
+  `components/dashboard/LeadDrawer.tsx` and is reached from a row's Lead
+  button.
 
 ## What is real and what is not
 

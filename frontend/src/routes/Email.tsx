@@ -36,7 +36,7 @@ export function EmailPage() {
           feature that is not built.
         </p>
         <p className="mt-4 text-sm">
-          <Link to="/app/leads" className="font-medium text-primary hover:underline">
+          <Link to="/app/conversations" className="font-medium text-primary hover:underline">
             Everything sent is on the lead
           </Link>{' '}
           <span className="text-muted-foreground">

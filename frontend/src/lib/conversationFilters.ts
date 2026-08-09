@@ -1,4 +1,4 @@
-import type { Conversation } from './types'
+import type { Conversation, Lead } from './types'
 
 /** One definition of "unclaimed", "live", "appointed", shared by the three
  *  pages that filter conversations: Chat, Calls and the cross-channel list.
@@ -85,4 +85,42 @@ export function stateOf(c: Conversation): [string, string] {
   // tag on the same row told a manager two opposite things at once.
   if (c.status !== 'closed') return ['In progress', 'border-primary/30 bg-primary/10 text-primary']
   return ['Closed', 'border-border text-muted-foreground']
+}
+
+/* ------------------------------------------------------------------------- *
+ * Leads that never had a conversation.
+ *
+ * A lead imported from an ADF document arrives as a document, not a chat --
+ * there is no thread, no stage, nothing said. It still has to be somewhere a
+ * rep looks, so it sits in the same list under the same filters. What cannot
+ * apply is answered false rather than fudged: a lead is never Live, because
+ * nothing is running, and never declined, because nobody said no.
+ * ------------------------------------------------------------------------- */
+
+export function leadMatches(
+  l: Lead,
+  filter: ConversationFilter,
+  meId: string | undefined,
+): boolean {
+  switch (filter) {
+    case 'flagged':
+      return Boolean(l.flagged)
+    case 'unclaimed':
+      return !l.assigned_user_id
+    case 'mine':
+      return Boolean(meId && l.assigned_user_id === meId)
+    case 'appointed':
+      return l.stage === 'appointment'
+    case 'live':
+    case 'declined':
+      return false
+    default:
+      return true
+  }
+}
+
+export function leadStateOf(l: Lead): [string, string] {
+  if (l.stage === 'appointment')
+    return ['Appointment set', 'border-success/30 bg-success/10 text-success']
+  return ['No conversation yet', 'border-border text-muted-foreground']
 }

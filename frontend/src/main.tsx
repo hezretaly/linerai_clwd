@@ -1,7 +1,7 @@
 import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import './styles/liner-theme.css'
 
@@ -15,7 +15,6 @@ import { OverviewPage } from './routes/Overview'
 import { ConversationRedirect, ConversationsPage } from './routes/Conversations'
 import { ConversationListPage } from './routes/ConversationList'
 import { EmailPage } from './routes/Email'
-import { LeadsPage } from './routes/Leads'
 import { LeadImportPage } from './routes/LeadImport'
 import { CalendarPage } from './routes/Calendar'
 import { InventoryPage } from './routes/Inventory'
@@ -82,7 +81,10 @@ createRoot(document.getElementById('root')!).render(
             <Route path="email" element={<EmailPage />} />
             <Route path="conversations" element={<ConversationListPage />} />
             <Route path="conversations/:id" element={<ConversationRedirect />} />
-            <Route path="leads" element={<LeadsPage />} />
+            {/* The list of leads is the conversations page now: an ADF lead
+                appears there as a row with no thread to open. Kept as a
+                redirect for bookmarks and for anything still linking here. */}
+            <Route path="leads" element={<Navigate to="/app/conversations" replace />} />
             <Route path="leads/import" element={<LeadImportPage />} />
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="inventory" element={<InventoryPage />} />

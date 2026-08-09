@@ -90,7 +90,7 @@ export function LeadImportPage() {
         title="Import leads"
         subtitle="Take in the leads your marketplaces already send you, then reach out from here."
         actions={
-          <Link to="/app/leads">
+          <Link to="/app/conversations">
             <Button size="sm">Back to leads</Button>
           </Link>
         }
@@ -244,7 +244,7 @@ export function LeadImportPage() {
               </li>
             ))}
           </ul>
-          <Link to="/app/leads">
+          <Link to="/app/conversations">
             <Button variant="primary" className="mt-4">
               Open the leads table
             </Button>
@@ -346,7 +346,7 @@ export function LeadImportPage() {
               {create.data.merged ? 'Merged into an existing lead.' : 'Lead created.'}{' '}
               <button
                 className="underline"
-                onClick={() => navigate('/app/leads')}
+                onClick={() => navigate('/app/conversations')}
               >
                 Open the leads table
               </button>

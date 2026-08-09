@@ -42,12 +42,12 @@ const KPI_ICONS: Record<string, IconName> = {
  *  to go and look up somewhere else. */
 const KPI_LINKS: Record<string, string> = {
   chat: '/app/chat',
-  email: '/app/leads',
+  email: '/app/conversations',
   calls: '/app/calls',
   appointments_set: '/app/calendar',
   // Both channels: an escalation on a call does not appear on the chat page.
   needs_a_person: '/app/conversations?filter=flagged',
-  credit_apps: '/app/leads',
+  credit_apps: '/app/conversations',
 }
 
 type TrendRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom'
@@ -663,10 +663,11 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
 function UnclaimedRow({ lead }: { lead: Lead }) {
   const navigate = useNavigate()
   // A lead that never chatted -- an ADF import -- has no thread to take over,
-  // so the row and its action both go to the lead list rather than nowhere.
+  // so the row and its action both go to the list, where it is a row of its
+  // own, rather than to a transcript that does not exist.
   const thread = lead.conversation_id
     ? `/app/conversations/${lead.conversation_id}`
-    : '/app/leads'
+    : '/app/conversations'
 
   return (
     <div

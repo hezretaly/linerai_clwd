@@ -531,6 +531,18 @@ def main() -> int:
           not again["created"] and len(again["merged"]) == len(preview["prospects"]),
           f"{len(again['created'])} created, {len(again['merged'])} merged")
 
+    # There is no lead page any more: an imported lead shows up on the
+    # conversations list as a row with no thread to open. That row exists only
+    # because the list says which leads never had a conversation, so if this
+    # goes null-blind the whole ADF import becomes invisible in the product.
+    all_leads = {lead["id"]: lead for lead in call("GET", "/api/leads")["leads"]}
+    threadless = [lead for lead in all_leads.values() if not lead.get("conversation_id")]
+    check("a lead that never chatted is still listed", bool(threadless),
+          f"{len(threadless)} of {len(all_leads)} have no thread")
+    check("and the ones just imported are among them",
+          all(not all_leads[lead["id"]].get("conversation_id") for lead in landed),
+          f"{len(landed)} imported")
+
     imported = landed[0]
     fields = {f["key"]: f for f in imported["captured_fields"]}
     check("what the document said was captured", "comments" in fields)

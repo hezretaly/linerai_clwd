@@ -49,7 +49,6 @@ DEALER = [
     "/app/calls",
     "/app/email",
     "/app/conversations",
-    "/app/leads",
     "/app/leads/import",
     "/app/calendar",
     "/app/inventory",
