@@ -559,7 +559,7 @@ function ThreadHeader({
         ) : (
           <button
             onClick={onDecline}
-            className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:bg-accent"
+            className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-destructive hover:bg-destructive hover:text-destructive-foreground"
           >
             Declined
           </button>
@@ -571,7 +571,7 @@ function ThreadHeader({
         ) : (
           <button
             onClick={onBook}
-            className="inline-flex h-8 items-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+            className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-primary hover:bg-primary hover:text-primary-foreground"
           >
             Appointment set
           </button>
@@ -810,7 +810,7 @@ function ContextRail({ conversation }: { conversation: Conversation }) {
       )}
 
       <div className="border-b border-border p-5">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">What this is about</div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">Summary</div>
         {/* Liner's own summary of the thread, which is what a rep wants before
             they read it. The captured fields that used to sit here are on the
             lead, and an empty "Nothing captured yet" spent a panel saying
