@@ -123,9 +123,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   phones. Two rules keep it that way: a `<table>` never reflows, so any table
   either scrolls inside its own `overflow-x-auto` card or has a card layout
   below `md`; and a flex or grid child needs `min-w-0` before it will shrink
-  below its content. Rep-facing pages (overview, conversations, leads,
-  calendar) get designed mobile layouts -- conversations is master/detail and
-  calendar is an agenda. Admin pages just have to not overflow.
+  below its content. Rep-facing pages (overview, conversations, the buyer
+  page, calendar) get designed mobile layouts -- the buyer page is
+  master/detail and calendar is an agenda. Admin pages just have to not
+  overflow. `make shots` discovers a real buyer page rather than listing one,
+  because it is the screen most likely to overflow and the one a rep reads.
 - **Escalating notifies a rep; it does not gag Liner.** Only a rep pressing
   Take over sets `agent_paused`. Stopping on escalation meant a buyer who asked
   one question a human had to answer got "someone is picking this up" to
@@ -198,22 +200,40 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   same ternary chain, which is exactly how Appointed ends up counting
   `stage === 'booked'` on one page and an appointment row on another: a manager
   gets two numbers for one question and no way to tell which is wrong.
-- **Chat and Calls work a thread; Conversations sees all of them.**
-  `/app/chat` and `/app/calls` are one component filtered by channel —
-  master/detail, built for reading and replying. `/app/conversations` is the
-  page above: both channels, no transcript, sliced by state rather than
-  opened. A row there opens the thread on its own channel via
-  `/app/conversations/:id`, which asks the API which channel it is rather than
-  guessing chat. **There is no Leads page.** A lead that never had a
-  conversation — an ADF import — is a row on the same list, and the two kinds
+- **The dashboard is organised by buyer, not by thread.** There is no Chat
+  page, no Calls page and no Email page: a buyer who chatted at 9pm and rang
+  back next morning was three unrelated screens, and a rep could call someone
+  who had already booked. `/app/conversations` lists **people**, and
+  `/app/leads/:id` is one buyer's whole history in the order it happened —
+  every conversation, their outreach, their appointments, their escalations.
+  A row is a lead, or a conversation that has no lead yet: `book_appointment`
+  is what mints a lead, so most live chats have none, and an anonymous buyer
+  asking a question at 9pm is exactly who a rep needs to see. The two kinds
   stay separate in the code (`Row` is a union, not a lead dressed as a
-  conversation). What cannot apply is answered false rather than fudged: a
-  lead is never Live because nothing is running, and never declined because
-  nobody said no. Its row opens the lead drawer instead of a transcript that
-  does not exist. Everything held on a buyer — captured fields, appointments,
-  outreach, the follow-up and credit-application composers — lives in
-  `components/dashboard/LeadDrawer.tsx` and is reached from a row's Lead
-  button.
+  conversation), and what cannot apply is answered false rather than fudged.
+  `/app/conversations/:id` still resolves: it redirects to the buyer when the
+  thread has one, so a thread is never readable in two places.
+- **The timeline is composed in `app/timeline.py`, and the de-duplication is
+  the whole difficulty.** `api/outreach.py` mirrors an appointment email into
+  the buyer's thread as a `role="rep"` message carrying `outreach_id`, so the
+  round trip lands without depending on inbox delivery. Lead-level outreach
+  has no mirror. Concatenating `messages` and `outreach` therefore shows every
+  confirmation twice and every follow-up once — a dealership that appears to
+  have mailed you twice. A mirror and its row fold into one entry keyed on the
+  outreach id. `make smoke` asserts the count.
+- **The channel strip is counted, never declared.** It offers what the buyer
+  actually used. There is no SMS provider in this system, so there is no SMS
+  tab sitting permanently at zero — a tab that is always empty claims a
+  capability that does not exist.
+- **One matcher decides who a buyer is.** `app/matching.py`, used by the ADF
+  importer, manual entry and `book_appointment`. Booking used to match on
+  email alone while the importer matched on email *then* phone, so someone who
+  booked from chat and rang back leaving a second address arrived as a second
+  lead with the same number on file. Email exact, phone by its last ten
+  digits, and nothing else: a name is not identity, and two Dave Joneses are
+  two people. `/api/leads/{id}/duplicates` reports candidates **with the reason
+  they matched** and merges nothing — a rep cannot check "trust us", and a
+  shared household number is a real thing.
 
 ## What is real and what is not
 

@@ -103,6 +103,12 @@ export interface Lead {
   unconfirmed_count?: number
   last_touch_at?: string
   conversation_id?: string | null
+  /* Folded on by the list endpoint from the lead's conversations, so the
+     conversations list can draw a person-shaped row without a query each. */
+  conversation_count?: number
+  channels?: string[]
+  open?: boolean
+  declined?: boolean
   appointments?: Appointment[]
   conversations?: Conversation[]
   outreach?: Outreach[]

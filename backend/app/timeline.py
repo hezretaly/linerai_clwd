@@ -1,0 +1,200 @@
+"""One ordered timeline for a buyer, across every channel they used.
+
+The dashboard used to be organised by thread: a chat here, a call there, email
+somewhere else. A buyer who chats at 9pm and calls back next morning was three
+unrelated screens, and a rep could ring someone who had already booked.
+
+Combining them is a query rather than a migration, because the schema already
+agrees with the idea:
+
+* voice transcript chunks land in ``messages`` like chat turns
+  (``api/voice.py``), so a call and a chat are the same rows with a different
+  ``conversations.channel``;
+* ``outreach`` already hangs off the lead, not off a conversation.
+
+Composed here, on the server, for the reason ``recap.py`` is: ordering and
+de-duplication get decided once, against rows, instead of four arrays being
+merged and re-sorted by whichever client asked.
+
+**The de-duplication is the whole difficulty.** ``api/outreach.py`` mirrors an
+appointment email into the buyer's thread as a ``role="rep"`` message carrying
+``{"name": "outreach", "outreach_id": ...}``, so that the round trip lands
+visibly without depending on inbox delivery. Lead-level outreach -- the
+follow-up and credit-application composers -- has no mirror. Concatenating
+``messages`` and ``outreach`` therefore shows every appointment email twice and
+every follow-up once, which reads as a system that sent things it did not send.
+So a mirror and its row are folded into a single entry keyed on the outreach
+id, and an unmirrored row stands on its own.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+
+from sqlalchemy.orm import Session
+
+from app.models import (
+    Appointment,
+    Conversation,
+    Escalation,
+    Lead,
+    Message,
+    Outreach,
+    User,
+    Vehicle,
+)
+from app.schemas.serialize import iso, loads, outreach_out, user_out, vehicle_out
+
+# Within the same second, what a rep expects to read first. A booking is the
+# consequence of the message above it, not the other way round.
+KIND_ORDER = {"message": 0, "outreach": 1, "appointment": 2, "escalation": 3}
+
+
+def _mirrored_outreach_id(message: Message) -> str | None:
+    """The outreach this thread message is a copy of, if it is one."""
+    for call in loads(message.tool_calls_json, []):
+        if isinstance(call, dict) and call.get("outreach_id"):
+            return str(call["outreach_id"])
+    return None
+
+
+def _entry(kind: str, at: datetime | None, **payload) -> dict:
+    return {"kind": kind, "at": iso(at), **payload}
+
+
+def compose(
+    db: Session,
+    conversations: list[Conversation],
+    *,
+    outreach: list[Outreach] | None = None,
+    appointments: list[Appointment] | None = None,
+) -> list[dict]:
+    """Every entry for these conversations, oldest first."""
+    convo_by_id = {c.id: c for c in conversations}
+    ids = list(convo_by_id)
+
+    messages = (
+        db.query(Message).filter(Message.conversation_id.in_(ids)).all() if ids else []
+    )
+    # Which outreach rows already appear in a thread, and where.
+    mirrors: dict[str, Message] = {}
+    for m in messages:
+        found = _mirrored_outreach_id(m)
+        if found:
+            mirrors[found] = m
+
+    entries: list[dict] = []
+
+    for m in messages:
+        if _mirrored_outreach_id(m):
+            continue  # emitted below as the outreach it copies
+        convo = convo_by_id[m.conversation_id]
+        entries.append(_entry(
+            "message", m.created_at,
+            id=m.id,
+            channel=convo.channel,
+            conversation_id=convo.id,
+            role=m.role,
+            content=m.content,
+            tool_calls=loads(m.tool_calls_json, []),
+        ))
+
+    for o in outreach or []:
+        mirror = mirrors.get(o.id)
+        # The mirror's timestamp, when there is one: that is where the email
+        # sits in the thread a rep is reading, and moving it by a few
+        # milliseconds would shuffle it past the message it answered.
+        at = mirror.created_at if mirror is not None else (o.sent_at or o.created_at)
+        row = outreach_out(o)
+        # An outreach row has a `kind` of its own -- followup, reminder,
+        # credit_application -- and so does a timeline entry. Two different
+        # words for two different things, and letting them share a key means
+        # the spread silently overwrites which sort of entry this is.
+        row["outreach_kind"] = row.pop("kind")
+        row.pop("created_at", None)
+        entries.append(_entry(
+            "outreach", at,
+            conversation_id=mirror.conversation_id if mirror is not None else None,
+            in_thread=mirror is not None,
+            # `channel` rides along from outreach_out -- 'email', or
+            # 'phone_logged' for a call a rep wrote up. Both are real things
+            # that happened, and the filter strip names them from this.
+            **row,
+        ))
+
+    for a in appointments or []:
+        vehicle = (
+            db.query(Vehicle).filter_by(id=a.vehicle_id).one_or_none()
+            if a.vehicle_id else None
+        )
+        entries.append(_entry(
+            "appointment", a.created_at,
+            id=a.id,
+            # Not a channel. The filter strip slices what was *said*; an
+            # appointment happened regardless of where it was arranged.
+            channel="",
+            conversation_id=a.conversation_id,
+            starts_at=iso(a.starts_at),
+            status=a.status,
+            booked_by=a.booked_by,
+            vehicle=vehicle_out(vehicle) if vehicle else None,
+        ))
+
+    escalations = (
+        db.query(Escalation).filter(Escalation.conversation_id.in_(ids)).all() if ids else []
+    )
+    for e in escalations:
+        claimed = (
+            db.query(User).filter_by(id=e.claimed_by_user_id).one_or_none()
+            if e.claimed_by_user_id else None
+        )
+        entries.append(_entry(
+            "escalation", e.created_at,
+            id=e.id,
+            channel="",
+            conversation_id=e.conversation_id,
+            reason=e.reason,
+            claimed_at=iso(e.claimed_at),
+            claimed_by=user_out(claimed) if claimed else None,
+        ))
+
+    entries.sort(key=lambda x: (x["at"] or "", KIND_ORDER.get(x["kind"], 9)))
+    return entries
+
+
+def lead_timeline(db: Session, lead: Lead) -> list[dict]:
+    """Everything this buyer did, on every channel."""
+    conversations = db.query(Conversation).filter_by(lead_id=lead.id).all()
+    return compose(
+        db,
+        conversations,
+        outreach=db.query(Outreach).filter_by(lead_id=lead.id).all(),
+        appointments=db.query(Appointment).filter_by(lead_id=lead.id).all(),
+    )
+
+
+def conversation_timeline(db: Session, convo: Conversation) -> list[dict]:
+    """One thread. For a conversation that has no lead yet -- an anonymous chat
+    is still something a rep has to be able to read and answer, and it has no
+    buyer to hang a timeline on until someone books."""
+    return compose(
+        db,
+        [convo],
+        outreach=[],
+        appointments=db.query(Appointment).filter_by(conversation_id=convo.id).all(),
+    )
+
+
+def channel_counts(entries: list[dict]) -> dict[str, int]:
+    """What the filter strip offers, built from what is actually here.
+
+    Never a fixed list of channels. SMS has no provider in this system, and a
+    tab that is always empty claims a capability that does not exist.
+    """
+    counts: dict[str, int] = {}
+    for entry in entries:
+        channel = entry.get("channel") or ""
+        if channel:
+            counts[channel] = counts.get(channel, 0) + 1
+    return counts

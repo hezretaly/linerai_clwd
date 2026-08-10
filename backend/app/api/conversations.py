@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from datetime import datetime
 
+from app import timeline
+from app.recap import conversation_recap
 from app.agent import tools
 from app.agent.tools import when_label
 from app.api.deps import current_user
@@ -92,6 +94,30 @@ def get_conversation(
     user: User = Depends(current_user),
 ) -> dict:
     return conversation_out(_get(db, conversation_id), db, detail=True)
+
+
+@router.get("/{conversation_id}/timeline")
+def get_timeline(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """One thread, in the same shape the lead page renders.
+
+    For a conversation with no lead yet. An anonymous chat is still something a
+    rep has to read and answer, and there is no buyer to hang a timeline on
+    until someone books -- so it gets its own rather than being invisible.
+    """
+    convo = _get(db, conversation_id)
+    entries = timeline.conversation_timeline(db, convo)
+    return {
+        "lead": None,
+        "entries": entries,
+        "channels": timeline.channel_counts(entries),
+        "conversations": [conversation_out(convo, db)],
+        "recap": conversation_recap(db, convo),
+        "reply_to": None if convo.status == "closed" else convo.id,
+    }
 
 
 @router.post("/{conversation_id}/takeover")

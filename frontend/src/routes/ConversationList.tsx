@@ -18,22 +18,21 @@ import type { ConversationFilter } from '../lib/conversationFilters'
 import type { Conversation, Lead, TeamMember, User } from '../lib/types'
 import { Button, Card, Empty, Spinner } from '../components/ui'
 import { Icon } from '../components/Icon'
-import { LeadDrawer } from '../components/dashboard/LeadDrawer'
 import { PageIntro } from '../components/dashboard/AppShell'
 
 /* Everyone Liner has heard from, in one list a manager can slice.
  *
- * Chat and Calls are working pages: one channel, master/detail, built around
- * reading a thread and replying. This is the page above them -- what came in,
- * what booked, what was declined, what is still running -- and it answers by
- * filtering rather than by opening anything. The filters are shared with Chat
- * so the two cannot disagree about what Appointed means.
+ * A row is a person, not a thread. A buyer who chatted at 9pm and rang back
+ * next morning used to be two unrelated rows on two different pages, and a rep
+ * could call someone who had already booked; here they are one row that opens
+ * one page.
  *
- * Two kinds of row, because there are two kinds of thing. A conversation is a
- * thread someone had. A lead imported from an ADF document never had one --
- * it is a document a marketplace sent -- and it would be invisible everywhere
- * if this page only listed threads. They are kept apart in the code and shown
- * together, rather than dressing a lead up as a conversation it never was.
+ * Two kinds of row, because there are two kinds of thing, and neither is
+ * dressed up as the other. A lead is a person the dealership knows -- from a
+ * booking, or from an ADF document a marketplace sent. A conversation with no
+ * lead is an anonymous thread: `book_appointment` is what mints a lead, so
+ * most live chats have none, and a buyer asking a question at 9pm is exactly
+ * who a rep needs to see.
  */
 
 const CHANNEL_LABEL: Record<string, string> = { chat: 'Website chat', voice: 'Voice call' }
@@ -61,9 +60,10 @@ interface RowView {
   assignedId: string | null
   flagged: boolean
   activeAt: string
-  /** Where a click goes. A lead with no thread has nothing to open, so its
-   *  row opens the drawer instead of navigating to a page that is not there. */
-  thread: string | null
+  /** Where a click goes: the buyer's page, or an anonymous thread's own. */
+  thread: string
+  /** Which channels this row has actually used, for the column. */
+  channels: string[]
 }
 
 function view(row: Row): RowView {
@@ -83,6 +83,7 @@ function view(row: Row): RowView {
       flagged: Boolean(c.open_escalation),
       activeAt: c.last_activity_at ?? c.started_at,
       thread: `/app/conversations/${c.id}`,
+      channels: [c.channel],
     }
   }
   const l = row.l
@@ -90,7 +91,11 @@ function view(row: Row): RowView {
     row,
     name: l.name || 'Unnamed lead',
     email: l.email ?? '',
-    origin: SOURCE_LABEL[l.source] ?? l.source,
+    // What they actually used, when they used anything. An imported lead has
+    // used nothing, so the document it arrived in is all there is to say.
+    origin: (l.channels ?? []).length
+      ? (l.channels ?? []).map((c) => CHANNEL_LABEL[c] ?? c).join(' · ')
+      : SOURCE_LABEL[l.source] ?? l.source,
     state: leadStateOf(l),
     vehicle: l.vehicle_of_interest
       ? { title: l.vehicle_of_interest.title, price: l.vehicle_of_interest.price }
@@ -99,7 +104,8 @@ function view(row: Row): RowView {
     assignedId: l.assigned_user_id ?? null,
     flagged: Boolean(l.flagged),
     activeAt: l.last_touch_at ?? l.created_at,
-    thread: null,
+    thread: `/app/leads/${l.id}`,
+    channels: l.channels ?? [],
   }
 }
 
@@ -139,7 +145,6 @@ export function ConversationListPage() {
   )
   const [origin, setOrigin] = useState('')
   const [assignee, setAssignee] = useState('')
-  const [openLead, setOpenLead] = useState<string | null>(null)
 
   // Linkable, and the back button means something -- the same rule the Chat
   // page follows, because the Overview links into both.
@@ -168,16 +173,18 @@ export function ConversationListPage() {
   const meId = me?.user.id
 
   const rows = useMemo<RowView[]>(() => {
-    const threads: Row[] = (data?.conversations ?? []).map((c) => ({
-      kind: 'thread', id: c.id, c,
+    // People first. A buyer who chatted at 9pm and rang back next morning is
+    // one row here, not two -- that is the whole point of the page.
+    const people: Row[] = (leadData?.leads ?? []).map((l) => ({
+      kind: 'lead', id: l.id, l,
     }))
-    // Only the ones with nothing to open. A lead that did have a conversation
-    // is already in the list above as that conversation, and listing it twice
-    // would double every count on the page.
-    const orphans: Row[] = (leadData?.leads ?? [])
-      .filter((l) => !l.conversation_id)
-      .map((l) => ({ kind: 'lead', id: l.id, l }))
-    return [...threads, ...orphans]
+    // Then the threads nobody has a name for yet. A lead only exists once
+    // someone books, so most live chats have none -- and an anonymous buyer
+    // asking a question at 9pm is exactly who a rep needs to see.
+    const anonymous: Row[] = (data?.conversations ?? [])
+      .filter((c) => !c.lead_id)
+      .map((c) => ({ kind: 'thread', id: c.id, c }))
+    return [...people, ...anonymous]
       .map(view)
       .sort((a, b) => b.activeAt.localeCompare(a.activeAt))
   }, [data, leadData])
@@ -205,10 +212,7 @@ export function ConversationListPage() {
           : r.assignedId === assignee,
     )
 
-  const open = (r: RowView) => {
-    if (r.thread) navigate(r.thread)
-    else setOpenLead(r.row.id)
-  }
+  const open = (r: RowView) => navigate(r.thread)
 
   return (
     <main className="p-4 md:p-6">
@@ -308,7 +312,6 @@ export function ConversationListPage() {
                   key={r.row.id}
                   r={r}
                   onOpen={() => open(r)}
-                  onLead={() => setOpenLead(leadIdOf(r))}
                 />
               ))}
             </ul>
@@ -334,7 +337,6 @@ export function ConversationListPage() {
                       key={r.row.id}
                       r={r}
                       onOpen={() => open(r)}
-                      onLead={() => setOpenLead(leadIdOf(r))}
                     />
                   ))}
                 </tbody>
@@ -346,7 +348,7 @@ export function ConversationListPage() {
         <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3">
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Icon name="clock" className="h-3.5 w-3.5 shrink-0" />
-            A row opens the thread on its own channel. Lead opens everything held on the buyer.
+            A row opens everything held on that buyer -- every channel, in the order it happened.
           </p>
           <span className="tnum ml-auto text-xs text-muted-foreground">
             {visible.length} of {rows.length}
@@ -354,15 +356,8 @@ export function ConversationListPage() {
         </div>
       </Card>
 
-      <LeadDrawer id={openLead} onClose={() => setOpenLead(null)} />
     </main>
   )
-}
-
-/** A lead row *is* the lead; a thread row points at one, and may not have it
- *  (a chat that never gave a name has no lead until it books). */
-function leadIdOf(r: RowView): string | null {
-  return r.row.kind === 'lead' ? r.row.id : r.row.c.lead_id
 }
 
 function CounterCard({
@@ -403,25 +398,6 @@ function CounterCard({
   )
 }
 
-/** Only on rows that have a thread to open: on a lead row the row click
- *  already opens the drawer, and a button that repeats it is noise. */
-function LeadButton({ onLead, disabled }: { onLead: () => void; disabled: boolean }) {
-  return (
-    <button
-      disabled={disabled}
-      onClick={(e) => {
-        // The row itself opens the thread. Without this the drawer opens and
-        // the page navigates away underneath it.
-        e.stopPropagation()
-        onLead()
-      }}
-      className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-xs font-medium transition-colors hover:border-primary hover:bg-primary hover:text-primary-foreground disabled:opacity-40 disabled:hover:border-input disabled:hover:bg-background disabled:hover:text-foreground"
-    >
-      Lead
-    </button>
-  )
-}
-
 function Flag() {
   return (
     <span className="inline-flex shrink-0 items-center rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
@@ -437,11 +413,9 @@ function NoEmail() {
 function TableRow({
   r,
   onOpen,
-  onLead,
 }: {
   r: RowView
   onOpen: () => void
-  onLead: () => void
 }) {
   const [label, style] = r.state
 
@@ -494,7 +468,11 @@ function TableRow({
         {relative(r.activeAt)}
       </td>
       <td className="w-20 whitespace-nowrap px-3 py-2.5 text-right">
-        {r.thread && <LeadButton onLead={onLead} disabled={!leadIdOf(r)} />}
+        {r.channels.length > 1 && (
+          <span className="text-[11px] text-muted-foreground">
+            {r.channels.length} channels
+          </span>
+        )}
       </td>
     </tr>
   )
@@ -503,11 +481,9 @@ function TableRow({
 function PhoneRow({
   r,
   onOpen,
-  onLead,
 }: {
   r: RowView
   onOpen: () => void
-  onLead: () => void
 }) {
   const [label, style] = r.state
 
@@ -554,11 +530,7 @@ function PhoneRow({
             </div>
           </div>
         </button>
-        {r.thread && (
-          <div className="shrink-0 pt-0.5">
-            <LeadButton onLead={onLead} disabled={!leadIdOf(r)} />
-          </div>
-        )}
+
       </div>
     </li>
   )

@@ -45,9 +45,6 @@ PENDING_ASSETS: list[str] = []
 UNREACHABLE_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"]
 DEALER = [
     "/app",
-    "/app/chat",
-    "/app/calls",
-    "/app/email",
     "/app/conversations",
     "/app/leads/import",
     "/app/calendar",
@@ -298,8 +295,31 @@ async def main() -> int:
         await page.click('button[type="submit"]')
         await page.wait_for_url("**/app", timeout=10_000)
 
+        # The buyer page needs a real id, so it is discovered rather than
+        # listed. It is the page most likely to overflow -- a timeline, a rail
+        # and a channel strip -- so leaving it out of the phone check would
+        # leave the one screen a rep actually reads unguarded.
+        routes = list(DEALER)
+        picked = await page.evaluate(
+            """async () => {
+                const r = await fetch('/api/leads', {credentials: 'include'})
+                const {leads} = await r.json()
+                // The busiest buyer: most channels, then most threads. A lead
+                // with nothing on it would pass a check it never exercised.
+                const best = leads
+                  .filter(l => l.conversation_count)
+                  .sort((a, b) => (b.channels?.length ?? 0) - (a.channels?.length ?? 0)
+                                  || b.conversation_count - a.conversation_count)[0]
+                return best ? best.id : null
+            }"""
+        )
+        if picked:
+            routes.insert(2, f"/app/leads/{picked}")
+        else:
+            print("  (no lead with a conversation -- skipping the buyer page)")
+
         print("\ndealer routes:")
-        for route in DEALER:
+        for route in routes:
             await shot(route)
 
         # Same session, narrower window. Signing in again is unnecessary and the
@@ -307,7 +327,7 @@ async def main() -> int:
         phone = True
         await page.set_viewport_size(PHONE)
         print(f"\nmobile ({PHONE['width']}px):")
-        for route in ["/chat", *DEALER]:
+        for route in ["/chat", *routes]:
             await shot(route)
 
         await browser.close()

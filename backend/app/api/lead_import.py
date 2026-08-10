@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import secrets
 
-import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -38,6 +37,7 @@ from app.integrations.base import NotConfigured
 from app.config import settings
 from app.db import get_db, utcnow
 from app.events import emit
+from app.matching import match_lead
 from app.ingest.adf import AdfError, parse_adf
 from app.integrations.registry import get_email_sender
 from app.models import Appointment, CapturedField, Dealership, Lead, Outreach, User, Vehicle
@@ -46,11 +46,6 @@ from app.schemas.serialize import lead_out, outreach_out, vehicle_out
 router = APIRouter(prefix="/leads", tags=["leads"])
 
 SOURCES = {"chat", "phone", "website", "adf"}
-
-
-def _digits(value: str) -> str:
-    """Last ten digits, so +1 (555) 013-4 and 5550134 are the same person."""
-    return re.sub(r"\D", "", value or "")[-10:]
 
 
 class ProspectIn(BaseModel):
@@ -81,20 +76,6 @@ class ProspectIn(BaseModel):
         parts = [str(self.vehicle_year or ""), self.vehicle_make, self.vehicle_model,
                  self.vehicle_trim]
         return " ".join(p for p in parts if p).strip()
-
-
-def _match_lead(db: Session, email: str, phone: str) -> Lead | None:
-    """Email first, then phone. A marketplace resends the same buyer for weeks."""
-    if email:
-        hit = db.query(Lead).filter(Lead.email == email.lower().strip()).first()
-        if hit is not None:
-            return hit
-    tail = _digits(phone)
-    if len(tail) >= 7:
-        for lead in db.query(Lead).filter(Lead.phone != "").all():
-            if _digits(lead.phone) == tail:
-                return lead
-    return None
 
 
 def _match_vehicle(db: Session, prospect) -> Vehicle | None:
@@ -145,7 +126,7 @@ async def preview_adf(
 
     rows = []
     for prospect in prospects:
-        existing = _match_lead(db, prospect.email, prospect.phone)
+        existing = match_lead(db, prospect.email, prospect.phone)
         vehicle = _match_vehicle(db, prospect)
         row = prospect.as_dict()
         row["source"] = "adf"
@@ -224,7 +205,7 @@ def commit_adf(
             raise HTTPException(400, f"{prospect.name or 'A prospect'} has no way to be contacted.")
         source = prospect.source if prospect.source in SOURCES else "adf"
 
-        lead = _match_lead(db, prospect.email, prospect.phone)
+        lead = match_lead(db, prospect.email, prospect.phone)
         if lead is None:
             lead = Lead(
                 name=prospect.name.strip(),

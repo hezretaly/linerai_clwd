@@ -445,7 +445,11 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
         lead_id=devon.id, vehicle_id=sienna.id, assigned_user_id=marcus.id,
         starts_at=devon_slot,
         duration_min=30, status="confirmed", booked_by="liner",
-        conversation_id=devon_convo.id, created_at=now - timedelta(hours=9),
+        # After the turns, not at the start: the timeline is ordered by time,
+        # and an appointment stamped when the thread opened draws above the
+        # message that booked it.
+        conversation_id=devon_convo.id,
+        created_at=now - timedelta(hours=9) + timedelta(minutes=5),
     )
     db.add(devon_appt)
     db.flush()
@@ -457,6 +461,18 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
         provider="outbox", provider_message_id="outbox-seed-devon", status="sent",
         sent_at=now - timedelta(hours=7), created_at=now - timedelta(hours=7),
     ))
+
+    # Devon rings back the next morning. The same buyer, a second channel, and
+    # the reason the dashboard is organised by person rather than by thread: on
+    # a per-thread list this is a stranger with no booking, and a rep reading it
+    # would offer them a slot they already have.
+    add_convo(devon, "voice", "vehicle_focus", [
+        ("buyer", "It's Devon -- I booked online last night about the Sienna."),
+        ("assistant", f"You're down for {devon_day} at 10:00 AM with Marcus. "
+                      "Anything you'd like ready before you get here?"),
+        ("buyer", "Could you have the third row folded down so I can see the space?"),
+        ("assistant", "I'll pass that to Marcus so it's set up when you arrive."),
+    ], 7, status="closed")
 
     # --- Janet Whitfield: booked, unconfirmed, unassigned --------------------
     janet = add_lead("Janet Whitfield", "j.whitfield@example.com", "", "chat", None, 6)
@@ -480,7 +496,8 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
         lead_id=janet.id, vehicle_id=f150.id, assigned_user_id=None,
         starts_at=janet_slot,
         duration_min=30, status="booked", booked_by="liner",
-        conversation_id=janet_convo.id, created_at=now - timedelta(hours=6),
+        conversation_id=janet_convo.id,
+        created_at=now - timedelta(hours=6) + timedelta(minutes=5),
     ))
 
     # --- Gil Otonye: escalated on out-the-door price, agent holding ----------

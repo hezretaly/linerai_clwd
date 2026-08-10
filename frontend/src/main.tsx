@@ -12,9 +12,8 @@ import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
 import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
-import { ConversationRedirect, ConversationsPage } from './routes/Conversations'
 import { ConversationListPage } from './routes/ConversationList'
-import { EmailPage } from './routes/Email'
+import { LeadPage, LeadRedirect } from './routes/LeadPage'
 import { LeadImportPage } from './routes/LeadImport'
 import { CalendarPage } from './routes/Calendar'
 import { InventoryPage } from './routes/Inventory'
@@ -58,33 +57,18 @@ createRoot(document.getElementById('root')!).render(
             }
           >
             <Route index element={<OverviewPage />} />
-            {/* Chat and Calls are one component filtered by channel: working
-                pages, master/detail, built for reading a thread and replying.
-                /app/conversations is the page above them -- both channels, no
-                transcript, filtered rather than opened. */}
-            <Route
-              path="chat"
-              element={<ConversationsPage channel="chat" title="Chat" basePath="/app/chat" />}
-            />
-            <Route
-              path="chat/:id"
-              element={<ConversationsPage channel="chat" title="Chat" basePath="/app/chat" />}
-            />
-            <Route
-              path="calls"
-              element={<ConversationsPage channel="voice" title="Calls" basePath="/app/calls" />}
-            />
-            <Route
-              path="calls/:id"
-              element={<ConversationsPage channel="voice" title="Calls" basePath="/app/calls" />}
-            />
-            <Route path="email" element={<EmailPage />} />
+            {/* One list of people, one page per person. Chat, Calls and Email
+                were three pages over the same buyer, so the same thread was
+                readable in three places and a rep could ring someone who had
+                already booked. */}
             <Route path="conversations" element={<ConversationListPage />} />
-            <Route path="conversations/:id" element={<ConversationRedirect />} />
-            {/* The list of leads is the conversations page now: an ADF lead
-                appears there as a row with no thread to open. Kept as a
-                redirect for bookmarks and for anything still linking here. */}
+            {/* An anonymous thread -- no lead until someone books -- opens on
+                its own. One that does have a lead redirects to the buyer, so a
+                thread is never readable in two places. Every old link into
+                /app/conversations/:id still lands somewhere right. */}
+            <Route path="conversations/:id" element={<LeadRedirect />} />
             <Route path="leads" element={<Navigate to="/app/conversations" replace />} />
+            <Route path="leads/:id" element={<LeadPage of="lead" />} />
             <Route path="leads/import" element={<LeadImportPage />} />
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="inventory" element={<InventoryPage />} />

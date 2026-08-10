@@ -19,21 +19,11 @@ import { Icon, type IconName } from '../Icon'
 const NAV = [
   { to: '/app', label: 'Overview', icon: 'overview', end: true, group: 'Today',
     badge: null, tone: 'muted' },
-  // One channel per page. The badge sits on Chat because that is where the
-  // count comes from -- blue, not red: it counts messages waiting to be read,
-  // and red is this dashboard's word for something going wrong.
-  { to: '/app/chat', label: 'Chat', icon: 'chat', group: 'Today',
-    badge: 'conversations', tone: 'primary' },
-  { to: '/app/calls', label: 'Calls', icon: 'phone', group: 'Today',
-    badge: null, tone: 'muted' },
-  { to: '/app/email', label: 'Email', icon: 'mail', group: 'Today',
-    badge: null, tone: 'muted' },
-  // Both channels in one filterable list -- what came in, what booked, what
-  // was declined -- plus the leads that never had a conversation at all, which
-  // would otherwise appear nowhere. Chat and Calls are for working a thread;
-  // this is for seeing all of them.
+  // Everyone Liner has heard from, on every channel, in one list. The badge is
+  // blue, not red: it counts messages waiting to be read, and red is this
+  // dashboard's word for something going wrong.
   { to: '/app/conversations', label: 'Conversations', icon: 'inbox', group: 'Today',
-    badge: null, tone: 'muted' },
+    badge: 'conversations', tone: 'primary' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
     badge: 'appointments', tone: 'muted' },
   { to: '/app/inventory', label: 'Inventory', icon: 'inventory', group: 'Manage',

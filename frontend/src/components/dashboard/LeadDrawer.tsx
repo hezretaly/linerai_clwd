@@ -229,6 +229,39 @@ export function LeadDrawer({ id, onClose }: { id: string | null; onClose: () => 
   )
 }
 
+/** The two drafts a rep can send to a buyer, with the pick-one control.
+ *
+ *  Exported because the lead page needs it too: when every thread on a buyer
+ *  is closed there is nothing to reply on -- Liner cannot open a chat with
+ *  someone who is not on the site -- and email is the only way back to them.
+ *  A second copy of the composer is how one of them quietly stops sending the
+ *  server's draft and starts composing its own. */
+export function LeadComposers({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+  const [kind, setKind] = useState<string>('followup')
+  return (
+    <div className="mt-2">
+      <div className="flex gap-2">
+        {(
+          [
+            ['followup', 'Follow-up'],
+            ['credit_application', 'Credit application'],
+          ] as const
+        ).map(([key, label]) => (
+          <Button
+            key={key}
+            size="sm"
+            variant={kind === key ? 'primary' : 'secondary'}
+            onClick={() => setKind(key)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      <Composer lead={lead} kind={kind} onDone={onDone} />
+    </div>
+  )
+}
+
 /**
  * Lead-level outreach. The draft comes from the server, not from here -- it is
  * built out of the lead's real state, so a lead with a booked visit gets a

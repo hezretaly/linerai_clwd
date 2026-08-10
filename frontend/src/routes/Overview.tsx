@@ -41,9 +41,9 @@ const KPI_ICONS: Record<string, IconName> = {
 /** Where each figure came from, so the card is a way in rather than a number
  *  to go and look up somewhere else. */
 const KPI_LINKS: Record<string, string> = {
-  chat: '/app/chat',
+  chat: '/app/conversations',
   email: '/app/conversations',
-  calls: '/app/calls',
+  calls: '/app/conversations',
   appointments_set: '/app/calendar',
   // Both channels: an escalation on a call does not appear on the chat page.
   needs_a_person: '/app/conversations?filter=flagged',
@@ -313,7 +313,7 @@ export function OverviewPage() {
           <div>
             <div className="flex items-center gap-2">
               <Link
-                to="/app/chat?filter=flagged"
+                to="/app/conversations?filter=flagged"
                 className="font-semibold leading-none tracking-tight text-primary hover:underline"
               >
                 Needs a person
@@ -375,7 +375,7 @@ export function OverviewPage() {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border p-6">
             <div>
               <Link
-                to="/app/chat?filter=unclaimed"
+                to="/app/conversations?filter=unclaimed"
                 className="font-semibold leading-none tracking-tight text-primary hover:underline"
               >
                 Unclaimed leads
@@ -414,7 +414,7 @@ export function OverviewPage() {
             <div>
               <div className="flex items-center gap-2">
                 <Link
-                  to="/app/chat"
+                  to="/app/conversations"
                   className="font-semibold leading-none tracking-tight text-primary hover:underline"
                 >
                   Happening now

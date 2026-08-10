@@ -46,8 +46,12 @@ export function matches(
       return Boolean(c.open_escalation)
     case 'unclaimed':
       return !c.lead?.assigned_user_id
+    // Not closed, rather than 'active'. A thread at 'handoff' is one a rep is
+    // standing in -- as live as it gets -- and counting only 'active' meant a
+    // row badged "In progress" was missing from the In progress filter. The
+    // lead side answers this from `open`, which is the same rule.
     case 'live':
-      return c.status === 'active'
+      return c.status !== 'closed'
     case 'mine':
       return Boolean(meId && c.lead?.assigned_user_id === meId)
     case 'declined':
@@ -111,16 +115,23 @@ export function leadMatches(
       return Boolean(meId && l.assigned_user_id === meId)
     case 'appointed':
       return l.stage === 'appointment'
+    // Both derived from the lead's conversations by the API, so a person is
+    // Live when any of their threads is, not when the newest one happens to
+    // be -- a buyer with an open call and a closed chat is live.
     case 'live':
+      return Boolean(l.open)
     case 'declined':
-      return false
+      return Boolean(l.declined)
     default:
       return true
   }
 }
 
 export function leadStateOf(l: Lead): [string, string] {
+  if (l.declined) return ['Client declined', 'border-border text-muted-foreground']
   if (l.stage === 'appointment')
     return ['Appointment set', 'border-success/30 bg-success/10 text-success']
-  return ['No conversation yet', 'border-border text-muted-foreground']
+  if (l.open) return ['In progress', 'border-primary/30 bg-primary/10 text-primary']
+  if (!l.conversation_count) return ['No conversation yet', 'border-border text-muted-foreground']
+  return ['Closed', 'border-border text-muted-foreground']
 }

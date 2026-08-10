@@ -639,6 +639,128 @@ def main() -> int:
     check("the list rows do not pay for it",
           "recap" not in call("GET", "/api/conversations")["conversations"][0])
 
+    print("\n== one buyer, one timeline, every channel ==")
+    # The lead the rep just booked has a chat thread and, once we send the
+    # confirmation, an email. Both have to arrive in one ordered list.
+    booked_lead = call("GET", f"/api/conversations/{rep_convo}")["lead"]["id"]
+    tl = call("GET", f"/api/leads/{booked_lead}/timeline")
+    kinds = [e["kind"] for e in tl["entries"]]
+    check("the buyer's whole history comes back in one call", bool(kinds), str(len(kinds)))
+    stamps = [e["at"] for e in tl["entries"]]
+    check("and it is in the order it happened", stamps == sorted(stamps))
+    check("the appointment is on it, not only the messages", "appointment" in kinds)
+    check("the strip counts channels from what is there, never a fixed list",
+          set(tl["channels"]) <= {"chat", "voice", "email", "phone_logged"},
+          str(tl["channels"]))
+
+    # The headline case, on fixture data: one buyer who chatted and later rang
+    # back. On a per-thread list that is a stranger with no booking, and a rep
+    # would offer them a slot they already have.
+    both = next(
+        (l for l in call("GET", "/api/leads")["leads"]
+         if {"chat", "voice"} <= set(l.get("channels") or [])),
+        None,
+    )
+    check("a buyer who used two channels is one buyer", both is not None,
+          both["name"] if both else "no fixture lead uses both")
+    if both:
+        mixed = call("GET", f"/api/leads/{both['id']}/timeline")
+        check("and both channels arrive in the one timeline",
+              {"chat", "voice"} <= set(mixed["channels"]), str(mixed["channels"]))
+        order = [e["at"] for e in mixed["entries"]]
+        check("interleaved in the order they happened", order == sorted(order))
+        check("each turn still says which channel it came from",
+              all(e["channel"] in {"chat", "voice"}
+                  for e in mixed["entries"] if e["kind"] == "message"))
+    # Nothing in this system can send an SMS, so nothing may offer it.
+    check("and never offers a channel this product does not have",
+          "sms" not in tl["channels"])
+    check("a recap rides along, so the rail is not empty", bool(tl["recap"]),
+          tl["recap"][:70])
+
+    # THE regression this page can ship silently. An appointment email exists
+    # twice in the database -- as an outreach row, and mirrored into the thread
+    # so the round trip lands visibly. Concatenating the two shows every
+    # confirmation twice, which reads as a dealership that mailed you twice.
+    lead_before = call("GET", f"/api/leads/{booked_lead}")
+    appt_id = [a for a in lead_before["appointments"] if a["status"] != "cancelled"][0]["id"]
+    call("POST", f"/api/appointments/{appt_id}/outreach", {
+        "subject": "Your appointment at Riverside Auto",
+        "body": "See you then.",
+    })
+    after = call("GET", f"/api/leads/{booked_lead}/timeline")
+    emails = [e for e in after["entries"] if e["kind"] == "outreach"]
+    sent = call("GET", f"/api/leads/{booked_lead}")["outreach"]
+    check("an emailed appointment appears once, not once per copy of it",
+          len(emails) == len(sent), f"{len(emails)} entries for {len(sent)} sends")
+    check("and it is marked as the thread copy it is",
+          any(e["in_thread"] for e in emails))
+    check("no mirrored message survives as a rep message as well",
+          not any(e["kind"] == "message" and e["role"] == "rep"
+                  and e.get("tool_calls") and
+                  any("outreach_id" in str(t) for t in e["tool_calls"])
+                  for e in after["entries"]))
+    # Lead-level outreach has no mirror at all, so it must not be dropped by
+    # the same rule that folds the mirrored kind.
+    call("POST", f"/api/leads/{booked_lead}/outreach", {
+        "subject": "Following up", "body": "Still interested?", "kind": "followup",
+    })
+    third = call("GET", f"/api/leads/{booked_lead}/timeline")
+    loose = [e for e in third["entries"] if e["kind"] == "outreach" and not e["in_thread"]]
+    check("an email with no thread copy is still shown", bool(loose),
+          f"{len(loose)} unmirrored")
+
+    print("\n== an anonymous thread is still readable ==")
+    # A lead only exists once someone books, so most live chats have none.
+    orphan = next(c for c in call("GET", "/api/conversations")["conversations"]
+                  if not c["lead_id"])
+    solo = call("GET", f"/api/conversations/{orphan['id']}/timeline")
+    check("a conversation with no lead gets a timeline of its own",
+          bool(solo["entries"]), f"{len(solo['entries'])} entries")
+    check("and says there is no buyer behind it yet", solo["lead"] is None)
+
+    print("\n== a returning buyer is the same person ==")
+    # book_appointment matched on email alone; the importer matched on email
+    # *then* phone. So someone who booked from chat and rang back leaving a
+    # second address arrived as a second lead with the same number on file.
+    phone = "(319) 555-0148"
+    card = call("GET", f"/api/conversations/{rep_convo}/availability")
+    slots = [s["starts_at"] for d in card["days"] for s in d["slots"]]
+    one = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(one, content="I'd like to come in")
+    call("POST", f"/api/conversations/{one}/book", {
+        "starts_at": slots[0], "name": "Robin Ash",
+        "email": "robin.ash@example.invalid", "phone": phone})
+    two = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(two, content="Booking again")
+    call("POST", f"/api/conversations/{two}/book", {
+        "starts_at": slots[1], "name": "Robin Ash",
+        "email": "r.ash@work.invalid", "phone": phone})
+    lead_one = call("GET", f"/api/conversations/{one}")["lead"]["id"]
+    lead_two = call("GET", f"/api/conversations/{two}")["lead"]["id"]
+    check("a second booking on the same phone lands on the same lead",
+          lead_one == lead_two, f"{lead_one[:8]} vs {lead_two[:8]}")
+    # The form asks where the confirmation should go, so a corrected address
+    # means it -- but the old one is worth keeping rather than overwriting.
+    same = call("GET", f"/api/leads/{lead_one}")
+    check("the address they last typed is the one on file",
+          same["email"] == "r.ash@work.invalid", same["email"])
+    check("and the one it replaced was kept, not dropped",
+          any(f["key"] == "previous_email" for f in same["captured_fields"]),
+          str([f["key"] for f in same["captured_fields"]]))
+    for appt in call("GET", "/api/appointments")["appointments"]:
+        if appt["lead_id"] == lead_one and appt["status"] in ("booked", "confirmed"):
+            booked_here.append(appt["id"])
+
+    print("\n== duplicates are pointed at, never merged ==")
+    dupes = call("GET", f"/api/leads/{lead_one}/duplicates")
+    check("a lead with no twin returns none rather than a guess",
+          isinstance(dupes["duplicates"], list))
+    if dupes["duplicates"]:
+        check("and every hit says why it matched",
+              all(d["reason"] in {"same email", "same phone"} for d in dupes["duplicates"]),
+              str([d["reason"] for d in dupes["duplicates"]]))
+
     print("\n== the cross-channel list can be sliced without opening anything ==")
     listed = call("GET", "/api/conversations")["conversations"]
     stamps = [c.get("last_activity_at") for c in listed]

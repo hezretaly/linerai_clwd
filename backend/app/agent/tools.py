@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.db import utcnow
 from app.events import emit
+from app.matching import match_lead
 from app.models import (
     Appointment,
     Dealership,
@@ -401,6 +402,29 @@ def _dealership_hours(db: Session) -> dict:
 DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
+def _remember_old_email(db: Session, lead: Lead) -> None:
+    """Park the address being replaced on the lead as a captured field.
+
+    Provenance is 'typed' because the buyer really did type it, on an earlier
+    visit -- it is a fact about them, not a guess. Overwriting the column
+    without this would lose the only address a rep had for someone whose new
+    one bounces.
+    """
+    from app.models import CapturedField
+
+    row = (
+        db.query(CapturedField)
+        .filter_by(lead_id=lead.id, key="previous_email")
+        .one_or_none()
+    )
+    if row is None:
+        db.add(CapturedField(
+            lead_id=lead.id, key="previous_email", value=lead.email, provenance="typed",
+        ))
+    else:
+        row.value = lead.email
+
+
 def clock_label(when: datetime) -> str:
     """"10:00 AM" -- no leading zero, and no %-I, which is glibc-only."""
     return f"{(when.hour % 12) or 12}:{when.minute:02d} {'AM' if when.hour < 12 else 'PM'}"
@@ -522,7 +546,11 @@ def book_appointment(
 
     lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
     if lead is None:
-        lead = db.query(Lead).filter(Lead.email == email).one_or_none()
+        # The same matcher the ADF importer uses, so email *and* phone both
+        # identify a returning buyer. Matching on email alone meant someone who
+        # booked from chat and called back leaving a second address arrived as
+        # a second lead, with the number on file identical on both rows.
+        lead = match_lead(db, email, phone)
     if lead is None:
         lead = Lead(name=name, email=email, phone=phone,
                     source="voice" if convo.channel == "voice" else "chat")
@@ -530,8 +558,15 @@ def book_appointment(
         db.flush()
     else:
         lead.name = lead.name or name
-        lead.email = lead.email or email
         lead.phone = lead.phone or phone
+        # `lead.email or email` silently threw the typed address away. The form
+        # asks "Where should the confirmation go?", so a buyer correcting a
+        # typo means it -- and the confirmation was going to the old address.
+        # The previous one is kept rather than lost: a shared family address is
+        # a real thing and a rep may need it back.
+        if email and lead.email and lead.email != email:
+            _remember_old_email(db, lead)
+        lead.email = email or lead.email
     # The buyer gave the address for this purpose -- that consent is the record.
     lead.email_consent_at = lead.email_consent_at or utcnow()
     convo.lead_id = lead.id
