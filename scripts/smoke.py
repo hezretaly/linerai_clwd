@@ -672,11 +672,30 @@ def main() -> int:
         check("each turn still says which channel it came from",
               all(e["channel"] in {"chat", "voice"}
                   for e in mixed["entries"] if e["kind"] == "message"))
+        # The captured fields have their own panel, where each one wears its
+        # provenance. Prose cannot carry that, so restating them in the recap
+        # turns an inferred guess into a flat assertion a rep repeats on the
+        # phone -- which is exactly what save_captured_fields refuses to let
+        # the model do in the first place.
+        guesses = [f["value"] for f in call("GET", f"/api/leads/{both['id']}")
+                   ["captured_fields"] if not f["verified"]]
+        check("the fixture really has an inferred field to test with",
+              bool(guesses), str(guesses))
+        check("and the recap does not restate a guess as a fact",
+              not any(v and v in mixed["recap"] for v in guesses),
+              mixed["recap"][:80])
     # Nothing in this system can send an SMS, so nothing may offer it.
     check("and never offers a channel this product does not have",
           "sms" not in tl["channels"])
     check("a recap rides along, so the rail is not empty", bool(tl["recap"]),
           tl["recap"][:70])
+    # Lead-level, not the newest thread's. Devon booked on the website and rang
+    # back next morning: the newest thread is the call, the appointment hangs
+    # off the chat, and a per-thread recap told a rep nothing was booked.
+    check("and it knows about a booking made on an earlier thread",
+          "Booked for" in tl["recap"] or "Confirmed for" in tl["recap"],
+          tl["recap"][:80])
+
 
     # THE regression this page can ship silently. An appointment email exists
     # twice in the database -- as an outreach row, and mirrored into the thread

@@ -146,11 +146,22 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
 - **The rail's Summary is `recap`, not `summary`.** `conversations.summary` is
   whatever Liner said last, and printing that under a heading saying Summary
   made a reply look like a recap of the thread. `app/recap.py` composes the
-  real one from rows — who, which car, what was captured, the appointment, the
-  open escalation — so it can be checked against the data instead of trusted.
-  Deterministic on purpose: a model-written summary is a second place a fact
-  can be invented, and there is no model at all in stub mode. `summary` still
-  backs the one-line preview in the list.
+  real one from rows — who, which car, the appointment, the open escalation —
+  so it can be checked against the data instead of trusted. Deterministic on
+  purpose: a model-written summary is a second place a fact can be invented,
+  and there is no model at all in stub mode. `summary` still backs the
+  one-line preview in the list. Two rules keep it honest:
+  - **It never restates the captured fields.** They sit below it on the rail
+    where each wears its provenance, and prose cannot carry that: "Financing:
+    likely financing" reads as something the buyer said when the row says
+    `inferred`. Repeating a guess without the badge marking it a guess is how
+    a rep ends up asserting it on the phone. Two panels are only redundant
+    when they say the same thing equally well.
+  - **`lead_recap` is not `conversation_recap` on the newest thread.** Devon
+    booked on the website and rang back next morning, so the newest thread is
+    the call while the appointment hangs off the chat — the rail told a rep
+    "nothing booked yet" about a booked buyer. Anything that can span threads
+    is asked across all of them.
 - **The booking card is built from a tool result, never composed.** When
   `check_availability` runs, the buyer gets days, times and contact fields
   (`BookingCard.tsx`); the card can only offer what that tool returned, and its

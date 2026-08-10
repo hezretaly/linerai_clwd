@@ -5,7 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import matching, timeline
-from app.recap import conversation_recap
+from app.recap import lead_recap
 from app.api.deps import current_user
 from app.db import get_db
 from app.models import (
@@ -207,9 +207,9 @@ def get_timeline(
         "entries": entries,
         "channels": timeline.channel_counts(entries),
         "conversations": [conversation_out(c, db) for c in convos],
-        # One recap, from the newest thread, rather than one per conversation:
-        # composing it costs a handful of queries each and the rail shows one.
-        "recap": conversation_recap(db, convos[-1]) if convos else "",
+        # Lead-level, not the newest thread's: an appointment booked in a
+        # chat last night does not belong to the call made this morning.
+        "recap": lead_recap(db, lead),
         # Where a reply goes. A rep typing into this page has to be told which
         # thread they are answering on -- the alternative is a message landing
         # on a conversation the buyer closed last week.

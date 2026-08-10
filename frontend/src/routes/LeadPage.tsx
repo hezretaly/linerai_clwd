@@ -523,6 +523,15 @@ function LeadRail({
               </div>
             ))}
           </div>
+          {/* The reason this panel exists rather than folding into the
+              Summary above it: prose cannot carry provenance. A recap line
+              reading "financing: likely financing" states a guess as a fact,
+              and a rep repeats it on the phone. */}
+          {lead!.captured_fields!.some((f) => !f.verified) && (
+            <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+              Italic fields were inferred, not stated. Check before using them on a call.
+            </p>
+          )}
         </div>
       )}
 
