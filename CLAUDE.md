@@ -204,6 +204,27 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   so moving a chart's window cannot silently change what the KPI cards mean.
   An unknown range is a 400 -- answering a typo with "today" shows the wrong
   window under the right caption.
+- **A vehicle is never deleted, only taken off the lot.** `status` goes
+  `available | sold | removed`, and it has its own endpoint
+  (`POST /api/inventory/{id}/status`) rather than riding along in the PATCH
+  that edits mileage — taking a car off the lot is a different kind of act,
+  and a second way to set it is how one of them stops emitting the event.
+  `vehicle_mentions` and `appointments` both point at the row, so a delete
+  either errors or takes the quote history with it, and that history is the
+  only answer to "who was told about this car?" — the question a rep has the
+  moment one sells. `ingest/pipeline.py` reached the same conclusion for a
+  listing that vanishes from the feed. Two rules keep it working:
+  - **The blast radius is shown before the decision, not after.** Who was
+    quoted it and who is booked in to see it is the whole reason the moment
+    matters; a confirmation that arrives once it is too late to act is a speed
+    bump. Their appointments are **not** cancelled — that is a call a rep
+    makes, and a visit that quietly vanishes from the calendar is worse than
+    one against a car that has gone.
+  - **A hand-set status is marked manual and survives the next import.** The
+    dealership's own site will still be listing a car that sold an hour ago,
+    so ingest sees it "reappear". That branch used to set it back to available
+    outside the manual-override check every other field respects, which put a
+    sold car straight back in front of the model.
 - **Hours come from `hours_json`.** No page states its own.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the

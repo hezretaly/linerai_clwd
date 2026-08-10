@@ -229,8 +229,15 @@ def publish(db: Session, run: IngestRun) -> dict:
                 applied["protected"] += 1
                 continue
             setattr(vehicle, key, change["to"])
-        if entry.get("reappeared"):
+        # A vehicle back in the feed is available again -- unless a rep said
+        # otherwise. Marking a car sold is the one edit that has to outlive the
+        # next import: the dealership's own website will still be listing it
+        # for hours, so an unguarded reappearance puts a sold car straight back
+        # in front of the model. Manual override wins here like everywhere else.
+        if entry.get("reappeared") and "status" not in manual:
             vehicle.status = "available"
+        elif entry.get("reappeared"):
+            applied["protected"] += 1
         vehicle.last_seen_at = utcnow()
         vehicle.ingest_run_id = run.id
         applied["updated"] += 1

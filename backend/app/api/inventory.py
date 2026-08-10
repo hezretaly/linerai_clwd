@@ -9,14 +9,26 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
 from app.db import get_db, utcnow
-from app.models import Conversation, Lead, User, Vehicle, VehicleMention
+from app.events import emit
+from app.models import (
+    Appointment,
+    Conversation,
+    Lead,
+    User,
+    Vehicle,
+    VehicleMention,
+)
 from app.schemas.serialize import vehicle_out
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
+# `status` is deliberately absent: it has its own endpoint, because taking a
+# car off the lot is not the same kind of act as correcting its mileage. A
+# second way to set it is how one of them quietly stops emitting the event the
+# dashboard listens for.
 EDITABLE = {
     "year", "make", "model", "trim", "price", "mileage", "body_style", "seats",
-    "title_status", "status", "keywords", "rule_discuss", "rule_hold_price",
+    "title_status", "keywords", "rule_discuss", "rule_hold_price",
     "rule_mention_warranty", "rule_note",
 }
 
@@ -85,7 +97,84 @@ def get_vehicle(
         }
         for mention, convo, lead in mentions
     ]
+    out["appointments"] = _visits(db, vehicle)
     return out
+
+
+def _visits(db: Session, vehicle: Vehicle) -> list[dict]:
+    """Buyers who are coming in to see this specific car.
+
+    The harder half of the blast radius. A quote is a car someone was told
+    about; an appointment is someone who will be standing on the lot asking
+    for it. Nothing here cancels them -- that is a call a rep makes, and
+    silently cancelling a buyer's visit is worse than a wrong car on the
+    calendar.
+    """
+    rows = (
+        db.query(Appointment, Lead)
+        .outerjoin(Lead, Lead.id == Appointment.lead_id)
+        .filter(
+            Appointment.vehicle_id == vehicle.id,
+            Appointment.status.in_(("booked", "confirmed")),
+        )
+        .order_by(Appointment.starts_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id": appt.id,
+            "lead_id": appt.lead_id,
+            "lead_name": (lead.name if lead else None) or "Unknown caller",
+            "starts_at": appt.starts_at.isoformat(),
+            "status": appt.status,
+        }
+        for appt, lead in rows
+    ]
+
+
+STATUSES = {"available", "sold", "removed"}
+
+
+class StatusBody(BaseModel):
+    status: str
+
+
+@router.post("/{vehicle_id}/status")
+def set_status(
+    vehicle_id: str,
+    body: StatusBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Take a car off the lot, or put it back.
+
+    Never a delete. `vehicle_mentions` and `appointments` both point at this
+    row, so removing it either errors or takes the quote history with it -- and
+    that history is the only way to answer "who was told about this car?", which
+    is the question a rep has the moment one sells. The ingest pipeline made the
+    same call for a listing that vanishes from the feed, for the same reason.
+
+    Marked manual so the next import cannot undo it: the dealership's own site
+    will still be listing a car that sold an hour ago.
+    """
+    if body.status not in STATUSES:
+        raise HTTPException(400, f"status must be one of {', '.join(sorted(STATUSES))}")
+
+    vehicle = db.query(Vehicle).filter_by(id=vehicle_id).one_or_none()
+    if vehicle is None:
+        raise HTTPException(404, "Vehicle not found")
+
+    was = vehicle.status
+    vehicle.status = body.status
+    manual = set(json.loads(vehicle.manual_fields_json or "[]"))
+    manual.add("status")
+    vehicle.manual_fields_json = json.dumps(sorted(manual))
+    db.commit()
+
+    emit(db, "vehicle.status_changed", {
+        "vehicle_id": vehicle.id, "from": was, "to": vehicle.status, "by": user.id,
+    })
+    return get_vehicle(vehicle_id, db, user)
 
 
 class VehiclePatch(BaseModel):

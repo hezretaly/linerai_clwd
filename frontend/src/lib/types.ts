@@ -63,6 +63,16 @@ export interface Vehicle {
   last_seen_at: string | null
   quoted_to?: number
   mentions?: VehicleMention[]
+  /* Buyers booked in to see this specific car. The harder half of the blast
+     radius: a quote is someone who was told about it, an appointment is
+     someone who will be standing on the lot asking for it. Detail only. */
+  appointments?: {
+    id: string
+    lead_id: string | null
+    lead_name: string
+    starts_at: string
+    status: string
+  }[]
 }
 
 export interface VehicleMention {

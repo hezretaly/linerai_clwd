@@ -186,6 +186,16 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
   })
 
   const [price, setPrice] = useState('')
+  const [confirming, setConfirming] = useState(false)
+
+  const setStatus = useMutation({
+    mutationFn: (status: string) => api.post(`/api/inventory/${id}/status`, { status }),
+    onSuccess: () => {
+      setConfirming(false)
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      void queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
 
   return (
     <Sheet
@@ -226,6 +236,15 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
               <dd className="capitalize">{vehicle.source}</dd>
             </div>
           </dl>
+
+          <OffTheLot
+            vehicle={vehicle}
+            confirming={confirming}
+            pending={setStatus.isPending}
+            onAsk={() => setConfirming(true)}
+            onCancel={() => setConfirming(false)}
+            onSet={(status) => setStatus.mutate(status)}
+          />
 
           <section className="space-y-3 rounded-lg border border-border p-3">
             <h3 className="text-sm font-semibold">What Liner may say about this one</h3>
@@ -329,5 +348,126 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
         </div>
       )}
     </Sheet>
+  )
+}
+
+/** Taking a car off the lot, and putting it back.
+ *
+ *  Never a delete: `vehicle_mentions` and `appointments` both point at the row,
+ *  so removing it takes with it the only answer to "who was told about this
+ *  car?" -- which is the question a rep has the moment one sells.
+ *
+ *  The blast radius is shown *before* the decision rather than after it. Who
+ *  was quoted this and who is coming in to see it is the whole reason the
+ *  moment matters, and a confirmation that appears once it is too late to
+ *  matter is just a speed bump.
+ */
+function OffTheLot({
+  vehicle,
+  confirming,
+  pending,
+  onAsk,
+  onCancel,
+  onSet,
+}: {
+  vehicle: Vehicle
+  confirming: boolean
+  pending: boolean
+  onAsk: () => void
+  onCancel: () => void
+  onSet: (status: string) => void
+}) {
+  const visits = vehicle.appointments ?? []
+  const quoted = vehicle.mentions?.length ?? 0
+
+  if (vehicle.status !== 'available') {
+    return (
+      <section className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+        <h3 className="text-sm font-semibold capitalize">This one is {vehicle.status}</h3>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Liner will not offer it: <code>search_inventory</code> only returns available
+          vehicles, so it is filtered before the model sees anything. The record stays so
+          the {quoted === 1 ? 'buyer who was' : `${quoted} buyers who were`} quoted it can
+          still be found.
+        </p>
+        <Button size="sm" disabled={pending} onClick={() => onSet('available')}>
+          {pending ? 'Saving...' : 'Put it back on the lot'}
+        </Button>
+      </section>
+    )
+  }
+
+  if (!confirming) {
+    return (
+      <section className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold">On the lot</h3>
+          <p className="text-xs text-muted-foreground">
+            Liner may offer it to anyone who matches.
+          </p>
+        </div>
+        <Button size="sm" onClick={onAsk}>
+          Mark sold
+        </Button>
+      </section>
+    )
+  }
+
+  return (
+    <section className="space-y-3 rounded-lg border border-primary/30 bg-accent p-3">
+      <h3 className="text-sm font-semibold text-primary">
+        Mark this sold?
+      </h3>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Liner stops offering it immediately. The record stays -- it is what tells you who
+        to call.
+      </p>
+
+      {visits.length > 0 && (
+        <div className="rounded-md border border-border bg-background p-2.5">
+          <p className="text-xs font-medium">
+            {visits.length} {visits.length === 1 ? 'buyer is' : 'buyers are'} booked in to see
+            this car
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {visits.map((visit) => (
+              <li key={visit.id} className="flex items-center justify-between gap-2 text-xs">
+                <Link
+                  to={`/app/leads/${visit.lead_id}`}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {visit.lead_name}
+                </Link>
+                <span className="text-muted-foreground">{dateTime(visit.starts_at)}</span>
+              </li>
+            ))}
+          </ul>
+          {/* Deliberately not cancelled here. Whether to call and rebook is a
+              rep's call; a visit that quietly vanishes from the calendar is
+              worse than one against a car that has gone. */}
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            Their appointments stay as they are. Call them, or rebook from the calendar.
+          </p>
+        </div>
+      )}
+
+      {quoted > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Quoted to {quoted} {quoted === 1 ? 'buyer' : 'buyers'} -- listed below.
+        </p>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant="primary" size="sm" disabled={pending} onClick={() => onSet('sold')}>
+          {pending ? 'Saving...' : 'Yes, mark sold'}
+        </Button>
+        <Button size="sm" disabled={pending} onClick={() => onSet('removed')}>
+          Not sold -- just off the lot
+        </Button>
+        <Button size="sm" variant="secondary" disabled={pending} onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </section>
   )
 }

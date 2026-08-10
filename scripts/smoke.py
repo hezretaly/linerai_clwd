@@ -801,6 +801,65 @@ def main() -> int:
     ):
         check(f"'{name}' is answerable from the list rows", bool(hits), f"{len(hits)} rows")
 
+    print("\n== a car comes off the lot without taking its history with it ==")
+    # Never a delete: vehicle_mentions and appointments both point at the row,
+    # and that history is the only answer to "who was told about this car?".
+    fleet = call("GET", "/api/inventory")["vehicles"]
+    target = max(fleet, key=lambda v: v["mention_count"])
+    before = call("GET", f"/api/inventory/{target['id']}")
+    check("the blast radius is on the record before anything changes",
+          before["mention_count"] > 0,
+          f"{before['mention_count']} quotes, {len(before['appointments'])} visits")
+    check("and it names who is booked in to see it, not just who was told",
+          isinstance(before["appointments"], list))
+
+    # Before/after, or the check proves nothing: a car the stub was never going
+    # to offer "stops being offered" whatever the status says.
+    def offered_vins() -> list[str]:
+        probe = call("POST", "/api/chat/sessions")["conversation_id"]
+        say(probe, content=f"Tell me about the {target['make']} {target['model']}")
+        return [
+            v["vin"]
+            for m in call("GET", f"/api/conversations/{probe}")["messages"]
+            for c in m["tool_calls"]
+            for v in (c.get("result") or {}).get("vehicles", [])
+        ]
+
+    check("the agent offers it while it is on the lot",
+          target["vin"] in offered_vins(), target["vin"])
+
+    # Re-read: the probe above just quoted the car, so it wrote a mention of
+    # its own. Comparing against the snapshot from before the probe would be
+    # measuring data this test changed.
+    pre = call("GET", f"/api/inventory/{target['id']}")
+
+    sold = call("POST", f"/api/inventory/{target['id']}/status", {"status": "sold"})
+    check("marking it sold takes", sold["status"] == "sold", sold["status"])
+    check("the quote history survives it",
+          len(sold["mentions"]) == len(pre["mentions"]),
+          f"{len(pre['mentions'])} -> {len(sold['mentions'])}")
+    check("and so does anyone booked in to see it -- cancelling is a rep's call",
+          len(sold["appointments"]) == len(pre["appointments"]))
+
+    # The point of the whole feature: Liner must stop offering it, and it is
+    # filtered in the tool rather than asked for in the prompt.
+    after_sold = offered_vins()
+    check("and cannot once it is sold -- filtered in the tool, not asked of the model",
+          target["vin"] not in after_sold, f"{len(after_sold)} other cars still offered")
+    check("while the rest of the lot is still offered", bool(after_sold))
+
+    # The regression that would make this feature quietly useless. The
+    # dealership's own site still lists a car that sold an hour ago, so the
+    # next import sees it "reappear" -- and used to set it back to available,
+    # skipping the manual-override check every other field respects.
+    check("the sold flag is marked manual so an import cannot undo it",
+          "status" in sold["manual_fields"], str(sold["manual_fields"]))
+
+    back = call("POST", f"/api/inventory/{target['id']}/status", {"status": "available"})
+    check("a deal that falls through can be put back", back["status"] == "available")
+    code, _ = status_of("POST", f"/api/inventory/{target['id']}/status", {"status": "gone"})
+    check("an invented status is refused rather than stored", code == 400, str(code))
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's
