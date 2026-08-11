@@ -84,17 +84,33 @@ other wrong value — the receipts are where you find out, not the response.
 first is what the deployed Worker posts to; the second is what this app
 documented first.
 
-The endpoint **answers before it files the mail** — the Worker calls
-`setReject()` on a non-2xx, so a slow CRM bounces a real buyer's reply back to
-them. It returns `{"outcome": "received", "receipt_id": ...}` in a few
-milliseconds and resolves in the background; the receipt then settles to
-`accepted`, `unresolved` or `failed`.
+The endpoint **answers before it files the mail**. It returns
+`{"outcome": "received", "receipt_id": ...}` in a few milliseconds and resolves
+in the background; the receipt then settles to `accepted`, `unresolved` or
+`failed`. The Worker retries a 5xx or a dropped connection, so a slow answer
+costs a buyer a duplicate attempt rather than a delivery.
 
 The claim is written *before* the response, not after, and that ordering is
 load-bearing. A plain "return 200, process later" loses its own dedupe: a
-Cloudflare retry arriving mid-processing finds nothing accepted yet and files
-the reply a second time. Bodies over 10 MB are refused with a 413, matching
-the Worker's own limit.
+retry arriving mid-processing finds nothing accepted yet and files the reply a
+second time. Bodies over 10 MB are refused with a 413, matching the Worker's
+own limit.
+
+**The schema is never stricter than the wire.** A Worker writes
+`inReplyTo: parsed.inReplyTo ?? null` because that is the obvious way to say
+"there wasn't one", and every declared field accepts `null` for that reason.
+Getting this wrong is expensive rather than noisy: a 4xx tells a retrying
+Worker its payload is wrong and to stop trying, so a schema quibble becomes a
+buyer's reply that is gone for good rather than delayed. `make smoke` posts the
+deployed Worker's payload field for field.
+
+**A message with no `Message-ID` header still dedupes.** `JSON.stringify` drops
+the key when postal-mime found none, and the retry above would then file the
+same reply twice. The digest of the exact request bytes stands in — exact
+rather than heuristic, because a retry re-posts the identical body while two
+real emails differ in the `receivedAt` the Worker stamps per invocation. Such
+an id is written `sha256:…` on the receipt and never leaves the building: put
+in an outgoing `In-Reply-To` it would name a message that never existed.
 
 ## Checking it
 
@@ -162,4 +178,11 @@ answering the question a rep asked is the rep's turn again.
 The Worker source here matches what is deployed, but nothing in this repository
 can run or verify it. The endpoint it posts to **is** verified: `make smoke`
 drives both auth schemes, both paths, the dedupe, every rung of the resolution
-ladder, and the reopen.
+ladder, the reopen, and the deployed Worker's payload field for field.
+
+One deliberate gap on the Worker side: a delivery that fails all three attempts
+is logged and dropped rather than bounced with `message.setReject()`. Rejecting
+is the honest failure — the buyer learns their reply did not arrive — but it
+turns one bad deploy into a wave of bounces at real prospects. The cost of the
+choice is that the only evidence is a `DELIVERY FAILED` line in
+`wrangler tail`, so that line is the alarm.

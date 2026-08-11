@@ -51,6 +51,12 @@ MAX_BODY = 10 * 1024 * 1024
 
 REPLY_RE = re.compile(r"reply\+([A-Za-z0-9_-]{6,64})@", re.IGNORECASE)
 
+# Prefix on a message id this app invented because the mail carried none.
+# It has to be recognisable: a synthetic id is a dedupe key and nothing
+# else, and must never be echoed back out as an In-Reply-To header naming
+# a message that does not exist.
+SYNTHETIC = "sha256:"
+
 # Where a reply stops being what the buyer wrote and starts being a copy of
 # what we sent them. Outlook draws a rule of underscores; Gmail writes "On
 # <date> X wrote:"; older clients use the Original Message banner. Trimming is
@@ -100,16 +106,31 @@ def as_text(html: str) -> str:
 
 
 class InboundBody(BaseModel):
+    """What a Worker posts. Every field is optional *and nullable*.
+
+    `str = ""` was wrong, and wrong in the way that costs real mail. A Worker
+    writes `inReplyTo: parsed.inReplyTo ?? null` because that is the obvious
+    way to say "there wasn't one", and pydantic rejected the null as a type
+    error -- so every reply that was not itself threaded came back 400
+    malformed. Worse, a sensible Worker treats 4xx as "my payload is wrong,
+    retrying will not help" and gives up, which turns a schema quibble into a
+    buyer's reply that is gone for good.
+
+    Nothing downstream reads these attributes anyway: every value is pulled
+    out of `model_dump()` and coerced with `or ""`. The declarations are
+    documentation of the shape, so they must not be stricter than the wire.
+    """
+
     model_config = {"extra": "allow"}
 
-    messageId: str = ""
-    from_: str = ""
-    to: str = ""
-    subject: str = ""
-    text: str = ""
-    html: str = ""
-    inReplyTo: str = ""
-    receivedAt: str = ""
+    messageId: str | None = ""
+    from_: str | None = ""
+    to: str | None = ""
+    subject: str | None = ""
+    text: str | None = ""
+    html: str | None = ""
+    inReplyTo: str | None = ""
+    receivedAt: str | None = ""
 
 
 def signature_for(raw: bytes) -> str:
@@ -205,6 +226,19 @@ async def receive(
 
     data = payload.model_dump()
     message_id = (data.get("messageId") or "").strip()
+    if not message_id:
+        # Not every message carries a Message-ID header, and without one the
+        # dedupe below has nothing to key on -- while a Worker that retries a
+        # dropped response would file the same reply twice.
+        #
+        # The bytes are the key instead, and that is exact rather than a
+        # heuristic: a retry re-posts the identical body, so the digest
+        # matches. Two genuinely separate emails do not collide, because the
+        # Worker stamps `receivedAt` per invocation at millisecond resolution
+        # -- a buyer writing "yes" twice produces two different bodies and
+        # stays two messages. Prefixed so a receipt says plainly that this is
+        # ours and not something the sender chose.
+        message_id = SYNTHETIC + sha256(raw).hexdigest()[:32]
     # The Worker sends `from`, which is a Python keyword; pydantic keeps it in
     # the extras rather than on the field named from_.
     sender = (data.get("from") or data.get("from_") or "").strip()
@@ -231,8 +265,9 @@ async def receive(
         "subject": subject, "body": body, "in_reply_to": in_reply_to,
     }
 
-    # Idempotent on the provider's id. Cloudflare retries, and a retry must not
-    # give a buyer two replies on their timeline.
+    # Idempotent on the message id -- the sender's when there is one, the
+    # digest of the bytes when there is not. Cloudflare retries, and a retry
+    # must not give a buyer two replies on their timeline.
     if message_id:
         seen = (
             db.query(InboundEmail)
@@ -315,7 +350,12 @@ def _place(receipt_id: str) -> None:
             # marker ever fires on something it should not.
             body=just_the_reply(claim.body),
             provider="inbound",
-            provider_message_id=claim.message_id or None,
+            # Only a real one. A synthetic id is ours, and putting it here
+            # would send it back out as an In-Reply-To header naming a message
+            # that never existed.
+            provider_message_id=(
+                None if claim.message_id.startswith(SYNTHETIC) else claim.message_id
+            ) or None,
             in_reply_to=claim.in_reply_to or None,
             status="sent",
             sent_at=utcnow(),

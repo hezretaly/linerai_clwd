@@ -246,6 +246,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     receipt is claimed *before* the response and resolved after — that
     ordering is the dedupe: a plain "return 200, process later" lets a retry
     arriving mid-flight file the same reply twice.
+  - **The intake's schema is never stricter than the wire.** Every declared
+    field on `InboundBody` accepts `null`, because a Worker writes
+    `inReplyTo: parsed.inReplyTo ?? null` and means "there wasn't one".
+    Declaring it `str = ""` made every unthreaded reply a 400 — and a Worker
+    reasonably reads 4xx as *my payload is wrong, retrying will not help*, so
+    a schema quibble became replies lost rather than delayed. Nothing
+    downstream reads the attributes anyway; they are documentation of a shape,
+    and `make smoke` posts the deployed Worker's payload field for field.
+  - **A message with no `Message-ID` dedupes on its bytes.** `JSON.stringify`
+    drops the key when there was no header, which leaves a retrying Worker
+    free to file the same reply twice. The digest of the exact request body
+    stands in, and that is precise rather than heuristic: a retry re-posts an
+    identical body, while two real emails differ in the `receivedAt` the
+    Worker stamps per invocation. Written `sha256:…`, and never echoed into an
+    outgoing `In-Reply-To`, where it would name a message that never existed.
   - **The intake takes either credential and one of two paths.**
     `X-Liner-Signature` (HMAC over the exact bytes, so it covers the body) or
     `X-Webhook-Secret` (plain, what the deployed Worker sends), on

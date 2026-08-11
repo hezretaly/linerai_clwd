@@ -1080,6 +1080,98 @@ def main() -> int:
     check("the token is read from the payload too, not only from the address",
           by_hint.get("matched_by") == "reply_token", str(by_hint.get("matched_by")))
 
+    print("\n== the exact payload the deployed worker builds ==")
+    # Field for field what integrations/email/worker/src/index.ts sends, so a
+    # change on this side that the Worker cannot survive fails here rather
+    # than in production. It is not a hypothetical shape: `inReplyTo: null`
+    # once made every unthreaded reply a 400, and because a sensible Worker
+    # reads 4xx as "my payload is wrong, retrying will not help", those
+    # replies were lost rather than delayed.
+    def worker_payload(**over: object) -> dict:
+        body = {
+            "messageId": f"<worker-{run}-1@outlook.com>",
+            "from": send["to_address"],
+            "to": f"reply+{send['reply_token']}@linerai.us",
+            "conversationId": send["reply_token"],
+            "subject": "Re: Liner test message",
+            "fromAddress": send["to_address"],
+            "fromName": "A Buyer",
+            "text": "sounds good",
+            "html": "<div>sounds good</div>",
+            # Null, not absent and not "". `parsed.inReplyTo ?? null` is the
+            # obvious way to write "there wasn't one", so the schema must not
+            # be stricter than the wire.
+            "inReplyTo": None,
+            "references": None,
+            "date": "2026-08-11T10:00:00Z",
+            "receivedAt": "2026-08-11T10:00:01.123Z",
+            "attachments": [],
+        }
+        body.update(over)
+        return body
+
+    inbound(worker_payload(), path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
+    landed = settled(f"<worker-{run}-1@outlook.com>")
+    check("a null inReplyTo is a missing header, not a malformed payload",
+          landed.get("outcome") == "accepted", str(landed.get("outcome")))
+    check("and the fields the worker sends that we do not read are tolerated",
+          landed.get("matched_by") == "reply_token", str(landed.get("matched_by")))
+
+    # The Worker retries a 5xx or a dropped connection. Re-posting the same
+    # bytes must cost a buyer nothing.
+    twice = worker_payload(messageId=f"<worker-{run}-2@outlook.com>")
+    inbound(twice, path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
+    again = inbound(twice, path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
+    check("its retry is recognised rather than filed a second time",
+          isinstance(again[1], dict) and again[1].get("outcome") == "duplicate",
+          str(again[1]))
+
+    # Not every message carries a Message-ID header, and JSON.stringify drops
+    # the key entirely when postal-mime found none. Without a fallback the
+    # dedupe above has nothing to key on and the retry files twice.
+    headerless = worker_payload()
+    headerless.pop("messageId")
+    first = inbound(headerless, path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
+    repeat = inbound(headerless, path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
+    check("mail with no Message-ID is still accepted",
+          isinstance(first[1], dict) and first[1].get("outcome") == "received",
+          str(first[1]))
+    check("and its retry is caught on the bytes instead",
+          isinstance(repeat[1], dict) and repeat[1].get("outcome") == "duplicate",
+          str(repeat[1]))
+    # The other half of that trade, and the half that would be invisible if it
+    # broke: two real emails must stay two. The Worker stamps receivedAt once
+    # per invocation at millisecond resolution, so a buyer writing the same
+    # word twice still produces two different bodies.
+    second = worker_payload(receivedAt="2026-08-11T10:00:09.987Z")
+    second.pop("messageId")
+    landed_second = inbound(second, path="/api/emails/inbound",
+                            shared=WEBHOOK_SECRET.decode())[1]
+    check("while a genuinely second message is not mistaken for a retry",
+          isinstance(landed_second, dict) and landed_second.get("outcome") == "received",
+          str(landed_second))
+
+    # A synthetic id is a dedupe key and nothing else. Echoed back out as an
+    # In-Reply-To it would name a message that never existed.
+    landed_ids = [
+        e.get("provider_message_id") or ""
+        for e in call("GET", f"/api/leads/{send['lead_id']}/timeline")["entries"]
+    ]
+    check("and the id we invented never leaves the building",
+          not any(i.startswith("sha256:") for i in landed_ids),
+          str([i for i in landed_ids if i.startswith("sha256:")][:2]))
+
+    # The catch-all also carries mail to support@ and sales@, where there is no
+    # token at all and the Worker sends conversationId: null.
+    stranger_id = f"<worker-{run}-cold@outlook.com>"
+    inbound(
+        worker_payload(messageId=stranger_id, to="sales@linerai.us", conversationId=None),
+        path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode(),
+    )
+    cold = settled(stranger_id)
+    check("a null conversationId is a message with no token, not a broken one",
+          cold.get("outcome") in {"accepted", "unresolved"}, str(cold.get("outcome")))
+
     print("\n== a buyer answering puts it back on a person ==")
     # Built here rather than hunted for in the seed. The first version looked
     # for any flagged thread with an address on it, which passed on a fresh
