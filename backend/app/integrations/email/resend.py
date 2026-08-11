@@ -23,6 +23,23 @@ API = "https://api.resend.com/emails"
 TIMEOUT = 20.0
 
 
+def as_html(text: str) -> str:
+    """Plain text as paragraphs, escaped.
+
+    Deliberately not a template. The bodies here are drafts a rep read and
+    possibly edited, and wrapping them in a branded shell would mean sending
+    something other than what they approved. Escaping is not optional: a body
+    can contain a buyer's own words, and `<` in an unescaped body is how a
+    stray angle bracket eats the rest of the email.
+    """
+    from html import escape
+
+    blocks = [b.strip() for b in (text or "").split("\n\n") if b.strip()]
+    return "".join(
+        f"<p>{escape(b).replace(chr(10), '<br>')}</p>" for b in blocks
+    )
+
+
 class ResendSender(EmailSender):
     name = "resend"
     delivers = True
@@ -47,17 +64,28 @@ class ResendSender(EmailSender):
             )
 
     def from_address(self) -> str:
-        return settings.sending_from or f"liner@{settings.sending_domain}"
+        # support@ rather than liner@: it is the address the domain is set up
+        # around, and the one a buyer replying by hand rather than by hitting
+        # Reply will send to -- which the catch-all routes back either way.
+        return settings.sending_from or f"support@{settings.sending_domain}"
 
     def payload(self, to: str, subject: str, body: str, reply_to: str = "") -> dict:
         """The request body, built separately so it can be asserted without
         being sent. `make smoke` checks the shape offline; the HTTP call is the
-        only part a key would add."""
+        only part a key would add.
+
+        Both parts go: `text` is the source of truth -- every draft in this
+        system is written as plain text -- and `html` is derived from it so the
+        message renders as paragraphs rather than as one run-on block. Sending
+        only one of the two is how an email either looks broken in a modern
+        client or arrives unreadable in a plain-text one.
+        """
         out = {
             "from": self.from_address(),
             "to": [to],
             "subject": subject,
             "text": body,
+            "html": as_html(body),
         }
         if reply_to:
             out["reply_to"] = reply_to

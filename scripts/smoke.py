@@ -16,6 +16,7 @@ import secrets
 import re
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from hashlib import sha256
@@ -170,6 +171,22 @@ def inbound(
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode()[:120]
+
+
+def settled(message_id: str, tries: int = 40) -> dict:
+    """Wait for a claimed delivery to be filed, and say what it became.
+
+    The endpoint answers before it resolves -- the Worker rejects the message
+    to the sender on a non-2xx, so a slow CRM bounces a real buyer's reply --
+    which means the response says 'received' and the outcome arrives a moment
+    later on the receipt.
+    """
+    for _ in range(tries):
+        for row in call("GET", "/api/email/receipts")["receipts"]:
+            if row["message_id"] == message_id and row["outcome"] != "received":
+                return row
+        time.sleep(0.1)
+    return {}
 
 
 def sse(raw: str) -> list[tuple[str, dict]]:
@@ -916,6 +933,10 @@ def main() -> int:
     replyable = call("GET", "/api/email/replyable")["sends"]
     check("every send carries a token a reply can come back on", bool(replyable),
           f"{len(replyable)} replyable sends")
+    # A send with no lead has nowhere for a reply to land, and the page that
+    # lists these promises which buyer it will show up on.
+    check("and every one of them has a buyer for the reply to land on",
+          all(s["lead_id"] for s in replyable))
     send = replyable[0]
 
     # The deployed Worker posts to /api/emails/inbound with a plain shared
@@ -929,7 +950,7 @@ def main() -> int:
     check("the path the deployed worker posts to reaches the same handler",
           code == 200, f"{code} {aliased}")
     check("and a plain shared secret authenticates it",
-          aliased.get("outcome") in {"accepted", "unresolved"}, str(aliased))
+          aliased.get("outcome") == "received", str(aliased))
     wrong = inbound({"messageId": "<x>", "from": "a@b.c", "to": "sales@d"},
                     path="/api/emails/inbound", shared="not-the-secret")
     check("but the wrong one does not", wrong[0] == 401, str(wrong[0]))
@@ -952,9 +973,14 @@ def main() -> int:
         "text": "Yes -- can I come in on Saturday?",
     }
     code, got = inbound(reply)
-    check("a reply on the token lands on the right buyer",
-          code == 200 and got.get("outcome") == "accepted"
-          and got.get("lead_id") == send["lead_id"], str(got))
+    # Answered before it is filed, on purpose: the Worker rejects the message
+    # back to the sender on a non-2xx, so a slow CRM bounces a real reply.
+    check("the endpoint answers immediately rather than making Cloudflare wait",
+          code == 200 and got.get("outcome") == "received", str(got))
+    filed = settled(reply["messageId"])
+    check("and the reply is then filed against the right buyer",
+          filed.get("outcome") == "accepted" and filed.get("lead_id") == send["lead_id"],
+          str(filed.get("outcome")))
 
     timeline = call("GET", f"/api/leads/{send['lead_id']}/timeline")
     inbox = [e for e in timeline["entries"]
@@ -963,6 +989,9 @@ def main() -> int:
           f"{len(inbox)} inbound entries")
 
     # Cloudflare retries. A retry must not give the buyer two replies.
+    # A retry that arrives *during* processing is the case a naive fast-ack
+    # loses: nothing is 'accepted' yet, so a dedupe looking only for that
+    # files the reply twice. The claim is written before the response.
     code, again = inbound(reply)
     check("the same delivery twice is one activity",
           again.get("outcome") == "duplicate", str(again))
@@ -973,28 +1002,35 @@ def main() -> int:
 
     # No token -- a client that rewrote Reply-To, or a forward. The From
     # address is the loosest rule and comes last for that reason.
-    code, loose = inbound({
+    inbound({
         "messageId": f"<smoke-{run}-no-token>", "from": send["to_address"],
         "to": "sales@example.invalid", "subject": "Hello", "text": "Still thinking",
     })
+    loose = settled(f"<smoke-{run}-no-token>")
     check("a reply with no token falls back to the address on file",
           loose.get("outcome") == "accepted" and loose.get("lead_id") == send["lead_id"],
-          str(loose))
-    matched = call("GET", "/api/email/receipts")["receipts"][0]
-    check("and records which rule placed it", matched["matched_by"] == "from_address",
-          matched["matched_by"])
+          str(loose.get("outcome")))
+    check("and records which rule placed it", loose.get("matched_by") == "from_address",
+          str(loose.get("matched_by")))
 
     # A name is never part of matching, so a stranger stays a stranger rather
     # than being attached to whoever happens to share one.
-    code, stranger = inbound({
+    inbound({
         "messageId": f"<smoke-{run}-stranger>", "from": "nobody@nowhere.invalid",
         "to": "sales@example.invalid", "subject": "Do you take trades?", "text": "?",
     })
+    stranger = settled(f"<smoke-{run}-stranger>")
     check("mail from someone we do not know is kept, not guessed at",
-          stranger.get("outcome") == "unresolved", str(stranger))
+          stranger.get("outcome") == "unresolved", str(stranger.get("outcome")))
     check("and kept, not dropped -- someone really wrote in",
           any(r["message_id"] == f"<smoke-{run}-stranger>"
               for r in call("GET", "/api/email/receipts")["receipts"]))
+
+    # No session guards this endpoint, so an unbounded body is a firehose
+    # anyone who finds the URL can point at it. The limit matches the Worker's.
+    oversized = inbound({"messageId": f"<smoke-{run}-big>", "text": "x" * (11 * 1024 * 1024)})
+    check("an oversized delivery is refused before it is parsed",
+          oversized[0] == 413, str(oversized[0]))
 
     print("\n== a buyer answering puts it back on a person ==")
     # Built here rather than hunted for in the seed. The first version looked
@@ -1022,13 +1058,14 @@ def main() -> int:
     check("a rep taking over claims it",
           call("GET", f"/api/conversations/{mine}")["open_escalation"] is None)
 
-    code, reopened = inbound({
+    inbound({
         "messageId": f"<smoke-{run}-reopen>", "from": escalation_email,
         "to": "sales@example.invalid", "subject": "Re:",
         "text": "Following up on my question",
     })
+    reopened = settled(f"<smoke-{run}-reopen>")
     check("the reply reaches the buyer it came from",
-          reopened.get("outcome") == "accepted", str(reopened))
+          reopened.get("outcome") == "accepted", str(reopened.get("outcome")))
     check("and puts the thread back in the queue -- their turn became ours again",
           call("GET", f"/api/conversations/{mine}")["open_escalation"] is not None)
 
@@ -1039,12 +1076,12 @@ def main() -> int:
     shouty = dict(reply)
     shouty["messageId"] = f"<smoke-{run}-shouty>"
     shouty["to"] = f"reply+{send['reply_token'].upper()}@example.invalid"
-    code, cased = inbound(shouty)
+    inbound(shouty)
+    cased = settled(shouty["messageId"])
     check("a token that came back upper-cased still finds its buyer",
-          cased.get("lead_id") == send["lead_id"], str(cased))
-    stamped = call("GET", "/api/email/receipts")["receipts"][0]
+          cased.get("lead_id") == send["lead_id"], str(cased.get("outcome")))
     check("and by the token, not by guessing from the address",
-          stamped["matched_by"] == "reply_token", stamped["matched_by"])
+          cased.get("matched_by") == "reply_token", str(cased.get("matched_by")))
 
     print("\n== a manager can see the whole mailbox, not just per-buyer ==")
     box = call("GET", "/api/email/messages")

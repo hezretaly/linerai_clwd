@@ -20,7 +20,7 @@ import hmac
 import re
 from hashlib import sha256
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -46,6 +46,9 @@ router = APIRouter(tags=["email"])
 # reply+<token>@domain. The local part is what carries the thread; the domain
 # is whatever Cloudflare routed, and matching on it would break the moment a
 # dealer forwards from a second address.
+# Matches the Worker's `express.json({ limit: "10mb" })`.
+MAX_BODY = 10 * 1024 * 1024
+
 REPLY_RE = re.compile(r"reply\+([A-Za-z0-9_-]{6,64})@", re.IGNORECASE)
 
 
@@ -101,11 +104,20 @@ def _receipt(db: Session, **kwargs) -> InboundEmail:
 @router.post("/emails/inbound")
 async def receive(
     request: Request,
+    background: BackgroundTasks,
     x_liner_signature: str = Header(default=""),
     x_webhook_secret: str = Header(default=""),
     db: Session = Depends(get_db),
 ) -> dict:
     raw = await request.body()
+
+    # An intake no session guards is an intake anyone can point a firehose at.
+    # 10 MB is the documented ceiling on the Worker side; matching it here
+    # means the refusal happens before the body is parsed.
+    if len(raw) > MAX_BODY:
+        _receipt(db, outcome="malformed",
+                 detail=f"Body was {len(raw)} bytes; the limit is {MAX_BODY}.")
+        raise HTTPException(413, "Payload too large")
 
     # No secret configured means no door at all, so the endpoint is shut rather
     # than open. An unauthenticated mail intake is worse than a missing one.
@@ -164,8 +176,13 @@ async def receive(
     if message_id:
         seen = (
             db.query(InboundEmail)
-            .filter(InboundEmail.message_id == message_id,
-                    InboundEmail.outcome == "accepted")
+            .filter(
+                InboundEmail.message_id == message_id,
+                # 'received' counts: it is a delivery already claimed and still
+                # being filed. Checking only for 'accepted' would let a fast
+                # retry slip past into a second activity.
+                InboundEmail.outcome.in_(("received", "accepted", "unresolved")),
+            )
             .first()
         )
         if seen is not None:
@@ -173,44 +190,84 @@ async def receive(
                      **envelope)
             return {"ok": True, "outcome": "duplicate"}
 
-    lead, outreach, matched_by = _resolve(db, to, in_reply_to, sender)
-    if lead is None:
-        _receipt(
-            db, outcome="unresolved", **envelope,
-            detail=(
+    # Claim the message before answering, then do the work after. Returning
+    # 200 fast matters: the Worker rejects the message to the sender on a
+    # non-2xx, so a slow CRM bounces a real buyer's reply.
+    #
+    # The claim is why this is written down rather than just backgrounded. A
+    # plain "return 200, process later" loses the dedupe it is sitting right
+    # next to -- a retry arriving mid-processing finds no accepted receipt and
+    # files the reply twice. The row goes in first, holding the message id;
+    # the background pass fills in what it resolved to.
+    claim = _receipt(db, outcome="received", detail=f"Authenticated by {proved_by}.",
+                     **envelope)
+    background.add_task(_place, claim.id)
+    return {"ok": True, "outcome": "received", "receipt_id": claim.id}
+
+
+def _place(receipt_id: str) -> None:
+    """Resolve one claimed delivery and store it. Runs after the response.
+
+    Its own session: the request's is closed by the time this runs, and
+    reusing it is the classic background-task crash.
+    """
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        claim = db.query(InboundEmail).filter_by(id=receipt_id).one_or_none()
+        if claim is None or claim.outcome != "received":
+            return
+
+        lead, outreach, matched_by = _resolve(
+            db, claim.to_address, claim.in_reply_to, claim.from_address
+        )
+        if lead is None:
+            claim.outcome = "unresolved"
+            claim.detail = (
                 "No reply token, no matching message id, and the From address is not "
                 "on any lead. Kept rather than dropped -- someone really wrote in."
-            ),
+            )
+            db.commit()
+            return
+
+        record = Outreach(
+            lead_id=lead.id,
+            appointment_id=outreach.appointment_id if outreach else None,
+            channel="email",
+            direction="in",
+            kind="reply",
+            to_address=claim.from_address,
+            subject=claim.subject,
+            body=claim.body,
+            provider="inbound",
+            provider_message_id=claim.message_id or None,
+            in_reply_to=claim.in_reply_to or None,
+            status="sent",
+            sent_at=utcnow(),
         )
-        return {"ok": True, "outcome": "unresolved"}
+        db.add(record)
+        db.flush()
 
-    record = Outreach(
-        lead_id=lead.id,
-        appointment_id=outreach.appointment_id if outreach else None,
-        channel="email",
-        direction="in",
-        kind="reply",
-        to_address=sender,
-        subject=subject,
-        body=body,
-        provider="inbound",
-        provider_message_id=message_id or None,
-        in_reply_to=in_reply_to or None,
-        status="sent",
-        sent_at=utcnow(),
-    )
-    db.add(record)
-    db.commit()
+        claim.outcome = "accepted"
+        claim.matched_by = matched_by
+        claim.lead_id = lead.id
+        claim.outreach_id = record.id
+        db.commit()
 
-    _receipt(db, outcome="accepted", matched_by=matched_by, lead_id=lead.id,
-             outreach_id=record.id, detail=f"Authenticated by {proved_by}.", **envelope)
-
-    reopened = _reopen(db, outreach, lead)
-    emit(db, "email.received", {
-        "lead_id": lead.id, "outreach_id": record.id,
-        "matched_by": matched_by, "reopened": reopened,
-    })
-    return {"ok": True, "outcome": "accepted", "lead_id": lead.id}
+        reopened = _reopen(db, outreach, lead)
+        emit(db, "email.received", {
+            "lead_id": lead.id, "outreach_id": record.id,
+            "matched_by": matched_by, "reopened": reopened,
+        })
+    except Exception as exc:  # never let a background failure vanish
+        claim = db.query(InboundEmail).filter_by(id=receipt_id).one_or_none()
+        if claim is not None:
+            claim.outcome = "failed"
+            claim.detail = f"Could not be filed: {exc}"[:500]
+            db.commit()
+    finally:
+        db.close()
 
 
 def _resolve(
@@ -472,7 +529,15 @@ def replyable(
     """
     rows = (
         db.query(Outreach)
-        .filter(Outreach.direction == "out", Outreach.reply_token.is_not(None))
+        .filter(
+            Outreach.direction == "out",
+            Outreach.reply_token.is_not(None),
+            # A send with no lead has nowhere for a reply to land -- the test
+            # send from this very page is one -- and the dropdown promises
+            # which buyer it will appear on. Offering one would make the page
+            # lie and file the result as unresolved.
+            Outreach.lead_id.is_not(None),
+        )
         .order_by(Outreach.created_at.desc())
         .limit(25)
         .all()

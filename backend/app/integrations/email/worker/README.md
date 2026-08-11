@@ -23,9 +23,9 @@ RESEND_API_KEY=re_...
 # goes out fine and every reply bounces, and nothing in the app looks wrong.
 SENDING_DOMAIN=linerai.us
 
-# Optional. Defaults to liner@$SENDING_DOMAIN. A display name is worth setting:
-# it is what a buyer sees in their inbox.
-SENDING_FROM=Riverside Auto <liner@linerai.us>
+# Optional. Defaults to support@$SENDING_DOMAIN. A display name is worth
+# setting: it is what a buyer sees in their inbox.
+SENDING_FROM=Riverside Auto <support@linerai.us>
 
 # --- Receiving ---------------------------------------------------------------
 # Must equal the Worker's WEBHOOK_SECRET exactly. This is the only thing in
@@ -78,11 +78,23 @@ change; nothing on the backend needs touching.
 Both are compared in constant time, so a mismatch fails identically to any
 other wrong value — the receipts are where you find out, not the response.
 
-## Paths
+## Paths and the response
 
 `/api/emails/inbound` and `/api/inbound-email` reach the same handler. The
 first is what the deployed Worker posts to; the second is what this app
 documented first.
+
+The endpoint **answers before it files the mail** — the Worker calls
+`setReject()` on a non-2xx, so a slow CRM bounces a real buyer's reply back to
+them. It returns `{"outcome": "received", "receipt_id": ...}` in a few
+milliseconds and resolves in the background; the receipt then settles to
+`accepted`, `unresolved` or `failed`.
+
+The claim is written *before* the response, not after, and that ordering is
+load-bearing. A plain "return 200, process later" loses its own dedupe: a
+Cloudflare retry arriving mid-processing finds nothing accepted yet and files
+the reply a second time. Bodies over 10 MB are refused with a 413, matching
+the Worker's own limit.
 
 ## Checking it
 

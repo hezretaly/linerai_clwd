@@ -241,6 +241,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     a mail server may rewrite the case of a local part, SQLite's `=` is
     case-sensitive, and the resulting miss is invisible — the reply just lands
     by the loosest matching rule instead of the exact one.
+  - **The intake answers before it files.** The Worker rejects the message to
+    the sender on a non-2xx, so a slow CRM bounces a real buyer's reply. The
+    receipt is claimed *before* the response and resolved after — that
+    ordering is the dedupe: a plain "return 200, process later" lets a retry
+    arriving mid-flight file the same reply twice.
   - **The intake takes either credential and one of two paths.**
     `X-Liner-Signature` (HMAC over the exact bytes, so it covers the body) or
     `X-Webhook-Secret` (plain, what the deployed Worker sends), on
