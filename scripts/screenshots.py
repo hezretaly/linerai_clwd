@@ -50,6 +50,7 @@ DEALER = [
     "/app/calendar",
     "/app/inventory",
     "/app/inventory/import",
+    "/app/email",
     "/app/assistant",
     "/app/team",
 ]

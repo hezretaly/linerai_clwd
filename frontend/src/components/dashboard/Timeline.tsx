@@ -28,6 +28,7 @@ export interface TimelineEntry {
   tool_calls?: { name: string }[]
 
   // outreach
+  direction?: 'out' | 'in'
   subject?: string
   body?: string
   outreach_kind?: string
@@ -129,11 +130,25 @@ function Message({ e, showChannel }: { e: TimelineEntry; showChannel: boolean })
 }
 
 function Outreach({ e }: { e: TimelineEntry }) {
+  // A reply the buyer sent us, not a send. Same row shape, opposite direction,
+  // and a rep skimming a timeline has to be able to tell at a glance who wrote
+  // which -- so it leans to the buyer's side and says who it is from.
+  const inbound = e.direction === 'in'
   return (
-    <div className="my-2 w-full max-w-[90%] self-center rounded-lg border border-border bg-muted/40 p-3">
+    <div
+      className={clsx(
+        'my-2 w-full max-w-[90%] rounded-lg border p-3',
+        inbound
+          ? 'self-start border-primary/30 bg-primary/5'
+          : 'self-center border-border bg-muted/40',
+      )}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <ChannelMark channel={e.channel} />
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <Icon name="mail" className="h-3 w-3 shrink-0" />
+            {inbound ? 'Email reply' : CHANNEL_LABEL[e.channel] ?? e.channel}
+          </span>
           <p className="mt-0.5 truncate text-sm font-medium">{e.subject}</p>
         </div>
         {/* Only where a link was there to follow. An email with nothing
@@ -162,9 +177,9 @@ function Outreach({ e }: { e: TimelineEntry }) {
         </p>
       )}
       <p className="tnum mt-1.5 text-[11px] text-muted-foreground">
-        {e.to_address ? `To ${e.to_address} · ` : ''}
+        {e.to_address ? `${inbound ? 'From' : 'To'} ${e.to_address} · ` : ''}
         {dateTime(e.at)}
-        {!e.delivered_externally && e.channel === 'email' && (
+        {!inbound && !e.delivered_externally && e.channel === 'email' && (
           <> · recorded locally, not delivered</>
         )}
       </p>

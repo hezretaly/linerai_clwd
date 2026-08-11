@@ -148,6 +148,11 @@ class Outreach(Base):
     lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), nullable=True)
     sent_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     channel: Mapped[str] = mapped_column(String(20), default="email")  # email | phone_logged
+    # Which way it went. Inbound replies are the same shape as outbound sends
+    # -- an address, a subject, a body, a provider id -- so they share the
+    # table rather than getting one of their own, and the timeline renders
+    # both without a new entry kind.
+    direction: Mapped[str] = mapped_column(String(3), default="out", index=True)  # out | in
     # What this send *was*, so the overview can count one kind without
     # inferring it from the subject line. followup | reminder | credit_application
     kind: Mapped[str] = mapped_column(String(30), default="followup", index=True)
@@ -165,10 +170,54 @@ class Outreach(Base):
     # /r/<token> hop we own. No token means the body carried no trackable
     # link -- a rep who deleted it, or a send made before this existed --
     # which is different from a link nobody clicked.
+    # What makes a reply traceable. Every outbound send carries
+    # `Reply-To: reply+<reply_token>@<sending_domain>`, and the Cloudflare
+    # catch-all routes that straight back to the row that sent it. Keyed on
+    # the send rather than on a conversation because most outreach here is
+    # composed against a lead and has no conversation to name.
+    reply_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # The provider id of the message this one answers, for the fallback path
+    # when a reply arrives without the plus-address (a client that rewrites
+    # Reply-To, or a forward).
+    in_reply_to: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
     click_token: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     click_count: Mapped[int] = mapped_column(Integer, default=0)
     first_clicked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_clicked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = created()
+
+
+class InboundEmail(Base):
+    """A receipt for every delivery the webhook was handed, kept or not.
+
+    Append-only, the same instinct as ``events``. It does three jobs at once:
+    it is the dedupe index on ``message_id``, it is the log the setup page
+    reads, and it is the only way to debug a delivery that was refused --
+    without it a bad signature returns 401 into the void and the operator has
+    nothing to look at.
+
+    Storing an unresolved message is deliberate. A reply this system cannot
+    place is still a real buyer talking, and dropping it silently is the worst
+    of the available answers.
+    """
+
+    __tablename__ = "inbound_emails"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    # accepted | duplicate | unresolved | bad_signature | malformed
+    outcome: Mapped[str] = mapped_column(String(20), index=True)
+    message_id: Mapped[str] = mapped_column(String(200), default="", index=True)
+    from_address: Mapped[str] = mapped_column(String(255), default="")
+    to_address: Mapped[str] = mapped_column(String(255), default="")
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    in_reply_to: Mapped[str] = mapped_column(String(200), default="")
+    # How it was placed, when it was: reply_token | in_reply_to | from_address.
+    # A rep looking at a misfiled reply needs to know which rule put it there.
+    matched_by: Mapped[str] = mapped_column(String(20), default="")
+    lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), nullable=True)
+    outreach_id: Mapped[str | None] = mapped_column(ForeignKey("outreach.id"), nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = created()
 
 

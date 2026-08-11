@@ -18,6 +18,7 @@ from app.api.deps import current_user, get_dealership
 from app.api.team import rep_load
 from app.config import settings
 from app.db import get_db, utcnow
+from app import outreach_send
 from app.events import emit
 from app.integrations.registry import get_email_sender
 from app.models import (
@@ -217,27 +218,26 @@ def send_outreach(
         appointment_id=appointment.id, lead_id=lead.id, sent_by_user_id=user.id,
         channel="email", to_address=lead.email, subject=body.subject, body=body.body,
         provider=sender.name, status="queued",
+        reply_token=outreach_send.mint_reply_token(db),
     )
     db.add(record)
     db.commit()
 
-    # DEMO_MODE blocks real delivery unless the address was explicitly
-    # allow-listed. Cheap insurance against a rehearsal mailing a prospect.
-    blocked = (
-        sender.delivers
-        and settings.demo_mode
-        and lead.email.lower() not in settings.allowlist
-    )
+    # One guard, shared with the lead-level send. See app/outreach_send.py.
+    blocked = outreach_send.blocked_reason(sender, lead.email)
     if blocked:
         record.status = "failed"
-        record.error = (
-            f"DEMO_MODE is on and {lead.email} is not in EMAIL_ALLOWLIST, so nothing was sent."
-        )
+        record.error = blocked
         db.commit()
         return outreach_out(record)
 
     try:
-        result = sender.send(lead.email, body.subject, body.body, reply_to=user.email)
+        # Reply-To routes back to this row, not to the rep who pressed send:
+        # a reply has to reach the system to land on the buyer's timeline.
+        result = sender.send(
+            lead.email, body.subject, body.body,
+            reply_to=outreach_send.reply_to_address(record.reply_token),
+        )
         record.provider_message_id = result.message_id
         record.provider_thread_id = result.thread_id
         # 'sent' means the provider accepted it. There is no delivery callback.

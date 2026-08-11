@@ -149,6 +149,12 @@ PUBLIC_BASE_URL=https://liner.example.com
 
 # Leave this on. It is what stops a demo emailing a real prospect.
 DEMO_MODE=true
+
+# The only thing in front of /api/inbound-email, which writes into a buyer's
+# history and has no session to check because Cloudflare has none to send.
+# Startup refuses to run on the development default when ENV=production.
+# Set the same value as a secret on the Cloudflare Worker.
+WEBHOOK_SECRET=$(openssl rand -hex 32)
 EOF
 sudo chown liner:liner /srv/liner/.env
 sudo chmod 600 /srv/liner/.env
@@ -170,6 +176,31 @@ website. Set it to your real hostname anyway, so that day needs no debugging.
 Everything else keeps its default and reports itself as not-configured — the
 agent runs on the stub, email goes to the outbox, voice returns a typed 503.
 Nothing is simulated to cover those gaps.
+
+### Email, when you want it
+
+Two independent halves, and the second one fails silently — a deployment can
+send perfectly and drop every reply, with nothing in the app looking wrong.
+`/app/email` in the dashboard is where you check both, and it records every
+delivery the inbound endpoint was handed **including the ones it refused**.
+
+```bash
+EMAIL_SENDER=resend
+RESEND_API_KEY=re_...
+# Verified in Resend, and the same domain Cloudflare routes mail for.
+# Outbound builds `Reply-To: reply+<token>@here`; if the two differ, replies
+# bounce and the app has no way to know.
+SENDING_DOMAIN=linerai.us
+```
+
+Receiving needs Cloudflare Email Routing on that domain, with a **catch-all**
+rule to the Worker in
+`backend/app/integrations/email/worker/` — its README has the records, the
+rules and the two secrets. The catch-all is not optional: `reply+<token>@`
+addresses are minted per send and cannot be enumerated as rules.
+
+The Worker has never been deployed from here, so treat its first run as
+untested. The endpoint it posts to is covered by `make smoke`.
 
 ## 3. Build and seed
 

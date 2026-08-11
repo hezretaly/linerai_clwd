@@ -36,6 +36,7 @@ from app.api.deps import current_user, get_dealership
 from app.integrations.base import NotConfigured
 from app.config import settings
 from app.db import get_db, utcnow
+from app import outreach_send
 from app.events import emit
 from app.matching import match_lead
 from app.ingest.adf import AdfError, parse_adf
@@ -490,6 +491,7 @@ def send_lead_outreach(
         channel="email", kind=payload.kind, to_address=lead.email,
         subject=payload.subject, body=payload.body,
         provider=sender.name, status="queued",
+        reply_token=outreach_send.mint_reply_token(db),
     )
     db.add(record)
     db.flush()
@@ -497,18 +499,21 @@ def send_lead_outreach(
     db.commit()
 
     # An imported address is by definition not one we allow-listed. Refusing is
-    # the point -- a rehearsal must not mail a real prospect.
-    if sender.delivers and settings.demo_mode and lead.email.lower() not in settings.allowlist:
+    # the point -- a rehearsal must not mail a real prospect. One guard, shared
+    # with the appointment send; see app/outreach_send.py.
+    blocked = outreach_send.blocked_reason(sender, lead.email)
+    if blocked:
         record.status = "failed"
-        record.error = (
-            f"DEMO_MODE is on and {lead.email} is not in EMAIL_ALLOWLIST, so nothing was sent."
-        )
+        record.error = blocked
         db.commit()
         return outreach_out(record)
 
     try:
         # record.body, not payload.body: the tracked link is the one that goes.
-        result = sender.send(lead.email, payload.subject, record.body, reply_to=user.email)
+        result = sender.send(
+            lead.email, payload.subject, record.body,
+            reply_to=outreach_send.reply_to_address(record.reply_token),
+        )
         record.provider_message_id = result.message_id
         record.provider_thread_id = result.thread_id
         record.status = result.status

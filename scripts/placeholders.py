@@ -14,7 +14,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "PLACEHOLDERS.md"
 MARKER = re.compile(r"PLACEHOLDER\(([^)]+)\):\s*(.*)")
 SKIP = {"node_modules", ".venv", ".git", "dist", ".artifacts", ".logs", "sites"}
-EXTS = {".py", ".ts", ".tsx", ".yaml", ".yml"}
+# .js is here for the Cloudflare Worker, which is the one piece of this
+# system that runs somewhere else entirely -- and therefore the one most
+# likely to be assumed working because nothing local complains.
+EXTS = {".py", ".ts", ".tsx", ".js", ".yaml", ".yml"}
 
 
 def main() -> None:

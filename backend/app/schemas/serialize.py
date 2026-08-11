@@ -255,6 +255,10 @@ def outreach_out(o: Outreach) -> dict:
         "lead_id": o.lead_id,
         "sent_by_user_id": o.sent_by_user_id,
         "channel": o.channel,
+        # Which way it went. An inbound reply is the same shape as a send --
+        # address, subject, body, provider id -- and shares the table, so
+        # this is the only thing telling the two apart on the timeline.
+        "direction": o.direction,
         "to_address": o.to_address,
         "subject": o.subject,
         "body": o.body,

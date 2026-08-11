@@ -13,6 +13,7 @@ from app.config import settings
 from app.integrations.email.base import EmailSender
 from app.integrations.email.gmail import GmailSender
 from app.integrations.email.outbox import ConsoleSender, OutboxSender
+from app.integrations.email.resend import ResendSender
 from app.integrations.voice.base import UnconfiguredVoiceProvider, VoiceProvider
 
 
@@ -27,6 +28,8 @@ class IntegrationStatus:
 
 
 def get_email_sender() -> EmailSender:
+    if settings.email_sender == "resend":
+        return ResendSender()
     if settings.email_sender == "gmail":
         return GmailSender()
     if settings.email_sender == "console":
@@ -87,6 +90,16 @@ def _model_name(provider: str) -> str:
     )
 
 
+# What each sender needs, asked of the sender rather than hardcoded here. This
+# block used to name Google's variables whatever was selected, so choosing
+# Resend put a banner on screen telling the operator to set
+# GOOGLE_SERVICE_ACCOUNT_JSON.
+SENDER_HINTS = {
+    "resend": ["EMAIL_SENDER=resend", "RESEND_API_KEY", "SENDING_DOMAIN"],
+    "gmail": ["EMAIL_SENDER=gmail", "GOOGLE_SERVICE_ACCOUNT_JSON", "GMAIL_IMPERSONATE"],
+}
+
+
 def _email_status() -> IntegrationStatus:
     sender = get_email_sender()
     missing: list[str] = []
@@ -96,12 +109,14 @@ def _email_status() -> IntegrationStatus:
         try:
             sender.check()
             configured = True
-            detail = f"Sending as {settings.gmail_impersonate}."
+            detail = f"Sending as {getattr(sender, 'from_address', lambda: sender.name)()}."
         except Exception as exc:  # NotConfigured
             missing = getattr(exc, "missing", [])
             detail = getattr(exc, "detail", str(exc))
     else:
-        missing = ["EMAIL_SENDER=gmail", "GOOGLE_SERVICE_ACCOUNT_JSON", "GMAIL_IMPERSONATE"]
+        # Nothing is selected, so there is no one sender to name. Point at the
+        # one this deployment is meant to use and leave the other discoverable.
+        missing = SENDER_HINTS["resend"]
         detail = "Outreach is recorded in the local outbox. No mail is delivered."
     return IntegrationStatus(
         key="email",
@@ -110,6 +125,36 @@ def _email_status() -> IntegrationStatus:
         impl=sender.name,
         missing=missing,
         detail=detail,
+    )
+
+
+def _inbound_status() -> IntegrationStatus:
+    """Receiving is a separate thing from sending and fails separately.
+
+    A deployment can send perfectly and silently drop every reply -- the
+    Cloudflare route is configured somewhere else entirely -- so folding this
+    into the email row would hide exactly the half that breaks quietly.
+    """
+    missing = []
+    if not settings.webhook_secret:
+        missing.append("WEBHOOK_SECRET")
+    if not settings.sending_domain:
+        missing.append("SENDING_DOMAIN")
+    configured = not missing
+    return IntegrationStatus(
+        key="inbound_email",
+        label="Email replies",
+        configured=configured,
+        impl="webhook" if configured else "none",
+        missing=missing,
+        detail=(
+            f"Replies to reply+<token>@{settings.sending_domain} are accepted at "
+            "/api/inbound-email. The Cloudflare route that delivers them is "
+            "configured outside this app -- see integrations/email/worker/README.md."
+            if configured
+            else "The inbound endpoint refuses everything without a shared secret. "
+            "Nothing can write to a buyer's history unauthenticated."
+        ),
     )
 
 
@@ -146,7 +191,10 @@ def _scraper_status() -> IntegrationStatus:
 
 
 def all_statuses() -> list[IntegrationStatus]:
-    return [_llm_status(), _email_status(), _voice_status(), _scraper_status()]
+    return [
+        _llm_status(), _email_status(), _inbound_status(),
+        _voice_status(), _scraper_status(),
+    ]
 
 
 def registry_payload() -> dict:

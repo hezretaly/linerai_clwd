@@ -5,6 +5,10 @@ never run against the real thing, because the credential or vendor it needs
 is not available.
 
 
+## cloudflare-worker
+
+- `backend/app/integrations/email/worker/worker.js:4` -- this has never been deployed or executed.
+
 ## gmail
 
 - `backend/app/integrations/email/gmail.py:3` -- unverified. Requires a Google Workspace service account with domain-wide delegation plus GMAIL_IMPERSONATE, neither of which exists in this environment, so this code path has never been executed. The google-api client libraries are also not in pyproject.toml -- add them alongside the credentials. Until then ``check()`` raises and the app falls back to the outbox sender with a visible not-configured state.
@@ -12,4 +16,8 @@ is not available.
 ## llm
 
 - `backend/app/agent/loop.py:21` -- the vendor calls in providers.py have never run against a real endpoint -- there is no API key in this environment. The turn loop below, including tool dispatch, the malformed-argument path, the guard retry and the escalation, IS exercised on every `make smoke` run against a fake provider (scripts/agent_loop_check.py). So the plumbing is tested and the HTTP call is not. Expect to fix a wire-format detail on the first live run, not the shape of the conversation.
+
+## resend
+
+- `backend/app/integrations/email/resend.py:3` -- the HTTP call has never run here. There is no RESEND_API_KEY in this environment and inventing one to make a green tick appear is the opposite of what this codebase is for. Everything either side of the request is real and tested -- the allow-list guard, the Reply-To that makes a reply traceable, the row that records what was attempted, the error path that stores what the API said. Only the send itself is unproven, and ``check()`` says so until a key exists.
 

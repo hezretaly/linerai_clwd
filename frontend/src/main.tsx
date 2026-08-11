@@ -14,6 +14,7 @@ import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
 import { ConversationListPage } from './routes/ConversationList'
 import { LeadPage, LeadRedirect } from './routes/LeadPage'
+import { EmailSetupPage } from './routes/EmailSetup'
 import { LeadImportPage } from './routes/LeadImport'
 import { CalendarPage } from './routes/Calendar'
 import { InventoryPage } from './routes/Inventory'
@@ -73,6 +74,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="inventory" element={<InventoryPage />} />
             <Route path="inventory/import" element={<ImportPage />} />
+            <Route path="email" element={<EmailSetupPage />} />
             <Route path="assistant" element={<AssistantPage />} />
             <Route path="team" element={<TeamPage />} />
           </Route>

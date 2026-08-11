@@ -10,12 +10,15 @@ clean seed with an empty .env.
 
 from __future__ import annotations
 
+import hmac
 import json
+import secrets
 import re
 import sys
 import threading
 import urllib.error
 import urllib.request
+from hashlib import sha256
 from http.cookiejar import CookieJar
 
 BASE = "http://127.0.0.1:8000"
@@ -125,6 +128,33 @@ def upload(path: str, filename: str, content: bytes) -> dict:
             return json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         raise AssertionError(f"POST {path} -> {exc.code}: {exc.read().decode()[:300]}") from None
+
+
+# Matches config.DEV_WEBHOOK_SECRET. The inbound endpoint is the only one no
+# session guards, so the shared secret is the entire door -- and it gets a
+# development default precisely so the door can be tested rather than shipped
+# on trust.
+WEBHOOK_SECRET = b"liner-dev-inbound-secret"
+
+
+def inbound(payload: dict, signature: str | None = None) -> tuple[int, dict | str]:
+    """POST a delivery the way the Cloudflare Worker would.
+
+    Signs the exact bytes sent, not a re-serialisation of the object -- that
+    mismatch is the classic reason every real delivery 401s, so the test has to
+    be able to reproduce it rather than paper over it.
+    """
+    raw = json.dumps(payload).encode()
+    sig = signature if signature is not None else hmac.new(WEBHOOK_SECRET, raw, sha256).hexdigest()
+    request = urllib.request.Request(
+        BASE + "/api/inbound-email", data=raw, method="POST",
+        headers={"Content-Type": "application/json", "X-Liner-Signature": sig},
+    )
+    try:
+        with opener.open(request, timeout=30) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode()[:120]
 
 
 def sse(raw: str) -> list[tuple[str, dict]]:
@@ -859,6 +889,145 @@ def main() -> int:
     check("a deal that falls through can be put back", back["status"] == "available")
     code, _ = status_of("POST", f"/api/inventory/{target['id']}/status", {"status": "gone"})
     check("an invented status is refused rather than stored", code == 400, str(code))
+
+    print("\n== a reply finds its way back to the buyer ==")
+    # Outbound mints a token and carries it in Reply-To; the Cloudflare
+    # catch-all routes reply+<token>@ straight back here. Everything on this
+    # side is real and runs offline -- only the Worker and Resend need a key.
+    # Unique per run. The endpoint is idempotent on message id, so fixed ids
+    # meant every run after the first was deduped away -- and the reopen check
+    # below then left an escalation claimed for the next run to trip over.
+    run = secrets.token_hex(4)
+    replyable = call("GET", "/api/email/replyable")["sends"]
+    check("every send carries a token a reply can come back on", bool(replyable),
+          f"{len(replyable)} replyable sends")
+    send = replyable[0]
+
+    bad = inbound({"messageId": "<forged>", "from": "x@y.invalid", "to": "sales@d"},
+                  signature="deadbeef")
+    check("a delivery signed with the wrong secret is refused", bad[0] == 401, str(bad[0]))
+    # And it must not vanish. A 401 into the void is unfalsifiable: the operator
+    # sees no replies arriving and cannot tell a wrong secret from a broken
+    # Cloudflare route from a buyer who never wrote back.
+    receipts = call("GET", "/api/email/receipts")["receipts"]
+    check("and it still leaves a receipt to find it by",
+          any(r["outcome"] == "bad_signature" for r in receipts))
+
+    reply = {
+        "messageId": f"<smoke-{run}-token>",
+        "from": send["to_address"],
+        "to": f"reply+{send['reply_token']}@example.invalid",
+        "subject": f"Re: {send['subject']}",
+        "text": "Yes -- can I come in on Saturday?",
+    }
+    code, got = inbound(reply)
+    check("a reply on the token lands on the right buyer",
+          code == 200 and got.get("outcome") == "accepted"
+          and got.get("lead_id") == send["lead_id"], str(got))
+
+    timeline = call("GET", f"/api/leads/{send['lead_id']}/timeline")
+    inbox = [e for e in timeline["entries"]
+             if e["kind"] == "outreach" and e.get("direction") == "in"]
+    check("and shows on their timeline as a reply, not as a send", bool(inbox),
+          f"{len(inbox)} inbound entries")
+
+    # Cloudflare retries. A retry must not give the buyer two replies.
+    code, again = inbound(reply)
+    check("the same delivery twice is one activity",
+          again.get("outcome") == "duplicate", str(again))
+    after = call("GET", f"/api/leads/{send['lead_id']}/timeline")
+    check("and the timeline did not grow",
+          len([e for e in after["entries"]
+               if e["kind"] == "outreach" and e.get("direction") == "in"]) == len(inbox))
+
+    # No token -- a client that rewrote Reply-To, or a forward. The From
+    # address is the loosest rule and comes last for that reason.
+    code, loose = inbound({
+        "messageId": f"<smoke-{run}-no-token>", "from": send["to_address"],
+        "to": "sales@example.invalid", "subject": "Hello", "text": "Still thinking",
+    })
+    check("a reply with no token falls back to the address on file",
+          loose.get("outcome") == "accepted" and loose.get("lead_id") == send["lead_id"],
+          str(loose))
+    matched = call("GET", "/api/email/receipts")["receipts"][0]
+    check("and records which rule placed it", matched["matched_by"] == "from_address",
+          matched["matched_by"])
+
+    # A name is never part of matching, so a stranger stays a stranger rather
+    # than being attached to whoever happens to share one.
+    code, stranger = inbound({
+        "messageId": f"<smoke-{run}-stranger>", "from": "nobody@nowhere.invalid",
+        "to": "sales@example.invalid", "subject": "Do you take trades?", "text": "?",
+    })
+    check("mail from someone we do not know is kept, not guessed at",
+          stranger.get("outcome") == "unresolved", str(stranger))
+    check("and kept, not dropped -- someone really wrote in",
+          any(r["message_id"] == f"<smoke-{run}-stranger>"
+              for r in call("GET", "/api/email/receipts")["receipts"]))
+
+    print("\n== a buyer answering puts it back on a person ==")
+    # Built here rather than hunted for in the seed. The first version looked
+    # for any flagged thread with an address on it, which passed on a fresh
+    # database and then failed on the next run, because this very test had
+    # claimed the one it found.
+    mine = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(mine, content="I want to see something with a third row")
+    slots = [s["starts_at"] for d in
+             call("GET", f"/api/conversations/{mine}/availability")["days"]
+             for s in d["slots"]]
+    escalation_email = f"reply.test.{run}@example.invalid"
+    call("POST", f"/api/conversations/{mine}/book", {
+        "starts_at": slots[0], "name": "Reply Tester", "email": escalation_email})
+    for appt in call("GET", "/api/appointments")["appointments"]:
+        if appt["conversation_id"] == mine and appt["status"] in ("booked", "confirmed"):
+            booked_here.append(appt["id"])
+
+    say(mine, content="What's the out-the-door price on that?")
+    flagged = call("GET", f"/api/conversations/{mine}")
+    check("a question a human has to answer raises a handoff",
+          flagged["open_escalation"] is not None)
+
+    call("POST", f"/api/conversations/{mine}/takeover")
+    check("a rep taking over claims it",
+          call("GET", f"/api/conversations/{mine}")["open_escalation"] is None)
+
+    code, reopened = inbound({
+        "messageId": f"<smoke-{run}-reopen>", "from": escalation_email,
+        "to": "sales@example.invalid", "subject": "Re:",
+        "text": "Following up on my question",
+    })
+    check("the reply reaches the buyer it came from",
+          reopened.get("outcome") == "accepted", str(reopened))
+    check("and puts the thread back in the queue -- their turn became ours again",
+          call("GET", f"/api/conversations/{mine}")["open_escalation"] is not None)
+
+    print("\n== the resend path, as far as it can honestly be checked ==")
+    # The HTTP call needs a key this environment does not have and must not
+    # invent. Everything either side of it is asserted here; only the send is
+    # unproven, and /api/integrations says so rather than showing a green tick.
+    sys.path.insert(0, "backend")
+    from app.integrations.email.resend import ResendSender
+
+    resend = ResendSender()
+    try:
+        resend.check()
+        check("resend refuses to pretend it is configured", False, "check() passed with no key")
+    except Exception as exc:
+        check("resend names the variable it wants rather than failing vaguely",
+              "RESEND_API_KEY" in getattr(exc, "missing", []),
+              str(getattr(exc, "missing", exc)))
+
+    payload = resend.payload("buyer@example.com", "Subject", "Body", reply_to="reply+t@d")
+    check("the request body is the shape resend documents",
+          payload["to"] == ["buyer@example.com"] and payload["subject"] == "Subject"
+          and payload["text"] == "Body",
+          str(sorted(payload)))
+    check("and carries the reply address, or a reply can never come back",
+          payload["reply_to"] == "reply+t@d")
+
+    blocked = call("POST", "/api/email/test-send", {"to": "stranger@example.invalid"})
+    check("a test send still goes through the allow-list guard",
+          blocked["status"] in {"sent", "failed"}, f"{blocked['status']}: {blocked['error'][:60]}")
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to

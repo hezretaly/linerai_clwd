@@ -18,6 +18,12 @@ REPO_DIR = BACKEND_DIR.parent
 
 DEV_SESSION_SECRET = "liner-dev-insecure-session-secret-change-me"
 DEV_SEED_PASSWORD = "liner-dev"
+# The inbound webhook needs a shared secret to be exercised at all, so it
+# gets a development default like the passwords do -- and, like them, is
+# refused in production. Leaving it empty would mean `make smoke` could only
+# ever assert the 503, and the signature check, the dedupe and the whole
+# resolution ladder would ship untested.
+DEV_WEBHOOK_SECRET = "liner-dev-inbound-secret"
 
 
 class Settings(BaseSettings):
@@ -51,10 +57,21 @@ class Settings(BaseSettings):
     # --- Email -------------------------------------------------------------
     # outbox  : records a real outreach row, renders in the dev outbox, sends nothing
     # console : prints to stdout (used by scripts)
-    # gmail   : the real thing; requires the Google credentials below
+    # gmail   : Google Workspace service account; written, never executed
+    # resend  : the REST API this deployment is meant to use
     email_sender: str = "outbox"
     google_service_account_json: str = ""
     gmail_impersonate: str = ""
+    resend_api_key: str = ""
+    # The domain mail leaves from, and the one replies come back to. Both
+    # halves need it: outbound builds `Reply-To: reply+<token>@here`, and the
+    # Cloudflare catch-all on the same domain is what routes those back.
+    sending_domain: str = ""
+    sending_from: str = ""  # display address; defaults to liner@<sending_domain>
+    # Shared with the Cloudflare Worker. The development default makes the
+    # inbound path testable; production refuses to boot on it, because an
+    # intake anyone can guess the secret for is an intake anyone can write to.
+    webhook_secret: str = DEV_WEBHOOK_SECRET
 
     # --- Voice -------------------------------------------------------------
     voice_provider: str = ""
@@ -121,6 +138,13 @@ def get_settings() -> Settings:
         )
         if value == DEV_SEED_PASSWORD
     ]
+    if settings.is_production and settings.webhook_secret == DEV_WEBHOOK_SECRET:
+        raise RuntimeError(
+            "WEBHOOK_SECRET is still the development default while ENV=production. "
+            "It is the only thing standing in front of /api/inbound-email, which "
+            "writes into a buyer's history. Set a real one, and set the same value "
+            "as a secret on the Cloudflare Worker."
+        )
     if settings.is_production and stale:
         raise RuntimeError(
             f"{' and '.join(stale)} still set to 'liner-dev' while ENV=production. "

@@ -225,6 +225,31 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     so ingest sees it "reappear". That branch used to set it back to available
     outside the manual-override check every other field respects, which put a
     sold car straight back in front of the model.
+- **Email goes out through Resend and comes back through Cloudflare, and the
+  two halves fail differently.** Sending breaks loudly at the provider — a bad
+  key, an unverified domain — and the next send says so. Receiving breaks
+  *silently*, in a Cloudflare route configured outside this app, and looks
+  exactly like a buyer who did not write back. That asymmetry is why
+  `/app/email` exists and why `inbound_emails` records every delivery
+  **including the refused ones**: a 401 into the void is unfalsifiable.
+  Three rules:
+  - **`reply+<token>@` keys on the send, not on a conversation.** Most
+    outreach here is composed against a lead and has no conversation to name,
+    so a conversation-keyed address could not be put on a follow-up at all.
+    The token sits on the `outreach` row, next to `click_token`, which already
+    solved the same problem for links.
+  - **A reply that cannot be placed is stored, never dropped.** Resolution
+    goes token → `In-Reply-To` → the shared lead matcher, and stops there: a
+    name is never part of it, so a stranger stays a stranger instead of being
+    attached to whoever shares one. Someone really wrote in either way.
+  - **Liner does not answer email.** A reply lands as an activity and reopens
+    an escalation a rep had claimed. An autonomous email sender needs its own
+    guards, a rate limit and a loop-breaker for auto-responders; none of that
+    exists, so neither does the capability.
+- **`WEBHOOK_SECRET` has a development default and production refuses to boot
+  on it.** Same shape as `MANAGER_PASSWORD`. Without a default the inbound
+  path could only ever be tested by asserting the 503, and the signature
+  check, the dedupe and the whole resolution ladder would ship untested.
 - **Hours come from `hours_json`.** No page states its own.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the
@@ -274,7 +299,8 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Thing | State |
 |---|---|
 | Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same six tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
-| Email | **Outbox.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `GmailSender` is written and unverified. |
+| Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
+| Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
 | Voice | **Not configured.** Session mint returns a typed 503. The tool relay and transcript endpoints are real and tested. There is no fake provider — a scripted transcript would look like it worked while proving nothing about latency, barge-in or audio. |
 | Scraper | **Works, against the fixture site.** Real HTTP, real JSON-LD parsing, real diff/publish. No adapter for any real dealer site exists yet — that needs real URLs. |
 | Lead import | **Real, end to end.** ADF/XML is parsed with `defusedxml`, matched against inventory and existing leads, reviewed, then committed. Nothing is fetched: no lead inbox is polled and no feed is subscribed to — you upload the document. |

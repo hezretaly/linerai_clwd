@@ -28,6 +28,11 @@ const NAV = [
     badge: 'appointments', tone: 'muted' },
   { to: '/app/inventory', label: 'Inventory', icon: 'inventory', group: 'Manage',
     badge: 'inventory', tone: 'primary' },
+  // Under Manage, not Today: it is a setup screen. Sending and receiving fail
+  // in different places for different reasons, and receiving fails silently --
+  // this is where you find out which.
+  { to: '/app/email', label: 'Email', icon: 'mail', group: 'Manage',
+    badge: null, tone: 'muted' },
   { to: '/app/assistant', label: 'Liner setup', icon: 'sliders', group: 'Manage',
     badge: null, tone: 'muted' },
   { to: '/app/team', label: 'Team', icon: 'user', group: 'Manage',

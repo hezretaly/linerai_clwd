@@ -101,7 +101,9 @@ def compose(
         ))
 
     for o in outreach or []:
-        mirror = mirrors.get(o.id)
+        # An inbound reply has no mirror by definition: nothing wrote it into a
+        # thread, a buyer sent it to us.
+        mirror = mirrors.get(o.id) if o.direction != "in" else None
         # The mirror's timestamp, when there is one: that is where the email
         # sits in the thread a rep is reading, and moving it by a few
         # milliseconds would shuffle it past the message it answered.
