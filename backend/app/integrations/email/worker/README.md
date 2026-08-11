@@ -1,57 +1,123 @@
-# Inbound email: Cloudflare Email Routing → Worker → Liner
+# Email: Resend out, Cloudflare in
 
-Receiving is configured outside this application, which is exactly why it
-fails quietly. A deployment can send perfectly and drop every reply, and
-nothing in the app would look wrong. `/app/email` exists to make that visible:
-it shows every delivery the endpoint was handed, **including the ones it
-refused**.
+Two halves that fail in different places. **Sending** breaks at Resend — a bad
+key, an unverified domain — and the next send says so verbatim. **Receiving**
+breaks in Cloudflare, configured outside this app entirely, and breaks
+*silently*: no error, no row, just replies that never arrive.
 
-**Status: unverified.** No part of this directory has been deployed or
-executed. The endpoint it posts to is verified — signature check, dedupe and
-the whole resolution ladder are exercised offline by `make smoke`.
+That asymmetry is why `/app/email` exists. It records every delivery the
+endpoint was handed **including the ones it refused**, which is the only way to
+tell a wrong secret from a missing route from a buyer who simply has not
+written back.
 
-## What has to be true
+## `.env` on the server
 
-1. **Email Routing enabled** on the sending domain, with Cloudflare's MX and
-   SPF records live. Use the same domain as `SENDING_DOMAIN` in the backend:
-   outbound builds `Reply-To: reply+<token>@SENDING_DOMAIN`, and if the routed
-   domain differs, every reply bounces and the app cannot tell.
-2. **Rules** — `support@` and `sales@` to this Worker, plus a **catch-all** to
-   the same Worker. The catch-all is not optional: `reply+<token>@` addresses
-   are minted per send and cannot be enumerated as rules.
-3. **Secrets** — `wrangler secret put CRM_WEBHOOK_URL` (the public
-   `https://…/api/inbound-email`) and `wrangler secret put WEBHOOK_SECRET`,
-   matching the backend's.
+```bash
+# --- Sending -----------------------------------------------------------------
+EMAIL_SENDER=resend
+RESEND_API_KEY=re_...
 
+# Verified in Resend AND the domain Cloudflare routes mail for. It does double
+# duty: outbound builds `Reply-To: reply+<token>@here`, and the catch-all on
+# the same domain is what brings those replies back. If the two differ, mail
+# goes out fine and every reply bounces, and nothing in the app looks wrong.
+SENDING_DOMAIN=linerai.us
+
+# Optional. Defaults to liner@$SENDING_DOMAIN. A display name is worth setting:
+# it is what a buyer sees in their inbox.
+SENDING_FROM=Riverside Auto <liner@linerai.us>
+
+# --- Receiving ---------------------------------------------------------------
+# Must equal the Worker's WEBHOOK_SECRET exactly. This is the only thing in
+# front of an endpoint that writes into a buyer's history -- no session guards
+# it, because Cloudflare has none to send. Generate with:
+#   openssl rand -hex 32
+WEBHOOK_SECRET=...
+
+# --- The guard you want on until you mean it ---------------------------------
+# With DEMO_MODE on, a send to anyone not in EMAIL_ALLOWLIST is refused and the
+# refusal is recorded. Turn it off only when you intend to mail real buyers.
+DEMO_MODE=true
+EMAIL_ALLOWLIST=you@yourdomain.com
 ```
-npm i postal-mime
+
+`ENV=production` refuses to boot while `WEBHOOK_SECRET` is still the
+development default.
+
+## Cloudflare
+
+1. **Email Routing** enabled on `linerai.us`, Cloudflare's MX and SPF records
+   live.
+2. **A catch-all rule** to this Worker. Not optional: `reply+<token>@`
+   addresses are minted per send and cannot be enumerated as rules. Explicit
+   `support@` / `sales@` rules to the same Worker are fine alongside it.
+3. **The secret**, which is not in `wrangler.jsonc` — `vars` are plaintext in
+   the dashboard and in git:
+
+```bash
+wrangler secret put WEBHOOK_SECRET   # same value as the backend's
 wrangler deploy
 ```
 
+`WEBHOOK_URL` in `wrangler.jsonc` must be the **public** origin. The Worker
+runs on Cloudflare's edge and cannot reach a private address.
+
+## Which auth header
+
+The backend accepts either, and prefers the first when both are sent:
+
+| Header | What it proves |
+|---|---|
+| `X-Liner-Signature` | HMAC-SHA256 hex over the exact request bytes. Authenticates the sender **and** the body — a truncated or edited payload fails. |
+| `X-Webhook-Secret` | The shared secret in plain. Authenticates the sender only. |
+
+The deployed Worker sends `X-Webhook-Secret`, which over TLS to a known origin
+is an ordinary webhook arrangement. Moving to the signature is a Worker-only
+change; nothing on the backend needs touching.
+
+Both are compared in constant time, so a mismatch fails identically to any
+other wrong value — the receipts are where you find out, not the response.
+
+## Paths
+
+`/api/emails/inbound` and `/api/inbound-email` reach the same handler. The
+first is what the deployed Worker posts to; the second is what this app
+documented first.
+
 ## Checking it
 
-`/app/email` in the dashboard, or:
+`/app/email` in the dashboard:
 
-```
-curl -s https://your-host/api/integrations | jq '.integrations[] | select(.key=="inbound_email")'
-```
-
-The setup page can post a signed sample through the live endpoint, which
-exercises everything except Cloudflare itself. If that works and real mail
-does not, the problem is in the three points above rather than in the app.
+- **Status** — which sender is live, and the exact variables still missing.
+- **Send a test** — the real path, allow-list included, showing Resend's error
+  verbatim.
+- **Receive a test** — posts a signed sample to the live endpoint. The auth
+  check, the dedupe and the whole resolution ladder really run; only Cloudflare
+  is absent. If this works and real mail does not, the problem is in the three
+  Cloudflare points above.
+- **Receipts** — everything that arrived, refusals included.
 
 ## How a reply finds its buyer
 
-Every outbound send mints a `reply_token` and carries it in `Reply-To`. A
-reply arrives on the catch-all, the Worker forwards the envelope recipient
-verbatim, and the backend resolves in this order:
+Every outbound send mints a `reply_token` and carries it in `Reply-To`. The
+Worker forwards the envelope recipient verbatim, and the backend resolves:
 
-1. `reply+<token>@` → the send → its lead;
-2. `In-Reply-To` matched against a stored provider message id;
-3. the From address through the shared lead matcher (email exact, phone by its
-   last ten digits — a name is never part of it);
-4. otherwise **stored unresolved**, never dropped. Someone really wrote in.
+1. `reply+<token>@` → the send → its lead. Tokens are lowercase alphanumeric so
+   a mail server rewriting the local part's case cannot break the lookup, and
+   the match is case-insensitive anyway.
+2. `In-Reply-To` against a stored provider message id.
+3. The From address through the shared lead matcher — email exact, phone by its
+   last ten digits. **A name is never part of it**, so a stranger stays a
+   stranger rather than being filed under whoever shares one.
+4. Otherwise **stored unresolved**, never dropped. Someone really wrote in.
 
 Liner does not answer email. A reply lands as an activity on the buyer's
-timeline, and re-opens an escalation a rep had already claimed — a buyer
+timeline and reopens an escalation a rep had already claimed — a buyer
 answering the question a rep asked is the rep's turn again.
+
+## Status
+
+The Worker source here matches what is deployed, but nothing in this repository
+can run or verify it. The endpoint it posts to **is** verified: `make smoke`
+drives both auth schemes, both paths, the dedupe, every rung of the resolution
+ladder, and the reopen.

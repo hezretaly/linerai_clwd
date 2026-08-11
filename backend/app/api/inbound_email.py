@@ -22,6 +22,7 @@ from hashlib import sha256
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import matching
@@ -65,6 +66,26 @@ def signature_for(raw: bytes) -> str:
     return hmac.new(settings.webhook_secret.encode(), raw, sha256).hexdigest()
 
 
+def authenticate(raw: bytes, signature: str, shared: str) -> str:
+    """Which credential proved this delivery, or "" if none did.
+
+    Two are accepted because two are in use. `X-Liner-Signature` is an HMAC
+    over the exact bytes, so it authenticates the *body* as well as the
+    sender -- a truncated or edited payload fails. `X-Webhook-Secret` is a
+    plain shared secret, which authenticates only the sender; it is what the
+    deployed Cloudflare Worker sends, and over TLS to a known origin that is a
+    normal webhook arrangement rather than a hole.
+
+    Both are compared in constant time. Preferring the signature when both are
+    present means moving the Worker to HMAC is a Worker-only change.
+    """
+    if signature and hmac.compare_digest(signature_for(raw), signature):
+        return "signature"
+    if shared and hmac.compare_digest(settings.webhook_secret, shared):
+        return "shared_secret"
+    return ""
+
+
 def _receipt(db: Session, **kwargs) -> InboundEmail:
     row = InboundEmail(**kwargs)
     db.add(row)
@@ -72,10 +93,16 @@ def _receipt(db: Session, **kwargs) -> InboundEmail:
     return row
 
 
+# Two paths, one handler. `/api/emails/inbound` is what the deployed Worker
+# posts to; `/api/inbound-email` is what this app documented first. Changing
+# either would mean a redeploy on one side to fix a rename on the other, and
+# an alias costs a line.
 @router.post("/inbound-email")
+@router.post("/emails/inbound")
 async def receive(
     request: Request,
     x_liner_signature: str = Header(default=""),
+    x_webhook_secret: str = Header(default=""),
     db: Session = Depends(get_db),
 ) -> dict:
     raw = await request.body()
@@ -89,10 +116,26 @@ async def receive(
             "and is refused. See integrations/email/worker/README.md.",
         )
 
-    if not hmac.compare_digest(signature_for(raw), x_liner_signature or ""):
+    proved_by = authenticate(raw, x_liner_signature or "", x_webhook_secret or "")
+    if not proved_by:
         # Recorded before refusing: a wrong shared secret is the single most
         # likely reason mail stops arriving, and it is invisible otherwise.
-        _receipt(db, outcome="bad_signature", detail="X-Liner-Signature did not match.")
+        # Naming which headers arrived turns "nothing works" into "the Worker
+        # is sending the header I am not reading".
+        offered = [
+            name for name, value in (
+                ("X-Liner-Signature", x_liner_signature),
+                ("X-Webhook-Secret", x_webhook_secret),
+            ) if value
+        ]
+        _receipt(
+            db, outcome="bad_signature",
+            detail=(
+                f"Sent {' and '.join(offered)}, and neither matched WEBHOOK_SECRET."
+                if offered else
+                "No X-Liner-Signature or X-Webhook-Secret header was sent at all."
+            ),
+        )
         raise HTTPException(401, "Bad signature")
 
     try:
@@ -160,7 +203,7 @@ async def receive(
     db.commit()
 
     _receipt(db, outcome="accepted", matched_by=matched_by, lead_id=lead.id,
-             outreach_id=record.id, **envelope)
+             outreach_id=record.id, detail=f"Authenticated by {proved_by}.", **envelope)
 
     reopened = _reopen(db, outreach, lead)
     emit(db, "email.received", {
@@ -181,7 +224,19 @@ def _resolve(
     """
     found = REPLY_RE.search(to or "")
     if found:
-        sent = db.query(Outreach).filter_by(reply_token=found.group(1)).first()
+        token = found.group(1)
+        sent = db.query(Outreach).filter_by(reply_token=token).first()
+        if sent is None:
+            # New tokens are lowercase so this cannot bite, but a mail server
+            # is entitled to rewrite the local part's case and an older token
+            # is mixed. Falling through to the From address would still
+            # "work", quietly, on the loosest rule available -- which is how a
+            # reply ends up on the wrong buyer.
+            sent = (
+                db.query(Outreach)
+                .filter(func.lower(Outreach.reply_token) == token.lower())
+                .first()
+            )
         if sent is not None and sent.lead_id:
             lead = db.query(Lead).filter_by(id=sent.lead_id).one_or_none()
             if lead is not None:

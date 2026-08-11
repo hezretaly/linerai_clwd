@@ -137,19 +137,34 @@ def upload(path: str, filename: str, content: bytes) -> dict:
 WEBHOOK_SECRET = b"liner-dev-inbound-secret"
 
 
-def inbound(payload: dict, signature: str | None = None) -> tuple[int, dict | str]:
+def inbound(
+    payload: dict,
+    signature: str | None = None,
+    *,
+    path: str = "/api/inbound-email",
+    shared: str | None = None,
+) -> tuple[int, dict | str]:
     """POST a delivery the way the Cloudflare Worker would.
 
     Signs the exact bytes sent, not a re-serialisation of the object -- that
     mismatch is the classic reason every real delivery 401s, so the test has to
     be able to reproduce it rather than paper over it.
+
+    `shared` swaps the HMAC for the plain X-Webhook-Secret header, which is
+    what the deployed Worker sends; `path` covers the alias it posts to. Both
+    are the live configuration, so both belong in the gate rather than being
+    trusted.
     """
     raw = json.dumps(payload).encode()
-    sig = signature if signature is not None else hmac.new(WEBHOOK_SECRET, raw, sha256).hexdigest()
-    request = urllib.request.Request(
-        BASE + "/api/inbound-email", data=raw, method="POST",
-        headers={"Content-Type": "application/json", "X-Liner-Signature": sig},
-    )
+    if shared is not None:
+        headers = {"Content-Type": "application/json", "X-Webhook-Secret": shared}
+    else:
+        sig = (
+            signature if signature is not None
+            else hmac.new(WEBHOOK_SECRET, raw, sha256).hexdigest()
+        )
+        headers = {"Content-Type": "application/json", "X-Liner-Signature": sig}
+    request = urllib.request.Request(BASE + path, data=raw, method="POST", headers=headers)
     try:
         with opener.open(request, timeout=30) as response:
             return response.status, json.loads(response.read())
@@ -903,6 +918,22 @@ def main() -> int:
           f"{len(replyable)} replyable sends")
     send = replyable[0]
 
+    # The deployed Worker posts to /api/emails/inbound with a plain shared
+    # secret. Both are live configuration, so both are checked here rather
+    # than assumed -- a rename on either side is otherwise silent.
+    code, aliased = inbound(
+        {"messageId": f"<smoke-{run}-alias>", "from": "stranger@nowhere.invalid",
+         "to": "sales@example.invalid", "subject": "Hi", "text": "hello"},
+        path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode(),
+    )
+    check("the path the deployed worker posts to reaches the same handler",
+          code == 200, f"{code} {aliased}")
+    check("and a plain shared secret authenticates it",
+          aliased.get("outcome") in {"accepted", "unresolved"}, str(aliased))
+    wrong = inbound({"messageId": "<x>", "from": "a@b.c", "to": "sales@d"},
+                    path="/api/emails/inbound", shared="not-the-secret")
+    check("but the wrong one does not", wrong[0] == 401, str(wrong[0]))
+
     bad = inbound({"messageId": "<forged>", "from": "x@y.invalid", "to": "sales@d"},
                   signature="deadbeef")
     check("a delivery signed with the wrong secret is refused", bad[0] == 401, str(bad[0]))
@@ -1000,6 +1031,20 @@ def main() -> int:
           reopened.get("outcome") == "accepted", str(reopened))
     check("and puts the thread back in the queue -- their turn became ours again",
           call("GET", f"/api/conversations/{mine}")["open_escalation"] is not None)
+
+    # A mail server is entitled to rewrite the case of a local part, and
+    # SQLite's `=` is not case-insensitive. Tokens are minted lowercase so this
+    # cannot bite, but a reply arriving upper-cased must still find its buyer
+    # rather than falling through to the loosest rule available.
+    shouty = dict(reply)
+    shouty["messageId"] = f"<smoke-{run}-shouty>"
+    shouty["to"] = f"reply+{send['reply_token'].upper()}@example.invalid"
+    code, cased = inbound(shouty)
+    check("a token that came back upper-cased still finds its buyer",
+          cased.get("lead_id") == send["lead_id"], str(cased))
+    stamped = call("GET", "/api/email/receipts")["receipts"][0]
+    check("and by the token, not by guessing from the address",
+          stamped["matched_by"] == "reply_token", stamped["matched_by"])
 
     print("\n== the resend path, as far as it can honestly be checked ==")
     # The HTTP call needs a key this environment does not have and must not

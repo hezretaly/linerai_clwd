@@ -7,7 +7,7 @@ is not available.
 
 ## cloudflare-worker
 
-- `backend/app/integrations/email/worker/worker.js:4` -- this has never been deployed or executed.
+- `backend/app/integrations/email/worker/src/index.ts:6` -- this file is the deployed Worker's source as
 
 ## gmail
 

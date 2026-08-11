@@ -237,7 +237,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     outreach here is composed against a lead and has no conversation to name,
     so a conversation-keyed address could not be put on a follow-up at all.
     The token sits on the `outreach` row, next to `click_token`, which already
-    solved the same problem for links.
+    solved the same problem for links. Tokens are **lowercase alphanumeric**:
+    a mail server may rewrite the case of a local part, SQLite's `=` is
+    case-sensitive, and the resulting miss is invisible — the reply just lands
+    by the loosest matching rule instead of the exact one.
+  - **The intake takes either credential and one of two paths.**
+    `X-Liner-Signature` (HMAC over the exact bytes, so it covers the body) or
+    `X-Webhook-Secret` (plain, what the deployed Worker sends), on
+    `/api/inbound-email` or `/api/emails/inbound`. Both are live
+    configuration, so `make smoke` drives both rather than trusting either.
   - **A reply that cannot be placed is stored, never dropped.** Resolution
     goes token → `In-Reply-To` → the shared lead matcher, and stops there: a
     name is never part of it, so a stranger stays a stranger instead of being

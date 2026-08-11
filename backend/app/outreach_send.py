@@ -38,6 +38,17 @@ def blocked_reason(sender: EmailSender, to_address: str) -> str:
     )
 
 
+# Lowercase letters and digits only, and deliberately so. `token_urlsafe`
+# gives mixed case plus `-` and `_`, and both hurt here: the local part of an
+# address is case-insensitive in practice, so a mail server that lowercases
+# `reply+AbC@` leaves a token that no longer matches the stored value --
+# SQLite's `=` is case-sensitive -- and a hyphen breaks the `[a-z0-9_]+`
+# extraction some Workers use. Neither failure is visible: the reply simply
+# falls through to the weaker matching rules, or lands unresolved.
+ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+TOKEN_LENGTH = 20
+
+
 def mint_reply_token(db: Session) -> str:
     """A token that routes a reply back to the row that sent it.
 
@@ -46,7 +57,7 @@ def mint_reply_token(db: Session) -> str:
     this costs.
     """
     while True:
-        token = secrets.token_urlsafe(12)
+        token = "".join(secrets.choice(ALPHABET) for _ in range(TOKEN_LENGTH))
         if db.query(Outreach).filter_by(reply_token=token).first() is None:
             return token
 
