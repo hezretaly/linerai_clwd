@@ -1032,6 +1032,54 @@ def main() -> int:
     check("an oversized delivery is refused before it is parsed",
           oversized[0] == 413, str(oversized[0]))
 
+    print("\n== the shape a real reply actually arrives in ==")
+    # Taken from a wrangler tail of the deployed Worker, not invented: it names
+    # the token `conversationId`, quotes the whole original message back, sends
+    # Outlook's HTML, and carries an SES message id in In-Reply-To.
+    real = {
+        "messageId": f"<MW4PR20MB5131{run}@MW4PR20MB5131.namprd20.prod.outlook.com>",
+        "from": send["to_address"],
+        "to": f"reply+{send['reply_token']}@linerai.us",
+        "conversationId": send["reply_token"],
+        "subject": "Re: Liner test message",
+        "fromAddress": send["to_address"],
+        "fromName": "A Buyer",
+        "text": (
+            "what\n________________________________\n"
+            "From: Riverside Auto <support@linerai.us>\nSent: Wednesday\n"
+            "To: buyer\nSubject: Liner test message\n\n\n"
+            "This is a test from the Liner dashboard.\n"
+        ),
+        "html": "<html><head><style>P{}</style></head><body><div>what</div></body></html>",
+        "inReplyTo": "<0100019ff27db392-0f8f4780@email.amazonses.com>",
+        "attachments": [],
+    }
+    inbound(real)
+    landed = settled(real["messageId"])
+    check("a real Outlook reply resolves by its token", landed.get("matched_by") == "reply_token",
+          f"{landed.get('outcome')} / {landed.get('matched_by')}")
+
+    body = next(
+        (m["body"] for m in call("GET", "/api/email/messages?box=received")["messages"]
+         if m["lead_id"] == send["lead_id"]),
+        "",
+    )
+    # Every reply carries our own last message back. Storing that means a rep
+    # reads one word followed by four paragraphs they wrote themselves, and
+    # the reply after it carries two copies.
+    check("and is stored as what the buyer wrote, not the thread they quoted",
+          "Riverside Auto" not in body, repr(body[:60]))
+
+    # The Worker names the token `conversationId`, so reading it means the
+    # deployed Worker needs no edit at all.
+    hinted = dict(real)
+    hinted["messageId"] = f"<hint-{run}>"
+    hinted["to"] = "support@linerai.us"
+    inbound(hinted)
+    by_hint = settled(hinted["messageId"])
+    check("the token is read from the payload too, not only from the address",
+          by_hint.get("matched_by") == "reply_token", str(by_hint.get("matched_by")))
+
     print("\n== a buyer answering puts it back on a person ==")
     # Built here rather than hunted for in the seed. The first version looked
     # for any flagged thread with an address on it, which passed on a fresh

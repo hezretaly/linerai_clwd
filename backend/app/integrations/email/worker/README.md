@@ -116,12 +116,26 @@ Worker forwards the envelope recipient verbatim, and the backend resolves:
 
 1. `reply+<token>@` → the send → its lead. Tokens are lowercase alphanumeric so
    a mail server rewriting the local part's case cannot break the lookup, and
-   the match is case-insensitive anyway.
-2. `In-Reply-To` against a stored provider message id.
+   the match is case-insensitive anyway. The token is also read off the payload
+   (`replyToken`, or `conversationId` — an earlier Worker's name for the same
+   field) and folded into the address, so a Worker that already extracted it
+   needs no edit. A hint that disagrees with the address loses; the address is
+   what the mail server actually delivered to.
+2. `In-Reply-To` against a stored provider message id. **This rung rarely fires
+   with Resend.** Resend runs on SES, so the id a client quotes back is
+   `<...@email.amazonses.com>` while `provider_message_id` holds the UUID
+   Resend's API returned — two different identifiers for one message. Rungs 1
+   and 3 carry the load; this one is here for a provider that returns the id it
+   actually put in the header.
 3. The From address through the shared lead matcher — email exact, phone by its
    last ten digits. **A name is never part of it**, so a stranger stays a
    stranger rather than being filed under whoever shares one.
 4. Otherwise **stored unresolved**, never dropped. Someone really wrote in.
+
+A reply also arrives with the entire message it is answering quoted underneath
+it. Only the buyer's own words are stored on the timeline — the untrimmed body
+stays on the receipt, so a quote marker that ever fires wrongly costs
+presentation and not the message.
 
 Liner does not answer email. A reply lands as an activity on the buyer's
 timeline and reopens an escalation a rep had already claimed — a buyer

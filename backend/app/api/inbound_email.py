@@ -51,6 +51,53 @@ MAX_BODY = 10 * 1024 * 1024
 
 REPLY_RE = re.compile(r"reply\+([A-Za-z0-9_-]{6,64})@", re.IGNORECASE)
 
+# Where a reply stops being what the buyer wrote and starts being a copy of
+# what we sent them. Outlook draws a rule of underscores; Gmail writes "On
+# <date> X wrote:"; older clients use the Original Message banner. Trimming is
+# conservative on purpose -- the untouched body is kept on the receipt, so a
+# marker that fires wrongly costs presentation, never the message.
+QUOTE_MARKERS = [
+    re.compile(r"\n_{8,}\s*\n"),
+    re.compile(r"\n-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
+    re.compile(r"\nOn .{5,80}\bwrote:\s*\n", re.IGNORECASE),
+    re.compile(r"\nFrom:\s.+\nSent:\s", re.IGNORECASE),
+]
+
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+def just_the_reply(text: str) -> str:
+    """What the buyer actually typed, without the thread they quoted back.
+
+    Their whole previous message comes back attached to every reply. Storing
+    it means a rep opening a timeline reads "what" followed by four paragraphs
+    of our own words, and the next reply carries two copies.
+    """
+    trimmed = text or ""
+    for marker in QUOTE_MARKERS:
+        found = marker.search(trimmed)
+        if found:
+            trimmed = trimmed[: found.start()]
+    # Every line quoted, or nothing left: keep what we were given rather than
+    # storing an empty message.
+    return trimmed.strip() or (text or "").strip()
+
+
+def as_text(html: str) -> str:
+    """A last resort for a message that arrived with no plain-text part.
+
+    Not a renderer -- it strips tags so a rep sees words instead of markup.
+    Storing raw HTML in a field the timeline prints as text is how a reply
+    shows up as a page of Outlook style attributes.
+    """
+    from html import unescape
+
+    without_head = re.sub(
+        r"<(script|style|head)\b.*?</\1>", " ", html or "", flags=re.S | re.IGNORECASE
+    )
+    spaced = re.sub(r"<br\s*/?>|</p>|</div>|</tr>", "\n", without_head, flags=re.IGNORECASE)
+    return re.sub(r"\n{3,}", "\n\n", unescape(TAG_RE.sub("", spaced))).strip()
+
 
 class InboundBody(BaseModel):
     model_config = {"extra": "allow"}
@@ -163,8 +210,21 @@ async def receive(
     sender = (data.get("from") or data.get("from_") or "").strip()
     to = (data.get("to") or "").strip()
     subject = (data.get("subject") or "").strip()
-    body = (data.get("text") or data.get("html") or "").strip()
+    # Plain text when there is any; otherwise the HTML part with its tags
+    # taken off, which beats storing markup in a field rendered as text.
+    body = (data.get("text") or "").strip() or as_text(data.get("html") or "")
     in_reply_to = (data.get("inReplyTo") or "").strip()
+    # The Worker already pulls the token out of the recipient. Reading it here
+    # too means the deployed Worker needs no edit -- it calls the field
+    # `conversationId`, which is what it was named before the token moved onto
+    # the send. Either name, or neither: the address is re-parsed regardless.
+    hinted = str(data.get("replyToken") or data.get("conversationId") or "").strip()
+
+    # The token the Worker found, folded into the address the resolver reads,
+    # so one code path handles both. A hint that disagrees with the address
+    # loses: the address is what the mail server actually delivered to.
+    if hinted and not REPLY_RE.search(to):
+        to = f"reply+{hinted}@{settings.sending_domain or 'hinted'}"
 
     envelope = {
         "message_id": message_id, "from_address": sender, "to_address": to,
@@ -239,7 +299,10 @@ def _place(receipt_id: str) -> None:
             kind="reply",
             to_address=claim.from_address,
             subject=claim.subject,
-            body=claim.body,
+            # Trimmed here rather than on the way in: the receipt above still
+            # holds every byte that arrived, so nothing is lost if a quote
+            # marker ever fires on something it should not.
+            body=just_the_reply(claim.body),
             provider="inbound",
             provider_message_id=claim.message_id or None,
             in_reply_to=claim.in_reply_to or None,
