@@ -284,7 +284,41 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
 - **There is no Drafts tab, because nothing stores a draft.** One is composed
   from the lead's state when the composer opens and lives in the browser until
   the rep presses send. A tab that is always empty claims a feature that does
-  not exist.
+  not exist. Closing the composer with text in it asks first, which is the
+  whole safety net there is.
+- **The composer takes any address, and says who it found rather than
+  restricting.** The case `/app/email` exists for is a stranger writing to
+  `sales@`; a composer that could only answer existing leads would push a rep
+  back into their own mail client, where the reply is invisible to this system
+  for good. So `POST /api/email/compose` puts the address through the one
+  matcher, files the send against a buyer when there is one, and sends anyway
+  when there is not — with the line under the field saying which happened
+  *before* the send. What it will not do is skip `blocked_reason`: a composer
+  is exactly where a rehearsal reaches a real prospect.
+  - **The refusal warning is only shown when there is something to refuse.**
+    `blocked_reason` deliberately does not bite on a sender that delivers
+    nothing, so with the outbox the composer says no mail will leave the
+    building rather than warning about a limit that will not fire. A warning
+    that turns out to be wrong is worse than none — the next one gets ignored
+    too.
+  - **A reply carries `In-Reply-To` and `References`.** The sender interface
+    takes a provider message id, not a rendered header, so each vendor maps it
+    its own way (`headers` for Resend, MIME for Gmail). Without it a reply
+    opens a second conversation in the buyer's inbox, and a buyer answering
+    four times ends up with four threads about one car.
+- **The mailbox refreshes itself two ways, and they are not redundant.**
+  `email.received` on the socket is the one that matters — mail arriving is the
+  only thing on this dashboard nobody clicked for — and it fires for an
+  unresolved delivery as well as an accepted one, because a stranger's reply
+  has no buyer page to appear on instead. The five-minute poll is the backstop
+  for a dropped socket, and the "Checked 3m ago" line exists because a list
+  that refreshes silently is indistinguishable from one that is stuck.
+  Refusals stay silent: their receipt is written before authentication, so
+  emitting there would let anyone who found the URL grow the events table.
+- **`accepted` on a receipt means fully filed.** The escalation reopen happens
+  before the receipt is stamped, not after. Stamped first, it failed about one
+  run in three — the receipt read filed while the thread this reply reopens was
+  still sitting claimed.
 - **`WEBHOOK_SECRET` has a development default and production refuses to boot
   on it.** Same shape as `MANAGER_PASSWORD`. Without a default the inbound
   path could only ever be tested by asserting the 503, and the signature

@@ -1169,6 +1169,81 @@ def main() -> int:
           f"{len(hit)} of {counts['all']}")
     check("a term in nothing returns nothing", not miss, str(len(miss)))
 
+    print("\n== a manager can write one, not only read them ==")
+    # A composer that could only reach buyers already on file would send a rep
+    # back to their own mail client to answer a stranger -- where the reply is
+    # invisible to this system for good. So it takes any address, and says
+    # which of the two happened rather than restricting.
+    known = call("GET", "/api/email/recipients")["recipients"]
+    check("the composer can offer buyers who have an address", bool(known),
+          f"{len(known)} on file")
+    check("and every one it offers really has one",
+          all("@" in r["email"] for r in known))
+
+    # This run's own buyer, so the assertion is about a lead that certainly has
+    # an address rather than whichever one happens to sort first.
+    target = next((r for r in known if r["lead_id"] == send["lead_id"]), None)
+    check("including the buyer this run just created", target is not None,
+          send["lead_id"])
+    wrote = call("POST", "/api/email/compose", {
+        "to": target["email"], "subject": f"Checking in {run}",
+        "body": "Are you still looking?",
+    })
+    check("a composed email is filed against the buyer it was addressed to",
+          wrote["lead_id"] == target["lead_id"], str(wrote.get("lead_id")))
+    # An outreach entry carries the row's own id, so this is the send itself
+    # appearing in the buyer's history rather than something merely shaped
+    # like it.
+    check("and lands on their timeline like any other send",
+          any(e["kind"] == "outreach" and e["id"] == wrote["id"]
+              for e in call("GET", f"/api/leads/{target['lead_id']}/timeline")["entries"]),
+          wrote["id"])
+    check("with a reply route home, or the answer arrives nowhere",
+          any(s2["id"] == wrote["id"]
+              for s2 in call("GET", "/api/email/replyable")["sends"]))
+
+    # A stranger is still writable-to. The row exists, it is listed here, and
+    # it simply has no timeline to sit on -- which the composer states before
+    # the rep presses send rather than after.
+    stranger = call("POST", "/api/email/compose", {
+        "to": f"nobody-{run}@example.invalid", "subject": "Hello",
+        "body": "Who is this?",
+    })
+    check("writing to someone not on file is allowed, not refused",
+          stranger["status"] == "sent", stranger["status"])
+    check("and is honest that it belongs to nobody", stranger["lead_id"] is None)
+    check("both appear in Sent", all(
+        any(m["id"] == row["id"] for m in call("GET", "/api/email/messages?box=sent")["messages"])
+        for row in (wrote, stranger)))
+
+    # Refusals, because a composer is a form and a form gets submitted empty.
+    no_to = status_of("POST", "/api/email/compose", {"to": "", "subject": "x", "body": "y"})
+    check("an email with no recipient is refused", no_to[0] == 400, str(no_to[0]))
+    hollow = status_of("POST", "/api/email/compose",
+                       {"to": "a@b.invalid", "subject": " ", "body": " "})
+    check("an empty email is refused rather than sent", hollow[0] == 400, str(hollow[0]))
+    ghost = status_of("POST", "/api/email/compose",
+                      {"to": "a@b.invalid", "subject": "x", "body": "y", "lead_id": "no-such"})
+    check("and a send cannot be filed against a buyer who does not exist",
+          ghost[0] == 404, str(ghost[0]))
+
+    # Replying threads. The provider id of the message being answered goes out
+    # as In-Reply-To, which is what puts our reply under the original in the
+    # buyer's client instead of starting a second conversation.
+    arrived = next(
+        m for m in call("GET", "/api/email/messages?box=received")["messages"]
+        if m["lead_id"]
+    )
+    answered = call("POST", "/api/email/compose", {
+        "to": arrived["address"], "subject": f"Re: {arrived['subject']}",
+        "body": "Thanks for getting back to us.", "lead_id": arrived["lead_id"],
+        "in_reply_to_outreach_id": arrived["id"],
+    })
+    check("answering an arrival is recorded as a reply, not a fresh send",
+          answered["kind"] == "reply", answered["kind"])
+    check("and stays on the buyer whose message it answers",
+          answered["lead_id"] == arrived["lead_id"])
+
     print("\n== the resend path, as far as it can honestly be checked ==")
     # The HTTP call needs a key this environment does not have and must not
     # invent. Everything either side of it is asserted here; only the send is
@@ -1192,6 +1267,17 @@ def main() -> int:
           str(sorted(payload)))
     check("and carries the reply address, or a reply can never come back",
           payload["reply_to"] == "reply+t@d")
+    # A reply that does not thread reads as a new email from the dealership,
+    # which is how a buyer ends up with four separate conversations about one
+    # car. References as well as In-Reply-To: several clients thread on the
+    # former only.
+    threaded = resend.payload("b@e.com", "Re: x", "y", in_reply_to="<orig@ses>")
+    check("a reply carries the header that threads it under the original",
+          threaded["headers"]["In-Reply-To"] == "<orig@ses>"
+          and threaded["headers"]["References"] == "<orig@ses>",
+          str(threaded.get("headers")))
+    check("and a fresh send carries no threading header at all",
+          "headers" not in payload, str(sorted(payload)))
 
     blocked = call("POST", "/api/email/test-send", {"to": "stranger@example.invalid"})
     check("a test send still goes through the outbound limit",

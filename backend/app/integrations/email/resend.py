@@ -69,7 +69,14 @@ class ResendSender(EmailSender):
         # Reply will send to -- which the catch-all routes back either way.
         return settings.sending_from or f"support@{settings.sending_domain}"
 
-    def payload(self, to: str, subject: str, body: str, reply_to: str = "") -> dict:
+    def payload(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        reply_to: str = "",
+        in_reply_to: str = "",
+    ) -> dict:
         """The request body, built separately so it can be asserted without
         being sent. `make smoke` checks the shape offline; the HTTP call is the
         only part a key would add.
@@ -89,14 +96,30 @@ class ResendSender(EmailSender):
         }
         if reply_to:
             out["reply_to"] = reply_to
+        if in_reply_to:
+            # What makes a reply land *under* the message it answers instead of
+            # starting a second thread in the buyer's inbox. `References` as
+            # well as `In-Reply-To`: several clients thread on the former only,
+            # and one line of ours is the whole chain we can honestly claim.
+            out["headers"] = {
+                "In-Reply-To": in_reply_to,
+                "References": in_reply_to,
+            }
         return out
 
-    def send(self, to: str, subject: str, body: str, reply_to: str = "") -> SendResult:
+    def send(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        reply_to: str = "",
+        in_reply_to: str = "",
+    ) -> SendResult:
         self.check()
         try:
             response = httpx.post(
                 API,
-                json=self.payload(to, subject, body, reply_to),
+                json=self.payload(to, subject, body, reply_to, in_reply_to),
                 headers={"Authorization": f"Bearer {settings.resend_api_key}"},
                 timeout=TIMEOUT,
             )

@@ -109,6 +109,22 @@ the Worker's own limit.
   Cloudflare points above.
 - **Receipts** — everything that arrived, refusals included.
 
+The list updates itself: the dealer socket carries `email.received` the moment
+a delivery is filed, and a five-minute poll covers a dropped connection. The
+"Checked *n* ago" line above the mailbox is there so a quiet morning is
+distinguishable from a stuck page.
+
+## Writing one
+
+**Write** on the mailbox, or **Reply** on any message. The address is put
+through the same matcher everything else uses: a buyer on file gets the send on
+their timeline with a reply route home, and an address belonging to nobody is
+sent to anyway — the line under the field says which, before you press send.
+Replies carry `In-Reply-To`, so they land under the original in the recipient's
+client rather than starting a second thread.
+
+Nothing stores a draft. It lives in the browser until Send.
+
 ## How a reply finds its buyer
 
 Every outbound send mints a `reply_token` and carries it in `Reply-To`. The

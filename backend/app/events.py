@@ -30,6 +30,13 @@ EVENT_TYPES = {
     "conversation.declined",
     "outreach.sent",
     "outreach.opened",
+    # Mail that arrived and got filed -- accepted or unresolved, both after the
+    # HMAC passed. Refusals are deliberately silent: the receipt is written
+    # before authentication, and emitting there would let anyone who found the
+    # URL grow the events table.
+    "email.received",
+    "lead.imported",
+    "vehicle.status_changed",
     "call.started",
     "call.ended",
 }

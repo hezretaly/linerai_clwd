@@ -289,6 +289,17 @@ def _place(receipt_id: str) -> None:
                 "on any lead. Kept rather than dropped -- someone really wrote in."
             )
             db.commit()
+            # Emitted as well as the accepted case, so the mailbox updates
+            # itself for a stranger too. Without this the one delivery nobody
+            # is expecting -- no buyer page, no timeline, visible only on
+            # /app/email -- is also the one that needs a manual refresh to
+            # appear. The event is only ever raised after the HMAC passed;
+            # refusals stay silent so an unauthenticated caller cannot grow
+            # the events table.
+            emit(db, "email.received", {
+                "lead_id": None, "outreach_id": None,
+                "receipt_id": claim.id, "matched_by": "", "outcome": "unresolved",
+            })
             return
 
         record = Outreach(
@@ -312,16 +323,24 @@ def _place(receipt_id: str) -> None:
         db.add(record)
         db.flush()
 
+        # Before the receipt is stamped, not after. `accepted` is what the
+        # setup page shows and what the gate waits on, so anything still
+        # outstanding when it appears is a race -- the receipt reads filed
+        # while the escalation this reply reopens is still sitting claimed.
+        # It failed roughly one run in three that way, which is the worst
+        # kind: rare enough to look like a fluke.
+        reopened = _reopen(db, outreach, lead)
+
         claim.outcome = "accepted"
         claim.matched_by = matched_by
         claim.lead_id = lead.id
         claim.outreach_id = record.id
         db.commit()
 
-        reopened = _reopen(db, outreach, lead)
         emit(db, "email.received", {
             "lead_id": lead.id, "outreach_id": record.id,
-            "matched_by": matched_by, "reopened": reopened,
+            "receipt_id": claim.id, "matched_by": matched_by,
+            "outcome": "accepted", "reopened": reopened,
         })
     except Exception as exc:  # never let a background failure vanish
         claim = db.query(InboundEmail).filter_by(id=receipt_id).one_or_none()
@@ -418,320 +437,3 @@ def _reopen(db: Session, outreach: Outreach | None, lead: Lead) -> bool:
         "conversation_id": claimed.conversation_id, "action": "buyer_replied",
     })
     return True
-
-
-# --------------------------------------------------------------------------
-# What the setup page reads. Dealer session required -- unlike the intake
-# above, which is guarded by the HMAC because Cloudflare has no session.
-# --------------------------------------------------------------------------
-
-
-@router.get("/email/receipts")
-def receipts(
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    """The last deliveries and what happened to each.
-
-    Refusals included, and they are the point: a rep watching replies not
-    arrive needs to tell a wrong shared secret from a Cloudflare route that
-    was never created from a buyer who simply has not written back.
-    """
-    rows = (
-        db.query(InboundEmail)
-        .order_by(InboundEmail.created_at.desc())
-        .limit(40)
-        .all()
-    )
-    return {
-        "receipts": [
-            {
-                "id": r.id,
-                "outcome": r.outcome,
-                "message_id": r.message_id,
-                "from_address": r.from_address,
-                "to_address": r.to_address,
-                "subject": r.subject,
-                "matched_by": r.matched_by,
-                "lead_id": r.lead_id,
-                "detail": r.detail,
-                "created_at": iso(r.created_at),
-            }
-            for r in rows
-        ],
-        # The address family a reply has to arrive on. Empty domain means the
-        # Reply-To is omitted entirely rather than pointing somewhere that
-        # would bounce, and the page says so.
-        "reply_domain": settings.sending_domain,
-        "endpoint": "/api/inbound-email",
-        "signature_header": "X-Liner-Signature",
-    }
-
-
-@router.get("/email/messages")
-def messages(
-    box: str = "all",
-    q: str = "",
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    """Every email this dealership has sent or received, newest first.
-
-    A union rather than one table, for the same reason the conversations list
-    is one: a reply nobody could place has no `outreach` row -- there is no
-    buyer to hang it on -- and it exists only as a receipt. Listing just
-    `outreach` would mean a stranger writing to sales@ is visible on the
-    diagnostics strip and nowhere a manager would ever look.
-
-    Drafts are deliberately absent. Nothing here stores one: a draft is
-    composed from the lead's state when the composer opens
-    (`GET /api/leads/{id}/outreach?draft=1`) and exists only in the rep's
-    browser until they press send. An empty "Drafts" tab would claim a feature
-    that is not there.
-    """
-    rows = (
-        db.query(Outreach)
-        .filter(Outreach.channel == "email")
-        .order_by(Outreach.created_at.desc())
-        .limit(500)
-        .all()
-    )
-    lead_ids = {r.lead_id for r in rows if r.lead_id}
-    leads = {
-        lead.id: lead
-        for lead in (
-            db.query(Lead).filter(Lead.id.in_(lead_ids)).all() if lead_ids else []
-        )
-    }
-
-    out = []
-    for r in rows:
-        lead = leads.get(r.lead_id or "")
-        out.append({
-            "id": r.id,
-            "kind": "message",
-            "direction": r.direction,
-            "address": r.to_address,
-            "subject": r.subject,
-            "body": r.body,
-            "status": r.status,
-            "error": r.error,
-            "provider": r.provider,
-            "delivered_externally": r.provider not in {"", "outbox", "console"},
-            "lead_id": r.lead_id,
-            "lead_name": (lead.name if lead else "") or "",
-            "at": iso(r.sent_at or r.created_at),
-        })
-
-    # Mail that arrived and could not be placed. It has no lead by definition,
-    # so nothing on any buyer page will ever show it.
-    for r in (
-        db.query(InboundEmail)
-        .filter(InboundEmail.outcome == "unresolved")
-        .order_by(InboundEmail.created_at.desc())
-        .limit(200)
-        .all()
-    ):
-        out.append({
-            "id": r.id,
-            "kind": "unmatched",
-            "direction": "in",
-            "address": r.from_address,
-            "subject": r.subject,
-            "body": r.body,
-            "status": "unmatched",
-            "error": "",
-            "provider": "inbound",
-            "delivered_externally": True,
-            "lead_id": None,
-            "lead_name": "",
-            "at": iso(r.created_at),
-        })
-
-    out.sort(key=lambda m: m["at"] or "", reverse=True)
-
-    counts = {
-        key: sum(1 for m in out if _in_box(m, key))
-        for key in ("all", "received", "sent", "failed", "unmatched")
-    }
-    shown = [m for m in out if _in_box(m, box)]
-    if q:
-        needle = q.lower()
-        shown = [
-            m for m in shown
-            if needle in f"{m['address']} {m['subject']} {m['body']} {m['lead_name']}".lower()
-        ]
-    return {"messages": shown[:200], "counts": counts}
-
-
-def _in_box(m: dict, box: str) -> bool:
-    """One definition of each box, used for the counts and for the filtering.
-    Two copies is how a tab ends up saying 12 and showing 9."""
-    if box == "received":
-        return m["direction"] == "in" and m["kind"] == "message"
-    if box == "sent":
-        return m["direction"] == "out" and m["status"] == "sent"
-    # Refusals live here: an allow-list block is a send that did not happen,
-    # and it is the one a manager has to notice.
-    if box == "failed":
-        return m["direction"] == "out" and m["status"] != "sent"
-    if box == "unmatched":
-        return m["kind"] == "unmatched"
-    return True
-
-
-@router.get("/email/replyable")
-def replyable(
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    """Sends a reply could arrive against, for the setup page's test.
-
-    Choosing the target explicitly is deliberate: a test reply lands on a real
-    buyer's timeline, and a rep should never have to guess whose.
-    """
-    rows = (
-        db.query(Outreach)
-        .filter(
-            Outreach.direction == "out",
-            Outreach.reply_token.is_not(None),
-            # A send with no lead has nowhere for a reply to land -- the test
-            # send from this very page is one -- and the dropdown promises
-            # which buyer it will appear on. Offering one would make the page
-            # lie and file the result as unresolved.
-            Outreach.lead_id.is_not(None),
-        )
-        .order_by(Outreach.created_at.desc())
-        .limit(25)
-        .all()
-    )
-    out = []
-    for row in rows:
-        lead = db.query(Lead).filter_by(id=row.lead_id).one_or_none() if row.lead_id else None
-        out.append({
-            "id": row.id,
-            "reply_token": row.reply_token,
-            "subject": row.subject,
-            "to_address": row.to_address,
-            "lead_id": row.lead_id,
-            "lead_name": (lead.name if lead else None) or "Unknown",
-            "created_at": iso(row.created_at),
-        })
-    return {"sends": out}
-
-
-class TestSend(BaseModel):
-    to: str
-
-
-@router.post("/email/test-send")
-def test_send(
-    body: TestSend,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    """One real send down the real path, recorded like any other.
-
-    Not a special case that skips the guards: the same allow-list refuses it,
-    the same reply token is minted, the same row is written. A test that took a
-    shortcut would prove the shortcut works.
-    """
-    from app import outreach_send
-    from app.integrations.registry import get_email_sender
-
-    sender = get_email_sender()
-    token = outreach_send.mint_reply_token(db)
-    record = Outreach(
-        lead_id=None, sent_by_user_id=user.id, channel="email", kind="test",
-        to_address=body.to, subject="Liner test message",
-        body="This is a test from the Liner dashboard. Replying to it proves the "
-             "round trip works: the reply address on this message routes back "
-             "into the system.",
-        provider=sender.name, status="queued", reply_token=token,
-    )
-    db.add(record)
-    db.commit()
-
-    blocked = outreach_send.blocked_reason(sender, body.to)
-    if blocked:
-        record.status = "failed"
-        record.error = blocked
-        db.commit()
-        return {"status": "failed", "error": blocked, "provider": sender.name}
-
-    try:
-        result = sender.send(
-            body.to, record.subject, record.body,
-            reply_to=outreach_send.reply_to_address(token),
-        )
-    except Exception as exc:  # NotConfigured, or anything the provider raised
-        record.status = "failed"
-        record.error = str(exc)
-        db.commit()
-        return {"status": "failed", "error": str(exc), "provider": sender.name}
-
-    record.provider_message_id = result.message_id
-    record.status = result.status
-    record.error = result.detail if result.status != "sent" else ""
-    record.sent_at = utcnow()
-    db.commit()
-    return {
-        "status": result.status,
-        "error": result.detail,
-        "provider": result.provider,
-        # Without a domain there is no Reply-To at all, which is worth saying:
-        # the mail may go out and still be unreplyable.
-        "reply_to": outreach_send.reply_to_address(token),
-    }
-
-
-class TestInbound(BaseModel):
-    outreach_id: str
-
-
-@router.post("/email/test-inbound")
-def test_inbound(
-    body: TestInbound,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    """Post a signed sample through the live handler.
-
-    Deliberately over HTTP to our own endpoint rather than calling `receive()`
-    in-process: the signature check and the header plumbing are exactly the
-    parts that break, and a test that skipped them would pass while real
-    deliveries 401.
-    """
-    import json
-
-    import httpx
-
-    sent = db.query(Outreach).filter_by(id=body.outreach_id).one_or_none()
-    if sent is None or not sent.reply_token:
-        raise HTTPException(404, "No such send, or it carries no reply token.")
-
-    domain = settings.sending_domain or "example.invalid"
-    payload = {
-        "messageId": f"<test-{sent.reply_token}-{utcnow().isoformat()}>",
-        "from": sent.to_address,
-        "to": f"reply+{sent.reply_token}@{domain}",
-        "subject": f"Re: {sent.subject}",
-        "text": "This is a test reply posted from the Liner dashboard.",
-        "inReplyTo": sent.provider_message_id or "",
-        "receivedAt": utcnow().isoformat(),
-    }
-    raw = json.dumps(payload).encode()
-    try:
-        response = httpx.post(
-            "http://127.0.0.1:8000/api/inbound-email",
-            content=raw,
-            headers={
-                "Content-Type": "application/json",
-                "X-Liner-Signature": signature_for(raw),
-            },
-            timeout=15.0,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, f"Could not reach the inbound endpoint: {exc}") from None
-
-    return {"status": response.status_code, "body": response.json() if response.content else {}}

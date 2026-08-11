@@ -19,7 +19,13 @@ const INVALIDATES: Record<string, string[]> = {
   'appointment.confirmed': ['overview', 'appointments'],
   'appointment.assigned': ['overview', 'appointments', 'team'],
   'handoff.triggered': ['overview', 'conversations'],
-  'outreach.sent': ['appointments', 'leads', 'conversations'],
+  'outreach.sent': ['appointments', 'leads', 'conversations', 'email-messages', 'timeline'],
+  // Mail arriving is the one thing on this dashboard nobody triggered, so it
+  // is the one thing that must not wait for a click. `email-receipts` is here
+  // as well as `email-messages` because a reply nobody could place has no
+  // outreach row -- it exists only as a receipt, and it is exactly the
+  // delivery a manager needs to notice.
+  'email.received': ['email-messages', 'email-receipts', 'timeline', 'leads', 'conversations'],
   'call.started': ['overview', 'conversations'],
   'call.ended': ['overview', 'conversations'],
 }

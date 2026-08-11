@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import { api, ApiError } from '../lib/api'
 import { dateTime } from '../lib/format'
 import type { IntegrationsPayload } from '../lib/types'
-import { Badge, Button, Card, Field, Input, Spinner } from '../components/ui'
+import { Badge, Button, Card, Field, Input, Sheet, Spinner } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
 
@@ -20,11 +20,32 @@ import { PageIntro } from '../components/dashboard/AppShell'
  * breaks in Cloudflare, configured outside this app entirely, and breaks
  * *silently*: no error, no row, just replies that never arrive.
  *
- * There is no Drafts tab. Nothing here stores a draft -- one is composed from
- * the lead's state when the composer opens and lives in the browser until the
- * rep presses send -- and a tab that is always empty claims a feature that
- * does not exist.
+ * There is no Drafts tab. Nothing on the server stores a draft -- the composer
+ * below keeps one in the browser and nowhere else -- and a tab that is always
+ * empty claims a feature that does not exist.
+ *
+ * Two things keep the list current, and they are not redundant. The socket
+ * carries `email.received` the instant a delivery is filed, which is the
+ * refresh that matters: mail arriving is the only thing on this dashboard
+ * nobody clicked for. The poll below is the backstop for when the socket is
+ * not there to carry it -- a dropped connection, a laptop that slept -- and it
+ * is deliberately slow, because it is covering an outage rather than doing the
+ * work.
  */
+
+/** Five minutes. Fast enough that a missed socket message is a wait and not a
+ *  dead page, slow enough to be free. The socket is what makes it feel live. */
+const POLL_MS = 5 * 60 * 1000
+
+/** `relative()` takes an ISO string; TanStack hands back an epoch. Same idea,
+ *  different input, and 0 means nothing has been fetched yet rather than 1970. */
+function sinceChecked(at: number): string {
+  if (!at) return 'never'
+  const minutes = Math.round((Date.now() - at) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  return `${Math.round(minutes / 60)}h ago`
+}
 
 interface Receipt {
   id: string
@@ -71,6 +92,31 @@ const BOXES: [Box, string][] = [
   ['unmatched', 'No buyer'],
 ]
 
+/** What the composer holds while it is open, and nothing else holds ever.
+ *
+ *  There is no draft row behind this. It lives in the browser until Send is
+ *  pressed, which is why closing the sheet asks first -- a confirm is cheap,
+ *  and a schema for saved drafts is a decision nobody has taken. */
+interface Compose {
+  to: string
+  subject: string
+  body: string
+  /** Set when replying to mail from a buyer already on file, so the send is
+   *  filed against them even if they wrote from an address the matcher has
+   *  never seen. */
+  lead_id?: string
+  lead_name?: string
+  /** The message being answered, so the buyer's client threads the reply
+   *  under it instead of starting a second conversation in their inbox. */
+  in_reply_to_outreach_id?: string
+}
+
+interface Recipient {
+  lead_id: string
+  name: string
+  email: string
+}
+
 interface Send {
   id: string
   reply_token: string
@@ -99,12 +145,25 @@ export function EmailSetupPage() {
   const [query, setQuery] = useState('')
   const [openSetup, setOpenSetup] = useState(false)
   const [reading, setReading] = useState<Mail | null>(null)
+  const [composing, setComposing] = useState<Compose | null>(null)
 
-  const { data: mail } = useQuery({
+  // The clock above the list counts up between fetches, so something has to
+  // re-render it. Thirty seconds is finer than the label's own resolution.
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const { data: mail, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['email-messages', box, query],
     queryFn: () => api.get<{ messages: Mail[]; counts: Record<Box, number> }>(
       `/api/email/messages?box=${box}&q=${encodeURIComponent(query)}`,
     ),
+    refetchInterval: POLL_MS,
+    // A tab left open all morning is the case this page is for. Coming back to
+    // it should not show yesterday's mailbox while the timer runs down.
+    refetchOnWindowFocus: true,
   })
 
   const { data: integrations } = useQuery({
@@ -114,6 +173,8 @@ export function EmailSetupPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['email-receipts'],
     queryFn: () => api.get<ReceiptsPayload>('/api/email/receipts'),
+    refetchInterval: POLL_MS,
+    refetchOnWindowFocus: true,
   })
   const { data: sends } = useQuery({
     queryKey: ['email-replyable'],
@@ -184,14 +245,39 @@ export function EmailSetupPage() {
               </button>
             ))}
           </div>
-          <div className="ml-auto min-w-0">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search address, subject, text..."
               className="w-full sm:w-64"
             />
+            <Button
+              variant="primary"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setComposing({ to: '', subject: '', body: '' })}
+            >
+              <Icon name="mail" className="h-3.5 w-3.5 shrink-0" />
+              Write
+            </Button>
           </div>
+        </div>
+
+        {/* A list that refreshes itself and never says so is indistinguishable
+            from one that is stuck. The clock is the difference, and the button
+            is for whoever does not want to trust it. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          <span>
+            {isFetching ? 'Checking...' : `Checked ${sinceChecked(dataUpdatedAt)}`} · live on
+            new mail, and again every 5 minutes
+          </span>
+          <button
+            onClick={refresh}
+            className="ml-auto shrink-0 font-medium text-primary hover:underline"
+          >
+            Check now
+          </button>
         </div>
 
         {!mail ? (
@@ -255,6 +341,28 @@ export function EmailSetupPage() {
                     <pre className="scroll-thin max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-relaxed">
                       {m.body || '(no body)'}
                     </pre>
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <Button
+                        size="sm"
+                        onClick={() => setComposing({
+                          to: m.address,
+                          // Not "Re: Re: Re:". A buyer who replies four times
+                          // should not end up with a subject line that is
+                          // mostly prefix.
+                          subject: /^re:/i.test(m.subject) ? m.subject : `Re: ${m.subject}`,
+                          body: '',
+                          lead_id: m.lead_id ?? undefined,
+                          lead_name: m.lead_name || undefined,
+                          // Only when answering something that arrived. Our own
+                          // send has a provider id the buyer's client never saw.
+                          in_reply_to_outreach_id:
+                            m.direction === 'in' && m.kind === 'message' ? m.id : undefined,
+                        })}
+                      >
+                        <Icon name="back" className="h-3.5 w-3.5 shrink-0" />
+                        Reply
+                      </Button>
+                    </div>
                     {m.lead_id ? (
                       <Link
                         to={`/app/leads/${m.lead_id}`}
@@ -479,7 +587,221 @@ curl -X POST ${data.endpoint} \\
       </Card>
       </>
       )}
+
+      <Composer
+        draft={composing}
+        onChange={setComposing}
+        onClose={() => setComposing(null)}
+        onSent={refresh}
+        scope={integrations?.outbound_scope ?? ''}
+        recipients={integrations?.outbound_recipients}
+        // The outbox delivers nothing, and `blocked_reason` deliberately does
+        // not bite on a sender that cannot reach anyone. Without this the
+        // composer warned "this will be refused" about a send that was about
+        // to succeed -- a warning that is wrong is worse than none, because
+        // the next one gets ignored too.
+        delivers={Boolean(email?.configured)}
+      />
     </main>
+  )
+}
+
+/** Write to anyone, from the dealership's address.
+ *
+ *  Deliberately not restricted to buyers on file: the case this whole page was
+ *  built for is a stranger writing to sales@, and a composer that could only
+ *  answer existing leads would push a rep back into their own mail client --
+ *  where the reply is invisible to this system for good.
+ *
+ *  What it does instead of restricting is *say who it found*. The address is
+ *  matched as it is typed, and the line under the field is the difference
+ *  between a send that lands on a buyer's timeline with a reply route home and
+ *  one that sits only here. Both are allowed; only one of them is silent. */
+function Composer({
+  draft,
+  onChange,
+  onClose,
+  onSent,
+  scope,
+  recipients,
+  delivers,
+}: {
+  draft: Compose | null
+  onChange: (draft: Compose) => void
+  onClose: () => void
+  onSent: () => void
+  scope: string
+  recipients?: string[] | null
+  delivers: boolean
+}) {
+  const [result, setResult] = useState<string | null>(null)
+  const sentOk = useRef(false)
+
+  const { data: book } = useQuery({
+    queryKey: ['email-recipients'],
+    queryFn: () => api.get<{ recipients: Recipient[] }>('/api/email/recipients'),
+    enabled: Boolean(draft),
+  })
+
+  const send = useMutation({
+    mutationFn: (d: Compose) => api.post<{
+      status: string
+      error: string
+      provider: string
+      lead_id: string | null
+      delivered_externally: boolean
+    }>('/api/email/compose', {
+      to: d.to.trim(),
+      subject: d.subject,
+      body: d.body,
+      lead_id: d.lead_id ?? null,
+      in_reply_to_outreach_id: d.in_reply_to_outreach_id ?? null,
+    }),
+    onSuccess: (r) => {
+      onSent()
+      if (r.status === 'sent') {
+        sentOk.current = true
+        // Closed on success, kept open on failure. A refusal names the setting
+        // that lifts it, and throwing the body away to show that message would
+        // mean retyping the email to act on it.
+        onClose()
+        return
+      }
+      setResult(`${r.status}: ${r.error}`)
+    },
+    onError: (e) => setResult((e as ApiError).message),
+  })
+
+  useEffect(() => {
+    if (draft) {
+      setResult(null)
+      sentOk.current = false
+    }
+  }, [draft])
+
+  const close = () => {
+    // Nothing on the server holds this. Asking is the whole safety net.
+    if (
+      !sentOk.current
+      && (draft?.body.trim() || draft?.subject.trim())
+      && !window.confirm('Discard this email? Nothing here is saved as a draft.')
+    ) return
+    onClose()
+  }
+
+  if (!draft) return null
+
+  const to = draft.to.trim().toLowerCase()
+  // A hint, not the verdict. The server puts the address through the one
+  // matcher at send time -- email exact, phone by its last ten digits, a name
+  // never -- and this is the same rule's easy half, shown early.
+  const known = draft.lead_id
+    ? { lead_id: draft.lead_id, name: draft.lead_name || 'this buyer', email: to }
+    : book?.recipients.find((r) => r.email.toLowerCase() === to)
+  const allowed = recipients === null || (recipients ?? []).includes(to)
+
+  return (
+    <Sheet open onClose={close} title={<h2 className="text-sm font-semibold">New email</h2>}>
+      <div className="space-y-3">
+        <Field label="To">
+          <Input
+            value={draft.to}
+            onChange={(e) => onChange({ ...draft, to: e.target.value, lead_id: undefined })}
+            placeholder="someone@example.com"
+            type="email"
+            list="liner-recipients"
+            autoFocus
+          />
+        </Field>
+        <datalist id="liner-recipients">
+          {book?.recipients.map((r) => (
+            <option key={r.lead_id} value={r.email}>
+              {r.name}
+            </option>
+          ))}
+        </datalist>
+
+        {to && (
+          known ? (
+            <p className="text-xs text-muted-foreground">
+              Goes on{' '}
+              <Link to={`/app/leads/${known.lead_id}`} className="text-primary hover:underline">
+                {known.name || known.email}
+              </Link>
+              &apos;s timeline, and their reply comes back to it.
+            </p>
+          ) : (
+            /* Not a warning. Writing to someone who is not a buyer yet is a
+               normal thing to do, and the send is recorded either way -- it
+               simply has no timeline to sit on until they are one. */
+            <p className="text-xs text-muted-foreground">
+              No buyer on file for this address. The send and any reply will show
+              here, but on nobody&apos;s timeline.
+            </p>
+          )
+        )}
+
+        <Field label="Subject">
+          <Input
+            value={draft.subject}
+            onChange={(e) => onChange({ ...draft, subject: e.target.value })}
+            placeholder="What this is about"
+          />
+        </Field>
+
+        <Field label="Message">
+          <textarea
+            value={draft.body}
+            onChange={(e) => onChange({ ...draft, body: e.target.value })}
+            rows={12}
+            placeholder="Plain text. It goes out as paragraphs, not wrapped in a template -- what you write is what they read."
+            className="scroll-thin w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm leading-relaxed outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+          />
+        </Field>
+
+        {/* Before the button, not after the refusal -- worth reading while
+            there is still time to stop. Which of the two applies depends on
+            the sender: with the outbox nothing is mailed to anyone, so the
+            outbound limit has nothing to bite on and saying otherwise would
+            be a warning about something that is not going to happen. */}
+        {!delivers ? (
+          <div className="rounded-md border border-border bg-muted/40 p-2.5">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              No mail will leave the building. The sender is the local outbox:
+              this is recorded here and on the buyer&apos;s timeline, and nothing
+              is delivered. Set <code>EMAIL_SENDER=resend</code> to send for real.
+            </p>
+          </div>
+        ) : !allowed && to ? (
+          <div className="rounded-md border border-warning/30 bg-warning-muted p-2.5">
+            <p className="text-xs leading-relaxed text-warning-foreground">
+              {scope} This one will be refused and recorded as not sent.
+            </p>
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!draft.to.trim() || send.isPending}
+            onClick={() => {
+              setResult(null)
+              send.mutate(draft)
+            }}
+          >
+            {send.isPending ? 'Sending...' : 'Send'}
+          </Button>
+          <Button size="sm" onClick={close}>Cancel</Button>
+        </div>
+
+        {result && (
+          <pre className="scroll-thin max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs text-destructive">
+            {result}
+          </pre>
+        )}
+      </div>
+    </Sheet>
   )
 }
 

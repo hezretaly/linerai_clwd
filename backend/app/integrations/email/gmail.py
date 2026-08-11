@@ -59,7 +59,10 @@ class GmailSender(EmailSender):
         ).with_subject(settings.gmail_impersonate)
         return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-    def send(self, to: str, subject: str, body: str, reply_to: str = "") -> SendResult:
+    def send(
+        self, to: str, subject: str, body: str,
+        reply_to: str = "", in_reply_to: str = "",
+    ) -> SendResult:
         self.check()
         message = EmailMessage()
         message["To"] = to
@@ -67,6 +70,11 @@ class GmailSender(EmailSender):
         message["Subject"] = subject
         if reply_to:
             message["Reply-To"] = reply_to
+        if in_reply_to:
+            # Both, not just In-Reply-To: a client threads on References
+            # and shows an orphan without it.
+            message["In-Reply-To"] = in_reply_to
+            message["References"] = in_reply_to
         message.set_content(body)
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()

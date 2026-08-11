@@ -16,7 +16,10 @@ class OutboxSender(EmailSender):
     name = "outbox"
     delivers = False
 
-    def send(self, to: str, subject: str, body: str, reply_to: str = "") -> SendResult:
+    def send(
+        self, to: str, subject: str, body: str,
+        reply_to: str = "", in_reply_to: str = "",
+    ) -> SendResult:
         return SendResult(
             provider="outbox",
             message_id=f"outbox-{uuid.uuid4()}",
@@ -31,6 +34,9 @@ class ConsoleSender(OutboxSender):
 
     name = "console"
 
-    def send(self, to: str, subject: str, body: str, reply_to: str = "") -> SendResult:
+    def send(
+        self, to: str, subject: str, body: str,
+        reply_to: str = "", in_reply_to: str = "",
+    ) -> SendResult:
         print(f"\n--- email (not delivered) ---\nTo: {to}\nSubject: {subject}\n\n{body}\n---\n")
-        return super().send(to, subject, body, reply_to)
+        return super().send(to, subject, body, reply_to, in_reply_to)
