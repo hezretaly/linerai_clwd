@@ -1046,6 +1046,44 @@ def main() -> int:
     check("and by the token, not by guessing from the address",
           stamped["matched_by"] == "reply_token", stamped["matched_by"])
 
+    print("\n== a manager can see the whole mailbox, not just per-buyer ==")
+    box = call("GET", "/api/email/messages")
+    check("every send and reply is listed in one place", bool(box["messages"]),
+          f"{box['counts']['all']} messages")
+    counts = box["counts"]
+    check("the boxes partition the mail rather than overlapping",
+          counts["received"] + counts["sent"] + counts["failed"] + counts["unmatched"]
+          == counts["all"], str(counts))
+    # A tab saying 12 and showing 9 is the classic two-definitions bug, so the
+    # count and the filter are asserted against each other rather than trusted.
+    for name in ("received", "sent", "failed", "unmatched"):
+        shown = call("GET", f"/api/email/messages?box={name}")["messages"]
+        check(f"the {name} tab shows what it counts",
+              len(shown) == counts[name], f"says {counts[name]}, shows {len(shown)}")
+
+    # The reason the mailbox is a union and not one table. Mail nobody could
+    # place has no outreach row and no buyer page -- without this it is
+    # visible only on the diagnostics strip, which is not where anyone looks.
+    unmatched = call("GET", "/api/email/messages?box=unmatched")["messages"]
+    check("mail from a stranger is readable rather than only counted",
+          any(m["body"] for m in unmatched), f"{len(unmatched)} unplaced")
+    check("and is not pinned to a buyer it does not belong to",
+          all(m["lead_id"] is None for m in unmatched))
+
+    # Taken from a message that is really there, not a guess. A term that
+    # matches nothing makes "narrows the list" true for the wrong reason.
+    term = next(
+        (w for m in box["messages"] for w in m["subject"].split() if len(w) > 5),
+        "",
+    )
+    hit = call("GET", f"/api/email/messages?q={term}")["messages"]
+    miss = call("GET", "/api/email/messages?q=zzzznotinanything")["messages"]
+    check("search finds a word that is really in the mailbox", bool(hit),
+          f"{term!r} -> {len(hit)} hits")
+    check("and narrows rather than returning everything", len(hit) < counts["all"],
+          f"{len(hit)} of {counts['all']}")
+    check("a term in nothing returns nothing", not miss, str(len(miss)))
+
     print("\n== the resend path, as far as it can honestly be checked ==")
     # The HTTP call needs a key this environment does not have and must not
     # invent. Everything either side of it is asserted here; only the send is
@@ -1071,8 +1109,21 @@ def main() -> int:
           payload["reply_to"] == "reply+t@d")
 
     blocked = call("POST", "/api/email/test-send", {"to": "stranger@example.invalid"})
-    check("a test send still goes through the allow-list guard",
+    check("a test send still goes through the outbound limit",
           blocked["status"] in {"sent", "failed"}, f"{blocked['status']}: {blocked['error'][:60]}")
+
+    # Who may be emailed used to take two settings to express and read like an
+    # inbound access list. It is one now, and the dashboard states it rather
+    # than leaving a manager to infer it from DEMO_MODE plus a list.
+    scope = call("GET", "/api/integrations")
+    check("the dashboard says who outbound may reach, in words",
+          bool(scope.get("outbound_scope")), scope.get("outbound_scope", "")[:70])
+    # None and [] are different answers -- no limit versus nobody -- and
+    # collapsing them is how an empty list starts meaning unrestricted.
+    limited = scope.get("outbound_recipients")
+    check("and distinguishes 'no limit' from 'nobody'",
+          limited is None or isinstance(limited, list),
+          "no limit" if limited is None else f"{len(limited)} allowed")
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to

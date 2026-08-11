@@ -203,5 +203,10 @@ def registry_payload() -> dict:
         "integrations": [asdict(s) for s in statuses],
         "unconfigured": [s.key for s in statuses if not s.configured],
         "demo_mode": settings.demo_mode,
+        # Named, counted and spelled out, because "who can we actually email?"
+        # is a question the answer to which used to require reading two
+        # settings and knowing which one won.
+        "outbound_scope": settings.outbound_scope,
+        "outbound_recipients": settings.outbound_recipients,
         "llm_mode": settings.llm_mode,
     }

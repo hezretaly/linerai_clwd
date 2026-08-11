@@ -1,7 +1,7 @@
 """Everything that has to be true of a send, in one place.
 
 `api/outreach.py` and `api/lead_import.py` both put mail on the wire, and both
-grew their own copy of the DEMO_MODE allow-list check. That was survivable
+grew their own copy of the outbound recipient check. That was survivable
 while the only sender was the outbox, which delivers nothing -- the guard was
 protecting a no-op. With Resend behind it the two copies are one rehearsal away
 from mailing a real prospect, and the copy that drifts is the one nobody
@@ -26,15 +26,24 @@ def blocked_reason(sender: EmailSender, to_address: str) -> str:
     Only bites when the sender actually delivers: with the outbox there is
     nothing to protect anyone from, and refusing there would hide the row a
     rep is supposed to see.
+
+    The message names the setting and the value that lifts it. A refusal that
+    says only "blocked" costs whoever reads it a search through the codebase.
     """
     if not sender.delivers:
         return ""
-    if not settings.demo_mode:
+    allowed = settings.outbound_recipients
+    if allowed is None:
         return ""
-    if (to_address or "").lower() in settings.allowlist:
+    if (to_address or "").lower() in allowed:
         return ""
     return (
-        f"DEMO_MODE is on and {to_address} is not in EMAIL_ALLOWLIST, so nothing was sent."
+        f"Not sent: OUTBOUND_ONLY_TO does not include {to_address}. "
+        + (
+            f"It currently allows {', '.join(allowed)}. "
+            if allowed else "It is empty, so every address is refused. "
+        )
+        + "Add the address to it, or set OUTBOUND_ONLY_TO=everyone to send freely."
     )
 
 

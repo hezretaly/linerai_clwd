@@ -254,6 +254,32 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     an escalation a rep had claimed. An autonomous email sender needs its own
     guards, a rate limit and a loop-breaker for auto-responders; none of that
     exists, so neither does the capability.
+- **`OUTBOUND_ONLY_TO` gates sending, never receiving.** One setting whose
+  name is the rule: empty refuses every send, a list allows those addresses,
+  the word `everyone` lifts the limit. One call site,
+  `outreach_send.blocked_reason`, and the refusal names the setting and the
+  value that changes it. Inbound has no filter at all — anyone may write in,
+  and mail that cannot be placed is kept.
+  - It replaced `DEMO_MODE` + `EMAIL_ALLOWLIST`, which took two values to say
+    one thing and read like an inbound access list. The old pair is still read
+    so an existing `.env` keeps its behaviour: **widening who can be emailed
+    is the one direction an upgrade must never do silently.**
+  - `everyone` is a word, not an empty string. Empty meaning "mail anybody" is
+    the default that goes wrong quietly — a deleted line, a mis-copied file —
+    and the failure is a rehearsal reaching real prospects.
+  - `outbound_recipients` returns `None` for no limit and `[]` for nobody.
+    Callers must tell them apart; collapsing the two is how an empty list
+    starts meaning unrestricted.
+- **`/app/email` is a union, and that is the point.** It lists `outreach` rows
+  both directions *plus* unresolved `inbound_emails`. A reply nobody could
+  place has no outreach row and no buyer page, so listing one table would
+  leave a stranger writing to `sales@` visible only on a diagnostics strip.
+  `_in_box` defines each tab once, for the counts and the filter both — two
+  copies is how a tab says 12 and shows 9.
+- **There is no Drafts tab, because nothing stores a draft.** One is composed
+  from the lead's state when the composer opens and lives in the browser until
+  the rep presses send. A tab that is always empty claims a feature that does
+  not exist.
 - **`WEBHOOK_SECRET` has a development default and production refuses to boot
   on it.** Same shape as `MANAGER_PASSWORD`. Without a default the inbound
   path could only ever be tested by asserting the 503, and the signature
@@ -331,5 +357,7 @@ model-generated rail chips. Each is additive against the current schema.
 - Don't edit `.env` (it is gitignored) or commit any service-account JSON.
 - Don't add a simulated result to fill a gap. Say what's missing instead —
   that's the whole design.
-- Don't remove `DEMO_MODE`'s allow-list check. It is what stops a rehearsal
-  emailing a real prospect.
+- Don't remove the `OUTBOUND_ONLY_TO` check. It is what stops a rehearsal
+  emailing a real prospect, and it is one setting away from being lifted
+  deliberately (`OUTBOUND_ONLY_TO=everyone`) — which is the supported way to
+  turn it off, rather than deleting the check.

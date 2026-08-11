@@ -11,8 +11,8 @@ Two honest limits, surfaced in the UI rather than papered over:
   "reminder" is a draft a rep reviews and sends. It is not a drip campaign, and
   the page says so.
 * **Delivery is still the outbox.** An imported address is by definition not in
-  ``EMAIL_ALLOWLIST``, so with ``DEMO_MODE`` on the send is refused and recorded
-  as refused. That is the guard working, not a bug.
+  ``OUTBOUND_ONLY_TO``, so unless that is widened the send is refused and
+  recorded as refused. That is the guard working, not a bug.
 
 Import is preview-then-commit, the same shape as inventory ingest: parsing never
 writes a row. Unlike inventory it holds the preview client-side instead of in an

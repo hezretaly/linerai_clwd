@@ -147,8 +147,10 @@ ALLOWED_ORIGINS=https://liner.example.com
 # set it and there is nothing left to infer.
 PUBLIC_BASE_URL=https://liner.example.com
 
-# Leave this on. It is what stops a demo emailing a real prospect.
-DEMO_MODE=true
+# Who outbound email may reach. Empty refuses every send, which is the safe
+# way to start; a list allows those addresses; the word `everyone` lifts the
+# limit entirely. It gates sending only -- anyone can always write in.
+OUTBOUND_ONLY_TO=
 
 # The only thing in front of /api/inbound-email, which writes into a buyer's
 # history and has no session to check because Cloudflare has none to send.

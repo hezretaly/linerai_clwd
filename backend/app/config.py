@@ -101,6 +101,27 @@ class Settings(BaseSettings):
     # http://127.0.0.1:8000 in a buyer's inbox. Set it and the guessing stops.
     public_base_url: str = ""
     session_cookie: str = "liner_session"
+
+    # --- Who outbound email may reach ---------------------------------------
+    # One setting whose name is the rule. Three ways to write it:
+    #
+    #   OUTBOUND_ONLY_TO=                       nobody -- every send is refused
+    #   OUTBOUND_ONLY_TO=me@x.com,you@y.com     only those addresses
+    #   OUTBOUND_ONLY_TO=everyone               no restriction at all
+    #
+    # It replaces DEMO_MODE + EMAIL_ALLOWLIST, which needed two values to say
+    # one thing and read like an inbound access list. It is not: nothing here
+    # has ever filtered incoming mail, and nothing does now.
+    #
+    # `everyone` is a word rather than an empty string on purpose. Empty
+    # meaning "send to anybody" is the sort of default that goes wrong in
+    # silence -- a deleted line, a mis-copied .env -- and the failure is a
+    # rehearsal mailing real prospects.
+    outbound_only_to: str = ""
+
+    # Legacy pair, still read so an existing .env keeps its current behaviour.
+    # Widening who can be emailed by accident is the one direction that must
+    # not happen on an upgrade.
     demo_mode: bool = True
     email_allowlist: str = ""
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -114,8 +135,43 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
     @property
-    def allowlist(self) -> list[str]:
+    def outbound_recipients(self) -> list[str] | None:
+        """Addresses outbound may reach, or None for no restriction.
+
+        None and [] are different answers and the caller must tell them apart:
+        None is "send to anyone", [] is "send to nobody". Collapsing them is
+        how an empty list starts meaning unrestricted.
+        """
+        if self.outbound_only_to.strip().lower() == "everyone":
+            return None
+        if self.outbound_only_to.strip():
+            return [e.strip().lower() for e in self.outbound_only_to.split(",") if e.strip()]
+        # Nothing set: fall back to what the old pair said, so upgrading does
+        # not quietly let mail out.
+        if not self.demo_mode:
+            return None
         return [e.strip().lower() for e in self.email_allowlist.split(",") if e.strip()]
+
+    @property
+    def outbound_scope(self) -> str:
+        """One line for the dashboard and the logs."""
+        allowed = self.outbound_recipients
+        if allowed is None:
+            return "Outbound email can reach anyone."
+        if not allowed:
+            return (
+                "Outbound email is refused for every address. Set OUTBOUND_ONLY_TO "
+                "to a comma-separated list, or to 'everyone' to lift the limit."
+            )
+        return (
+            f"Outbound email is limited to {len(allowed)} "
+            f"address{'' if len(allowed) == 1 else 'es'}: {', '.join(allowed)}."
+        )
+
+    @property
+    def allowlist(self) -> list[str]:
+        """Deprecated: use outbound_recipients, which can say 'no limit'."""
+        return self.outbound_recipients or []
 
     @property
     def is_production(self) -> bool:

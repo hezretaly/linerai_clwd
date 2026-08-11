@@ -34,11 +34,11 @@ SENDING_FROM=Riverside Auto <liner@linerai.us>
 #   openssl rand -hex 32
 WEBHOOK_SECRET=...
 
-# --- The guard you want on until you mean it ---------------------------------
-# With DEMO_MODE on, a send to anyone not in EMAIL_ALLOWLIST is refused and the
-# refusal is recorded. Turn it off only when you intend to mail real buyers.
-DEMO_MODE=true
-EMAIL_ALLOWLIST=you@yourdomain.com
+# --- Who outbound may reach --------------------------------------------------
+# Empty refuses every send; a list allows those addresses; `everyone` lifts the
+# limit. Sending only -- anyone can write in regardless, and a reply that
+# cannot be placed is kept rather than dropped.
+OUTBOUND_ONLY_TO=you@yourdomain.com
 ```
 
 `ENV=production` refuses to boot while `WEBHOOK_SECRET` is still the

@@ -319,6 +319,10 @@ export interface Integration {
 }
 
 export interface IntegrationsPayload {
+  /* Plain English: who outbound email may reach. `outbound_recipients` is null
+     for no limit, [] for nobody, or the exact addresses. */
+  outbound_scope?: string
+  outbound_recipients?: string[] | null
   integrations: Integration[]
   unconfigured: string[]
   demo_mode: boolean

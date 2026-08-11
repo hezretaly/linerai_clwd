@@ -24,15 +24,15 @@ const NAV = [
   // dashboard's word for something going wrong.
   { to: '/app/conversations', label: 'Conversations', icon: 'inbox', group: 'Today',
     badge: 'conversations', tone: 'primary' },
+  // Everything sent and received, plus the diagnostics for when one did not
+  // arrive. Under Today because reading the mail is daily work; the setup half
+  // is collapsed on the page rather than living somewhere else.
+  { to: '/app/email', label: 'Email', icon: 'mail', group: 'Today',
+    badge: null, tone: 'muted' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
     badge: 'appointments', tone: 'muted' },
   { to: '/app/inventory', label: 'Inventory', icon: 'inventory', group: 'Manage',
     badge: 'inventory', tone: 'primary' },
-  // Under Manage, not Today: it is a setup screen. Sending and receiving fail
-  // in different places for different reasons, and receiving fails silently --
-  // this is where you find out which.
-  { to: '/app/email', label: 'Email', icon: 'mail', group: 'Manage',
-    badge: null, tone: 'muted' },
   { to: '/app/assistant', label: 'Liner setup', icon: 'sliders', group: 'Manage',
     badge: null, tone: 'muted' },
   { to: '/app/team', label: 'Team', icon: 'user', group: 'Manage',

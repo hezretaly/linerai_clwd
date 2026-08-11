@@ -348,6 +348,118 @@ def receipts(
     }
 
 
+@router.get("/email/messages")
+def messages(
+    box: str = "all",
+    q: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Every email this dealership has sent or received, newest first.
+
+    A union rather than one table, for the same reason the conversations list
+    is one: a reply nobody could place has no `outreach` row -- there is no
+    buyer to hang it on -- and it exists only as a receipt. Listing just
+    `outreach` would mean a stranger writing to sales@ is visible on the
+    diagnostics strip and nowhere a manager would ever look.
+
+    Drafts are deliberately absent. Nothing here stores one: a draft is
+    composed from the lead's state when the composer opens
+    (`GET /api/leads/{id}/outreach?draft=1`) and exists only in the rep's
+    browser until they press send. An empty "Drafts" tab would claim a feature
+    that is not there.
+    """
+    rows = (
+        db.query(Outreach)
+        .filter(Outreach.channel == "email")
+        .order_by(Outreach.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    lead_ids = {r.lead_id for r in rows if r.lead_id}
+    leads = {
+        lead.id: lead
+        for lead in (
+            db.query(Lead).filter(Lead.id.in_(lead_ids)).all() if lead_ids else []
+        )
+    }
+
+    out = []
+    for r in rows:
+        lead = leads.get(r.lead_id or "")
+        out.append({
+            "id": r.id,
+            "kind": "message",
+            "direction": r.direction,
+            "address": r.to_address,
+            "subject": r.subject,
+            "body": r.body,
+            "status": r.status,
+            "error": r.error,
+            "provider": r.provider,
+            "delivered_externally": r.provider not in {"", "outbox", "console"},
+            "lead_id": r.lead_id,
+            "lead_name": (lead.name if lead else "") or "",
+            "at": iso(r.sent_at or r.created_at),
+        })
+
+    # Mail that arrived and could not be placed. It has no lead by definition,
+    # so nothing on any buyer page will ever show it.
+    for r in (
+        db.query(InboundEmail)
+        .filter(InboundEmail.outcome == "unresolved")
+        .order_by(InboundEmail.created_at.desc())
+        .limit(200)
+        .all()
+    ):
+        out.append({
+            "id": r.id,
+            "kind": "unmatched",
+            "direction": "in",
+            "address": r.from_address,
+            "subject": r.subject,
+            "body": r.body,
+            "status": "unmatched",
+            "error": "",
+            "provider": "inbound",
+            "delivered_externally": True,
+            "lead_id": None,
+            "lead_name": "",
+            "at": iso(r.created_at),
+        })
+
+    out.sort(key=lambda m: m["at"] or "", reverse=True)
+
+    counts = {
+        key: sum(1 for m in out if _in_box(m, key))
+        for key in ("all", "received", "sent", "failed", "unmatched")
+    }
+    shown = [m for m in out if _in_box(m, box)]
+    if q:
+        needle = q.lower()
+        shown = [
+            m for m in shown
+            if needle in f"{m['address']} {m['subject']} {m['body']} {m['lead_name']}".lower()
+        ]
+    return {"messages": shown[:200], "counts": counts}
+
+
+def _in_box(m: dict, box: str) -> bool:
+    """One definition of each box, used for the counts and for the filtering.
+    Two copies is how a tab ends up saying 12 and showing 9."""
+    if box == "received":
+        return m["direction"] == "in" and m["kind"] == "message"
+    if box == "sent":
+        return m["direction"] == "out" and m["status"] == "sent"
+    # Refusals live here: an allow-list block is a send that did not happen,
+    # and it is the one a manager has to notice.
+    if box == "failed":
+        return m["direction"] == "out" and m["status"] != "sent"
+    if box == "unmatched":
+        return m["kind"] == "unmatched"
+    return True
+
+
 @router.get("/email/replyable")
 def replyable(
     db: Session = Depends(get_db),

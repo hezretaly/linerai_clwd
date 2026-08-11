@@ -10,14 +10,20 @@ import { Badge, Button, Card, Field, Input, Spinner } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
 
-/* Email, both directions, on one screen you can prove things on.
+/* Every email this dealership has sent or received, and below it the tools to
+ * work out why one did not arrive.
  *
- * Sending and receiving fail in completely different places and for completely
- * different reasons. Outbound breaks at Resend -- an unverified domain, a bad
- * key -- and says so loudly on the next send. Inbound breaks in Cloudflare,
- * which is configured outside this app entirely, and breaks *silently*: no
- * error, no row, just replies that never arrive. That asymmetry is why this
- * page exists and why the receipts below matter more than they look.
+ * The mailbox is first because it is the daily thing. The diagnostics are
+ * second but not optional: sending and receiving fail in different places for
+ * different reasons, and only one of them is loud. Outbound breaks at Resend
+ * -- a bad key, an unverified domain -- and the next send says so. Inbound
+ * breaks in Cloudflare, configured outside this app entirely, and breaks
+ * *silently*: no error, no row, just replies that never arrive.
+ *
+ * There is no Drafts tab. Nothing here stores a draft -- one is composed from
+ * the lead's state when the composer opens and lives in the browser until the
+ * rep presses send -- and a tab that is always empty claims a feature that
+ * does not exist.
  */
 
 interface Receipt {
@@ -39,6 +45,31 @@ interface ReceiptsPayload {
   endpoint: string
   signature_header: string
 }
+
+interface Mail {
+  id: string
+  kind: 'message' | 'unmatched'
+  direction: 'in' | 'out'
+  address: string
+  subject: string
+  body: string
+  status: string
+  error: string
+  delivered_externally: boolean
+  lead_id: string | null
+  lead_name: string
+  at: string
+}
+
+type Box = 'all' | 'received' | 'sent' | 'failed' | 'unmatched'
+
+const BOXES: [Box, string][] = [
+  ['all', 'All'],
+  ['received', 'Received'],
+  ['sent', 'Sent'],
+  ['failed', 'Not sent'],
+  ['unmatched', 'No buyer'],
+]
 
 interface Send {
   id: string
@@ -64,6 +95,17 @@ export function EmailSetupPage() {
   const [to, setTo] = useState('')
   const [target, setTarget] = useState('')
   const [sendResult, setSendResult] = useState<string | null>(null)
+  const [box, setBox] = useState<Box>('all')
+  const [query, setQuery] = useState('')
+  const [openSetup, setOpenSetup] = useState(false)
+  const [reading, setReading] = useState<Mail | null>(null)
+
+  const { data: mail } = useQuery({
+    queryKey: ['email-messages', box, query],
+    queryFn: () => api.get<{ messages: Mail[]; counts: Record<Box, number> }>(
+      `/api/email/messages?box=${box}&q=${encodeURIComponent(query)}`,
+    ),
+  })
 
   const { data: integrations } = useQuery({
     queryKey: ['integrations'],
@@ -80,6 +122,7 @@ export function EmailSetupPage() {
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['email-receipts'] })
+    void queryClient.invalidateQueries({ queryKey: ['email-messages'] })
     void queryClient.invalidateQueries({ queryKey: ['timeline'] })
   }
 
@@ -116,9 +159,137 @@ export function EmailSetupPage() {
     <main className="p-4 md:p-6">
       <PageIntro
         title="Email"
-        subtitle="Sending goes out through Resend. Replies come back through Cloudflare."
+        subtitle="Everything sent and received. Out through Resend, back through Cloudflare."
       />
 
+      {/* ---- the mailbox ---- */}
+      <Card className="mb-6 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+          <div className="flex flex-wrap gap-1.5">
+            {BOXES.map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setBox(key)}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                  box === key
+                    ? 'border-foreground bg-foreground text-background'
+                    : key === 'failed' && (mail?.counts.failed ?? 0) > 0
+                      ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-accent'
+                      : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                )}
+              >
+                {label}
+                <span className="tnum opacity-70">{mail?.counts[key] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto min-w-0">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search address, subject, text..."
+              className="w-full sm:w-64"
+            />
+          </div>
+        </div>
+
+        {!mail ? (
+          <Spinner />
+        ) : mail.messages.length === 0 ? (
+          <p className="p-8 text-center text-sm text-muted-foreground">
+            {query ? 'Nothing matches that search.' : 'Nothing here yet.'}
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {mail.messages.map((m) => (
+              <li key={m.id}>
+                <button
+                  onClick={() => setReading(reading?.id === m.id ? null : m)}
+                  className="flex w-full flex-wrap items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50"
+                >
+                  <span
+                    className={clsx(
+                      'mt-0.5 inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium',
+                      m.status === 'unmatched'
+                        ? 'border-warning/30 bg-warning/10 text-warning'
+                        : m.direction === 'in'
+                          ? 'border-primary/30 bg-primary/10 text-primary'
+                          : m.status !== 'sent'
+                            ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                            : 'border-border text-muted-foreground',
+                    )}
+                  >
+                    <Icon
+                      name={m.direction === 'in' ? 'back' : 'mail'}
+                      className="h-3 w-3 shrink-0"
+                    />
+                    {m.status === 'unmatched'
+                      ? 'no buyer'
+                      : m.direction === 'in'
+                        ? 'received'
+                        : m.status === 'sent'
+                          ? 'sent'
+                          : m.status}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">
+                      {m.subject || <span className="text-muted-foreground">(no subject)</span>}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {m.direction === 'in' ? 'from' : 'to'} {m.address || 'unknown'}
+                      {m.lead_name && ` · ${m.lead_name}`}
+                      {!m.delivered_externally && m.direction === 'out' && m.status === 'sent'
+                        && ' · recorded locally, not delivered'}
+                    </div>
+                    {m.error && (
+                      <div className="mt-0.5 text-xs text-destructive">{m.error}</div>
+                    )}
+                  </div>
+                  <span className="tnum shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+                    {dateTime(m.at)}
+                  </span>
+                </button>
+                {reading?.id === m.id && (
+                  <div className="border-t border-border bg-muted/30 px-4 py-3">
+                    <pre className="scroll-thin max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-relaxed">
+                      {m.body || '(no body)'}
+                    </pre>
+                    {m.lead_id ? (
+                      <Link
+                        to={`/app/leads/${m.lead_id}`}
+                        className="mt-2 inline-block text-xs text-primary hover:underline"
+                      >
+                        Open {m.lead_name || 'buyer'}
+                      </Link>
+                    ) : (
+                      // Not an error. Nobody claimed to know who wrote in, which
+                      // is the honest answer -- a name is never used to match,
+                      // so a stranger stays a stranger.
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        No buyer on file for {m.address || 'this address'}. Add them from
+                        Conversations to give this a home.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {/* ---- setup and diagnostics ---- */}
+      <button
+        onClick={() => setOpenSetup(!openSetup)}
+        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+      >
+        <Icon name={openSetup ? 'back' : 'sliders'} className="h-3.5 w-3.5 shrink-0" />
+        {openSetup ? 'Hide setup and diagnostics' : 'Setup and diagnostics'}
+      </button>
+
+      {!openSetup ? null : (
+      <>
       <div className="mb-6 grid min-w-0 gap-4 lg:grid-cols-2">
         <StatusCard
           title="Sending"
@@ -141,12 +312,13 @@ export function EmailSetupPage() {
         <Card className="min-w-0 p-5">
           <h2 className="text-sm font-semibold">Send a test</h2>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Goes through the real path, allow-list included. With{' '}
-            <code>DEMO_MODE</code> on, an address that is not in{' '}
-            <code>EMAIL_ALLOWLIST</code> is refused and the refusal is recorded —
-            that guard is what stops a rehearsal mailing a prospect, so this page
-            does not bypass it.
+            Goes through the real path, limits included — this page does not
+            bypass them, or it would prove the bypass works.
           </p>
+          <OutboundScope
+            scope={integrations?.outbound_scope ?? ''}
+            recipients={integrations?.outbound_recipients}
+          />
           <div className="mt-3 space-y-2">
             <Field label="To">
               <Input
@@ -305,7 +477,52 @@ curl -X POST ${data.endpoint} \\
           </ul>
         )}
       </Card>
+      </>
+      )}
     </main>
+  )
+}
+
+/** Who outbound may reach, in a sentence, with the line that changes it.
+ *
+ *  This used to be DEMO_MODE plus EMAIL_ALLOWLIST -- two settings to express
+ *  one rule, and a name that read like an inbound access list. Nothing here
+ *  has ever filtered incoming mail. */
+function OutboundScope({
+  scope,
+  recipients,
+}: {
+  scope: string
+  recipients?: string[] | null
+}) {
+  const unrestricted = recipients === null
+  const nobody = Array.isArray(recipients) && recipients.length === 0
+  return (
+    <div
+      className={clsx(
+        'mt-3 rounded-md border p-2.5',
+        unrestricted
+          ? 'border-warning/30 bg-warning-muted'
+          : 'border-border bg-muted/40',
+      )}
+    >
+      <p
+        className={clsx(
+          'text-xs leading-relaxed',
+          unrestricted ? 'text-warning-foreground' : 'text-muted-foreground',
+        )}
+      >
+        {unrestricted && <strong>No limit. </strong>}
+        {scope}
+      </p>
+      {!unrestricted && (
+        <pre className="scroll-thin mt-1.5 overflow-x-auto rounded border border-border bg-background p-2 text-[11px]">
+{nobody
+  ? 'OUTBOUND_ONLY_TO=you@yourdomain.com     # or: everyone'
+  : 'OUTBOUND_ONLY_TO=everyone               # to lift the limit'}
+        </pre>
+      )}
+    </div>
   )
 }
 
