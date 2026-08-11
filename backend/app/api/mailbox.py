@@ -29,6 +29,16 @@ from app.models import InboundEmail, Lead, Outreach, User
 
 router = APIRouter(tags=["email"])
 
+#: How many messages one request returns. The mailbox loads more on demand
+#: rather than everything at once -- a dealership a year in has thousands.
+PAGE = 100
+
+#: How far back a single request will look at all. Deliberately generous: the
+#: counts are computed from this set, so a ceiling that bites makes a tab
+#: undercount rather than a page truncate. If a mailbox ever reaches it, the
+#: fix is counting in SQL, not raising the number again.
+CEILING = 5000
+
 
 @router.get("/email/receipts")
 def receipts(
@@ -76,6 +86,8 @@ def receipts(
 def messages(
     box: str = "all",
     q: str = "",
+    limit: int = PAGE,
+    offset: int = 0,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
@@ -97,7 +109,7 @@ def messages(
         db.query(Outreach)
         .filter(Outreach.channel == "email")
         .order_by(Outreach.created_at.desc())
-        .limit(500)
+        .limit(CEILING)
         .all()
     )
     lead_ids = {r.lead_id for r in rows if r.lead_id}
@@ -133,7 +145,7 @@ def messages(
         db.query(InboundEmail)
         .filter(InboundEmail.outcome == "unresolved")
         .order_by(InboundEmail.created_at.desc())
-        .limit(200)
+        .limit(CEILING)
         .all()
     ):
         out.append({
@@ -165,7 +177,22 @@ def messages(
             m for m in shown
             if needle in f"{m['address']} {m['subject']} {m['body']} {m['lead_name']}".lower()
         ]
-    return {"messages": shown[:200], "counts": counts}
+
+    # A page, and the honest size of what it came from. Returning a slice while
+    # the tab counted every row is how a box said 230 and listed 200 -- the
+    # same "says 12, shows 9" bug `_in_box` exists to prevent, arriving through
+    # the back door of a silent cap. The count stays the true total, because a
+    # manager asking how much mail there is wants the answer; the list says how
+    # far down it goes.
+    start = max(offset, 0)
+    end = start + max(min(limit, CEILING), 1)
+    return {
+        "messages": shown[start:end],
+        "counts": counts,
+        "matching": len(shown),
+        "offset": start,
+        "has_more": end < len(shown),
+    }
 
 
 def _in_box(m: dict, box: str) -> bool:

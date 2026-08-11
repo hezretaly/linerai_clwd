@@ -74,8 +74,21 @@ class Settings(BaseSettings):
     webhook_secret: str = DEV_WEBHOOK_SECRET
 
     # --- Voice -------------------------------------------------------------
+    # `openai` is the only implementation. Empty means voice is off, and the
+    # call page says so rather than failing on a button press.
     voice_provider: str = ""
+    # Optional. Empty falls back to OPENAI_API_KEY, because one key is the
+    # normal case and asking for the same secret twice is how the two drift.
+    # Set it only to bill voice to a different project.
     voice_provider_key: str = ""
+    # The alias, not a dated snapshot. A pinned snapshot is a thing that stops
+    # existing without anyone touching this repository.
+    voice_model: str = "gpt-realtime"
+    voice_voice: str = "alloy"
+    # Without this the buyer's own words never arrive: the model hears audio
+    # and answers, but nothing writes their side of the call into `messages`,
+    # so the dealer's transcript is a monologue.
+    voice_transcribe_model: str = "gpt-4o-mini-transcribe"
 
     # --- Scraper -----------------------------------------------------------
     scraper_base_url: str = ""

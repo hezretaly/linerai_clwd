@@ -1234,9 +1234,29 @@ def main() -> int:
     # A tab saying 12 and showing 9 is the classic two-definitions bug, so the
     # count and the filter are asserted against each other rather than trusted.
     for name in ("received", "sent", "failed", "unmatched"):
-        shown = call("GET", f"/api/email/messages?box={name}")["messages"]
-        check(f"the {name} tab shows what it counts",
-              len(shown) == counts[name], f"says {counts[name]}, shows {len(shown)}")
+        page = call("GET", f"/api/email/messages?box={name}")
+        # `matching`, not `len(messages)`. The list is a page; the tab is the
+        # total. Comparing the tab to the page is how this read "says 230,
+        # shows 200" once a box outgrew one screenful -- the same
+        # two-definitions bug `_in_box` exists to prevent, arriving through a
+        # silent cap instead of a second ternary.
+        check(f"the {name} tab counts what the filter matches",
+              page["matching"] == counts[name],
+              f"says {counts[name]}, matches {page['matching']}")
+        check(f"and the {name} page never claims to be the whole list",
+              len(page["messages"]) <= page["matching"]
+              and page["has_more"] == (len(page["messages"]) < page["matching"]),
+              f"{len(page['messages'])} of {page['matching']}, has_more={page['has_more']}")
+
+    # Paging grows the window, so a bigger limit is a superset -- not a
+    # different slice of a re-sorted list.
+    small = call("GET", "/api/email/messages?box=all&limit=5")
+    bigger = call("GET", "/api/email/messages?box=all&limit=20")
+    check("a page is the newest N, and asking for more extends it",
+          len(small["messages"]) <= 5
+          and [m["id"] for m in small["messages"]]
+          == [m["id"] for m in bigger["messages"]][:len(small["messages"])],
+          f"{len(small['messages'])} then {len(bigger['messages'])}")
 
     # The reason the mailbox is a union and not one table. Mail nobody could
     # place has no outreach row and no buyer page -- without this it is
@@ -1387,6 +1407,83 @@ def main() -> int:
     check("and distinguishes 'no limit' from 'nobody'",
           limited is None or isinstance(limited, list),
           "no limit" if limited is None else f"{len(limited)} allowed")
+
+    print("\n== a call runs the same executors, and says what it cannot guard ==")
+    # Voice is off in this environment, and the refusal is the assertion: a
+    # typed 503 naming the variable, not a 500 and not a call that appears to
+    # start. Inventing a key to turn it green is the opposite of the point.
+    minted = status_of("POST", "/api/voice/sessions")
+    check("with no provider a call is refused, in words that name the setting",
+          minted[0] == 503 and "VOICE_PROVIDER" in minted[1],
+          f"{minted[0]}: {minted[1][:90]}")
+
+    # The relay is the whole reason a call is as safe as a chat: the model asks,
+    # our executor decides. So it is exercised directly, with no provider.
+    voice_convo = call("POST", "/api/chat/sessions", {"channel": "voice"})
+    vid = voice_convo.get("conversation_id") or voice_convo.get("id")
+    hidden = call("POST", "/api/voice/tools", {
+        "conversation_id": vid, "name": "search_inventory",
+        "input": {"keywords": "BMW 330i"},
+    })["result"]
+    check("a tool call over the wire runs the real executor",
+          "vehicles" in hidden, str(sorted(hidden))[:70])
+    check("and a do-not-discuss vehicle is withheld on a call too",
+          not any("330i" in (v.get("model") or "") for v in hidden["vehicles"]),
+          str([v.get("model") for v in hidden["vehicles"]][:4]))
+
+    bad = call("POST", "/api/voice/tools", {
+        "conversation_id": vid, "name": "search_inventory", "input": {"nonsense": 1},
+    })
+    check("an invented argument is an error the model can see, not a crash",
+          "error" in bad, str(bad)[:80])
+
+    # The transcript is where the guard has to run, because on a call the words
+    # are already spoken by the time any server has them. It cannot unsay a
+    # price -- it raises a person, and this asserts that rather than implying
+    # parity with chat.
+    call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "buyer", "content": "how much is the Corolla?",
+    })
+    flagged = call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "assistant",
+        "content": "That one is $18,400 out the door.",
+    })
+    check("an unsourced price spoken on a call is caught on the transcript",
+          bool(flagged.get("guard_violations")), str(flagged.get("guard_violations")))
+    queued = call("GET", "/api/conversations?filter=needs_person")
+    rows = queued.get("conversations", queued if isinstance(queued, list) else [])
+    check("and it puts a rep on the call rather than passing silently",
+          any(r.get("id") == vid for r in rows), vid)
+
+    # The other half, and the half that would be invisible if it broke: a
+    # number the buyer said themselves must not trip it. A guard that fires on
+    # every budget question puts a rep on every call and reads as a dead bot.
+    call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "buyer",
+        "content": "my budget is about $22,500",
+    })
+    honest = call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "assistant",
+        "content": "Right -- so under $22,500. Let me see what we have.",
+    })
+    check("while a number the buyer said themselves is left alone",
+          not honest.get("guard_violations"), str(honest.get("guard_violations")))
+
+    check("a call ends without needing a provider", bool(
+        call("POST", f"/api/voice/sessions/{vid}/end", {}).get("ok")))
+
+    # Inventory is the local database and says so. It used to report itself
+    # unconfigured for want of SCRAPER_BASE_URL, which put it in the amber
+    # banner beside things that really are missing -- and a banner that cries
+    # wolf is a banner nobody reads.
+    integrations = call("GET", "/api/integrations")
+    source = next(i for i in integrations["integrations"] if i["key"] == "scraper")
+    check("inventory reports the database as a real source, not a gap",
+          source["configured"] and source["impl"] in {"database", "http"},
+          f"{source['impl']}: {source['detail'][:60]}")
+    check("and is not counted among the unconfigured",
+          "scraper" not in integrations["unconfigured"],
+          str(integrations["unconfigured"]))
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to

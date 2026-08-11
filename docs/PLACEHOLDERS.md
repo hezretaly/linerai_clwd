@@ -7,7 +7,7 @@ is not available.
 
 ## cloudflare-worker
 
-- `backend/app/integrations/email/worker/src/index.ts:6` -- this file is the deployed Worker's source as
+- `backend/app/integrations/email/worker/src/index.ts:6` -- this is the deployed Worker's source, kept
 
 ## gmail
 
@@ -16,6 +16,10 @@ is not available.
 ## llm
 
 - `backend/app/agent/loop.py:21` -- the vendor calls in providers.py have never run against a real endpoint -- there is no API key in this environment. The turn loop below, including tool dispatch, the malformed-argument path, the guard retry and the escalation, IS exercised on every `make smoke` run against a fake provider (scripts/agent_loop_check.py). So the plumbing is tested and the HTTP call is not. Expect to fix a wire-format detail on the first live run, not the shape of the conversation.
+
+## openai-realtime
+
+- `backend/app/integrations/voice/openai_realtime.py:3` -- the mint call has never run here. There is no OPENAI_API_KEY in this environment, and `api.openai.com` is refused by the egress proxy besides -- `CONNECT tunnel failed, response 403`. Everything either side of that one request is real and asserted offline by `make agent-check`: the session body, the tool conversion, the voice-only instructions, and the fact that `check()` names the missing variable rather than failing vaguely. Only the request itself is unproven.
 
 ## resend
 

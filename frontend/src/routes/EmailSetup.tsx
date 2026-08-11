@@ -37,6 +37,9 @@ import { PageIntro } from '../components/dashboard/AppShell'
  *  dead page, slow enough to be free. The socket is what makes it feel live. */
 const POLL_MS = 5 * 60 * 1000
 
+/** Matches the server's default page. One screenful and then some. */
+const PAGE = 100
+
 /** `relative()` takes an ISO string; TanStack hands back an epoch. Same idea,
  *  different input, and 0 means nothing has been fetched yet rather than 1970. */
 function sinceChecked(at: number): string {
@@ -83,6 +86,18 @@ interface Mail {
 }
 
 type Box = 'all' | 'received' | 'sent' | 'failed' | 'unmatched'
+
+interface Mailbox {
+  messages: Mail[]
+  counts: Record<Box, number>
+  /** How many match the current tab and search, which is not the same as how
+   *  many were returned. The tab counting every row while the list showed the
+   *  first two hundred is exactly the "says 12, shows 9" bug the one filter
+   *  definition exists to prevent. */
+  matching: number
+  offset: number
+  has_more: boolean
+}
 
 const BOXES: [Box, string][] = [
   ['all', 'All'],
@@ -146,6 +161,9 @@ export function EmailSetupPage() {
   const [openSetup, setOpenSetup] = useState(false)
   const [reading, setReading] = useState<Mail | null>(null)
   const [composing, setComposing] = useState<Compose | null>(null)
+  // How far down the list goes. Grown rather than paged, because a mailbox is
+  // read by scrolling -- page two of an inbox is somewhere nobody goes back to.
+  const [shown, setShown] = useState(PAGE)
 
   // The clock above the list counts up between fetches, so something has to
   // re-render it. Thirty seconds is finer than the label's own resolution.
@@ -156,9 +174,9 @@ export function EmailSetupPage() {
   }, [])
 
   const { data: mail, dataUpdatedAt, isFetching } = useQuery({
-    queryKey: ['email-messages', box, query],
-    queryFn: () => api.get<{ messages: Mail[]; counts: Record<Box, number> }>(
-      `/api/email/messages?box=${box}&q=${encodeURIComponent(query)}`,
+    queryKey: ['email-messages', box, query, shown],
+    queryFn: () => api.get<Mailbox>(
+      `/api/email/messages?box=${box}&q=${encodeURIComponent(query)}&limit=${shown}`,
     ),
     refetchInterval: POLL_MS,
     // A tab left open all morning is the case this page is for. Coming back to
@@ -180,6 +198,8 @@ export function EmailSetupPage() {
     queryKey: ['email-replyable'],
     queryFn: () => api.get<{ sends: Send[] }>('/api/email/replyable'),
   })
+
+  useEffect(() => setShown(PAGE), [box, query])
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['email-receipts'] })
@@ -384,6 +404,22 @@ export function EmailSetupPage() {
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Never a silent cut. A list that stops at a round number without
+            saying so reads as a mailbox with nothing older in it. */}
+        {mail?.has_more && (
+          <div className="border-t border-border p-3 text-center">
+            <button
+              onClick={() => setShown((n) => n + PAGE)}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              Show older
+            </button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Showing {mail.messages.length} of {mail.matching}
+            </p>
+          </div>
         )}
       </Card>
 

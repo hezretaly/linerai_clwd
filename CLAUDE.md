@@ -338,6 +338,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   on it.** Same shape as `MANAGER_PASSWORD`. Without a default the inbound
   path could only ever be tested by asserting the 503, and the signature
   check, the dedupe and the whole resolution ladder would ship untested.
+- **A call runs the same executors, and cannot run the same guard.** Audio
+  goes browser-to-OpenAI directly — proxying it would add a round trip to every
+  syllable, and latency is the product on a phone call — so the model is on the
+  far side of a connection this server is not in. Everything enforced *inside*
+  an executor still holds: `search_inventory` filters a do-not-discuss vehicle,
+  `book_appointment` refuses a clash, `save_captured_fields` downgrades a
+  dishonest `typed`. The reply guard cannot: by the time a transcript reaches
+  `/api/voice/transcript` the words are in someone's ear. It runs there anyway
+  and raises a handoff — it cannot unsay a number, and that difference is
+  written down rather than implied.
+- **`channel="voice"` appends to the prompt; it does not fork it.** The chat
+  rules assume a screen — a booking card, a rail of chips, a price you can
+  re-read — and a model given them out loud says "asterisk asterisk dollar
+  twenty-four thousand" and offers a card nobody can see. `VOICE_ADDENDUM`
+  covers spoken words only, numbers said the way people say them, one car at a
+  time, and taking the email by ear because there is no card. Appended, because
+  two full prompts is how the price rule ends up stricter on one channel.
+- **A key alone does not answer the phone.** `VOICE_PROVIDER` empty means voice
+  is off even with `OPENAI_API_KEY` present. Taking calls is a decision a
+  dealership makes, not a side effect of configuring the chat agent. The key
+  itself is shared — `VOICE_PROVIDER_KEY` exists only to bill voice to a
+  different project, and asking for the same secret twice is how the two drift.
 - **Hours come from `hours_json`.** No page states its own.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the
@@ -389,8 +411,8 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same six tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
 | Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
 | Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
-| Voice | **Not configured.** Session mint returns a typed 503. The tool relay and transcript endpoints are real and tested. There is no fake provider — a scripted transcript would look like it worked while proving nothing about latency, barge-in or audio. |
-| Scraper | **Works, against the fixture site.** Real HTTP, real JSON-LD parsing, real diff/publish. No adapter for any real dealer site exists yet — that needs real URLs. |
+| Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |
+| Inventory source | **The local database, and that is the real answer.** Rows arrive by seed, by CSV import or by hand, and `search_inventory` reads them. The scraper works against the fixture site but has no adapter for any real dealer site — no two are laid out alike, so that needs real URLs. An optional second source nobody has chosen is not a missing dependency, and it is not in the banner. |
 | Lead import | **Real, end to end.** ADF/XML is parsed with `defusedxml`, matched against inventory and existing leads, reviewed, then committed. Nothing is fetched: no lead inbox is polled and no feed is subscribed to — you upload the document. |
 | Reminders | **Manual.** There is no scheduler in this system, so a follow-up or reminder is a server-built draft a rep reviews and sends. Not a drip campaign; the page says so. |
 

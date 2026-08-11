@@ -24,6 +24,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend
 
 from app.agent import loop  # noqa: E402
 from app.agent.fake_provider import FakeProvider, call_tool, say  # noqa: E402
+from app.agent import tools  # noqa: E402
 from app.agent.providers import Completion, ToolCall, _openai_tools  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.models import Conversation, Escalation, Vehicle  # noqa: E402
@@ -341,9 +342,91 @@ def main() -> int:
         check("and the search that grounded it really ran",
               any(c["name"] == "search_inventory" for c in calls))
 
+        print("\n== the voice session, as far as it can honestly be checked ==")
+        # The mint call needs a key this environment does not have and must not
+        # invent -- and api.openai.com is refused by the egress proxy besides.
+        # Everything either side of that one request is asserted here.
+        from app.agent.prompts import build_system_prompt
+        from app.api.settings import live_settings
+        from app.config import settings as cfg
+        from app.integrations.voice.openai_realtime import OpenAIRealtimeProvider
+        from app.integrations.voice.base import UnconfiguredVoiceProvider
+        from app.models import Dealership
+
+        voice = OpenAIRealtimeProvider()
+        if not (cfg.voice_provider_key or cfg.openai_api_key):
+            try:
+                voice.check()
+                check("voice refuses to pretend it is configured", False, "check() passed")
+            except Exception as exc:
+                check("voice names the variable it wants rather than failing vaguely",
+                      "OPENAI_API_KEY" in getattr(exc, "missing", []),
+                      str(getattr(exc, "missing", exc)))
+
+        # A key sitting in the environment for the chat agent must not switch
+        # the phone on by itself. Turning a dealership's calls on is a decision.
+        check("a key alone does not start answering the phone",
+              isinstance(get_provider_for(""), UnconfiguredVoiceProvider))
+        check("and choosing openai does", isinstance(
+            get_provider_for("openai"), OpenAIRealtimeProvider))
+
+        dealership = db.query(Dealership).first()
+        spoken = build_system_prompt(db, dealership, live_settings(db), channel="voice")
+        written = build_system_prompt(db, dealership, live_settings(db))
+        check("a call gets the rules that only make sense out loud",
+              "PHONE CALL" in spoken and "SPEAK ONLY WORDS" in spoken)
+        check("and chat does not -- there is a card on a screen there",
+              "PHONE CALL" not in written)
+        # One prompt with an addendum, not two prompts. Two is how the price
+        # rule ends up stricter on one channel than the other.
+        check("but both carry the rule that matters",
+              "THE ONE RULE THAT MATTERS" in spoken
+              and "THE ONE RULE THAT MATTERS" in written)
+        check("and both carry the dealership's own facts",
+              dealership.name in spoken and dealership.phone in spoken)
+
+        body = voice.session_payload(spoken, tools.TOOL_DEFS)["session"]
+        check("the session body is the shape the realtime API documents",
+              body["type"] == "realtime" and bool(body["model"]), str(sorted(body)))
+        # The nested audio object, not the older flat keys -- those are
+        # rejected outright, and the failure is a 400 nobody can read.
+        check("audio config is nested under session.audio",
+              body["audio"]["output"]["voice"] == cfg.voice_voice
+              and body["audio"]["input"]["turn_detection"]["type"] == "server_vad",
+              str(body["audio"]))
+        # Without this the buyer's own words never reach us and the dealer's
+        # transcript of the call is a monologue.
+        check("and asks for the buyer's side to be transcribed",
+              bool(body["audio"]["input"]["transcription"]["model"]),
+              str(body["audio"]["input"].get("transcription")))
+        check("every tool is offered on a call too, not a subset",
+              {t["name"] for t in body["tools"]} == {t["name"] for t in tools.TOOL_DEFS},
+              f"{len(body['tools'])} tools")
+        check("in the flat shape realtime takes",
+              all(t["type"] == "function" and "parameters" in t for t in body["tools"]))
+        # One conversion, shared with the Responses path. A second copy is how
+        # a tool ends up offered on one channel and not the other.
+        check("and it is the same conversion the chat loop uses",
+              {t["name"] for t in body["tools"]} == {t["name"] for t in _openai_tools()})
+        check("the instructions really are the dealership's prompt",
+              body["instructions"] == spoken)
+
         return report()
     finally:
         db.close()
+
+
+def get_provider_for(name: str):
+    """The registry's choice under a given VOICE_PROVIDER, restored after."""
+    from app.config import settings as cfg
+    from app.integrations.registry import get_voice_provider
+
+    was = cfg.voice_provider
+    try:
+        cfg.voice_provider = name
+        return get_voice_provider()
+    finally:
+        cfg.voice_provider = was
 
 
 def report() -> int:

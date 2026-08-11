@@ -41,19 +41,19 @@ class UnconfiguredVoiceProvider(VoiceProvider):
     name = "unconfigured"
 
     def _missing(self) -> list[str]:
-        missing = []
-        if not settings.voice_provider:
-            missing.append("VOICE_PROVIDER")
-        if not settings.voice_provider_key:
-            missing.append("VOICE_PROVIDER_KEY")
-        return missing
+        # Only the choice. The key is the *provider's* business to ask for, and
+        # naming VOICE_PROVIDER_KEY here sent people looking for a second
+        # secret that the OpenAI path does not want -- it reuses OPENAI_API_KEY.
+        return ["VOICE_PROVIDER=openai"]
 
     def check(self) -> None:
         raise NotConfigured(
             "voice",
             self._missing(),
-            "No realtime voice vendor has been selected yet (plan §9 spike). "
-            "The call UI, session mint and tool relay are built; only audio is missing.",
+            "Calls are switched off. Set VOICE_PROVIDER=openai to answer the phone with "
+            "the OpenAI realtime model; it reuses OPENAI_API_KEY. Left empty on purpose: "
+            "a key present for the chat agent should not start a dealership taking calls "
+            "it has not decided to take.",
         )
 
     def mint_session(self, instructions: str, tools: list[dict]) -> VoiceSession:
