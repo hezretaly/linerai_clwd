@@ -1469,6 +1469,25 @@ def main() -> int:
     check("while a number the buyer said themselves is left alone",
           not honest.get("guard_violations"), str(honest.get("guard_violations")))
 
+    # A real call recorded a buyer message reading a Chinese filler particle,
+    # from an English speaker who had made an "mm" sound. The session names the
+    # language now, which is the actual fix; this is the second half -- even
+    # spelled "Mm" that is not something the buyer said, and a rep reads this
+    # before phoning them back.
+    grunt = call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "buyer", "content": "\u55ef",
+    })
+    check("a non-verbal sound is not recorded as something the buyer said",
+          grunt.get("recorded") is False, str(grunt)[:60])
+    # The narrowness is the point. Dropping a message a buyer really sent is
+    # far worse than keeping one they did not, so anything with a word in it
+    # stays whatever it looks like.
+    kept = call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "buyer", "content": "ok",
+    })
+    check("while a real word is kept however short", kept.get("recorded") is not False,
+          str(kept.get("content")))
+
     check("a call ends without needing a provider", bool(
         call("POST", f"/api/voice/sessions/{vid}/end", {}).get("ok")))
 

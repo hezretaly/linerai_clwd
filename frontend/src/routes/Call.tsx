@@ -56,6 +56,14 @@ type Phase = 'idle' | 'connecting' | 'live' | 'ended'
  * microphone. Matched on the label because there is no capability flag for it. */
 const BLUETOOTH = /airpods|bluetooth|\bbt\b|headset|beats|galaxy buds|\bwf-|\bwh-/i
 
+/** Above this the meter counts as speech rather than room noise. Only used for
+ *  the idle clock and the "hearing you" line -- the real turn detection happens
+ *  at the provider, on the audio itself. */
+const SPEECH = 0.06
+
+/** Two minutes of silence in both directions ends the call. */
+const IDLE_MS = 2 * 60 * 1000
+
 export function Call() {
   const [error, setError] = useState<ApiError | null>(null)
   const [failed, setFailed] = useState('')
@@ -88,6 +96,29 @@ export function Call() {
   const owed = useRef(false)
   const generating = useRef(false)
 
+  /* The microphone is held shut until the greeting has been spoken.
+   *
+   * This shipped wrong and it produced two greetings. The first was cut off
+   * mid-word -- "Let me know what" -- because something triggered the turn
+   * detector while it was still talking: the Bluetooth link switching profile,
+   * gain settling, or the greeting itself leaking back. Interrupting cancels
+   * the response, and the silence afterwards is a completed turn, so the
+   * server generated a fresh greeting. Nobody had said anything.
+   *
+   * Nothing is lost by waiting. A buyer cannot meaningfully interrupt a
+   * sentence they have not heard yet, and from the moment it finishes they can
+   * cut in whenever they like. */
+  const micOpen = useRef(false)
+  const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  /* Set when close_conversation succeeds. The buyer said they were done, so the
+   * goodbye is allowed to finish and then the line goes down. */
+  const closing = useRef(false)
+  const lastHeard = useRef(Date.now())
+  // Read from the event handlers that open the mic, where the `muted` state
+  // captured at render time may be a version ago.
+  const mutedRef = useRef(false)
+
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
   // the microphone live and the meter lit in the browser chrome, which is the
   // single most alarming thing a website can do.
@@ -106,7 +137,24 @@ export function Call() {
     transcript.current?.scrollTo({ top: transcript.current.scrollHeight })
   }, [lines])
 
+  /* Nobody has said anything for a long time, in either direction.
+   *
+   * A forgotten tab is not a harmless one here: the microphone stays live and
+   * the provider bills by the minute, so a call left open on a phone in a
+   * pocket is both a privacy problem and a bill. Long enough that a caller
+   * thinking, or reading their own email back to themselves, is never cut off. */
+  useEffect(() => {
+    if (phase !== 'live') return
+    const timer = setInterval(() => {
+      if (Date.now() - lastHeard.current > IDLE_MS) void hangUp()
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [phase])
+
   const teardown = () => {
+    clearTimeout(openTimer.current)
+    micOpen.current = false
+    closing.current = false
     channel.current?.close()
     pc.current?.close()
     mic.current?.getTracks().forEach((t) => t.stop())
@@ -127,6 +175,22 @@ export function Call() {
       /* The call is the thing. A transcript row that failed to save must not
          interrupt it -- the buyer is mid-sentence. */
     })
+  }
+
+  /** The microphone is live only when it is open *and* not muted. One place
+   *  decides, because two booleans over the same tracks is how Unmute turns
+   *  the mic on before the greeting has finished. */
+  const applyMic = () => {
+    mic.current?.getAudioTracks().forEach((t) => {
+      t.enabled = micOpen.current && !mutedRef.current
+    })
+  }
+
+  const openMic = () => {
+    if (micOpen.current) return
+    clearTimeout(openTimer.current)
+    micOpen.current = true
+    applyMic()
   }
 
   /** Ask for one reply, once everything it is waiting on has been answered. */
@@ -162,6 +226,12 @@ export function Call() {
       type: 'conversation.item.create',
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) },
     }))
+    // The buyer said they were done and the executor agreed. Saying goodbye is
+    // not hanging up -- the line, and their microphone, stay open until
+    // something closes them. The goodbye is allowed to finish first.
+    if (name === 'close_conversation' && (output as any)?.result?.closed) {
+      closing.current = true
+    }
     outstanding.current = Math.max(outstanding.current - 1, 0)
     respondWhenReady()
   }
@@ -193,10 +263,17 @@ export function Call() {
         break
       case 'output_audio_buffer.started':
         setSpeaking(true)
+        lastHeard.current = Date.now()
         break
       case 'output_audio_buffer.stopped':
       case 'output_audio_buffer.cleared':
         setSpeaking(false)
+        lastHeard.current = Date.now()
+        // The greeting is over, so the buyer may now be heard. Anything
+        // earlier is the connection settling, and the turn detector reads that
+        // as an interruption.
+        openMic()
+        if (closing.current) void hangUp()
         break
       case 'error':
         setFailed(event.error?.message || 'The provider reported an error.')
@@ -223,7 +300,9 @@ export function Call() {
       analyser.getByteTimeDomainData(buffer)
       let peak = 0
       for (const sample of buffer) peak = Math.max(peak, Math.abs(sample - 128))
-      setLevel(Math.min(peak / 60, 1))
+      const loudness = Math.min(peak / 60, 1)
+      setLevel(loudness)
+      if (loudness > SPEECH) lastHeard.current = Date.now()
       requestAnimationFrame(tick)
     }
     tick()
@@ -234,6 +313,8 @@ export function Call() {
     setFailed('')
     setLines([])
     setPhase('connecting')
+    mutedRef.current = false
+    setMuted(false)
     outstanding.current = 0
     owed.current = false
     generating.current = false
@@ -280,7 +361,13 @@ export function Call() {
         // the difference between a call and a silent one.
         void audio.current.play().catch(() => {})
       }
+      // Added but not yet sending. Opened on the first
+      // `output_audio_buffer.stopped`, and unconditionally after six seconds so
+      // that a greeting which never plays cannot leave a caller unheard.
+      micOpen.current = false
+      stream.getAudioTracks().forEach((t) => { t.enabled = false })
       stream.getTracks().forEach((track) => connection.addTrack(track, stream))
+      openTimer.current = setTimeout(openMic, 6000)
 
       const events = connection.createDataChannel('oai-events')
       channel.current = events
@@ -340,7 +427,10 @@ export function Call() {
 
   const toggleMute = () => {
     const next = !muted
-    mic.current?.getAudioTracks().forEach((t) => { t.enabled = !next })
+    mutedRef.current = next
+    // Through applyMic, so pressing Unmute during the greeting does not open
+    // the microphone before the greeting it would interrupt has finished.
+    applyMic()
     setMuted(next)
   }
 
@@ -366,7 +456,7 @@ export function Call() {
           <p className="-mt-4 mb-2 text-center text-xs text-muted-foreground">
             {muted
               ? 'Muted.'
-              : level > 0.06
+              : level > SPEECH
                 ? 'Hearing you.'
                 : 'Not picking anything up -- check the microphone below.'}
           </p>

@@ -375,6 +375,19 @@ def main() -> int:
         written = build_system_prompt(db, dealership, live_settings(db))
         check("a call gets the rules that only make sense out loud",
               "PHONE CALL" in spoken and "SPEAK ONLY WORDS" in spoken)
+        # A real call asked "when would you like to come in?", was told ten,
+        # and answered "we have eleven". On a screen the card offers the times;
+        # out loud nothing does unless the assistant is told to.
+        check("and is told to offer real times rather than ask an open question",
+              "check_availability first" in spoken and "two real openings" in spoken)
+        # It promised to read the address back and then booked without doing
+        # it, which is how a lead ends up unreachable.
+        check("and to wait for the email to be confirmed before booking",
+              "WAIT for them to say yes" in spoken)
+        # Saying goodbye is not hanging up. The line, and the buyer's
+        # microphone, stay open until close_conversation is called.
+        check("and that ending the call takes a tool call, not a farewell",
+              "close_conversation in the same turn" in spoken)
         check("and chat does not -- there is a card on a screen there",
               "PHONE CALL" not in written)
         # One prompt with an addendum, not two prompts. Two is how the price

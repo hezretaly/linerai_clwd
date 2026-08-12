@@ -354,6 +354,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   sounds like the assistant changing voice mid-sentence. Submit every
   outstanding result, wait for the `response.done` of the response that asked
   for them, then request exactly one.
+- **A greeting the buyer has not heard yet cannot be interrupted.** The
+  microphone is held shut until the first `output_audio_buffer.stopped`. Open
+  from the start, the connection settling triggers the turn detector, which
+  cancels the greeting mid-word — and the silence afterwards is a completed
+  turn, so the server generates a second greeting to nobody. A real call opened
+  with two.
+- **Saying goodbye is not hanging up.** The line and the buyer's microphone
+  stay open until something closes them, and a realtime provider bills by the
+  minute. `close_conversation` — the same tool chat uses — is what puts the
+  phone down, and the client hangs up once the goodbye has finished playing.
+  Two minutes of silence in both directions does it too, because a forgotten
+  tab is a live microphone.
 - **The transcript is a side channel, not what the model heard.** The model
   gets the raw audio; `conversation.item.input_audio_transcription` is a
   parallel service for our records. So a garbled transcript means a poor
