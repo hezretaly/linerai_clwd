@@ -91,11 +91,16 @@ class OpenAIRealtimeProvider(VoiceProvider):
                         # Without a transcription model the buyer's own words
                         # never reach us: the model hears them and answers, and
                         # the dealer's transcript is a monologue.
-                        "transcription": {"model": settings.voice_transcribe_model},
-                        # Server-side turn taking. The alternative is the browser
-                        # deciding when a sentence ended, which is exactly the
-                        # judgement a realtime model is better at.
-                        "turn_detection": {"type": "server_vad"},
+                        "transcription": _transcription(),
+                        # Cleans the input before anything reads it. Skipping it
+                        # leaves the transcriber and the turn detector both
+                        # working on whatever the headset produced, and a
+                        # Bluetooth mic in hands-free mode produces very little.
+                        "noise_reduction": {"type": settings.voice_noise_reduction},
+                        # Server-side turn taking. The browser deciding when a
+                        # sentence ended is exactly the judgement a realtime
+                        # model is better at.
+                        "turn_detection": _turn_detection(),
                     },
                     "output": {"voice": settings.voice_voice},
                 },
@@ -153,6 +158,43 @@ class OpenAIRealtimeProvider(VoiceProvider):
             expires_in=_seconds_left(data.get("expires_at")),
             model=settings.voice_model,
         )
+
+
+def _transcription() -> dict:
+    """The transcriber's own settings.
+
+    The language hint is the one that matters and the one everybody omits.
+    Without it the transcriber infers the language from the audio, and
+    telephone-quality audio -- which is what a Bluetooth headset gives you the
+    moment its microphone is opened -- is exactly where inference goes wrong.
+    The result is not a slightly-off transcript, it is confident nonsense in
+    the wrong language.
+    """
+    config: dict = {"model": settings.voice_transcribe_model}
+    if settings.voice_language:
+        config["language"] = settings.voice_language
+    return config
+
+
+def _turn_detection() -> dict:
+    """When the buyer has finished speaking.
+
+    `semantic_vad` asks whether the sentence sounded complete;
+    `server_vad` times a silence. On clean audio the difference is taste. On
+    poor audio it is not: gappy input reads as silence, so a fixed threshold
+    cuts the buyer off mid-sentence and the model answers half a question --
+    which from the buyer's side looks exactly like not being heard.
+
+    `interrupt_response` is on either way. Talking over an assistant that
+    keeps going is the single most infuriating thing a phone bot does.
+    """
+    if settings.voice_turn_detection == "server_vad":
+        return {"type": "server_vad", "interrupt_response": True}
+    return {
+        "type": "semantic_vad",
+        "eagerness": settings.voice_eagerness,
+        "interrupt_response": True,
+    }
 
 
 def _realtime_tools(tools: list[dict]) -> list[dict]:

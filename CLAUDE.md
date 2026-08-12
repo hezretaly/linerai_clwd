@@ -348,6 +348,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `/api/voice/transcript` the words are in someone's ear. It runs there anyway
   and raises a handoff — it cannot unsay a number, and that difference is
   written down rather than implied.
+- **One response at a time on a call.** A turn that calls two tools fires
+  `response.function_call_arguments.done` twice, and answering each with its
+  own `response.create` puts two responses on the same audio track — which
+  sounds like the assistant changing voice mid-sentence. Submit every
+  outstanding result, wait for the `response.done` of the response that asked
+  for them, then request exactly one.
+- **The transcript is a side channel, not what the model heard.** The model
+  gets the raw audio; `conversation.item.input_audio_transcription` is a
+  parallel service for our records. So a garbled transcript means a poor
+  microphone, not an assistant that misunderstood — and changing the
+  transcription model fixes the record, never the comprehension. Both symptoms
+  do share one cause, which is why the session sets `noise_reduction`, a
+  `language` hint and `semantic_vad` rather than defaults: on the
+  telephone-quality audio a Bluetooth headset produces, a fixed silence
+  threshold cuts the buyer off mid-sentence and the language is inferred wrong.
 - **`channel="voice"` appends to the prompt; it does not fork it.** The chat
   rules assume a screen — a booking card, a rail of chips, a price you can
   re-read — and a model given them out loud says "asterisk asterisk dollar

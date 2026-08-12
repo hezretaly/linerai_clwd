@@ -47,6 +47,15 @@ interface Line {
 
 type Phase = 'idle' | 'connecting' | 'live' | 'ended'
 
+/* A Bluetooth headset is the most common reason a call goes badly, and the
+ * reason is not obvious enough for anyone to guess it. Opening the microphone
+ * on AirPods forces the link out of A2DP into the hands-free profile, which
+ * collapses *both* directions to telephone quality -- so the buyer sounds
+ * broken to the model and the model sounds thin to the buyer, at once. The
+ * cure is to leave the headset as output and take input from the built-in
+ * microphone. Matched on the label because there is no capability flag for it. */
+const BLUETOOTH = /airpods|bluetooth|\bbt\b|headset|beats|galaxy buds|\bwf-|\bwh-/i
+
 export function Call() {
   const [error, setError] = useState<ApiError | null>(null)
   const [failed, setFailed] = useState('')
@@ -54,18 +63,44 @@ export function Call() {
   const [lines, setLines] = useState<Line[]>([])
   const [muted, setMuted] = useState(false)
   const [speaking, setSpeaking] = useState(false)
+  const [level, setLevel] = useState(0)
+  const [mics, setMics] = useState<MediaDeviceInfo[]>([])
+  const [micId, setMicId] = useState('')
 
   const pc = useRef<RTCPeerConnection | null>(null)
   const channel = useRef<RTCDataChannel | null>(null)
   const mic = useRef<MediaStream | null>(null)
+  const meter = useRef<AudioContext | null>(null)
   const audio = useRef<HTMLAudioElement | null>(null)
   const convo = useRef('')
   const transcript = useRef<HTMLDivElement | null>(null)
+
+  /* Only one response may be generating at a time.
+   *
+   * This shipped wrong and it sounded like the assistant changing voice
+   * mid-sentence. A turn that called two tools fired
+   * `response.function_call_arguments.done` twice, and each handler answered
+   * with its own `response.create` -- so two responses generated audio into
+   * the same track and the buyer heard both at once. The rule is: submit every
+   * outstanding tool result, then ask for exactly one response, and only once
+   * the response that requested them has finished. */
+  const outstanding = useRef(0)
+  const owed = useRef(false)
+  const generating = useRef(false)
 
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
   // the microphone live and the meter lit in the browser chrome, which is the
   // single most alarming thing a website can do.
   useEffect(() => () => teardown(), [])
+
+  useEffect(() => {
+    // Labels are blank until permission has been granted once, so this fills
+    // in properly only after the first call. Listed anyway: an unnamed device
+    // is still selectable, and on most machines the order is stable.
+    void navigator.mediaDevices?.enumerateDevices?.()
+      .then((all) => setMics(all.filter((d) => d.kind === 'audioinput')))
+      .catch(() => {})
+  }, [phase])
 
   useEffect(() => {
     transcript.current?.scrollTo({ top: transcript.current.scrollHeight })
@@ -75,9 +110,12 @@ export function Call() {
     channel.current?.close()
     pc.current?.close()
     mic.current?.getTracks().forEach((t) => t.stop())
+    void meter.current?.close().catch(() => {})
     channel.current = null
     pc.current = null
     mic.current = null
+    meter.current = null
+    setLevel(0)
   }
 
   const say = (role: Line['role'], text: string) => {
@@ -91,13 +129,18 @@ export function Call() {
     })
   }
 
+  /** Ask for one reply, once everything it is waiting on has been answered. */
+  const respondWhenReady = () => {
+    if (outstanding.current > 0 || !owed.current || generating.current) return
+    owed.current = false
+    channel.current?.send(JSON.stringify({ type: 'response.create' }))
+  }
+
   /** Tool calls come back over the data channel and are executed on our side.
    *
    *  This is the part that makes a call as safe as a chat. The model asks for
    *  `search_inventory`; the executor decides what it gets, so a do-not-discuss
-   *  vehicle never reaches it whatever the prompt says. The result goes back as
-   *  a conversation item, and `response.create` is what makes the model
-   *  actually speak it -- without that it sits silent holding an answer. */
+   *  vehicle never reaches it whatever the prompt says. */
   const runTool = async (name: string, callId: string, rawArgs: string) => {
     let input: Record<string, unknown> = {}
     try {
@@ -119,17 +162,29 @@ export function Call() {
       type: 'conversation.item.create',
       item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) },
     }))
-    channel.current?.send(JSON.stringify({ type: 'response.create' }))
+    outstanding.current = Math.max(outstanding.current - 1, 0)
+    respondWhenReady()
   }
 
   const onEvent = (event: Record<string, any>) => {
     switch (event.type) {
+      case 'response.created':
+        generating.current = true
+        break
+      case 'response.done':
+        generating.current = false
+        // The response that asked for the tools has finished emitting them, so
+        // this is the earliest moment a new one may be requested.
+        respondWhenReady()
+        break
       case 'response.function_call_arguments.done':
+        outstanding.current += 1
+        owed.current = true
         void runTool(event.name, event.call_id, event.arguments)
         break
-      // The buyer's own words. Without a transcription model configured
-      // server-side this event never fires and the dealer's transcript is a
-      // monologue -- which is why the session asks for one.
+      // The buyer's own words. A side channel: the model hears the raw audio
+      // and never reads this, so a wrong transcript means a poor microphone
+      // rather than an assistant that misunderstood.
       case 'conversation.item.input_audio_transcription.completed':
         say('buyer', event.transcript || '')
         break
@@ -151,27 +206,79 @@ export function Call() {
     }
   }
 
+  /** A live input level, which is the only way to answer "can it hear me?".
+   *
+   *  Without this, a microphone that is muted at the operating system, or a
+   *  headset that handed over a dead input, is indistinguishable from an
+   *  assistant that is ignoring you. */
+  const watchLevel = (stream: MediaStream) => {
+    const ctx = new AudioContext()
+    meter.current = ctx
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 512
+    ctx.createMediaStreamSource(stream).connect(analyser)
+    const buffer = new Uint8Array(analyser.frequencyBinCount)
+    const tick = () => {
+      if (meter.current !== ctx) return
+      analyser.getByteTimeDomainData(buffer)
+      let peak = 0
+      for (const sample of buffer) peak = Math.max(peak, Math.abs(sample - 128))
+      setLevel(Math.min(peak / 60, 1))
+      requestAnimationFrame(tick)
+    }
+    tick()
+  }
+
   const start = async () => {
     setError(null)
     setFailed('')
     setLines([])
     setPhase('connecting')
+    outstanding.current = 0
+    owed.current = false
+    generating.current = false
     try {
       // Ours, and the only request that carries the real key. What comes back
       // is good for about a minute and for one call.
       const session = await api.post<Session>('/api/voice/sessions')
       convo.current = session.conversation_id
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Constraints, not `audio: true`. Echo cancellation is the load-bearing
+      // one: without it the model hears its own voice coming back, transcribes
+      // it as the buyer, and answers itself.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          ...(micId ? { deviceId: { exact: micId } } : {}),
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      })
       mic.current = stream
+      watchLevel(stream)
+      // Labels are only readable once permission exists, so the picker below
+      // is populated with real names from here on.
+      void navigator.mediaDevices.enumerateDevices()
+        .then((all) => setMics(all.filter((d) => d.kind === 'audioinput')))
+        .catch(() => {})
 
-      const connection = new RTCPeerConnection()
+      const connection = new RTCPeerConnection({
+        // One public STUN server. The SDP exchange here is a single HTTP round
+        // trip with nowhere to trickle a late candidate to, so anything not in
+        // the offer is lost -- and on a network that needs a reflexive
+        // candidate, that is the whole connection.
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      })
       pc.current = connection
 
-      // The model's voice. Attached before the offer, because the track can
-      // arrive as soon as the answer is set.
       connection.ontrack = (e) => {
-        if (audio.current) audio.current.srcObject = e.streams[0]
+        if (!audio.current) return
+        audio.current.srcObject = e.streams[0]
+        // Safari will not autoplay a stream attached after the click that
+        // started this, even though a gesture did occur. Asking explicitly is
+        // the difference between a call and a silent one.
+        void audio.current.play().catch(() => {})
       }
       stream.getTracks().forEach((track) => connection.addTrack(track, stream))
 
@@ -180,14 +287,22 @@ export function Call() {
       events.onmessage = (e) => onEvent(JSON.parse(e.data))
       // Liner opens. Without this the line is live and silent, and a buyer who
       // hears nothing hangs up before saying anything for the model to answer.
-      events.onopen = () => events.send(JSON.stringify({ type: 'response.create' }))
+      events.onopen = () => {
+        owed.current = true
+        respondWhenReady()
+      }
 
       const offer = await connection.createOffer()
       await connection.setLocalDescription(offer)
+      // Wait for the candidates before posting. There is no second channel to
+      // send them on afterwards, so an offer posted the instant the local
+      // description is set advertises no way to reach this browser -- which
+      // shows up as a call that takes seconds to connect, or does not.
+      await gathered(connection)
 
       const answer = await fetch(`${session.calls_url}?model=${encodeURIComponent(session.model)}`, {
         method: 'POST',
-        body: offer.sdp,
+        body: connection.localDescription?.sdp ?? offer.sdp,
         headers: {
           Authorization: `Bearer ${session.client_secret}`,
           'Content-Type': 'application/sdp',
@@ -230,6 +345,8 @@ export function Call() {
   }
 
   const missing = error?.notConfigured
+  const chosen = mics.find((d) => d.deviceId === micId) ?? mics[0]
+  const overBluetooth = Boolean(chosen?.label && BLUETOOTH.test(chosen.label))
 
   return (
     <div className="flex h-full items-center justify-center bg-muted/40 px-4 py-6">
@@ -243,14 +360,22 @@ export function Call() {
           </p>
         </div>
 
-        <Meter live={phase === 'live'} speaking={speaking} />
+        <Meter live={phase === 'live'} speaking={speaking} level={level} />
 
-        {/* Only rendered while there is something to show, so an idle page is
-            the same calm card it always was. */}
+        {phase === 'live' && (
+          <p className="-mt-4 mb-2 text-center text-xs text-muted-foreground">
+            {muted
+              ? 'Muted.'
+              : level > 0.06
+                ? 'Hearing you.'
+                : 'Not picking anything up -- check the microphone below.'}
+          </p>
+        )}
+
         {lines.length > 0 && (
           <div
             ref={transcript}
-            className="scroll-thin mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border bg-background p-3 text-left"
+            className="scroll-thin mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border bg-background p-3 text-left"
           >
             {lines.map((line) => (
               <p key={line.id} className="text-sm leading-relaxed">
@@ -265,6 +390,39 @@ export function Call() {
                 {line.text}
               </p>
             ))}
+          </div>
+        )}
+
+        {mics.length > 1 && (
+          <label className="mt-4 block text-left">
+            <span className="text-xs font-medium text-muted-foreground">Microphone</span>
+            <select
+              value={micId || mics[0]?.deviceId || ''}
+              onChange={(e) => setMicId(e.target.value)}
+              disabled={phase === 'live' || phase === 'connecting'}
+              className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring disabled:opacity-60"
+            >
+              {mics.map((device, index) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `Microphone ${index + 1}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {overBluetooth && (
+          /* Not a warning about our own software. This is what wireless
+             earbuds do to any call, in any app, and the fix is a dropdown away
+             -- so it is worth saying plainly rather than letting a buyer
+             conclude the assistant is broken. */
+          <div className="mt-3 rounded-md border border-warning/30 bg-warning-muted p-2.5 text-left">
+            <p className="text-xs leading-relaxed text-warning-foreground">
+              Using a wireless headset&apos;s microphone drops the whole call to
+              telephone quality in both directions -- your voice arrives broken and
+              the reply sounds thin. Pick the built-in microphone above and keep
+              the earbuds for listening.
+            </p>
           </div>
         )}
 
@@ -325,19 +483,49 @@ export function Call() {
       {/* The model's audio. Not hidden with `display: none` -- Safari has
           historically refused to play a track on a detached element -- so it is
           present and simply has nothing to draw. */}
-      <audio ref={audio} autoPlay className="hidden" />
+      <audio ref={audio} autoPlay playsInline className="hidden" />
     </div>
   )
 }
 
-/** Seven bars. Flat when idle, moving while Liner is speaking.
+/** ICE gathering, or two seconds, whichever comes first.
  *
- *  Driven by the provider's own audio-buffer events rather than by analysing
- *  the waveform: it is the difference between "is sound playing" and "did the
- *  server decide to speak", and on a call with any lag those are not the same
- *  moment. Purely decorative -- `aria-hidden`, because the transcript below is
- *  what a screen reader should follow. */
-function Meter({ live, speaking }: { live: boolean; speaking: boolean }) {
+ *  Two seconds because a hung STUN server must not hold a call hostage: an
+ *  offer with host candidates only still connects on most networks, and a
+ *  degraded connection beats a button that never responds. */
+function gathered(connection: RTCPeerConnection): Promise<void> {
+  if (connection.iceGatheringState === 'complete') return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      connection.removeEventListener('icegatheringstatechange', onChange)
+      resolve()
+    }
+    const onChange = () => {
+      if (connection.iceGatheringState === 'complete') done()
+    }
+    const timer = setTimeout(done, 2000)
+    connection.addEventListener('icegatheringstatechange', onChange)
+  })
+}
+
+/** Seven bars: the buyer's own voice while they speak, Liner's while it does.
+ *
+ *  Two signals, one meter, because they never happen at once and a caller
+ *  needs both answers from the same place -- "is it hearing me" and "is it
+ *  talking". The input half is measured from the microphone; the output half
+ *  comes from the provider's audio-buffer events rather than from analysing
+ *  the returning waveform, because that is the difference between "sound is
+ *  playing" and "it decided to speak". */
+function Meter({
+  live,
+  speaking,
+  level,
+}: {
+  live: boolean
+  speaking: boolean
+  level: number
+}) {
   const heights = [10, 22, 34, 46, 34, 22, 10]
   return (
     <div className="my-6 flex h-12 items-center justify-center gap-1" aria-hidden="true">
@@ -345,12 +533,15 @@ function Meter({ live, speaking }: { live: boolean; speaking: boolean }) {
         <span
           key={index}
           style={{
-            height: speaking ? height : 10,
-            transitionDelay: `${index * 60}ms`,
+            height: speaking
+              ? height
+              : live ? Math.max(10, height * level) : 10,
+            transitionDelay: speaking ? `${index * 60}ms` : '0ms',
           }}
           className={clsx(
-            'w-1.5 rounded-full transition-all duration-300',
-            speaking ? 'bg-primary' : live ? 'bg-primary/40' : 'bg-border',
+            'w-1.5 rounded-full transition-all',
+            speaking ? 'bg-primary duration-300'
+              : live ? 'bg-primary/60 duration-75' : 'bg-border duration-300',
           )}
         />
       ))}

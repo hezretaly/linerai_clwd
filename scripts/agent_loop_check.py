@@ -392,13 +392,38 @@ def main() -> int:
         # rejected outright, and the failure is a 400 nobody can read.
         check("audio config is nested under session.audio",
               body["audio"]["output"]["voice"] == cfg.voice_voice
-              and body["audio"]["input"]["turn_detection"]["type"] == "server_vad",
+              and set(body["audio"]["input"]) >= {
+                  "transcription", "noise_reduction", "turn_detection"},
               str(body["audio"]))
         # Without this the buyer's own words never reach us and the dealer's
         # transcript of the call is a monologue.
         check("and asks for the buyer's side to be transcribed",
               bool(body["audio"]["input"]["transcription"]["model"]),
               str(body["audio"]["input"].get("transcription")))
+        # The hint everyone omits. Left out, the transcriber infers the
+        # language from the audio -- and telephone-quality audio, which is what
+        # a Bluetooth headset produces the moment its microphone opens, is
+        # exactly where inference produces confident nonsense.
+        check("with the language named rather than guessed from the audio",
+              body["audio"]["input"]["transcription"].get("language") == cfg.voice_language,
+              str(body["audio"]["input"]["transcription"].get("language")))
+        # Cleans the input before either the transcriber or the turn detector
+        # reads it. near_field is a headset; far_field on a close mic strips
+        # the speech it should keep.
+        check("and the input cleaned for the microphone it expects",
+              body["audio"]["input"]["noise_reduction"]["type"]
+              in {"near_field", "far_field"},
+              str(body["audio"]["input"].get("noise_reduction")))
+        # Gappy audio reads as silence to a fixed threshold, so the buyer gets
+        # cut off mid-sentence and the model answers half a question -- which
+        # from their side is indistinguishable from not being heard.
+        turn = body["audio"]["input"]["turn_detection"]
+        check("turn taking is judged, not merely timed",
+              turn["type"] in {"semantic_vad", "server_vad"}, str(turn))
+        # Talking over an assistant that keeps going is the single most
+        # infuriating thing a phone bot does, and it is one flag.
+        check("and the buyer can always interrupt",
+              turn.get("interrupt_response") is True, str(turn))
         check("every tool is offered on a call too, not a subset",
               {t["name"] for t in body["tools"]} == {t["name"] for t in tools.TOOL_DEFS},
               f"{len(body['tools'])} tools")

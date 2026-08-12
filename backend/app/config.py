@@ -88,7 +88,33 @@ class Settings(BaseSettings):
     # Without this the buyer's own words never arrive: the model hears audio
     # and answers, but nothing writes their side of the call into `messages`,
     # so the dealer's transcript is a monologue.
+    #
+    # Worth knowing when this looks wrong: transcription is a *side channel*.
+    # The model itself hears the raw audio and never reads this text, so a
+    # garbled transcript means the microphone is poor, not that the assistant
+    # misunderstood. The two symptoms share a cause; changing this setting
+    # fixes only the record.
     voice_transcribe_model: str = "gpt-4o-mini-transcribe"
+    # ISO-639-1, and documented to improve accuracy *and* latency. Left unset,
+    # the transcriber guesses the language from audio -- and telephone-quality
+    # audio is exactly where it guesses wrong, which reads as a transcript
+    # full of nonsense words. Empty means let it guess.
+    voice_language: str = "en"
+    # `semantic_vad` lets the model judge whether a sentence finished, rather
+    # than timing a silence. It is markedly better on poor input, which is the
+    # case that matters: a Bluetooth headset in hands-free mode produces gappy
+    # 16 kHz audio that a fixed threshold reads as the end of every phrase, so
+    # the buyer gets interrupted mid-sentence and the model answers half a
+    # question. `server_vad` is the alternative and is cheaper to reason about.
+    voice_turn_detection: str = "semantic_vad"
+    # How fast to jump in. `low` waits longer for a buyer who is still
+    # thinking; `high` feels snappier and talks over people.
+    voice_eagerness: str = "medium"
+    # `near_field` is a headset or a phone held to the face -- the mic is close
+    # to the mouth. `far_field` is a laptop across a desk. The wrong one is
+    # worse than none: far-field processing on a close mic strips the speech
+    # it should be keeping.
+    voice_noise_reduction: str = "near_field"
 
     # --- Scraper -----------------------------------------------------------
     scraper_base_url: str = ""
