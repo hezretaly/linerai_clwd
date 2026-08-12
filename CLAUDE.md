@@ -354,6 +354,29 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   sounds like the assistant changing voice mid-sentence. Submit every
   outstanding result, wait for the `response.done` of the response that asked
   for them, then request exactly one.
+- **A realtime call bills the whole conversation on every turn.** Not the
+  latest exchange — all of it, audio included, as input, each time the model
+  answers. So cost climbs with call length no matter how short the replies get,
+  and the per-minute average hides it. Three brakes and one instrument:
+  `max_output_tokens` caps the dearest stream (output audio is twice the price
+  of input and generated about twice as fast as a person talks),
+  `truncation: retention_ratio` stops the history growing without limit, and
+  `VOICE_TRANSCRIBE=false` drops a bill that buys a readable record and nothing
+  else — the model hears the audio directly and never reads the transcript.
+  - **The cache hit ratio *is* the bill.** Cached input is discounted roughly
+    eighty-fold, so the same call costs three to four times more when caching
+    stops hitting, with nothing else different. That is why the retention ratio
+    is gentle: every truncation invalidates the cache from that point, and
+    truncating often costs more than the tokens it saves.
+  - **Shortening the prompt is not the fix, and can make it worse.** On a call
+    of any length the accumulated audio dwarfs the instructions, and a smaller
+    prefix means less of that history sits behind a cached boundary.
+  - **`/api/voice/cost/{id}` reports what the provider charged, per response.**
+    The counts come off `response.done` and are relayed by the browser; the
+    rates are `VOICE_PRICE_*` and the figure is labelled an estimate, because
+    those rates are configuration that can go stale. Per response rather than
+    per call: a total hides that the eleventh turn cost six times the second,
+    which is the finding.
 - **A greeting the buyer has not heard yet cannot be interrupted.** The
   microphone is held shut until the first `output_audio_buffer.stopped`. Open
   from the start, the connection settling triggers the turn detector, which

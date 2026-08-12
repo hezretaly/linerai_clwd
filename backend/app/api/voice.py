@@ -31,15 +31,16 @@ from sqlalchemy.orm import Session
 
 from app.agent import tools
 from app.agent.runner import record_buyer_message
-from app.api.deps import get_dealership
+from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings
 from app.agent.prompts import build_system_prompt
 from app.db import get_db
 from app.events import emit
 from app.integrations.registry import get_voice_provider
-from app.integrations.voice.openai_realtime import CALLS_URL
-from app.models import Conversation, Dealership, Message
-from app.schemas.serialize import message_out
+from app.config import settings
+from app.integrations.voice.openai_realtime import CALLS_URL, price_of
+from app.models import CallUsage, Conversation, Dealership, Message, User
+from app.schemas.serialize import iso, message_out
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
@@ -197,6 +198,139 @@ def _guard_after_the_fact(db: Session, convo: Conversation, spoken: str) -> list
         except tools.ToolError:
             pass
     return violations
+
+
+class Usage(BaseModel):
+    conversation_id: str
+    response_id: str = ""
+    usage: dict = {}
+
+
+@router.post("/usage")
+def record_usage(body: Usage, db: Session = Depends(get_db)) -> dict:
+    """What one response on this call actually cost, in tokens.
+
+    Relayed from the browser because that is where the numbers are: the
+    provider reports them on `response.done`, over a data channel this server
+    is not part of. Recorded rather than estimated from wall-clock, and that
+    distinction is the whole point -- "about twenty-five cents a minute" is not
+    a number anyone can act on, while "the eleventh turn cost six times the
+    second, and caching stopped hitting at turn four" is.
+
+    Unauthenticated for the same reason `/voice/tools` is: it is the buyer's
+    browser talking, and a buyer has no session. It writes token counts against
+    a conversation that must already exist, and nothing else.
+    """
+    convo = db.query(Conversation).filter_by(id=body.conversation_id).one_or_none()
+    if convo is None:
+        raise HTTPException(404, "Conversation not found")
+
+    # Idempotent on the provider's response id. A relay that retries must not
+    # double a call's apparent cost -- a cost report nobody trusts is one
+    # nobody reads.
+    if body.response_id:
+        seen = (
+            db.query(CallUsage)
+            .filter_by(conversation_id=convo.id, response_id=body.response_id)
+            .first()
+        )
+        if seen is not None:
+            return {"recorded": False, "reason": "duplicate"}
+
+    data = body.usage or {}
+    into = data.get("input_token_details") or {}
+    out = data.get("output_token_details") or {}
+    cached = into.get("cached_tokens_details") or {}
+
+    # Cached tokens are *included* in the audio and text counts the provider
+    # reports, so charging both would double-count the discount away. Fresh
+    # input is what is left after taking the cached part out.
+    cached_total = int(into.get("cached_tokens") or 0)
+    cached_audio = int(cached.get("audio_tokens") or 0)
+    cached_text = int(cached.get("text_tokens") or 0)
+
+    row = CallUsage(
+        conversation_id=convo.id,
+        response_id=body.response_id,
+        model=settings.voice_model,
+        input_tokens=int(data.get("input_tokens") or 0),
+        input_audio_tokens=max(int(into.get("audio_tokens") or 0) - cached_audio, 0),
+        input_text_tokens=max(int(into.get("text_tokens") or 0) - cached_text, 0),
+        cached_tokens=cached_total,
+        cached_audio_tokens=cached_audio,
+        output_tokens=int(data.get("output_tokens") or 0),
+        output_audio_tokens=int(out.get("audio_tokens") or 0),
+        output_text_tokens=int(out.get("text_tokens") or 0),
+    )
+    db.add(row)
+    db.commit()
+    return {"recorded": True, "estimated_usd": round(price_of(_as_dict(row)), 6)}
+
+
+def _as_dict(row: CallUsage) -> dict:
+    return {
+        "cached_tokens": row.cached_tokens,
+        "input_audio_tokens": row.input_audio_tokens,
+        "input_text_tokens": row.input_text_tokens,
+        "output_audio_tokens": row.output_audio_tokens,
+        "output_text_tokens": row.output_text_tokens,
+    }
+
+
+@router.get("/cost/{conversation_id}")
+def call_cost(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """What a call cost, turn by turn.
+
+    Turn by turn rather than a total, because the total hides the shape and the
+    shape is the finding: a realtime call bills the whole conversation so far
+    as input on *every* turn, so the eleventh costs several times the second
+    with nothing else different. A single number would leave someone shortening
+    their prompt when the fix is capping the history.
+
+    `estimated_usd` is exactly that -- the token counts are the provider's own,
+    the rates are configuration that can go stale, and the vendor's billing
+    page is the authority.
+    """
+    rows = (
+        db.query(CallUsage)
+        .filter_by(conversation_id=conversation_id)
+        .order_by(CallUsage.created_at.asc())
+        .all()
+    )
+    turns = [
+        {
+            "at": iso(r.created_at),
+            "input_tokens": r.input_tokens,
+            "cached_tokens": r.cached_tokens,
+            "fresh_input_tokens": r.input_audio_tokens + r.input_text_tokens,
+            "output_tokens": r.output_tokens,
+            "output_audio_tokens": r.output_audio_tokens,
+            "estimated_usd": round(price_of(_as_dict(r)), 6),
+        }
+        for r in rows
+    ]
+    cached = sum(r.cached_tokens for r in rows)
+    billed_in = sum(r.input_audio_tokens + r.input_text_tokens for r in rows)
+    return {
+        "conversation_id": conversation_id,
+        "turns": turns,
+        "responses": len(turns),
+        "estimated_usd": round(sum(t["estimated_usd"] for t in turns), 6),
+        # The single most useful number here. Cached input is discounted by
+        # roughly eighty times, so a call where caching stopped hitting costs
+        # several times one where it did -- and nothing else about the two
+        # calls looks any different.
+        "cache_hit_ratio": round(cached / (cached + billed_in), 3) if cached + billed_in else 0.0,
+        "model": rows[0].model if rows else settings.voice_model,
+        "note": (
+            "Estimated from the token counts the provider reported, at the rates in "
+            "VOICE_PRICE_*. The vendor's billing page is the authority."
+        ),
+    }
 
 
 @router.post("/sessions/{conversation_id}/end")

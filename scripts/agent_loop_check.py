@@ -449,6 +449,30 @@ def main() -> int:
         check("the instructions really are the dealership's prompt",
               body["instructions"] == spoken)
 
+        # A realtime call bills the whole conversation so far as input on every
+        # turn. Left alone that grows without limit and most of a long call's
+        # bill is re-reading its own beginning; these are the only two brakes.
+        check("a turn cannot run away in output audio, the dearest stream",
+              body["max_output_tokens"] == cfg.voice_max_output_tokens,
+              str(body.get("max_output_tokens")))
+        check("and the conversation stops growing without limit",
+              body["truncation"]["type"] == "retention_ratio"
+              and 0.0 < body["truncation"]["retention_ratio"] <= 1.0,
+              str(body.get("truncation")))
+
+        # Transcribing the buyer is billed on top of the call and buys a
+        # readable record, nothing more -- the model hears the audio directly.
+        # So it is the one part that can be switched off without changing what
+        # the assistant can do, and switching it off must really remove it.
+        from app.config import settings as live_cfg
+        was = live_cfg.voice_transcribe
+        try:
+            live_cfg.voice_transcribe = False
+            check("transcription can be switched off, since it bills separately",
+                  "transcription" not in voice.session_payload(spoken, [])["session"]["audio"]["input"])
+        finally:
+            live_cfg.voice_transcribe = was
+
         return report()
     finally:
         db.close()

@@ -243,6 +243,21 @@ export function Call() {
         break
       case 'response.done':
         generating.current = false
+        // What that response cost, straight from the provider. Relayed rather
+        // than estimated from wall-clock: a realtime call bills the whole
+        // conversation so far as input on every turn, so per-turn counts are
+        // the only way to see the curve -- and the curve, not the per-minute
+        // average, is what a bill is made of.
+        if (event.response?.usage) {
+          void api.post('/api/voice/usage', {
+            conversation_id: convo.current,
+            response_id: event.response.id ?? '',
+            usage: event.response.usage,
+          }).catch(() => {
+            /* Never at the expense of the call. A missing cost row is a gap in
+               a report; a failed call is a lost buyer. */
+          })
+        }
         // The response that asked for the tools has finished emitting them, so
         // this is the earliest moment a new one may be requested.
         respondWhenReady()

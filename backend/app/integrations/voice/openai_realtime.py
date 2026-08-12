@@ -91,7 +91,8 @@ class OpenAIRealtimeProvider(VoiceProvider):
                         # Without a transcription model the buyer's own words
                         # never reach us: the model hears them and answers, and
                         # the dealer's transcript is a monologue.
-                        "transcription": _transcription(),
+                        **({"transcription": _transcription()}
+                           if settings.voice_transcribe else {}),
                         # Cleans the input before anything reads it. Skipping it
                         # leaves the transcriber and the turn detector both
                         # working on whatever the headset produced, and a
@@ -110,6 +111,21 @@ class OpenAIRealtimeProvider(VoiceProvider):
                 # conversion is how a tool ends up offered on one channel only.
                 "tools": _realtime_tools(tools),
                 "tool_choice": "auto",
+                # Output audio is the dearest stream on the call and the
+                # assistant generates it about twice as fast as a person
+                # speaks. The prompt asks for two sentences; this is what
+                # happens when it does not get them.
+                "max_output_tokens": settings.voice_max_output_tokens,
+                # Every turn bills the whole conversation so far as input, so
+                # without this a ten-minute call spends most of its money
+                # re-reading itself. The ratio is deliberately gentle: each
+                # truncation invalidates the prompt cache from that point, and
+                # cached input is discounted by roughly eighty times, so
+                # truncating often costs more than the tokens it saves.
+                "truncation": {
+                    "type": "retention_ratio",
+                    "retention_ratio": settings.voice_retention_ratio,
+                },
             }
         }
 
@@ -158,6 +174,26 @@ class OpenAIRealtimeProvider(VoiceProvider):
             expires_in=_seconds_left(data.get("expires_at")),
             model=settings.voice_model,
         )
+
+
+# Dollars per million tokens, by the kind of token. Kept next to the code
+# that applies it rather than in five places at the call site.
+def price_of(usage: dict) -> float:
+    """What one response cost, in dollars.
+
+    An estimate, and labelled one everywhere it is shown: the authority is
+    OpenAI's own billing page, and these rates are configuration that can go
+    stale. What it is *not* is a guess -- the token counts are the ones the
+    provider reported for that exact response.
+    """
+    per_million = (
+        usage.get("cached_tokens", 0) * settings.voice_price_cached_in
+        + max(usage.get("input_audio_tokens", 0), 0) * settings.voice_price_audio_in
+        + max(usage.get("input_text_tokens", 0), 0) * settings.voice_price_text_in
+        + usage.get("output_audio_tokens", 0) * settings.voice_price_audio_out
+        + usage.get("output_text_tokens", 0) * settings.voice_price_text_out
+    )
+    return per_million / 1_000_000
 
 
 def _transcription() -> dict:

@@ -116,6 +116,44 @@ class Settings(BaseSettings):
     # it should be keeping.
     voice_noise_reduction: str = "near_field"
 
+    # --- What a call costs -------------------------------------------------
+    # A realtime call bills the *whole conversation so far* as input on every
+    # single turn. Left alone that grows without limit, and by the tenth turn
+    # most of the bill is re-reading the first nine. These three settings are
+    # the only brakes there are.
+    #
+    # Output audio is the dearest stream on the call -- twice the price of
+    # input, and the assistant generates roughly twice as many tokens per
+    # second as a person speaks. A cap is a hard stop on a rambling turn; the
+    # prompt asks for two sentences, and this is what happens when it does not
+    # get them. Generous enough that a real answer is never cut off.
+    voice_max_output_tokens: int = 1200
+    # Drop the oldest turns once the conversation gets long, keeping this
+    # fraction. 0.8 rather than something aggressive because each truncation
+    # invalidates the prompt cache from that point -- and cached input is
+    # discounted by roughly eighty times, so truncating often costs more than
+    # the tokens it saves.
+    voice_retention_ratio: float = 0.8
+    # Transcribing the buyer's side is billed *separately* from the call. It
+    # buys the dealer a readable transcript and nothing else -- the model
+    # hears the audio directly and never reads it -- so it is the one part of
+    # a call that can be switched off without changing what the assistant can
+    # do. Off means a transcript with Liner's half only.
+    voice_transcribe: bool = True
+
+    # Dollars per million tokens, for turning the recorded usage into money.
+    # Configurable because vendor prices move and a hardcoded number silently
+    # becomes a lie. Defaults are gpt-realtime as of mid-2026; `mini` is about
+    # a third, so if you change the model change these too.
+    voice_price_audio_in: float = 32.0
+    voice_price_audio_out: float = 64.0
+    voice_price_text_in: float = 4.0
+    voice_price_text_out: float = 16.0
+    # Cached input is the whole ballgame on a long call. Roughly an eightieth
+    # of fresh input; when caching stops hitting, the same call costs several
+    # times more with nothing else different.
+    voice_price_cached_in: float = 0.4
+
     # --- Scraper -----------------------------------------------------------
     scraper_base_url: str = ""
     scraper_user_agent: str = "LinerAI-Ingest/0.1 (+https://liner.ai/bot)"

@@ -1488,6 +1488,47 @@ def main() -> int:
     check("while a real word is kept however short", kept.get("recorded") is not False,
           str(kept.get("content")))
 
+    # What a call cost, from the provider's own token counts rather than from
+    # wall-clock. A realtime call bills the whole conversation so far as input
+    # on every turn, so the per-minute average hides the only thing that
+    # matters -- whether the cache is catching that history or it is being
+    # paid for again each time.
+    usage = {
+        "input_tokens": 5000,
+        "input_token_details": {
+            "audio_tokens": 1600, "text_tokens": 3400, "cached_tokens": 4000,
+            "cached_tokens_details": {"audio_tokens": 1000, "text_tokens": 3000},
+        },
+        "output_tokens": 200,
+        "output_token_details": {"audio_tokens": 180, "text_tokens": 20},
+    }
+    first = call("POST", "/api/voice/usage", {
+        "conversation_id": vid, "response_id": f"resp-{run}", "usage": usage})
+    check("a call's token usage is recorded, not estimated",
+          first.get("recorded") is True, str(first))
+    # A relay that retries must not double a call's apparent cost. A cost
+    # report nobody trusts is one nobody reads.
+    again = call("POST", "/api/voice/usage", {
+        "conversation_id": vid, "response_id": f"resp-{run}", "usage": usage})
+    check("and a retried relay does not double it",
+          again.get("recorded") is False, str(again))
+
+    priced = call("GET", f"/api/voice/cost/{vid}")
+    check("the cost is broken down per response, not just totalled",
+          len(priced["turns"]) == 1 and priced["responses"] == 1, str(priced["responses"]))
+    # Cached input is discounted by roughly eighty times, so charging the
+    # cached tokens at the full rate as well would wipe the discount out --
+    # and the reported audio and text counts *include* the cached part.
+    check("cached input is separated from fresh, or the discount is lost",
+          priced["turns"][0]["cached_tokens"] == 4000
+          and priced["turns"][0]["fresh_input_tokens"] == 1000,
+          str(priced["turns"][0]))
+    check("and the cache hit ratio is reported, because it is the whole bill",
+          priced["cache_hit_ratio"] == 0.8, str(priced["cache_hit_ratio"]))
+    check("with a dollar figure that is labelled an estimate",
+          priced["estimated_usd"] > 0 and "authority" in priced["note"],
+          f"${priced['estimated_usd']}")
+
     check("a call ends without needing a provider", bool(
         call("POST", f"/api/voice/sessions/{vid}/end", {}).get("ok")))
 

@@ -221,6 +221,45 @@ class InboundEmail(Base):
     created_at: Mapped[datetime] = created()
 
 
+class CallUsage(Base):
+    """What one response on a voice call actually cost, in tokens.
+
+    A separate table rather than columns on `conversations` for two reasons.
+    A call bills per response and the interesting question is where inside a
+    call the money went -- a total hides that the eleventh turn cost six times
+    the second. And a new table is created by `create_all` on an existing
+    database, where a new column is not: no reset, no lost data.
+
+    Recorded rather than estimated. The realtime API returns a `usage` object
+    on every `response.done`, and the whole reason this exists is that "about
+    twenty-five cents a minute" is a number nobody can act on. Cached input is
+    kept separate from fresh input because that split *is* the bill: cached
+    tokens are discounted by roughly eighty times, so a call where caching
+    stopped hitting costs several times one where it did, with nothing else
+    different.
+    """
+
+    __tablename__ = "call_usage"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    # The provider's id for the response this bills, so a retried relay is
+    # recorded once rather than doubling a call's apparent cost.
+    response_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    model: Mapped[str] = mapped_column(String(60), default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    input_audio_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    input_text_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached_audio_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_audio_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_text_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = created()
+
+
 class Event(Base):
     """Append-only. Doubles as the audit log and the WebSocket reconnect buffer."""
 
