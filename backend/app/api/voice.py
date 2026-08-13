@@ -83,13 +83,18 @@ def mint_session(
         # of a rebuild.
         "calls_url": CALLS_URL,
         "model": session.model,
-        # The first turn, sent verbatim rather than left to the model.
+        # What the buyer hears on connect, before the microphone opens.
         #
-        # A bare `response.create` on an empty conversation asks a model to
-        # invent an opening, and a smaller one invents the *customer's* -- a
-        # real call opened with "Hi! I'm looking for a compact SUV", in the
-        # assistant's voice, and then answered itself for four turns. The
-        # dealership wrote a greeting; this is it.
+        # Played by the browser, not spoken by the model. Asking a model to
+        # greet is asking it to improvise an opening, and a smaller one
+        # improvises the *customer's* -- a real call began "Hi! I'm looking for
+        # a compact SUV" in the assistant's voice and then answered itself. A
+        # pre-roll is the same words every time, cannot be interrupted by the
+        # connection settling, and costs no output audio tokens.
+        #
+        # Empty means the browser plays a tone. The text is sent alongside so
+        # whoever records the real thing knows what it should say.
+        "greeting_audio": settings.voice_greeting_audio,
         "greeting": live_settings(db).greeting,
         # Whether the buyer's own words will be written down. Off, the dealer's
         # transcript is Liner's half only -- which reads exactly like an

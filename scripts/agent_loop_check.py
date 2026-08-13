@@ -374,16 +374,16 @@ def main() -> int:
         spoken = build_system_prompt(db, dealership, live_settings(db), channel="voice")
         written = build_system_prompt(db, dealership, live_settings(db))
         check("a call gets the rules that only make sense out loud",
-              "PHONE CALL" in spoken and "SPEAK ONLY WORDS" in spoken)
+              "ON A PHONE CALL" in spoken and "Words only" in spoken)
         # A real call asked "when would you like to come in?", was told ten,
         # and answered "we have eleven". On a screen the card offers the times;
         # out loud nothing does unless the assistant is told to.
         check("and is told to offer real times rather than ask an open question",
-              "check_availability first" in spoken and "two real openings" in spoken)
+              "check_availability first" in spoken and "two real times" in spoken)
         # It promised to read the address back and then booked without doing
         # it, which is how a lead ends up unreachable.
         check("and to wait for the email to be confirmed before booking",
-              "WAIT for them to say yes" in spoken)
+              "wait for a yes" in spoken)
         # Saying goodbye is not hanging up. The line, and the buyer's
         # microphone, stay open until close_conversation is called.
         check("and that ending the call takes a tool call, not a farewell",
@@ -463,11 +463,16 @@ def main() -> int:
         # A model told never to speak the customer's side. A real call opened
         # with "Hi! I'm looking for a compact SUV" -- in the assistant's voice
         # -- and then answered itself for four turns.
-        check("the model is told it is only ever the dealership",
-              "ONLY EVER THE DEALERSHIP" in spoken
-              and "Never speak the customer's side" in spoken)
+        check("the model is told never to speak the customer's side",
+              "Never say the customer's side" in spoken)
         check("and to stay quiet rather than fill a silence",
-              "say nothing at all" in spoken)
+              "stay silent" in spoken)
+        # The voice rules are appended to a prompt that is already long, and
+        # every token of them is re-read on every turn of every call. Kept
+        # short on purpose; this is the tripwire if it creeps back.
+        from app.agent.prompts import VOICE_ADDENDUM
+        check("and the whole addendum stays short enough to reread every turn",
+              len(VOICE_ADDENDUM) < 1500, f"{len(VOICE_ADDENDUM)} chars")
 
         # Switching to the cheaper model must re-price the report too. Pinned
         # separately, changing one line of .env would leave this dashboard

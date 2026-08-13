@@ -38,6 +38,7 @@ interface Session {
   calls_url: string
   model: string
   greeting: string
+  greeting_audio: string
   transcribed: boolean
 }
 
@@ -85,6 +86,50 @@ function recordableType(): string {
   return RECORD_TYPES.find(supported) ?? ''
 }
 
+/** The opening the buyer hears, before the microphone opens.
+ *
+ *  Played here rather than spoken by the model, for four reasons that all
+ *  point the same way: it is the same words every call, it cannot be
+ *  improvised into the customer's line, it cannot be cut off by the connection
+ *  settling, and output audio is the dearest thing on a realtime call so not
+ *  generating it every time is free money.
+ *
+ *  A tone until a real recording exists. Two notes rather than one because a
+ *  single beep is a machine noise and a rising pair reads as "go ahead" --
+ *  which is exactly the thing the buyer needs to know. */
+async function preroll(ctx: AudioContext, url: string, into?: AudioNode | null) {
+  if (url) {
+    const element = new Audio(url)
+    element.crossOrigin = 'anonymous'
+    await element.play().catch(() => {})
+    await new Promise<void>((done) => {
+      element.onended = () => done()
+      // A recording that never fires `onended` -- a bad URL, a stalled fetch
+      // -- must not hold the microphone shut for the whole call.
+      setTimeout(done, 8000)
+    })
+    return
+  }
+
+  const now = ctx.currentTime
+  for (const [at, hz] of [[0, 660], [0.16, 990]] as [number, number][]) {
+    const tone = ctx.createOscillator()
+    const level = ctx.createGain()
+    tone.frequency.value = hz
+    // Ramped, not switched. A square edge on a sine is an audible click, and
+    // a click is what a broken connection sounds like.
+    level.gain.setValueAtTime(0, now + at)
+    level.gain.linearRampToValueAtTime(0.18, now + at + 0.02)
+    level.gain.linearRampToValueAtTime(0, now + at + 0.14)
+    tone.connect(level)
+    level.connect(ctx.destination)
+    if (into) level.connect(into)
+    tone.start(now + at)
+    tone.stop(now + at + 0.16)
+  }
+  await new Promise((done) => setTimeout(done, 380))
+}
+
 function clock(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
@@ -103,6 +148,9 @@ export function Call() {
   const [micId, setMicId] = useState('')
   const [seconds, setSeconds] = useState(0)
   const [transcribed, setTranscribed] = useState(true)
+  /** '' while deciding, then what is actually being captured. Shown, because
+   *  a call that silently failed to record looks identical to one that did. */
+  const [recording, setRecording] = useState<'both' | 'mic' | 'off'>('off')
 
   const pc = useRef<RTCPeerConnection | null>(null)
   const channel = useRef<RTCDataChannel | null>(null)
@@ -158,8 +206,6 @@ export function Call() {
   const recorder = useRef<MediaRecorder | null>(null)
   const chunks = useRef<Blob[]>([])
   const startedAt = useRef(0)
-  /** The dealership's opening line, consumed by the first response. */
-  const greeting = useRef('')
 
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
   // the microphone live and the meter lit in the browser chrome, which is the
@@ -178,6 +224,32 @@ export function Call() {
   useEffect(() => {
     transcript.current?.scrollTo({ top: transcript.current.scrollHeight })
   }, [lines])
+
+  /* A closed tab is the most likely way a call ends, and it used to take the
+   * recording with it: `hangUp` never runs, so nothing is ever uploaded.
+   * `sendBeacon` is the only thing a page can rely on during unload -- a
+   * normal fetch is cancelled with the document. */
+  useEffect(() => {
+    const rescue = () => {
+      const rec = recorder.current
+      if (!rec || rec.state === 'inactive' || !convo.current) return
+      rec.requestData()
+      rec.stop()
+      if (!chunks.current.length) return
+      const form = new FormData()
+      const type = rec.mimeType.split(';')[0]
+      form.append('file', new File(chunks.current, 'call', { type }), 'call')
+      navigator.sendBeacon(
+        `/api/voice/recording/${convo.current}` +
+        `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
+        form,
+      )
+      chunks.current = []
+      recorder.current = null
+    }
+    window.addEventListener('pagehide', rescue)
+    return () => window.removeEventListener('pagehide', rescue)
+  }, [])
 
   /* Nobody has said anything for a long time, in either direction.
    *
@@ -241,21 +313,7 @@ export function Call() {
   const respondWhenReady = () => {
     if (outstanding.current > 0 || !owed.current || generating.current) return
     owed.current = false
-    // The first turn is the dealership's greeting, word for word. Every turn
-    // after it answers something, so it needs no instructions of its own.
-    const opening = greeting.current
-    greeting.current = ''
-    channel.current?.send(JSON.stringify(
-      opening
-        ? {
-            type: 'response.create',
-            response: {
-              instructions:
-                `Greet the caller by saying exactly this, and nothing else: "${opening}"`,
-            },
-          }
-        : { type: 'response.create' },
-    ))
+    channel.current?.send(JSON.stringify({ type: 'response.create' }))
   }
 
   /** Tool calls come back over the data channel and are executed on our side.
@@ -376,7 +434,12 @@ export function Call() {
     const mix = ctx.createMediaStreamDestination()
     mixer.current = mix
     source.connect(mix)
-    startRecording(mix.stream)
+    // Safari starts an AudioContext suspended unless it was created inside a
+    // user gesture, and `start()` has awaited getUserMedia by the time this
+    // runs -- a suspended context produces silence through the mix, and the
+    // level meter reads zero with it.
+    void ctx.resume().catch(() => {})
+    startRecording(mix.stream, stream)
     const buffer = new Uint8Array(analyser.frequencyBinCount)
     const tick = () => {
       if (meter.current !== ctx) return
@@ -391,22 +454,37 @@ export function Call() {
     tick()
   }
 
-  /** Record the mixed call, if this browser can. */
-  const startRecording = (stream: MediaStream) => {
+  /** Record the call, and say which half of it if not both.
+   *
+   *  Every step here can fail on its own, and every one of them used to fail
+   *  silently -- which is how a finished call showed "No audio was captured"
+   *  with nothing to suggest why. A browser may have no MediaRecorder, may
+   *  support no container this can produce, or may refuse to record a stream
+   *  that came out of WebAudio (Safari has, historically). The mixed stream is
+   *  tried first and the bare microphone is the fallback, because half a
+   *  conversation is worth having and none of it is not. */
+  const startRecording = (mixed: MediaStream, raw: MediaStream) => {
     const type = recordableType()
-    if (!type) return  // no MediaRecorder here; the call still works
-    try {
-      const rec = new MediaRecorder(stream, { mimeType: type })
-      chunks.current = []
-      rec.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data) }
-      // A timeslice, so a tab closed mid-call still leaves most of the audio
-      // in hand rather than one chunk that was never flushed.
-      rec.start(5000)
-      recorder.current = rec
-    } catch {
-      /* Recording is a nice-to-have; a call that will not start because of it
-         is not. */
+    if (!type) {
+      setRecording('off')
+      return
     }
+    for (const [stream, kind] of [[mixed, 'both'], [raw, 'mic']] as const) {
+      try {
+        const rec = new MediaRecorder(stream, { mimeType: type })
+        chunks.current = []
+        rec.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data) }
+        // A timeslice, so a tab closed mid-call still leaves most of the audio
+        // in hand rather than one chunk that was never flushed.
+        rec.start(5000)
+        recorder.current = rec
+        setRecording(kind)
+        return
+      } catch {
+        /* Try the next one. */
+      }
+    }
+    setRecording('off')
   }
 
   /** Stop and upload. Awaited on hang-up so the last chunk is included. */
@@ -507,20 +585,10 @@ export function Call() {
       const events = connection.createDataChannel('oai-events')
       channel.current = events
       events.onmessage = (e) => onEvent(JSON.parse(e.data))
-      // Liner opens, with the dealership's own greeting rather than whatever
-      // the model would invent.
-      //
-      // A bare `response.create` on an empty conversation is a request to
-      // improvise an opening, and a smaller model improvises the *customer's*:
-      // a real call began "Hi! I'm looking for a compact SUV", spoken by the
-      // assistant, and then carried on answering itself. Naming the line
-      // removes the invitation.
-      greeting.current = session.greeting || ''
+      // Nothing is asked of the model here. The buyer hears the pre-roll
+      // below, then speaks, and the model answers that -- so it never has to
+      // invent an opening, which is where it invented the customer's.
       setTranscribed(session.transcribed !== false)
-      events.onopen = () => {
-        owed.current = true
-        respondWhenReady()
-      }
 
       const offer = await connection.createOffer()
       await connection.setLocalDescription(offer)
@@ -551,6 +619,14 @@ export function Call() {
         }
       }
       setPhase('live')
+
+      // The line is up: greet, then listen. Awaited, so the microphone opens
+      // only once the buyer has actually heard the opening -- otherwise the
+      // turn detector fires on the greeting itself.
+      if (meter.current) {
+        await preroll(meter.current, session.greeting_audio || '', mixer.current)
+      }
+      openMic()
     } catch (exc) {
       teardown()
       setPhase('idle')
@@ -713,7 +789,14 @@ export function Call() {
             place a buyer would ever read it. */}
         {phase !== 'ended' && (
           <p className="mt-3 text-center text-xs text-muted-foreground">
-            Calls are recorded so the team can follow up accurately.
+            {phase === 'live' && recording === 'off'
+              // Said out loud rather than discovered afterwards on an empty
+              // player. A browser that cannot record is a fact about the
+              // browser, not a fault in the call.
+              ? 'This browser cannot record audio, so this call is transcript only.'
+              : phase === 'live' && recording === 'mic'
+                ? 'Recording your side only -- this browser will not mix in the reply.'
+                : 'Calls are recorded so the team can follow up accurately.'}
           </p>
         )}
 

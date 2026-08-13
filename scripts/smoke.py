@@ -1463,7 +1463,7 @@ def main() -> int:
     # sent verbatim. Left to improvise an opening on an empty conversation, a
     # smaller model improvises the *customer's* -- which is what happened.
     greeting = call("GET", "/api/assistant-settings")["live"].get("greeting", "")
-    check("the dealership has an opening line to send verbatim",
+    check("the dealership has an opening line for the pre-roll to say",
           bool(greeting.strip()), greeting[:60])
 
     # The relay is the whole reason a call is as safe as a chat: the model asks,

@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     #   sage    -- calm and measured, reads older.
     # `alloy`, `ash`, `ballad`, `echo`, `verse` and `cedar` are the rest.
     voice_voice: str = "marin"
+    # A URL the buyer's browser plays on connect, before the microphone opens.
+    # Empty plays a short tone instead.
+    #
+    # A pre-roll beats asking the model to greet: it is the same words every
+    # time, it cannot be improvised into the customer's line, it cannot be
+    # interrupted by the connection settling, and it costs no output audio
+    # tokens -- which are the dearest thing on a call. Record the dealership's
+    # own greeting in the same voice and point this at it.
+    voice_greeting_audio: str = ""
     # Without this the buyer's own words never arrive: the model hears audio
     # and answers, but nothing writes their side of the call into `messages`,
     # so the dealer's transcript is a monologue.

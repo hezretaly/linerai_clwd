@@ -407,13 +407,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     match would charge that nano at the flagship's rate, silently — and a cost
     report that is confidently wrong is worse than one that says it does not
     know.
-- **The greeting is sent verbatim, not improvised.** A bare `response.create`
-  on an empty conversation asks a model to invent an opening, and a smaller one
-  invents the *customer's*: a real call on `gpt-realtime-mini` began "Hi! I'm
-  looking for a compact SUV" in the assistant's voice, and then answered itself
-  for four turns. The dealership's own `greeting` is passed to the browser and
-  named in the first `response.create`, and the prompt says outright that Liner
-  is only ever the dealership and should stay silent rather than fill one.
+- **The greeting is a pre-roll the browser plays, not a turn the model takes.**
+  Asking a model to open a call is asking it to improvise, and a smaller one
+  improvises the *customer's* line: a real call on `gpt-realtime-mini` began
+  "Hi! I'm looking for a compact SUV" in the assistant's voice and then answered
+  itself for four turns. So the browser plays `VOICE_GREETING_AUDIO` (a two-note
+  tone until a real recording exists), *then* opens the microphone, and the
+  model's first turn answers something the buyer actually said. It is also the
+  same words every call, cannot be cut off by the connection settling, and
+  generates no output audio — the dearest thing on a realtime call.
+- **The voice addendum stays short.** Every token of it is re-read on every turn
+  of every call, and the chat prompt it appends to is already long.
+  `make agent-check` fails if it grows past 1500 characters.
 - **A half-transcript must say it is half.** `VOICE_TRANSCRIBE=false` saves a
   separate bill and costs the buyer's side of every call — which then renders
   as Liner talking to nobody, indistinguishable from the failure above. The
