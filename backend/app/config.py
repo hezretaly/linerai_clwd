@@ -117,7 +117,17 @@ class Settings(BaseSettings):
     # garbled transcript means the microphone is poor, not that the assistant
     # misunderstood. The two symptoms share a cause; changing this setting
     # fixes only the record.
-    voice_transcribe_model: str = "gpt-4o-mini-transcribe"
+    # `-mini-` is the cheapest transcriber and the least accurate, and a call
+    # transcript is where that shows: "E-Class" came back as 比克拉斯. This one
+    # costs more per minute and is a different bill from the call itself.
+    # `gpt-live-transcribe` and `gpt-transcribe` additionally accept the
+    # inventory as keywords, which is the strongest lever there is on a
+    # dealership's vocabulary.
+    voice_transcribe_model: str = "gpt-4o-transcribe"
+    # How long the transcriber may think. Higher is more accurate and slower --
+    # and the latency is free here, because the model hears the audio directly
+    # and never waits for this text. It only delays the dealer's record.
+    voice_transcribe_delay: str = "high"
     # ISO-639-1, and documented to improve accuracy *and* latency. Left unset,
     # the transcriber guesses the language from audio -- and telephone-quality
     # audio is exactly where it guesses wrong, which reads as a transcript

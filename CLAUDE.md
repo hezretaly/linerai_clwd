@@ -470,6 +470,17 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   phone down, and the client hangs up once the goodbye has finished playing.
   Two minutes of silence in both directions does it too, because a forgotten
   tab is a live microphone.
+- **The buyer's summary email is composed from rows, like the rail's recap.**
+  `close_conversation` takes a model-written `summary` and that used to be the
+  entire email. A real call mailed *"John Doe is all set … A summary will be
+  sent to john@outlook.com"* — a status line about the reader, in the third
+  person, telling them that what they are holding is on its way to them. The
+  argument still backs `conversations.summary`; the email is `buyer_summary`,
+  built from captured fields, vehicle mentions and the appointment. The rail
+  already decided this, and it matters more here: that copy is the one the
+  buyer keeps and reads back to a rep. Only `typed` fields go in — an inferred
+  guess repeated back as fact is how a buyer arrives arguing about a budget
+  they never gave.
 - **The transcript is a side channel, not what the model heard.** The model
   gets the raw audio; `conversation.item.input_audio_transcription` is a
   parallel service for our records. So a garbled transcript means a poor
@@ -479,6 +490,12 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `language` hint and `semantic_vad` rather than defaults: on the
   telephone-quality audio a Bluetooth headset produces, a fixed silence
   threshold cuts the buyer off mid-sentence and the language is inferred wrong.
+  Two more levers, both ours: `delay` buys accuracy for latency this channel
+  does not pay — the model never waits on this text — and `keywords` feeds the
+  transcriber the dealership's own makes, models and trims, which is exactly
+  the vocabulary that comes back mangled ("E-Class" arrived as 比克拉斯). Only
+  some transcription models accept keywords, so they are withheld from the rest
+  rather than 400-ing the session.
 - **`channel="voice"` appends to the prompt; it does not fork it.** The chat
   rules assume a screen — a booking card, a rail of chips, a price you can
   re-read — and a model given them out loud says "asterisk asterisk dollar

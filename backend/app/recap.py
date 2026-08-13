@@ -31,6 +31,8 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Appointment,
+    CapturedField,
+    Dealership,
     Conversation,
     Escalation,
     Lead,
@@ -243,3 +245,104 @@ def lead_recap(db: Session, lead: Lead) -> str:
         parts.append(f"{turns} message{'' if turns == 1 else 's'} in, nothing booked yet")
 
     return " ".join(_sentence(p) for p in parts if p)
+
+
+def buyer_summary(db: Session, c: Conversation) -> str:
+    """The email a buyer keeps, built from rows rather than written by a model.
+
+    `close_conversation` takes a `summary` argument and this used to *be* that
+    argument, mailed verbatim. A real call produced: "John Doe is all set with
+    an appointment tomorrow at 11 AM to see the 2022 Mercedes-Benz E-Class GT.
+    A summary will be sent to john@outlook.com." Which is not a summary of
+    anything -- it is a status line, written in the third person, telling the
+    recipient that the thing they are reading is about to be sent to them.
+
+    The same argument the rail already had against a model-written recap
+    applies harder here: a model summary is a second place a fact can be
+    invented, and this one is the version the buyer keeps and reads back to a
+    rep. So it is composed the same way -- what they asked for, what they were
+    shown, and what is in the diary -- and every line of it can be checked
+    against a row.
+
+    Plain text, because that is what every draft in this system is and what
+    `as_html` renders from.
+    """
+    lead = db.query(Lead).filter_by(id=c.lead_id).one_or_none() if c.lead_id else None
+    dealership = db.query(Dealership).first()
+    name = (lead.name or "").split(" ")[0].strip() if lead and lead.name else ""
+
+    lines: list[str] = [f"Hi{' ' + name if name else ''},", ""]
+    lines.append(
+        f"Thanks for getting in touch with {dealership.name}. Here is where we left it."
+    )
+
+    # --- what they told us they wanted --------------------------------------
+    wants = (
+        db.query(CapturedField)
+        .filter(CapturedField.lead_id == lead.id)
+        .order_by(CapturedField.key.asc())
+        .all()
+        if lead else []
+    )
+    # Only what the buyer actually said. An inferred guess repeated back as
+    # though they had said it is how a buyer arrives arguing about a budget
+    # they never gave.
+    said = [f for f in wants if f.provenance == "typed" and (f.value or "").strip()]
+    if said:
+        lines += ["", "What you told us:"]
+        lines += [f"  - {f.key.replace('_', ' ').capitalize()}: {f.value}" for f in said]
+
+    # --- what we put in front of them ---------------------------------------
+    shown = (
+        db.query(Vehicle)
+        .join(VehicleMention, VehicleMention.vehicle_id == Vehicle.id)
+        .filter(VehicleMention.conversation_id == c.id)
+        .order_by(VehicleMention.created_at.asc())
+        .all()
+    )
+    seen: list[Vehicle] = []
+    for v in shown:
+        if all(v.id != other.id for other in seen):
+            seen.append(v)
+    if seen:
+        lines += ["", "Cars we looked at:"]
+        for v in seen:
+            price = f" -- ${v.price:,}" if v.price else ""
+            miles = f", {v.mileage:,} miles" if v.mileage else ""
+            lines.append(f"  - {_title(v)}{price}{miles}")
+
+    # --- the diary ----------------------------------------------------------
+    appt = (
+        db.query(Appointment)
+        .filter(
+            Appointment.conversation_id == c.id,
+            Appointment.status.in_(("booked", "confirmed")),
+        )
+        .order_by(Appointment.starts_at.asc())
+        .first()
+    )
+    if appt is not None:
+        car = (
+            db.query(Vehicle).filter_by(id=appt.vehicle_id).one_or_none()
+            if appt.vehicle_id else None
+        )
+        when = appt.starts_at.strftime("%A %d %B at %-I:%M %p")
+        lines += ["", "Your appointment:"]
+        lines.append(f"  {when}")
+        if car is not None:
+            lines.append(f"  To see the {_title(car)}")
+        lines.append(f"  {dealership.address}")
+        lines += [
+            "",
+            "If you need to move it, reply to this email or call "
+            f"{dealership.phone}.",
+        ]
+    else:
+        lines += [
+            "",
+            "Nothing is booked yet. Reply to this email or call "
+            f"{dealership.phone} whenever you would like to come and see one.",
+        ]
+
+    lines += ["", f"{dealership.name}", dealership.address, dealership.phone]
+    return "\n".join(lines)

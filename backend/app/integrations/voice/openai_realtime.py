@@ -72,7 +72,9 @@ class OpenAIRealtimeProvider(VoiceProvider):
                 "VOICE_PROVIDER_KEY if voice should bill to a different project.",
             )
 
-    def session_payload(self, instructions: str, tools: list[dict]) -> dict:
+    def session_payload(
+        self, instructions: str, tools: list[dict], keywords: list[str] | None = None
+    ) -> dict:
         """The request body, built separately so it can be asserted without
         being sent -- the same trick `ResendSender.payload` uses, and the only
         way to check this without a key.
@@ -91,7 +93,7 @@ class OpenAIRealtimeProvider(VoiceProvider):
                         # Without a transcription model the buyer's own words
                         # never reach us: the model hears them and answers, and
                         # the dealer's transcript is a monologue.
-                        **({"transcription": _transcription()}
+                        **({"transcription": _transcription(keywords)}
                            if settings.voice_transcribe else {}),
                         # Cleans the input before anything reads it. Skipping it
                         # leaves the transcriber and the turn detector both
@@ -129,12 +131,14 @@ class OpenAIRealtimeProvider(VoiceProvider):
             }
         }
 
-    def mint_session(self, instructions: str, tools: list[dict]) -> VoiceSession:
+    def mint_session(
+        self, instructions: str, tools: list[dict], keywords: list[str] | None = None
+    ) -> VoiceSession:
         self.check()
         try:
             response = httpx.post(
                 API,
-                json=self.session_payload(instructions, tools),
+                json=self.session_payload(instructions, tools, keywords),
                 headers={
                     "Authorization": f"Bearer {api_key()}",
                     "Content-Type": "application/json",
@@ -251,19 +255,37 @@ def price_of(usage: dict, model: str = "") -> float:
     return per_million / 1_000_000
 
 
-def _transcription() -> dict:
+#: Which transcribers accept a keyword list. Sending `keywords` to one that
+#: does not is a 400 that takes the whole call with it, so this is checked
+#: rather than hoped.
+KEYWORD_MODELS = ("gpt-transcribe", "gpt-live-transcribe")
+
+
+def _transcription(keywords: list[str] | None = None) -> dict:
     """The transcriber's own settings.
 
-    The language hint is the one that matters and the one everybody omits.
-    Without it the transcriber infers the language from the audio, and
-    telephone-quality audio -- which is what a Bluetooth headset gives you the
-    moment its microphone is opened -- is exactly where inference goes wrong.
-    The result is not a slightly-off transcript, it is confident nonsense in
-    the wrong language.
+    Three levers, and every one of them was left at its default while a real
+    call turned "E-Class" into 比克拉斯:
+
+    * **language** -- without it the transcriber infers the language from the
+      audio, and telephone-quality audio is exactly where inference goes wrong.
+      The result is not a slightly-off transcript, it is confident nonsense in
+      another script.
+    * **delay** -- more thinking time is more accuracy, and here the latency is
+      *free*: the model hears the raw audio and never reads this text, so a
+      slower transcriber delays only the dealer's record, never the reply.
+    * **keywords** -- the dealership's own vocabulary. "E-Class", "AMG", "GLE",
+      "Sienna" are precisely the words a general transcriber has no reason to
+      expect and every reason to mangle, and they are sitting in the inventory
+      table. Only two models accept them.
     """
     config: dict = {"model": settings.voice_transcribe_model}
     if settings.voice_language:
         config["language"] = settings.voice_language
+    if settings.voice_transcribe_delay:
+        config["delay"] = settings.voice_transcribe_delay
+    if keywords and settings.voice_transcribe_model.startswith(KEYWORD_MODELS):
+        config["keywords"] = keywords[:100]
     return config
 
 

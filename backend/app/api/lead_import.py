@@ -41,7 +41,16 @@ from app.events import emit
 from app.matching import match_lead
 from app.ingest.adf import AdfError, parse_adf
 from app.integrations.registry import get_email_sender
-from app.models import Appointment, CapturedField, Dealership, Lead, Outreach, User, Vehicle
+from app.models import (
+    Appointment,
+    CapturedField,
+    Conversation,
+    Dealership,
+    Lead,
+    Outreach,
+    User,
+    Vehicle,
+)
 from app.schemas.serialize import lead_out, outreach_out, vehicle_out
 
 router = APIRouter(prefix="/leads", tags=["leads"])
@@ -435,6 +444,40 @@ def lead_outreach(
         .all()
     )
     return {"outreach": [outreach_out(o) for o in rows]}
+
+
+@router.get("/{lead_id}/summary-preview")
+def summary_preview(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """The email `close_conversation` would send this buyer, without sending it.
+
+    It exists so the gate can assert the thing a buyer actually keeps. That
+    text used to be a model-written sentence mailed verbatim, and nothing
+    checked it because checking it meant sending it.
+    """
+    from app.recap import buyer_summary
+
+    lead = _get_lead(db, lead_id)
+    convo = (
+        db.query(Conversation)
+        .filter_by(lead_id=lead.id)
+        .order_by(Conversation.started_at.desc())
+        .first()
+    )
+    if convo is None:
+        return {"body": "", "appointment": False}
+    appt = (
+        db.query(Appointment)
+        .filter(
+            Appointment.conversation_id == convo.id,
+            Appointment.status.in_(("booked", "confirmed")),
+        )
+        .first()
+    )
+    return {"body": buyer_summary(db, convo), "appointment": appt is not None}
 
 
 class SendBody(BaseModel):

@@ -1333,6 +1333,32 @@ def main() -> int:
           f"{len(hit)} of {counts['all']}")
     check("a term in nothing returns nothing", not miss, str(len(miss)))
 
+    print("\n== the summary a buyer keeps is built from rows ==")
+    # `close_conversation` takes a model-written `summary` and that used to be
+    # the whole email. A real call mailed: "John Doe is all set with an
+    # appointment tomorrow at 11 AM ... A summary will be sent to
+    # john@outlook.com" -- a status line about the reader, in the third person,
+    # telling them the thing they are holding is on its way to them.
+    booked = next(
+        (l for l in call("GET", "/api/leads")["leads"]
+         if l.get("email") and l.get("appointment_count")),
+        None,
+    ) or next(l for l in call("GET", "/api/leads")["leads"] if l.get("email"))
+    kept = call("GET", f"/api/leads/{booked['id']}/summary-preview")
+    body = kept["body"]
+    check("it greets the buyer rather than describing them",
+          body.startswith("Hi"), body[:40])
+    check("and never announces itself as something about to be sent",
+          "will be sent" not in body.lower() and "summary will" not in body.lower(),
+          body[:80])
+    # Every line has to be checkable against a row, which is the whole reason
+    # it is composed rather than written.
+    check("it names the dealership a buyer can ring back",
+          call("GET", "/api/overview")["dealership"]["phone"] in body)
+    if kept["appointment"]:
+        check("and states the appointment rather than alluding to it",
+              "Your appointment:" in body, body[-200:])
+
     print("\n== a manager can write one, not only read them ==")
     # A composer that could only reach buyers already on file would send a rep
     # back to their own mail client to answer a stranger -- where the reply is

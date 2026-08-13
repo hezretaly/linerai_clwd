@@ -47,6 +47,7 @@ from app.models import (
     Dealership,
     Message,
     User,
+    Vehicle,
 )
 from app.schemas.serialize import iso, message_out
 
@@ -65,7 +66,7 @@ def mint_session(
     instructions = build_system_prompt(db, dealership, live_settings(db), channel="voice")
     # Raises NotConfigured -> 503 with the missing keys named. The call UI
     # reads that payload and says exactly what is absent.
-    session = provider.mint_session(instructions, tools.TOOL_DEFS)
+    session = provider.mint_session(instructions, tools.TOOL_DEFS, _spoken_words(db))
 
     convo = Conversation(channel="voice", status="active", stage="opening")
     db.add(convo)
@@ -102,6 +103,35 @@ def mint_session(
         # this page can show without saying why.
         "transcribed": settings.voice_transcribe,
     }
+
+
+def _spoken_words(db: Session) -> list[str]:
+    """The dealership's own vocabulary, for the transcriber.
+
+    "E-Class", "AMG", "GLE", "Sienna" are exactly the words a general
+    transcriber has no reason to expect and every reason to mangle -- a real
+    call turned "E-Class" into 比克拉斯 -- and they are sitting in the inventory
+    table. Makes, models and trims of cars actually on the lot, because a
+    keyword for a car nobody can buy is a nudge toward the wrong answer.
+
+    Only some transcription models accept these; the provider drops them for
+    the ones that do not, rather than sending a field that would 400 the whole
+    session.
+    """
+    words: list[str] = []
+    for make, model, trim in (
+        db.query(Vehicle.make, Vehicle.model, Vehicle.trim)
+        .filter(Vehicle.status == "available")
+        .distinct()
+        .all()
+    ):
+        words += [part for part in (make, model, trim) if part]
+    # Deduplicated with the order kept, so the list is stable between calls and
+    # the prompt cache is not invalidated by a set's iteration order.
+    seen: dict[str, None] = {}
+    for word in words:
+        seen.setdefault(word.strip(), None)
+    return [w for w in seen if w]
 
 
 class ToolRelay(BaseModel):

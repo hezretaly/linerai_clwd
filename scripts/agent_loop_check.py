@@ -417,6 +417,35 @@ def main() -> int:
         # language from the audio -- and telephone-quality audio, which is what
         # a Bluetooth headset produces the moment its microphone opens, is
         # exactly where inference produces confident nonsense.
+        # Free accuracy: the model hears the audio directly and never waits on
+        # this text, so a slower transcriber delays only the dealer's record.
+        check("the transcriber is given time to think, which costs nothing here",
+              body["audio"]["input"]["transcription"].get("delay") == cfg.voice_transcribe_delay,
+              str(body["audio"]["input"]["transcription"].get("delay")))
+        # The dealership's own vocabulary. "E-Class" came back as a Chinese
+        # transliteration on a real call, and those words are sitting in the
+        # inventory table.
+        from app.api.voice import _spoken_words
+        vocab = _spoken_words(db)
+        check("and the inventory is available as transcription keywords",
+              len(vocab) > 10 and any("Toyota" in w for w in vocab), f"{len(vocab)} words")
+        was_model = cfg.voice_transcribe_model
+        try:
+            cfg.voice_transcribe_model = "gpt-live-transcribe"
+            keyed = voice.session_payload(spoken, [], vocab)["session"]["audio"]["input"]
+            check("sent to a model that accepts them",
+                  keyed["transcription"]["keywords"][:1] == vocab[:1],
+                  str(len(keyed["transcription"].get("keywords", []))))
+            # Sending `keywords` to a model that does not take them is a 400
+            # that costs the whole call, so it is checked rather than hoped.
+            cfg.voice_transcribe_model = "whisper-1"
+            plain = voice.session_payload(spoken, [], vocab)["session"]["audio"]["input"]
+            check("and withheld from one that would reject them",
+                  "keywords" not in plain["transcription"],
+                  str(sorted(plain["transcription"])))
+        finally:
+            cfg.voice_transcribe_model = was_model
+
         check("with the language named rather than guessed from the audio",
               body["audio"]["input"]["transcription"].get("language") == cfg.voice_language,
               str(body["audio"]["input"]["transcription"].get("language")))

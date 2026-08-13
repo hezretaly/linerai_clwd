@@ -30,7 +30,12 @@ class VoiceProvider:
     def check(self) -> None:
         raise NotImplementedError
 
-    def mint_session(self, instructions: str, tools: list[dict]) -> VoiceSession:
+    def mint_session(
+        self, instructions: str, tools: list[dict], keywords: list[str] | None = None
+    ) -> VoiceSession:
+        """`keywords` is the dealership's own vocabulary -- makes, models and
+        trims -- for providers whose transcriber accepts a hint. Optional, so a
+        provider that has no use for it needs no change."""
         raise NotImplementedError
 
 
@@ -56,6 +61,8 @@ class UnconfiguredVoiceProvider(VoiceProvider):
             "it has not decided to take.",
         )
 
-    def mint_session(self, instructions: str, tools: list[dict]) -> VoiceSession:
+    def mint_session(
+        self, instructions: str, tools: list[dict], keywords: list[str] | None = None
+    ) -> VoiceSession:
         self.check()
         raise AssertionError("unreachable")

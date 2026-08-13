@@ -716,10 +716,23 @@ def close_conversation(
     from app.integrations.registry import get_email_sender
 
     sender = get_email_sender()
+    # Composed from rows, not the `summary` argument above.
+    #
+    # That argument is a model-written sentence and it used to be the whole
+    # email. A real call mailed: "John Doe is all set with an appointment
+    # tomorrow at 11 AM ... A summary will be sent to john@outlook.com." Which
+    # summarises nothing, is written about the reader in the third person, and
+    # tells them that what they are holding is about to be sent to them.
+    #
+    # The rail already decided this: a model-written summary is a second place
+    # a fact can be invented. It matters more here, because this is the copy
+    # the buyer keeps and reads back to a rep.
+    from app.recap import buyer_summary
+
     record = Outreach(
         lead_id=lead.id, channel="email", to_address=lead.email,
         subject=f"Your conversation with {db.query(Dealership).first().name}",
-        body=summary, provider=sender.name, status="queued",
+        body=buyer_summary(db, convo), provider=sender.name, status="queued",
     )
     db.add(record)
     db.commit()
