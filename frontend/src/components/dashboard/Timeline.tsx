@@ -51,6 +51,7 @@ export interface TimelineEntry {
   live?: boolean
   has_recording?: boolean
   recording_seconds?: number
+  recording_complete?: boolean
   both_sides?: boolean
 
   // escalation
@@ -303,12 +304,24 @@ function CallEntry({ e }: { e: TimelineEntry }) {
       )}
 
       {e.has_recording ? (
-        <audio
-          controls
-          preload="none"
-          src={`/api/voice/recording/${e.conversation_id}`}
-          className="mt-2 w-full"
-        />
+        <>
+          <audio
+            controls
+            preload="none"
+            src={`/api/voice/recording/${e.conversation_id}`}
+            className="mt-2 w-full"
+          />
+          {e.recording_complete === false && (
+            /* The slices stopped arriving without an end marker -- a tab
+               killed mid-call. What is here is real audio and worth keeping;
+               what it is not is the whole call, and a player that did not say
+               so would let a rep conclude the buyer hung up mid-sentence. */
+            <p className="mt-1 text-xs text-warning-foreground">
+              This call ended without closing off its recording, so the audio
+              stops before the call did.
+            </p>
+          )}
+        </>
       ) : (
         /* Not an error, and worth distinguishing from a call that had no audio
            to begin with: a browser without MediaRecorder, a tab closed before

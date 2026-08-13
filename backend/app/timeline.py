@@ -117,8 +117,18 @@ def compose(
                 if c.ended_at else 0
             ),
             live=c.ended_at is None,
-            has_recording=audio is not None,
+            has_recording=(
+                audio is not None and audio.size_bytes > 0
+                # A row from the version that named every file "None.webm"
+                # points at everybody's audio, so it is offered as nobody's.
+                and bool(audio.filename) and not audio.filename.startswith("None.")
+            ),
             recording_seconds=round(audio.duration_ms / 1000) if audio else 0,
+            # A recording is finished when the call said so. Zero means the
+            # slices stopped arriving without an end marker -- a crashed tab,
+            # a killed browser -- so the file is a real but partial call, and
+            # offering it as though it were whole would misrepresent it.
+            recording_complete=bool(audio and audio.duration_ms),
             # Whether the buyer's half was ever written down. With
             # transcription off a call leaves Liner's lines and nothing else,
             # which reads exactly like an assistant talking to itself -- and a

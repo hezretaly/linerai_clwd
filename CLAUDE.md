@@ -371,13 +371,32 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   nothing to send: a finished call with no audio and no error anywhere.
   Measured, not reasoned — same pipeline, same Chromium, context outside the
   gesture gives `chunks: 0, bytes: 0` and inside it gives 24 kB in two seconds.
-- **Every way a call can end uploads its audio.** The red button,
+- **Call audio is written as it is spoken, not uploaded at the end.** The end
+  is the least reliable moment there is — a closed tab, a crashed browser and a
+  dropped connection all skip it — so two-second slices go to
+  `/recording/{id}/chunk` and are appended to the file on disk. What a crash
+  costs is one slice. `/recording/{id}/complete` stamps the length, and
+  `duration_ms = 0` is what "still being written, or abandoned" looks like: the
+  timeline offers such a file but says the audio stops before the call did.
+  - **Slices must arrive in order, and only the browser can promise that.**
+    A webm or mp4 out of `MediaRecorder` is a header followed by continuation
+    clusters; reorder them and nothing plays. One promise chain in `Call.tsx`
+    is that guarantee — the server appends what it is given, because tracking
+    an expected sequence would need a column this codebase has no migration
+    for.
+  - **The filename is built after the flush.** `id` comes from the column
+    default at flush time; read a moment earlier it is `None`, and *every*
+    recording on the system lands in one file called `None.webm`. That shipped,
+    and was invisible for two commits because a single upload per call meant
+    the last writer won. Rows from that era are refused rather than served —
+    handing one buyer's call to another buyer's page is the version of this bug
+    that matters.
+- **Every way a call can end closes the recording off.** The red button,
   `close_conversation`, the idle timeout and a dropped connection all go
-  through `hangUp`, which awaits the upload; `hangUp` is re-entrant-guarded
-  because closing the peer connection fires the state change that calls it.
-  A closed tab can only be salvaged with `sendBeacon`, which browsers cap near
-  64 KB — so that path saves a short call and loses a long one, and says so
-  rather than implying coverage it does not have.
+  through `hangUp`; it is re-entrant-guarded because closing the peer
+  connection fires the state change that calls it. A closed tab beacons only
+  the unsent slice and the end marker, which is small enough to fit where a
+  whole call never was.
 - **Recording a call is somebody's voice, so three things are fixed.** The
   buyer is told before the microphone opens — the line is on `/call`, above the
   button, and several US states require every party to consent, which is a

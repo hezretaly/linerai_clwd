@@ -111,8 +111,17 @@ async function preroll(ctx: AudioContext, url: string, into?: AudioNode | null) 
     return
   }
 
+  await chime(ctx, RISING, into)
+}
+
+/** Rising: the line is open, go ahead. Falling: that was the end. */
+const RISING: [number, number][] = [[0, 660], [0.16, 990]]
+const FALLING: [number, number][] = [[0, 620], [0.14, 440]]
+
+async function chime(ctx: AudioContext, notes: [number, number][], into?: AudioNode | null) {
+  if (ctx.state === 'closed') return
   const now = ctx.currentTime
-  for (const [at, hz] of [[0, 660], [0.16, 990]] as [number, number][]) {
+  for (const [at, hz] of notes) {
     const tone = ctx.createOscillator()
     const level = ctx.createGain()
     tone.frequency.value = hz
@@ -127,7 +136,7 @@ async function preroll(ctx: AudioContext, url: string, into?: AudioNode | null) 
     tone.start(now + at)
     tone.stop(now + at + 0.16)
   }
-  await new Promise((done) => setTimeout(done, 380))
+  await new Promise((done) => setTimeout(done, notes.length * 190))
 }
 
 function clock(seconds: number): string {
@@ -209,7 +218,18 @@ export function Call() {
    * second lot of audio hardware for no gain. */
   const mixer = useRef<MediaStreamAudioDestinationNode | null>(null)
   const recorder = useRef<MediaRecorder | null>(null)
-  const chunks = useRef<Blob[]>([])
+  /* Slices already sent, and the queue that keeps them in order.
+   *
+   * A webm or mp4 out of MediaRecorder is a header followed by continuation
+   * clusters: reorder them and the file will not play. So every upload is
+   * chained behind the last one rather than fired in parallel -- this promise
+   * *is* the ordering guarantee the server documents but cannot enforce. */
+  const queue = useRef<Promise<void>>(Promise.resolve())
+  const seq = useRef(0)
+  /** The most recent slice, kept only until it is uploaded, so a closing tab
+   *  has something small to beacon. */
+  const pending = useRef<Blob[]>([])
+  const sentBytes = useRef(0)
   const startedAt = useRef(0)
 
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
@@ -272,16 +292,25 @@ export function Call() {
     if (rec.state === 'recording') rec.requestData()
     rec.stop()
     recorder.current = null
-    if (!chunks.current.reduce((n, c) => n + c.size, 0)) return
-    const form = new FormData()
-    const type = rec.mimeType.split(';')[0]
-    form.append('file', new File(chunks.current, 'call', { type }), 'call')
+    const id = convo.current
+    // Only the slices not yet uploaded, which is at most one interval of
+    // audio. Everything before them is already a file on the server -- which
+    // is the whole reason for streaming, since a beacon is capped near 64 KB
+    // and a whole call is not.
+    const left = pending.current
+    pending.current = []
+    if (left.reduce((n, c) => n + c.size, 0)) {
+      const form = new FormData()
+      const type = rec.mimeType.split(';')[0]
+      form.append('file', new File(left, 'call', { type }), 'call')
+      navigator.sendBeacon(`/api/voice/recording/${id}/chunk?seq=${seq.current++}`, form)
+    }
+    // And the end marker, so a tab that closed is not mistaken for a call
+    // still being written.
     navigator.sendBeacon(
-      `/api/voice/recording/${convo.current}` +
+      `/api/voice/recording/${id}/complete` +
       `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
-      form,
     )
-    chunks.current = []
   }
 
   const teardown = () => {
@@ -485,11 +514,14 @@ export function Call() {
     for (const [stream, kind] of [[mixed, 'both'], [raw, 'mic']] as const) {
       try {
         const rec = new MediaRecorder(stream, { mimeType: type })
-        chunks.current = []
-        rec.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data) }
-        // A timeslice, so a tab closed mid-call still leaves most of the audio
-        // in hand rather than one chunk that was never flushed.
-        rec.start(5000)
+        pending.current = []
+        seq.current = 0
+        sentBytes.current = 0
+        queue.current = Promise.resolve()
+        rec.ondataavailable = (e) => { if (e.data.size) send(e.data, rec.mimeType) }
+        // Two seconds, not five. The slice is the window of audio that only
+        // exists in this page, so it is also exactly what a crash loses.
+        rec.start(2000)
         recorder.current = rec
         setRecording(kind)
         return
@@ -498,6 +530,33 @@ export function Call() {
       }
     }
     setRecording('off')
+  }
+
+  /** Send one slice, behind every slice before it.
+   *
+   *  Chained rather than concurrent: the file on the server is these bytes
+   *  concatenated, and two requests in flight can land the wrong way round. */
+  const send = (slice: Blob, mimeType: string) => {
+    const id = convo.current
+    if (!id) return
+    pending.current.push(slice)
+    queue.current = queue.current.then(async () => {
+      const mine = pending.current
+      if (!mine.length) return
+      pending.current = []
+      const type = mimeType.split(';')[0]
+      try {
+        await api.upload(
+          `/api/voice/recording/${id}/chunk?seq=${seq.current++}`,
+          new File(mine, 'call', { type }),
+        )
+        sentBytes.current += mine.reduce((n, c) => n + c.size, 0)
+      } catch {
+        // Put them back so the next slice carries them. A dropped request
+        // mid-call is a blip; losing the audio to it is not.
+        pending.current = [...mine, ...pending.current]
+      }
+    })
   }
 
   /** Stop and upload. Awaited on hang-up, so the last few seconds -- usually
@@ -514,33 +573,28 @@ export function Call() {
       return
     }
     const done = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
-    // Flush whatever is buffered before stopping. Without this the audio since
-    // the last five-second slice is still inside the recorder when it closes.
+    // Flush whatever is buffered before stopping, or the audio since the last
+    // slice is still inside the recorder when it closes.
     if (rec.state === 'recording') rec.requestData()
     rec.stop()
     await done
+    // Everything queued, including the slice `stop` just produced.
+    await queue.current
 
-    const bytes = chunks.current.reduce((n, c) => n + c.size, 0)
-    if (!bytes) {
-      // Almost always a suspended AudioContext: the recorder ran, the mix fed
-      // it nothing. Named rather than swallowed.
-      setSaved('No audio was captured -- the browser gave the recorder silence.')
-      chunks.current = []
-      return
-    }
-    const blob = new Blob(chunks.current, { type: rec.mimeType.split(';')[0] })
-    chunks.current = []
-    const ms = Math.max(Date.now() - startedAt.current, 0)
     try {
-      await api.upload(
-        `/api/voice/recording/${conversationId}?duration_ms=${ms}`,
-        new File([blob], 'call', { type: blob.type }),
+      const end = await api.post<{ complete: boolean; bytes: number }>(
+        `/api/voice/recording/${conversationId}/complete` +
+        `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
       )
-      setSaved(`Recording saved (${Math.round(bytes / 1024)} KB).`)
+      setSaved(
+        end.bytes
+          ? `Recording saved (${Math.round(end.bytes / 1024)} KB).`
+          // The recorder ran and produced nothing, which is almost always a
+          // suspended AudioContext. Named rather than swallowed.
+          : 'No audio was captured -- the browser gave the recorder silence.',
+      )
     } catch (exc) {
-      // The call happened whether or not its audio was filed, but a rep
-      // looking for it later deserves to know it was not.
-      setSaved(`The recording could not be saved: ${(exc as ApiError).message}`)
+      setSaved(`The recording could not be closed off: ${(exc as ApiError).message}`)
     }
   }
 
@@ -690,14 +744,21 @@ export function Call() {
     // Closing the connection fires onconnectionstatechange, which calls this.
     if (hangingUp.current) return
     hangingUp.current = true
-    // Before teardown: stopping the microphone first would cut the last few
-    // seconds off the recording, which is usually the part with the
-    // appointment in it.
     const id = convo.current
-    await finishRecording(id)
-    teardown()
     setPhase('ended')
     setSpeaking(false)
+
+    // The falling pair, straight away. A phone that goes silent when you press
+    // the red button leaves you wondering whether it heard you -- and this is
+    // the moment a caller is least willing to wait, so it happens before the
+    // uploads rather than after them.
+    if (meter.current) await chime(meter.current, FALLING)
+
+    // Then close the recording off. Before teardown, because stopping the
+    // microphone first would cut the last few seconds -- usually the part with
+    // the appointment in it.
+    await finishRecording(id)
+    teardown()
     if (id) {
       await api.post(`/api/voice/sessions/${id}/end`, {}).catch(() => {})
     }

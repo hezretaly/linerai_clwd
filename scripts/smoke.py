@@ -112,8 +112,14 @@ def status_of(method: str, path: str, body: dict | None = None) -> tuple[int, st
         return exc.code, exc.read().decode()
 
 
-def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 0) -> dict:
-    """Post call audio the way the buyer's browser does: multipart, no session."""
+def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 0,
+                 *, complete: bool = True, seq: int = 0) -> dict:
+    """Post one slice of call audio the way the buyer's browser does.
+
+    Streamed rather than uploaded whole: the end of a call is the least
+    reliable moment there is, and everything up to the last slice is on disk
+    before it arrives.
+    """
     boundary = "----lineraudio"
     body = (
         f"--{boundary}\r\n"
@@ -121,15 +127,19 @@ def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 
         f"Content-Type: {content_type}\r\n\r\n"
     ).encode() + blob + f"\r\n--{boundary}--\r\n".encode()
     request = urllib.request.Request(
-        f"{BASE}/api/voice/recording/{convo}?duration_ms={duration_ms}",
+        f"{BASE}/api/voice/recording/{convo}/chunk?seq={seq}",
         data=body, method="POST",
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
     try:
         with opener.open(request, timeout=60) as response:
-            return json.loads(response.read().decode())
+            stored = json.loads(response.read().decode())
     except urllib.error.HTTPError as exc:
         return {"stored": False, "status": exc.code, "detail": exc.read().decode()[:120]}
+    if complete:
+        return call("POST", f"/api/voice/recording/{convo}/complete"
+                            f"?duration_ms={duration_ms}")
+    return stored
 
 
 def fetch_audio(convo: str, *, anonymous: bool = False) -> tuple[int, bytes]:
@@ -1590,22 +1600,23 @@ def main() -> int:
 
     # Recording. Bytes on disk, a row pointing at them, and a session in front
     # of the playback -- it is somebody's voice.
-    fake_audio = b"\x1aE\xdf\xa3" + b"demo audio bytes " * 40
-    stored = upload_audio(vid, "audio/webm", fake_audio, duration_ms=61000)
-    check("call audio is accepted from the buyer's browser",
-          stored.get("stored") is True, str(stored))
-    # One per call. An unauthenticated endpoint that appends without limit
-    # against one id is a place to keep someone else's files.
-    second = upload_audio(vid, "audio/webm", fake_audio)
-    check("and a second upload for the same call is refused, not appended",
-          second.get("stored") is False and second.get("reason") == "already recorded",
-          str(second))
+    head = b"\x1aE\xdf\xa3" + b"first slice " * 20
+    tail = b"second slice " * 20
+    part = upload_audio(vid, "audio/webm", head, complete=False, seq=0)
+    check("a slice of call audio is stored as it is recorded",
+          part.get("stored") is True, str(part))
+    grew = upload_audio(vid, "audio/webm", tail, duration_ms=61000, complete=True, seq=1)
+    check("and the next slice is appended to it, not written over it",
+          grew.get("bytes") == len(head) + len(tail),
+          f"{grew.get('bytes')} of {len(head) + len(tail)}")
+
     check("an unsupported type is refused before anything is written",
-          status_of("POST", f"/api/voice/recording/{vid}")[0] in {415, 422},
+          status_of("POST", f"/api/voice/recording/{vid}/chunk")[0] in {415, 422},
           "no file / wrong type")
 
     played = fetch_audio(vid)
-    check("a rep can play the call back", played[0] == 200 and played[1] == fake_audio,
+    check("a rep can play the call back, slices in the order they arrived",
+          played[0] == 200 and played[1] == head + tail,
           f"{played[0]}, {len(played[1])} bytes")
     check("but not without a session -- it is somebody's voice",
           fetch_audio(vid, anonymous=True)[0] in {401, 403},
@@ -1646,6 +1657,28 @@ def main() -> int:
     check("and served back as the type the browser actually recorded",
           played_mp4[0] == 200 and played_mp4[1].startswith(b"\x00\x00\x00 ftyp"),
           str(played_mp4[0]))
+    # Two calls, two files. The filename is built from the row id, which is
+    # generated at flush -- read a moment too early it is None, and every
+    # recording on the system lands in one file called None.webm. That shipped
+    # once and was invisible while each call uploaded exactly once.
+    check("and one call's audio is not another call's file",
+          fetch_audio(vid)[1] != played_mp4[1],
+          f"{len(fetch_audio(vid)[1])} vs {len(played_mp4[1])} bytes")
+    kept = [r for r in call("GET", "/api/voice/recordings")["recordings"]
+            if not r["orphaned"]]
+    check("and each call has a file of its own on disk",
+          len({r["filename"] for r in kept}) == len(kept), f"{len(kept)} recordings")
+    # Rows written before the filename was built after the flush all name one
+    # file. They are refused rather than served, because serving them hands one
+    # buyer's call audio to another buyer's page.
+    stale = next(
+        (r for r in call("GET", "/api/voice/recordings")["recordings"] if r["orphaned"]),
+        None,
+    )
+    if stale:
+        check("and a recording from the shared-file era is refused, not served",
+              fetch_audio(stale["conversation_id"])[0] == 410,
+              str(fetch_audio(stale["conversation_id"])[0]))
 
     # Inventory is the local database and says so. It used to report itself
     # unconfigured for want of SCRAPER_BASE_URL, which put it in the amber
