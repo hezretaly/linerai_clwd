@@ -176,22 +176,77 @@ class OpenAIRealtimeProvider(VoiceProvider):
         )
 
 
-# Dollars per million tokens, by the kind of token. Kept next to the code
-# that applies it rather than in five places at the call site.
-def price_of(usage: dict) -> float:
+# Dollars per million tokens, by model. Only models whose published audio
+# rates have been checked appear here; anything else is reported as unpriced
+# rather than quietly charged at the flagship's rates, because a cost report
+# that is confidently wrong is worse than one that admits it does not know.
+#
+# Text rates are derived at the same ratio as audio for the mini tier, which is
+# the one number here that is inferred rather than published -- it moves the
+# total by very little, since on a call of any length audio dominates.
+VOICE_RATES: dict[str, dict[str, float]] = {
+    "gpt-realtime": {
+        "audio_in": 32.0, "audio_out": 64.0,
+        "text_in": 4.0, "text_out": 16.0, "cached_in": 0.4,
+    },
+    "gpt-realtime-mini": {
+        "audio_in": 10.0, "audio_out": 20.0,
+        "text_in": 1.25, "text_out": 5.0, "cached_in": 0.125,
+    },
+}
+
+
+def rates_for(model: str) -> tuple[dict[str, float], bool]:
+    """The per-million rates for a model, and whether they were actually known.
+
+    A dated snapshot is priced as its family -- `gpt-realtime-2.1` is a
+    `gpt-realtime` -- but only where the suffix is a *version*, not another
+    tier. A plain prefix match makes a future `gpt-realtime-nano` a flagship
+    and charges it at three times its cost, silently, which is precisely the
+    confident wrong answer this table exists to avoid. So the remainder has to
+    begin with a digit.
+    """
+    name = (model or "").strip()
+    known = VOICE_RATES.get(name)
+    if known is None:
+        for family, rate in sorted(VOICE_RATES.items(), key=lambda kv: -len(kv[0])):
+            rest = name[len(family):]
+            if name.startswith(family) and rest.startswith("-") and rest[1:2].isdigit():
+                known = rate
+                break
+
+    # An explicit VOICE_PRICE_* always wins, for every model. A vendor can
+    # change a price faster than this file can be edited.
+    override = {
+        "audio_in": settings.voice_price_audio_in,
+        "audio_out": settings.voice_price_audio_out,
+        "text_in": settings.voice_price_text_in,
+        "text_out": settings.voice_price_text_out,
+        "cached_in": settings.voice_price_cached_in,
+    }
+    base = dict(known or dict.fromkeys(override, 0.0))
+    base.update({k: v for k, v in override.items() if v is not None})
+    return base, known is not None or any(v is not None for v in override.values())
+
+
+def price_of(usage: dict, model: str = "") -> float:
     """What one response cost, in dollars.
 
     An estimate, and labelled one everywhere it is shown: the authority is
-    OpenAI's own billing page, and these rates are configuration that can go
-    stale. What it is *not* is a guess -- the token counts are the ones the
-    provider reported for that exact response.
+    OpenAI's own billing page. What it is *not* is a guess -- the token counts
+    are the ones the provider reported for that exact response.
+
+    Priced against the model that billed it rather than the one configured
+    now, so switching to mini tomorrow does not silently re-price yesterday's
+    calls at the new rate and make a change look like a saving it was not.
     """
+    rate, _ = rates_for(model or settings.voice_model)
     per_million = (
-        usage.get("cached_tokens", 0) * settings.voice_price_cached_in
-        + max(usage.get("input_audio_tokens", 0), 0) * settings.voice_price_audio_in
-        + max(usage.get("input_text_tokens", 0), 0) * settings.voice_price_text_in
-        + usage.get("output_audio_tokens", 0) * settings.voice_price_audio_out
-        + usage.get("output_text_tokens", 0) * settings.voice_price_text_out
+        usage.get("cached_tokens", 0) * rate["cached_in"]
+        + max(usage.get("input_audio_tokens", 0), 0) * rate["audio_in"]
+        + max(usage.get("input_text_tokens", 0), 0) * rate["text_in"]
+        + usage.get("output_audio_tokens", 0) * rate["audio_out"]
+        + usage.get("output_text_tokens", 0) * rate["text_out"]
     )
     return per_million / 1_000_000
 

@@ -390,11 +390,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     of any length the accumulated audio dwarfs the instructions, and a smaller
     prefix means less of that history sits behind a cached boundary.
   - **`/api/voice/cost/{id}` reports what the provider charged, per response.**
-    The counts come off `response.done` and are relayed by the browser; the
-    rates are `VOICE_PRICE_*` and the figure is labelled an estimate, because
-    those rates are configuration that can go stale. Per response rather than
-    per call: a total hides that the eleventh turn cost six times the second,
-    which is the finding.
+    The counts come off `response.done` and are relayed by the browser, and the
+    figure is labelled an estimate. Per response rather than per call: a total
+    hides that the eleventh turn cost six times the second, which is the
+    finding.
+  - **Rates follow `VOICE_MODEL`, they are not pinned beside it.** Switching to
+    `gpt-realtime-mini` is one line of `.env`; if the prices were a separate
+    setting, that line would leave the dashboard charging flagship rates for
+    mini traffic — three times over, with nothing on the page to contradict it.
+    `VOICE_PRICE_*` still overrides, for when a vendor moves a price faster
+    than this repository. A row is priced against the model that *billed* it,
+    so changing model tomorrow does not re-price yesterday.
+  - **A model with no published rates is reported unpriced, never guessed at.**
+    Matching is on the family plus a *version* suffix, so `gpt-realtime-2.1` is
+    a `gpt-realtime` but a future `gpt-realtime-nano` is not. A plain prefix
+    match would charge that nano at the flagship's rate, silently — and a cost
+    report that is confidently wrong is worse than one that says it does not
+    know.
 - **A greeting the buyer has not heard yet cannot be interrupted.** The
   microphone is held shut until the first `output_audio_buffer.stopped`. Open
   from the start, the connection settling triggers the turn detector, which

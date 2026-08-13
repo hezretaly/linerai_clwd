@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings
 from app.db import get_db, utcnow
-from app.integrations.voice.openai_realtime import price_of
+from app.integrations.voice.openai_realtime import price_of, rates_for
 from app.models import (
     Appointment,
     CallUsage,
@@ -83,6 +83,9 @@ def overview(
         })
         for r in spend
     )
+    # Every model that billed in the window that we have no published rates
+    # for. A total which quietly omits one is worse than a total that names it.
+    unpriced = sorted({r.model for r in spend if not rates_for(r.model)[1]})
     voice_tokens = sum(r.input_tokens + r.output_tokens for r in spend)
     # The single number that explains a surprising bill. Cached input is
     # discounted roughly eighty-fold, so the same calls cost several times more
@@ -226,11 +229,13 @@ def overview(
              "value": round(voice_usd, 2),
              "format": "usd",
              "window": (
+                 f"no published rates for {', '.join(unpriced)} -- set VOICE_PRICE_*"
+                 if unpriced else
                  f"{voice_tokens:,} tokens, {int(voice_cache_ratio * 100)}% cached "
                  "-- last 24 hours" if spend
                  else "no calls billed yet"
              ),
-             "unavailable": not spend},
+             "unavailable": not spend or bool(unpriced)},
             {"key": "appointments_set", "label": "Appointments set",
              "value": appointments_set, "window": "last 24 hours"},
             {"key": "needs_a_person", "label": "Needs a person",

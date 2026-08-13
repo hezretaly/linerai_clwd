@@ -1576,6 +1576,10 @@ def main() -> int:
     check("with a dollar figure that is labelled an estimate",
           priced["estimated_usd"] > 0 and "authority" in priced["note"],
           f"${priced['estimated_usd']}")
+    # Whether the money means anything at all. An unknown model is reported
+    # unpriced rather than charged at another model's rates.
+    check("and it says whether the model's rates were actually known",
+          priced["priced"] is True, f"{priced['model']}: {priced['note'][:60]}")
 
     # Recording. Bytes on disk, a row pointing at them, and a session in front
     # of the playback -- it is somebody's voice.

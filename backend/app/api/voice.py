@@ -39,7 +39,7 @@ from app.db import get_db, utcnow
 from app.events import emit
 from app.integrations.registry import get_voice_provider
 from app.config import settings
-from app.integrations.voice.openai_realtime import CALLS_URL, price_of
+from app.integrations.voice.openai_realtime import CALLS_URL, price_of, rates_for
 from app.models import (
     CallRecording,
     CallUsage,
@@ -272,7 +272,7 @@ def record_usage(body: Usage, db: Session = Depends(get_db)) -> dict:
     )
     db.add(row)
     db.commit()
-    return {"recorded": True, "estimated_usd": round(price_of(_as_dict(row)), 6)}
+    return {"recorded": True, "estimated_usd": round(price_of(_as_dict(row), row.model), 6)}
 
 
 def _as_dict(row: CallUsage) -> dict:
@@ -317,12 +317,14 @@ def call_cost(
             "fresh_input_tokens": r.input_audio_tokens + r.input_text_tokens,
             "output_tokens": r.output_tokens,
             "output_audio_tokens": r.output_audio_tokens,
-            "estimated_usd": round(price_of(_as_dict(r)), 6),
+            "estimated_usd": round(price_of(_as_dict(r), r.model), 6),
         }
         for r in rows
     ]
     cached = sum(r.cached_tokens for r in rows)
     billed_in = sum(r.input_audio_tokens + r.input_text_tokens for r in rows)
+    model = rows[0].model if rows else settings.voice_model
+    _, priced = rates_for(model)
     return {
         "conversation_id": conversation_id,
         "turns": turns,
@@ -333,10 +335,19 @@ def call_cost(
         # several times one where it did -- and nothing else about the two
         # calls looks any different.
         "cache_hit_ratio": round(cached / (cached + billed_in), 3) if cached + billed_in else 0.0,
-        "model": rows[0].model if rows else settings.voice_model,
+        "model": model,
+        # Whether the money means anything at all. An unknown model is reported
+        # as unpriced rather than charged at some other model's rates: a cost
+        # report that is confidently wrong is worse than one that says it does
+        # not know.
+        "priced": priced,
         "note": (
-            "Estimated from the token counts the provider reported, at the rates in "
-            "VOICE_PRICE_*. The vendor's billing page is the authority."
+            f"Estimated from the token counts the provider reported for {model}, at "
+            "the published rates. VOICE_PRICE_* overrides them; the vendor's billing "
+            "page is the authority."
+            if priced else
+            f"No published rates are known for {model}, so these calls are not "
+            "priced. Set VOICE_PRICE_AUDIO_IN and the rest to value them."
         ),
     }
 

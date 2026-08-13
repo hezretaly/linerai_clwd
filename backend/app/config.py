@@ -42,7 +42,11 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     openai_api_key: str = ""
     # Overridable, because model names move faster than this file does.
-    openai_model: str = "gpt-5.4-nano"
+    # Luna is the cheapest tier of the 5.6 family -- $1/$6 per million against
+    # the flagship's rates -- and it is what this assistant needs: picking a
+    # car out of five search results and writing two sentences is a
+    # high-volume, low-difficulty job, which is the case Luna is built for.
+    openai_model: str = "gpt-5.6-luna"
     # gpt-5.x are reasoning models: reasoning tokens are spent from the same
     # budget as the reply, so too small a ceiling returns an empty message
     # rather than a short one.
@@ -151,18 +155,23 @@ class Settings(BaseSettings):
     # do. Off means a transcript with Liner's half only.
     voice_transcribe: bool = True
 
-    # Dollars per million tokens, for turning the recorded usage into money.
-    # Configurable because vendor prices move and a hardcoded number silently
-    # becomes a lie. Defaults are gpt-realtime as of mid-2026; `mini` is about
-    # a third, so if you change the model change these too.
-    voice_price_audio_in: float = 32.0
-    voice_price_audio_out: float = 64.0
-    voice_price_text_in: float = 4.0
-    voice_price_text_out: float = 16.0
-    # Cached input is the whole ballgame on a long call. Roughly an eightieth
-    # of fresh input; when caching stops hitting, the same call costs several
+    # Dollars per million tokens, for turning recorded usage into money.
+    #
+    # Unset by default, and that is the point: the rates follow VOICE_MODEL
+    # from the table in `integrations/voice/openai_realtime.py`, so switching
+    # to the mini model does not leave this dashboard reporting the flagship's
+    # prices on cheaper traffic -- a threefold overstatement that nothing else
+    # on the page would contradict. Set one of these and it wins for every
+    # model, which is what you want when a vendor changes a price before this
+    # repository catches up.
+    voice_price_audio_in: float | None = None
+    voice_price_audio_out: float | None = None
+    voice_price_text_in: float | None = None
+    voice_price_text_out: float | None = None
+    # Cached input is the whole ballgame on a long call: roughly an eightieth
+    # of fresh input, so when caching stops hitting the same call costs several
     # times more with nothing else different.
-    voice_price_cached_in: float = 0.4
+    voice_price_cached_in: float | None = None
 
     # --- Scraper -----------------------------------------------------------
     scraper_base_url: str = ""

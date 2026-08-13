@@ -460,6 +460,25 @@ def main() -> int:
               and 0.0 < body["truncation"]["retention_ratio"] <= 1.0,
               str(body.get("truncation")))
 
+        # Switching to the cheaper model must re-price the report too. Pinned
+        # separately, changing one line of .env would leave this dashboard
+        # charging flagship rates for mini traffic -- three times over, with
+        # nothing on the page to contradict it.
+        from app.integrations.voice.openai_realtime import rates_for
+        flagship, _ = rates_for("gpt-realtime")
+        mini, _ = rates_for("gpt-realtime-mini")
+        check("the mini model is priced as the mini model",
+              mini["audio_in"] < flagship["audio_in"] / 2,
+              f"{mini['audio_in']} vs {flagship['audio_in']}")
+        # A dated snapshot is still its family; another tier is not. A plain
+        # prefix match makes a future gpt-realtime-nano a flagship and charges
+        # it at three times its cost, silently.
+        check("a dated snapshot is priced as its family",
+              rates_for("gpt-realtime-mini-2.1")[0]["audio_in"] == mini["audio_in"])
+        check("but an unknown tier is reported unpriced, not guessed at",
+              rates_for("gpt-realtime-nano")[1] is False
+              and rates_for("something-else")[1] is False)
+
         # Transcribing the buyer is billed on top of the call and buys a
         # readable record, nothing more -- the model hears the audio directly.
         # So it is the one part that can be switched off without changing what
