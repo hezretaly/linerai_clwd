@@ -1459,6 +1459,13 @@ def main() -> int:
           minted[0] == 503 and "VOICE_PROVIDER" in minted[1],
           f"{minted[0]}: {minted[1][:90]}")
 
+    # The dealership's greeting reaches the browser so the first turn can be
+    # sent verbatim. Left to improvise an opening on an empty conversation, a
+    # smaller model improvises the *customer's* -- which is what happened.
+    greeting = call("GET", "/api/assistant-settings")["live"].get("greeting", "")
+    check("the dealership has an opening line to send verbatim",
+          bool(greeting.strip()), greeting[:60])
+
     # The relay is the whole reason a call is as safe as a chat: the model asks,
     # our executor decides. So it is exercised directly, with no provider.
     # ?channel=voice, not a body field -- posting it in the body is silently

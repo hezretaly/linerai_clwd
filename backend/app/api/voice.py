@@ -83,6 +83,19 @@ def mint_session(
         # of a rebuild.
         "calls_url": CALLS_URL,
         "model": session.model,
+        # The first turn, sent verbatim rather than left to the model.
+        #
+        # A bare `response.create` on an empty conversation asks a model to
+        # invent an opening, and a smaller one invents the *customer's* -- a
+        # real call opened with "Hi! I'm looking for a compact SUV", in the
+        # assistant's voice, and then answered itself for four turns. The
+        # dealership wrote a greeting; this is it.
+        "greeting": live_settings(db).greeting,
+        # Whether the buyer's own words will be written down. Off, the dealer's
+        # transcript is Liner's half only -- which reads exactly like an
+        # assistant talking to itself, and is the single most confusing thing
+        # this page can show without saying why.
+        "transcribed": settings.voice_transcribe,
     }
 
 

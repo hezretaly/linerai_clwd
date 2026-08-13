@@ -407,6 +407,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     match would charge that nano at the flagship's rate, silently — and a cost
     report that is confidently wrong is worse than one that says it does not
     know.
+- **The greeting is sent verbatim, not improvised.** A bare `response.create`
+  on an empty conversation asks a model to invent an opening, and a smaller one
+  invents the *customer's*: a real call on `gpt-realtime-mini` began "Hi! I'm
+  looking for a compact SUV" in the assistant's voice, and then answered itself
+  for four turns. The dealership's own `greeting` is passed to the browser and
+  named in the first `response.create`, and the prompt says outright that Liner
+  is only ever the dealership and should stay silent rather than fill one.
+- **A half-transcript must say it is half.** `VOICE_TRANSCRIBE=false` saves a
+  separate bill and costs the buyer's side of every call — which then renders
+  as Liner talking to nobody, indistinguishable from the failure above. The
+  call entry says so, and points at the recording, which has both halves
+  regardless.
 - **A greeting the buyer has not heard yet cannot be interrupted.** The
   microphone is held shut until the first `output_audio_buffer.stopped`. Open
   from the start, the connection settling triggers the turn detector, which

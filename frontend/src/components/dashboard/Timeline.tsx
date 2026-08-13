@@ -51,6 +51,7 @@ export interface TimelineEntry {
   live?: boolean
   has_recording?: boolean
   recording_seconds?: number
+  both_sides?: boolean
 
   // escalation
   reason?: string
@@ -289,6 +290,17 @@ function CallEntry({ e }: { e: TimelineEntry }) {
         )}
         <span className="ml-auto text-xs text-muted-foreground">{dateTime(e.at)}</span>
       </div>
+
+      {e.both_sides === false && (
+        /* Not a fault in the call. Transcription is billed separately and can
+           be switched off; what must not happen is a half-transcript
+           rendering as a whole one, because Liner's lines alone read as a
+           conversation it held with nobody. */
+        <p className="mt-1.5 text-xs text-warning-foreground">
+          Only Liner&apos;s side was transcribed on this call -- the audio has both
+          halves. Set VOICE_TRANSCRIBE=true to write the buyer&apos;s down.
+        </p>
+      )}
 
       {e.has_recording ? (
         <audio

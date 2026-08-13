@@ -119,6 +119,14 @@ def compose(
             live=c.ended_at is None,
             has_recording=audio is not None,
             recording_seconds=round(audio.duration_ms / 1000) if audio else 0,
+            # Whether the buyer's half was ever written down. With
+            # transcription off a call leaves Liner's lines and nothing else,
+            # which reads exactly like an assistant talking to itself -- and a
+            # rep who cannot tell the difference will either distrust a working
+            # call or miss a broken one.
+            both_sides=any(
+                m.role == "buyer" for m in messages if m.conversation_id == c.id
+            ) or c.ended_at is None,
         ))
 
     for m in messages:

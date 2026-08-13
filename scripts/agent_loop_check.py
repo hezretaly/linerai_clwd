@@ -460,6 +460,15 @@ def main() -> int:
               and 0.0 < body["truncation"]["retention_ratio"] <= 1.0,
               str(body.get("truncation")))
 
+        # A model told never to speak the customer's side. A real call opened
+        # with "Hi! I'm looking for a compact SUV" -- in the assistant's voice
+        # -- and then answered itself for four turns.
+        check("the model is told it is only ever the dealership",
+              "ONLY EVER THE DEALERSHIP" in spoken
+              and "Never speak the customer's side" in spoken)
+        check("and to stay quiet rather than fill a silence",
+              "say nothing at all" in spoken)
+
         # Switching to the cheaper model must re-price the report too. Pinned
         # separately, changing one line of .env would leave this dashboard
         # charging flagship rates for mini traffic -- three times over, with

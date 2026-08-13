@@ -37,6 +37,8 @@ interface Session {
   expires_in: number
   calls_url: string
   model: string
+  greeting: string
+  transcribed: boolean
 }
 
 interface Line {
@@ -100,6 +102,7 @@ export function Call() {
   const [mics, setMics] = useState<MediaDeviceInfo[]>([])
   const [micId, setMicId] = useState('')
   const [seconds, setSeconds] = useState(0)
+  const [transcribed, setTranscribed] = useState(true)
 
   const pc = useRef<RTCPeerConnection | null>(null)
   const channel = useRef<RTCDataChannel | null>(null)
@@ -155,6 +158,8 @@ export function Call() {
   const recorder = useRef<MediaRecorder | null>(null)
   const chunks = useRef<Blob[]>([])
   const startedAt = useRef(0)
+  /** The dealership's opening line, consumed by the first response. */
+  const greeting = useRef('')
 
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
   // the microphone live and the meter lit in the browser chrome, which is the
@@ -236,7 +241,21 @@ export function Call() {
   const respondWhenReady = () => {
     if (outstanding.current > 0 || !owed.current || generating.current) return
     owed.current = false
-    channel.current?.send(JSON.stringify({ type: 'response.create' }))
+    // The first turn is the dealership's greeting, word for word. Every turn
+    // after it answers something, so it needs no instructions of its own.
+    const opening = greeting.current
+    greeting.current = ''
+    channel.current?.send(JSON.stringify(
+      opening
+        ? {
+            type: 'response.create',
+            response: {
+              instructions:
+                `Greet the caller by saying exactly this, and nothing else: "${opening}"`,
+            },
+          }
+        : { type: 'response.create' },
+    ))
   }
 
   /** Tool calls come back over the data channel and are executed on our side.
@@ -488,8 +507,16 @@ export function Call() {
       const events = connection.createDataChannel('oai-events')
       channel.current = events
       events.onmessage = (e) => onEvent(JSON.parse(e.data))
-      // Liner opens. Without this the line is live and silent, and a buyer who
-      // hears nothing hangs up before saying anything for the model to answer.
+      // Liner opens, with the dealership's own greeting rather than whatever
+      // the model would invent.
+      //
+      // A bare `response.create` on an empty conversation is a request to
+      // improvise an opening, and a smaller model improvises the *customer's*:
+      // a real call began "Hi! I'm looking for a compact SUV", spoken by the
+      // assistant, and then carried on answering itself. Naming the line
+      // removes the invitation.
+      greeting.current = session.greeting || ''
+      setTranscribed(session.transcribed !== false)
       events.onopen = () => {
         owed.current = true
         respondWhenReady()
@@ -583,6 +610,15 @@ export function Call() {
               : level > SPEECH
                 ? 'Hearing you.'
                 : 'Not picking anything up -- check the microphone below.'}
+          </p>
+        )}
+
+        {phase === 'live' && !transcribed && (
+          /* A one-sided transcript is the most confusing thing this page can
+             show without explaining itself: Liner's half alone reads exactly
+             like an assistant holding a conversation with nobody. */
+          <p className="-mt-2 mb-2 text-center text-xs text-muted-foreground">
+            Only Liner&apos;s side is written down -- VOICE_TRANSCRIBE is off.
           </p>
         )}
 
