@@ -282,6 +282,9 @@ export interface Kpi {
   label: string
   value: number
   window: string
+  /** 'usd' for a figure that is money rather than a count. Sent by the server
+   *  so the card cannot decide to render a dollar amount as a tally. */
+  format?: 'usd'
   /** The count is real but the feature behind it is not set up, so the window
    *  line says why instead of a zero reading as a quiet day. */
   unavailable?: boolean

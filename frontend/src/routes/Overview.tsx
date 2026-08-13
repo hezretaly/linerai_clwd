@@ -33,6 +33,7 @@ const KPI_ICONS: Record<string, IconName> = {
   chat: 'chat',
   email: 'mail',
   calls: 'phone',
+  voice_spend: 'voice',
   appointments_set: 'calendar',
   needs_a_person: 'user',
   credit_apps: 'file',
@@ -44,6 +45,9 @@ const KPI_LINKS: Record<string, string> = {
   chat: '/app/conversations',
   email: '/app/conversations',
   calls: '/app/conversations',
+  // The calls it was spent on. There is no billing page to send them to,
+  // and a card that leads nowhere is a number to go and look up elsewhere.
+  voice_spend: '/app/conversations?filter=calls',
   appointments_set: '/app/calendar',
   // Both channels: an escalation on a call does not appear on the chat page.
   needs_a_person: '/app/conversations?filter=flagged',
@@ -289,7 +293,11 @@ export function OverviewPage() {
                 />
               </div>
               <div className="p-6 pt-0">
-                <div className="tnum text-2xl font-bold">{kpi.value}</div>
+                <div className="tnum text-2xl font-bold">
+                  {kpi.format === 'usd'
+                    ? `$${kpi.value.toFixed(2)}`
+                    : kpi.value}
+                </div>
                 {/* The mockup compares each figure to a 30-day average. Nothing
                     stores a daily rollup, so the card states its own window
                     rather than inventing a trend to sit under the number. */}

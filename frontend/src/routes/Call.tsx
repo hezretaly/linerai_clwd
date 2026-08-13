@@ -64,6 +64,31 @@ const SPEECH = 0.06
 /** Two minutes of silence in both directions ends the call. */
 const IDLE_MS = 2 * 60 * 1000
 
+/** What this browser can actually record, best first.
+ *
+ *  Not one format. Safari's MediaRecorder produces mp4 and Chrome's produces
+ *  webm, and asking for the wrong one throws -- so the answer is discovered
+ *  rather than assumed, and the type that won is uploaded with the file
+ *  because serving mp4 bytes as webm plays silence. */
+const RECORD_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+]
+
+function recordableType(): string {
+  const supported = (t: string) =>
+    typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t)
+  return RECORD_TYPES.find(supported) ?? ''
+}
+
+function clock(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
 export function Call() {
   const [error, setError] = useState<ApiError | null>(null)
   const [failed, setFailed] = useState('')
@@ -74,6 +99,7 @@ export function Call() {
   const [level, setLevel] = useState(0)
   const [mics, setMics] = useState<MediaDeviceInfo[]>([])
   const [micId, setMicId] = useState('')
+  const [seconds, setSeconds] = useState(0)
 
   const pc = useRef<RTCPeerConnection | null>(null)
   const channel = useRef<RTCDataChannel | null>(null)
@@ -119,6 +145,17 @@ export function Call() {
   // captured at render time may be a version ago.
   const mutedRef = useRef(false)
 
+  /* Both halves of the call, mixed into one track and recorded.
+   *
+   * Mixed rather than two files: a rep listening back wants the conversation,
+   * not two monologues to line up by hand. The mix happens in the same
+   * AudioContext the level meter already runs in -- a second context is a
+   * second lot of audio hardware for no gain. */
+  const mixer = useRef<MediaStreamAudioDestinationNode | null>(null)
+  const recorder = useRef<MediaRecorder | null>(null)
+  const chunks = useRef<Blob[]>([])
+  const startedAt = useRef(0)
+
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
   // the microphone live and the meter lit in the browser chrome, which is the
   // single most alarming thing a website can do.
@@ -146,8 +183,9 @@ export function Call() {
   useEffect(() => {
     if (phase !== 'live') return
     const timer = setInterval(() => {
+      setSeconds(Math.floor((Date.now() - startedAt.current) / 1000))
       if (Date.now() - lastHeard.current > IDLE_MS) void hangUp()
-    }, 5000)
+    }, 1000)
     return () => clearInterval(timer)
   }, [phase])
 
@@ -163,6 +201,7 @@ export function Call() {
     pc.current = null
     mic.current = null
     meter.current = null
+    mixer.current = null
     setLevel(0)
   }
 
@@ -308,7 +347,17 @@ export function Call() {
     meter.current = ctx
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 512
-    ctx.createMediaStreamSource(stream).connect(analyser)
+    const source = ctx.createMediaStreamSource(stream)
+    source.connect(analyser)
+
+    // The recording mix. The buyer goes in here; Liner joins when the remote
+    // track arrives, which is after this runs -- a WebAudio node can be
+    // connected to a live destination at any time, so the late arrival costs
+    // nothing but the first half-second of ringing.
+    const mix = ctx.createMediaStreamDestination()
+    mixer.current = mix
+    source.connect(mix)
+    startRecording(mix.stream)
     const buffer = new Uint8Array(analyser.frequencyBinCount)
     const tick = () => {
       if (meter.current !== ctx) return
@@ -323,11 +372,53 @@ export function Call() {
     tick()
   }
 
+  /** Record the mixed call, if this browser can. */
+  const startRecording = (stream: MediaStream) => {
+    const type = recordableType()
+    if (!type) return  // no MediaRecorder here; the call still works
+    try {
+      const rec = new MediaRecorder(stream, { mimeType: type })
+      chunks.current = []
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.current.push(e.data) }
+      // A timeslice, so a tab closed mid-call still leaves most of the audio
+      // in hand rather than one chunk that was never flushed.
+      rec.start(5000)
+      recorder.current = rec
+    } catch {
+      /* Recording is a nice-to-have; a call that will not start because of it
+         is not. */
+    }
+  }
+
+  /** Stop and upload. Awaited on hang-up so the last chunk is included. */
+  const finishRecording = async (conversationId: string) => {
+    const rec = recorder.current
+    recorder.current = null
+    if (!rec || rec.state === 'inactive') return
+    const done = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
+    rec.stop()
+    await done
+    if (!chunks.current.length) return
+    const blob = new Blob(chunks.current, { type: rec.mimeType.split(';')[0] })
+    chunks.current = []
+    const ms = Math.max(Date.now() - startedAt.current, 0)
+    try {
+      await api.upload(
+        `/api/voice/recording/${conversationId}?duration_ms=${ms}`,
+        new File([blob], 'call', { type: blob.type }),
+      )
+    } catch {
+      /* The call happened whether or not its audio was filed. */
+    }
+  }
+
   const start = async () => {
     setError(null)
     setFailed('')
     setLines([])
     setPhase('connecting')
+    startedAt.current = Date.now()
+    setSeconds(0)
     mutedRef.current = false
     setMuted(false)
     outstanding.current = 0
@@ -369,6 +460,16 @@ export function Call() {
       pc.current = connection
 
       connection.ontrack = (e) => {
+        // Into the recording mix as well as into the speaker. Safari needs the
+        // stream attached to a media element before a MediaStreamSource on it
+        // produces anything, which the line below happens to satisfy.
+        if (meter.current && mixer.current) {
+          try {
+            meter.current.createMediaStreamSource(e.streams[0]).connect(mixer.current)
+          } catch {
+            /* One-sided audio is worth having; no call is not. */
+          }
+        }
         if (!audio.current) return
         audio.current.srcObject = e.streams[0]
         // Safari will not autoplay a stream attached after the click that
@@ -432,11 +533,16 @@ export function Call() {
   }
 
   const hangUp = async () => {
+    // Before teardown: stopping the microphone first would cut the last few
+    // seconds off the recording, which is usually the part with the
+    // appointment in it.
+    const id = convo.current
+    await finishRecording(id)
     teardown()
     setPhase('ended')
     setSpeaking(false)
-    if (convo.current) {
-      await api.post(`/api/voice/sessions/${convo.current}/end`, {}).catch(() => {})
+    if (id) {
+      await api.post(`/api/voice/sessions/${id}/end`, {}).catch(() => {})
     }
   }
 
@@ -463,6 +569,9 @@ export function Call() {
               ? 'Connected. Just talk -- you can interrupt at any time.'
               : 'Same assistant, same inventory, same booking -- out loud.'}
           </p>
+          {(phase === 'live' || phase === 'ended') && (
+            <p className="tnum mt-2 text-2xl font-semibold">{clock(seconds)}</p>
+          )}
         </div>
 
         <Meter live={phase === 'live'} speaking={speaking} level={level} />
@@ -558,6 +667,17 @@ export function Call() {
         {phase === 'connecting' && (
           <p className="mt-3 text-center text-xs text-muted-foreground">
             Your browser will ask for the microphone.
+          </p>
+        )}
+
+        {/* Before the button, and unconditional. Several US states require
+            every party to a call to consent to being recorded; whether that
+            applies is the dealership's call to take with its own counsel, but
+            nobody should be recorded without being told, and this is the only
+            place a buyer would ever read it. */}
+        {phase !== 'ended' && (
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            Calls are recorded so the team can follow up accurately.
           </p>
         )}
 

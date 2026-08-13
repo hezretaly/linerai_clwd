@@ -1,6 +1,8 @@
-.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed reset-db smoke e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db smoke e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
+# How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
+N ?= 50
 UVICORN := backend/.venv/bin/uvicorn
 BACKEND_PORT := 8000
 FRONTEND_PORT := 5173
@@ -43,6 +45,9 @@ set-password: ## Change one account's password in place: make set-password EMAIL
 
 seed: ## Wipe and rebuild the Riverside Auto fixture
 	cd backend && ../$(PY) -m app.seed
+
+seed-demo: ## Add N demo buyers on top of the fixture (N=50)
+	$(PY) scripts/seed_demo.py $(N)
 
 reset-db: ## Delete the database and reseed
 	rm -f backend/liner.db backend/liner.db-wal backend/liner.db-shm

@@ -14,7 +14,7 @@ import { Icon } from '../Icon'
  */
 
 export interface TimelineEntry {
-  kind: 'message' | 'outreach' | 'appointment' | 'escalation'
+  kind: 'call' | 'message' | 'outreach' | 'appointment' | 'escalation'
   id: string
   at: string
   /** 'chat' | 'voice' | 'email' | 'phone_logged', or '' for things that
@@ -45,6 +45,12 @@ export interface TimelineEntry {
   status?: string
   booked_by?: string
   vehicle?: Vehicle | null
+
+  // call
+  seconds?: number
+  live?: boolean
+  has_recording?: boolean
+  recording_seconds?: number
 
   // escalation
   reason?: string
@@ -259,6 +265,54 @@ function ThreadBreak({ channel, at }: { channel: string; at: string }) {
   )
 }
 
+/** A call: how long it ran, and the audio if it was captured.
+ *
+ *  One entry per call rather than a header over its transcript lines. A rep
+ *  scanning a buyer's history wants "an eight-minute call on Tuesday" as a
+ *  single item they can press play on; the words are below it either way.
+ *
+ *  Duration comes from the conversation row, not from the audio, so a call
+ *  whose recording failed still reports how long it lasted -- and the two
+ *  being different is itself worth seeing. */
+function CallEntry({ e }: { e: TimelineEntry }) {
+  return (
+    <div className="my-3 rounded-lg border border-border bg-card p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Icon name="phone" className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="text-sm font-medium">
+          {e.live ? 'Call in progress' : 'Voice call'}
+        </span>
+        {!e.live && (e.seconds ?? 0) > 0 && (
+          <span className="tnum text-sm text-muted-foreground">
+            {mmss(e.seconds ?? 0)}
+          </span>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground">{dateTime(e.at)}</span>
+      </div>
+
+      {e.has_recording ? (
+        <audio
+          controls
+          preload="none"
+          src={`/api/voice/recording/${e.conversation_id}`}
+          className="mt-2 w-full"
+        />
+      ) : (
+        /* Not an error, and worth distinguishing from a call that had no audio
+           to begin with: a browser without MediaRecorder, a tab closed before
+           the upload, or a call still running. */
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          {e.live ? 'Audio is uploaded when the call ends.' : 'No audio was captured.'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function mmss(seconds: number): string {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
 export function Timeline({
   entries,
   /** Multi-channel pages mark each turn; a single thread does not need to say
@@ -283,7 +337,9 @@ export function Timeline({
       )
     }
     rows.push(
-      e.kind === 'message' ? (
+      e.kind === 'call' ? (
+        <CallEntry key={e.id} e={e} />
+      ) : e.kind === 'message' ? (
         <Message key={e.id} e={e} showChannel={false} />
       ) : e.kind === 'outreach' ? (
         <Outreach key={e.id} e={e} />

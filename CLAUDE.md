@@ -21,6 +21,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make dev` | Both servers in the background, logs to `.logs/` |
 | `make backend` / `make frontend` | One at a time, in the foreground |
 | `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
+| `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
 | `make reset-db` | Delete the database and reseed |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
@@ -354,6 +355,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   sounds like the assistant changing voice mid-sentence. Submit every
   outstanding result, wait for the `response.done` of the response that asked
   for them, then request exactly one.
+- **A call is one timeline entry, and it carries its own audio.** Not a header
+  over forty transcript lines: a rep scanning a buyer's history wants "an
+  eight-minute call on Tuesday" as something they can press play on. Duration
+  comes from the conversation row and not from the recording, so a call whose
+  audio failed still reports how long it ran — and the two disagreeing is
+  itself worth seeing. `end_call` stamps `ended_at` as well as
+  `close_conversation` does, because a call the buyer simply dropped otherwise
+  had no length at all.
+- **Recording a call is somebody's voice, so three things are fixed.** The
+  buyer is told before the microphone opens — the line is on `/call`, above the
+  button, and several US states require every party to consent, which is a
+  decision for the dealership to take with its own counsel. The audio never
+  leaves the server without a dealer session. And the format is recorded
+  alongside the bytes: Safari's `MediaRecorder` emits mp4 and Chrome's emits
+  webm, so serving one as the other plays silence. Files live under
+  `backend/var/` — gitignored, and never in the database, where a table growing
+  by megabytes a row ruins every backup.
 - **A realtime call bills the whole conversation on every turn.** Not the
   latest exchange — all of it, audio included, as input, each time the model
   answers. So cost climbs with call length no matter how short the replies get,

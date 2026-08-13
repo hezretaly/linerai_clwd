@@ -260,6 +260,36 @@ class CallUsage(Base):
     created_at: Mapped[datetime] = created()
 
 
+class CallRecording(Base):
+    """The audio of one call, on disk, with a row pointing at it.
+
+    Bytes on disk rather than in the database: a five-minute call is a few
+    megabytes, and a table that grows by megabytes a row turns every backup and
+    every `SELECT *` into a bad afternoon. The row carries what the file is,
+    because that is not guessable -- Safari's MediaRecorder produces mp4 and
+    Chrome's produces webm, and serving one as the other plays silence.
+
+    One per conversation. A second upload for a call that already has audio is
+    refused rather than appended: an unauthenticated endpoint that accepts
+    unlimited bytes against one id is a place to store someone else's files.
+    """
+
+    __tablename__ = "call_recordings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True, unique=True
+    )
+    filename: Mapped[str] = mapped_column(String(120), default="")
+    content_type: Mapped[str] = mapped_column(String(60), default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    # What the browser measured, which is the length of the audio rather than
+    # the length of the conversation row -- they differ when a tab is left open
+    # after the goodbye.
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = created()
+
+
 class Event(Base):
     """Append-only. Doubles as the audit log and the WebSocket reconnect buffer."""
 

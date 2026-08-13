@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Appointment,
+    CallRecording,
     Conversation,
     Escalation,
     Lead,
@@ -48,7 +49,9 @@ from app.schemas.serialize import iso, loads, outreach_out, user_out, vehicle_ou
 
 # Within the same second, what a rep expects to read first. A booking is the
 # consequence of the message above it, not the other way round.
-KIND_ORDER = {"message": 0, "outreach": 1, "appointment": 2, "escalation": 3}
+# A call opens before anything said on it, so it sorts first within a second.
+KIND_ORDER = {"call": 0, "message": 1, "outreach": 2, "appointment": 3,
+              "escalation": 4}
 
 
 def _mirrored_outreach_id(message: Message) -> str | None:
@@ -85,6 +88,38 @@ def compose(
             mirrors[found] = m
 
     entries: list[dict] = []
+
+    # One entry per call, at the moment it started, carrying the two things a
+    # transcript cannot: how long it ran, and whether the audio is there to
+    # play. Per conversation rather than per message because that is what a
+    # recording is -- a rep scanning a buyer's history wants "an eight-minute
+    # call on Tuesday" as one item, not a header over forty transcript lines.
+    recorded = {
+        r.conversation_id: r
+        for r in (
+            db.query(CallRecording).filter(CallRecording.conversation_id.in_(ids)).all()
+            if ids else []
+        )
+    }
+    for c in conversations:
+        if c.channel != "voice":
+            continue
+        audio = recorded.get(c.id)
+        entries.append(_entry(
+            "call", c.started_at,
+            id=c.id,
+            channel="voice",
+            conversation_id=c.id,
+            # From the row, not from the audio: a call whose recording failed
+            # still lasted as long as it lasted.
+            seconds=(
+                int((c.ended_at - c.started_at).total_seconds())
+                if c.ended_at else 0
+            ),
+            live=c.ended_at is None,
+            has_recording=audio is not None,
+            recording_seconds=round(audio.duration_ms / 1000) if audio else 0,
+        ))
 
     for m in messages:
         if _mirrored_outreach_id(m):

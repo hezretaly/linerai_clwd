@@ -17,8 +17,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings
 from app.db import get_db, utcnow
+from app.integrations.voice.openai_realtime import price_of
 from app.models import (
     Appointment,
+    CallUsage,
     Conversation,
     Dealership,
     Escalation,
@@ -59,6 +61,35 @@ def overview(
 
     chats = convos_on("chat")
     calls = convos_on("voice")
+
+    # What those calls cost. From `call_usage`, which holds the token counts
+    # the provider itself reported per response -- not an estimate from
+    # wall-clock, and not a number this page worked out for itself. A realtime
+    # call re-bills the whole conversation on every turn, so spend is the one
+    # figure on this dashboard that does not track the number of calls.
+    spend = (
+        db.query(CallUsage)
+        .join(Conversation, Conversation.id == CallUsage.conversation_id)
+        .filter(Conversation.started_at >= since)
+        .all()
+    )
+    voice_usd = sum(
+        price_of({
+            "cached_tokens": r.cached_tokens,
+            "input_audio_tokens": r.input_audio_tokens,
+            "input_text_tokens": r.input_text_tokens,
+            "output_audio_tokens": r.output_audio_tokens,
+            "output_text_tokens": r.output_text_tokens,
+        })
+        for r in spend
+    )
+    voice_tokens = sum(r.input_tokens + r.output_tokens for r in spend)
+    # The single number that explains a surprising bill. Cached input is
+    # discounted roughly eighty-fold, so the same calls cost several times more
+    # when this drops -- and nothing else on the page would look different.
+    cached = sum(r.cached_tokens for r in spend)
+    fresh = sum(r.input_audio_tokens + r.input_text_tokens for r in spend)
+    voice_cache_ratio = round(cached / (cached + fresh), 2) if cached + fresh else 0.0
     # Real rows, and only the ones that actually went. A queued or failed send
     # is not an email the buyer received, and counting it would make the card
     # read best when delivery is broken.
@@ -187,6 +218,19 @@ def overview(
             # nothing new arrives here until one is. The banner says so.
             {"key": "calls", "label": "Calls",
              "value": calls, "window": "last 24 hours"},
+            # Money, not a count, and deliberately next to the calls it came
+            # from. Marked unavailable rather than showing $0.00 when nothing
+            # has been recorded: a zero here reads as "calls are free", which
+            # is the most expensive thing this dashboard could imply.
+            {"key": "voice_spend", "label": "Voice spend",
+             "value": round(voice_usd, 2),
+             "format": "usd",
+             "window": (
+                 f"{voice_tokens:,} tokens, {int(voice_cache_ratio * 100)}% cached "
+                 "-- last 24 hours" if spend
+                 else "no calls billed yet"
+             ),
+             "unavailable": not spend},
             {"key": "appointments_set", "label": "Appointments set",
              "value": appointments_set, "window": "last 24 hours"},
             {"key": "needs_a_person", "label": "Needs a person",

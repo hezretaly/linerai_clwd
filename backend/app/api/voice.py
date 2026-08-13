@@ -25,7 +25,8 @@ which is the whole reason the rules live in executors.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -34,12 +35,19 @@ from app.agent.runner import record_buyer_message
 from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings
 from app.agent.prompts import build_system_prompt
-from app.db import get_db
+from app.db import get_db, utcnow
 from app.events import emit
 from app.integrations.registry import get_voice_provider
 from app.config import settings
 from app.integrations.voice.openai_realtime import CALLS_URL, price_of
-from app.models import CallUsage, Conversation, Dealership, Message, User
+from app.models import (
+    CallRecording,
+    CallUsage,
+    Conversation,
+    Dealership,
+    Message,
+    User,
+)
 from app.schemas.serialize import iso, message_out
 
 router = APIRouter(prefix="/voice", tags=["voice"])
@@ -339,6 +347,116 @@ def end_call(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     if convo is None:
         raise HTTPException(404, "Conversation not found")
     convo.status = "closed"
+    # Stamped here as well as in close_conversation. Without it a call that the
+    # buyer simply hung up on had no end time at all, so its length was
+    # unknowable -- and "how long was that call?" is the first thing anyone
+    # asks about a phone bill.
+    if convo.ended_at is None:
+        convo.ended_at = utcnow()
     db.commit()
-    emit(db, "call.ended", {"conversation_id": convo.id})
-    return {"ok": True}
+    emit(db, "call.ended", {
+        "conversation_id": convo.id,
+        "seconds": int((convo.ended_at - convo.started_at).total_seconds()),
+    })
+    return {"ok": True, "seconds": int((convo.ended_at - convo.started_at).total_seconds())}
+
+
+# --------------------------------------------------------------------------
+# The audio itself.
+#
+# A recorded call is a buyer's voice, so two things are load-bearing and
+# neither is technical: the buyer is told before the microphone opens (the
+# call page says so, above the button), and the file never leaves this server
+# without a dealer session. Several US states require every party to consent
+# to a recording, which is a decision for the dealership to take with its own
+# counsel -- what this code guarantees is that nobody is recorded silently.
+# --------------------------------------------------------------------------
+
+#: Ten minutes of Opus at a sane bitrate, with room to spare. A cap is not
+#: optional on an endpoint no session guards.
+MAX_RECORDING = 40 * 1024 * 1024
+
+#: What a browser will actually produce. Safari's MediaRecorder emits mp4 and
+#: Chrome's emits webm, so both are here -- and nothing else is, because this
+#: writes a file to disk from an unauthenticated request.
+AUDIO_TYPES = {
+    "audio/webm": ".webm",
+    "audio/ogg": ".ogg",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+}
+
+
+def recordings_dir():
+    from pathlib import Path
+
+    from app.config import BACKEND_DIR
+
+    path = Path(BACKEND_DIR) / "var" / "recordings"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@router.post("/recording/{conversation_id}")
+async def upload_recording(
+    conversation_id: str,
+    duration_ms: int = 0,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The call audio, uploaded by the buyer's browser when the call ends.
+
+    Unauthenticated, like the tool relay, because it is the buyer's browser
+    talking and a buyer has no session. That is why it is fenced on every side
+    it can be: the conversation must already exist and be a voice call, the
+    type must be one a browser really produces, the size is capped, and a call
+    that already has audio is refused rather than overwritten.
+    """
+    convo = db.query(Conversation).filter_by(id=conversation_id).one_or_none()
+    if convo is None or convo.channel != "voice":
+        raise HTTPException(404, "No such call")
+
+    suffix = AUDIO_TYPES.get((file.content_type or "").split(";")[0].strip())
+    if suffix is None:
+        raise HTTPException(415, f"Unsupported audio type {file.content_type!r}")
+
+    if db.query(CallRecording).filter_by(conversation_id=convo.id).first() is not None:
+        # Not an error worth shouting about -- a retried upload is the likely
+        # cause -- but the first recording stands.
+        return {"stored": False, "reason": "already recorded"}
+
+    raw = await file.read(MAX_RECORDING + 1)
+    if len(raw) > MAX_RECORDING:
+        raise HTTPException(413, "Recording too large")
+    if not raw:
+        raise HTTPException(400, "Empty recording")
+
+    row = CallRecording(
+        conversation_id=convo.id,
+        content_type=(file.content_type or "").split(";")[0].strip(),
+        size_bytes=len(raw),
+        duration_ms=max(duration_ms, 0),
+    )
+    row.filename = f"{row.id}{suffix}"
+    (recordings_dir() / row.filename).write_bytes(raw)
+    db.add(row)
+    db.commit()
+    return {"stored": True, "bytes": len(raw)}
+
+
+@router.get("/recording/{conversation_id}")
+def fetch_recording(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Play a call back. Dealer session required -- it is somebody's voice."""
+    row = db.query(CallRecording).filter_by(conversation_id=conversation_id).one_or_none()
+    if row is None:
+        raise HTTPException(404, "No recording for this call")
+    path = recordings_dir() / row.filename
+    if not path.exists():
+        # The row outlived the file -- a restored database, a cleared volume.
+        # Saying so beats a broken player with no explanation.
+        raise HTTPException(410, "The audio for this call is no longer on disk")
+    return FileResponse(path, media_type=row.content_type, filename=row.filename)

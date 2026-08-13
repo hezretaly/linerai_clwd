@@ -112,6 +112,38 @@ def status_of(method: str, path: str, body: dict | None = None) -> tuple[int, st
         return exc.code, exc.read().decode()
 
 
+def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 0) -> dict:
+    """Post call audio the way the buyer's browser does: multipart, no session."""
+    boundary = "----lineraudio"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="call"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode() + blob + f"\r\n--{boundary}--\r\n".encode()
+    request = urllib.request.Request(
+        f"{BASE}/api/voice/recording/{convo}?duration_ms={duration_ms}",
+        data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with opener.open(request, timeout=60) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        return {"stored": False, "status": exc.code, "detail": exc.read().decode()[:120]}
+
+
+def fetch_audio(convo: str, *, anonymous: bool = False) -> tuple[int, bytes]:
+    """Play a call back. `anonymous` skips the cookie jar, which is the check
+    that matters: the file is a buyer's voice and must not be public."""
+    request = urllib.request.Request(f"{BASE}/api/voice/recording/{convo}")
+    fetcher = urllib.request.build_opener() if anonymous else opener
+    try:
+        with fetcher.open(request, timeout=60) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
 def upload(path: str, filename: str, content: bytes) -> dict:
     """One multipart POST, hand-rolled -- smoke.py deliberately has no deps."""
     boundary = "----linersmoke"
@@ -372,9 +404,19 @@ def main() -> int:
     print("\n== credit applications are real sends, or nothing ==")
     over0 = call("GET", "/api/overview")
     keys = [k["key"] for k in over0["kpis"]]
-    check("the six cards the dashboard asks for",
-          keys == ["chat", "email", "calls", "appointments_set", "needs_a_person",
-                   "credit_apps"], ", ".join(keys))
+    check("the cards the dashboard asks for, in order",
+          keys == ["chat", "email", "calls", "voice_spend", "appointments_set",
+                   "needs_a_person", "credit_apps"], ", ".join(keys))
+    # Money, not a tally. A card that rendered a dollar amount as a count would
+    # read as five hundred calls rather than five hundred dollars.
+    spend = next(k for k in over0["kpis"] if k["key"] == "voice_spend")
+    check("and voice spend says it is money rather than a count",
+          spend.get("format") == "usd", str(spend.get("format")))
+    # $0.00 on this card would read as "calls are free", which is the most
+    # expensive thing this dashboard could imply.
+    check("with nothing billed yet, it says so instead of showing zero",
+          spend["unavailable"] == (spend["value"] == 0),
+          f"{spend['value']} / {spend['window']}")
     lead_for_credit = next(
         (lead for lead in call("GET", "/api/leads")["leads"] if lead["email"]), None
     )
@@ -1419,8 +1461,14 @@ def main() -> int:
 
     # The relay is the whole reason a call is as safe as a chat: the model asks,
     # our executor decides. So it is exercised directly, with no provider.
-    voice_convo = call("POST", "/api/chat/sessions", {"channel": "voice"})
+    # ?channel=voice, not a body field -- posting it in the body is silently
+    # ignored, which had this whole section exercising a chat thread while
+    # claiming to test a call.
+    voice_convo = call("POST", "/api/chat/sessions?channel=voice", {})
     vid = voice_convo.get("conversation_id") or voice_convo.get("id")
+    check("and it really is a call, not a chat wearing the label",
+          call("GET", f"/api/conversations/{vid}")["channel"] == "voice",
+          call("GET", f"/api/conversations/{vid}")["channel"])
     hidden = call("POST", "/api/voice/tools", {
         "conversation_id": vid, "name": "search_inventory",
         "input": {"keywords": "BMW 330i"},
@@ -1529,8 +1577,64 @@ def main() -> int:
           priced["estimated_usd"] > 0 and "authority" in priced["note"],
           f"${priced['estimated_usd']}")
 
-    check("a call ends without needing a provider", bool(
-        call("POST", f"/api/voice/sessions/{vid}/end", {}).get("ok")))
+    # Recording. Bytes on disk, a row pointing at them, and a session in front
+    # of the playback -- it is somebody's voice.
+    fake_audio = b"\x1aE\xdf\xa3" + b"demo audio bytes " * 40
+    stored = upload_audio(vid, "audio/webm", fake_audio, duration_ms=61000)
+    check("call audio is accepted from the buyer's browser",
+          stored.get("stored") is True, str(stored))
+    # One per call. An unauthenticated endpoint that appends without limit
+    # against one id is a place to keep someone else's files.
+    second = upload_audio(vid, "audio/webm", fake_audio)
+    check("and a second upload for the same call is refused, not appended",
+          second.get("stored") is False and second.get("reason") == "already recorded",
+          str(second))
+    check("an unsupported type is refused before anything is written",
+          status_of("POST", f"/api/voice/recording/{vid}")[0] in {415, 422},
+          "no file / wrong type")
+
+    played = fetch_audio(vid)
+    check("a rep can play the call back", played[0] == 200 and played[1] == fake_audio,
+          f"{played[0]}, {len(played[1])} bytes")
+    check("but not without a session -- it is somebody's voice",
+          fetch_audio(vid, anonymous=True)[0] in {401, 403},
+          str(fetch_audio(vid, anonymous=True)[0]))
+
+    ended = call("POST", f"/api/voice/sessions/{vid}/end", {})
+    check("a call ends without needing a provider", bool(ended.get("ok")))
+    # Stamped on hang-up as well as on close_conversation. Without it a call the
+    # buyer simply dropped had no end time, so its length was unknowable.
+    check("and the call has a length afterwards", "seconds" in ended, str(ended))
+
+    # The audio and the length arrive on the buyer's timeline as one entry --
+    # "a call on Tuesday" rather than a header over forty transcript lines.
+    #
+    # Against a call that has a buyer, which the one above does not: a thread
+    # only gets a lead when something books. Hunted for rather than assumed,
+    # because a check wrapped in `if` is a check that quietly stops running.
+    with_lead = next(
+        (r for r in call("GET", "/api/conversations")["conversations"]
+         if r.get("channel") == "voice" and r.get("lead")),
+        None,
+    )
+    check("the seed has a call that belongs to a buyer", with_lead is not None)
+    other = with_lead["id"]
+    upload_audio(other, "audio/mp4", b"\x00\x00\x00 ftypM4A demo", duration_ms=44000)
+    line = next(
+        (e for e in call("GET", f"/api/leads/{with_lead['lead']['id']}/timeline")["entries"]
+         if e["kind"] == "call" and e["id"] == other),
+        None,
+    )
+    check("a call is one timeline entry, not a header over its transcript",
+          line is not None, str(line)[:70])
+    check("carrying its own audio and its own length",
+          line["has_recording"] is True and line["seconds"] >= 0, str(line)[:90])
+    # Safari records mp4 and Chrome records webm. Serving one as the other
+    # plays silence, so what the browser produced is what comes back.
+    played_mp4 = fetch_audio(other)
+    check("and served back as the type the browser actually recorded",
+          played_mp4[0] == 200 and played_mp4[1].startswith(b"\x00\x00\x00 ftyp"),
+          str(played_mp4[0]))
 
     # Inventory is the local database and says so. It used to report itself
     # unconfigured for want of SCRAPER_BASE_URL, which put it in the amber

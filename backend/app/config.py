@@ -84,7 +84,17 @@ class Settings(BaseSettings):
     # The alias, not a dated snapshot. A pinned snapshot is a thing that stops
     # existing without anyone touching this repository.
     voice_model: str = "gpt-realtime"
-    voice_voice: str = "alloy"
+    # Who the dealership sounds like. `marin` is OpenAI's newest and best
+    # sounding -- a young American woman, clear and unhurried, which is what a
+    # showroom wants answering the phone. The runners-up are worth trying back
+    # to back before settling, because a voice is a branding decision and
+    # nothing in this repository can listen to them:
+    #   marin   -- young, American, clear. The default.
+    #   coral   -- warmer and chattier, a little less crisp.
+    #   shimmer -- brighter and more energetic; can read as hurried.
+    #   sage    -- calm and measured, reads older.
+    # `alloy`, `ash`, `ballad`, `echo`, `verse` and `cedar` are the rest.
+    voice_voice: str = "marin"
     # Without this the buyer's own words never arrive: the model hears audio
     # and answers, but nothing writes their side of the call into `messages`,
     # so the dealer's transcript is a monologue.
