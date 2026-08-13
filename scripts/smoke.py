@@ -1561,23 +1561,34 @@ def main() -> int:
           not honest.get("guard_violations"), str(honest.get("guard_violations")))
 
     # A real call recorded a buyer message reading a Chinese filler particle,
-    # from an English speaker who had made an "mm" sound. The session names the
-    # language now, which is the actual fix; this is the second half -- even
-    # spelled "Mm" that is not something the buyer said, and a rep reads this
-    # before phoning them back.
+    # from an English speaker who had made an "mm" sound -- and a later one
+    # recorded "\u6bd4\u514b\u62c9\u65af" from someone saying "E-Class". The session names
+    # the language, but the vendor treats that as a preference rather than a
+    # constraint, so the channel enforces it here: an English-only call did not
+    # produce a line with no English in it, and a rep reads this before phoning
+    # the buyer back.
     grunt = call("POST", "/api/voice/transcript", {
         "conversation_id": vid, "role": "buyer", "content": "\u55ef",
     })
     check("a non-verbal sound is not recorded as something the buyer said",
           grunt.get("recorded") is False, str(grunt)[:60])
-    # The narrowness is the point. Dropping a message a buyer really sent is
-    # far worse than keeping one they did not, so anything with a word in it
-    # stays whatever it looks like.
-    kept = call("POST", "/api/voice/transcript", {
-        "conversation_id": vid, "role": "buyer", "content": "ok",
+    mangled = call("POST", "/api/voice/transcript", {
+        "conversation_id": vid, "role": "buyer", "content": "\u6bd4\u514b\u62c9\u65af",
     })
-    check("while a real word is kept however short", kept.get("recorded") is not False,
-          str(kept.get("content")))
+    check("nor is a whole line decoded into the wrong script",
+          mangled.get("recorded") is False, str(mangled)[:60])
+    # Dropping a message a buyer really sent is far worse than keeping one they
+    # did not, so anything with an English letter in it stays however short --
+    # and so does a bare number, which is a year, a price or a phone number.
+    for content, label in (
+        ("ok", "while a real word is kept however short"),
+        ("E-Class", "and a trim the transcriber got right is kept"),
+        ("2019", "and so is a bare number -- a year, a price, a phone number"),
+    ):
+        kept = call("POST", "/api/voice/transcript", {
+            "conversation_id": vid, "role": "buyer", "content": content,
+        })
+        check(label, kept.get("recorded") is not False, str(kept)[:60])
 
     # What a call cost, from the provider's own token counts rather than from
     # wall-clock. A realtime call bills the whole conversation so far as input

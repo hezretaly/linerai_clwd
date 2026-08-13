@@ -496,6 +496,17 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the vocabulary that comes back mangled ("E-Class" arrived as 比克拉斯). Only
   some transcription models accept keywords, so they are withheld from the rest
   rather than 400-ing the session.
+- **`language` is a preference at the vendor and a rule here.** Every session
+  names `en`, and the model family still mis-detects English as Chinese — 嗯
+  for an "mm", 比克拉斯 for "E-Class". A hint that cannot be enforced where it
+  is sent is enforced where it lands: `_is_noise` in `api/voice.py` drops a
+  buyer line carrying no Latin letter, because an English-only channel did not
+  produce one. Bare digits stay (a year, a price, a phone number) and so does
+  anything with a word in it, however short — dropping something a buyer really
+  said is far worse than keeping something they did not. It costs a buyer who
+  genuinely speaks another language, and they are already being answered in
+  English by a prompt that says so; the recording keeps every word regardless,
+  which is what makes dropping safer than guessing.
 - **`channel="voice"` appends to the prompt; it does not fork it.** The chat
   rules assume a screen — a booking card, a rail of chips, a price you can
   re-read — and a model given them out loud says "asterisk asterisk dollar

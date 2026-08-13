@@ -25,6 +25,8 @@ which is the whole reason the rules live in executors.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -172,7 +174,7 @@ def append_transcript(body: TranscriptChunk, db: Session = Depends(get_db)) -> d
 
     if body.role == "buyer":
         if _is_noise(body.content):
-            return {"recorded": False, "reason": "non-verbal"}
+            return {"recorded": False, "reason": "not-english"}
         return message_out(record_buyer_message(db, convo, body.content))
 
     message = Message(conversation_id=convo.id, role="assistant", content=body.content)
@@ -186,26 +188,41 @@ def append_transcript(body: TranscriptChunk, db: Session = Depends(get_db)) -> d
     return {**message_out(message), "guard_violations": flagged}
 
 
+# Letters this channel could actually have been speaking. The prompt says
+# English and the model answers in English; a buyer transcript containing no
+# Latin letter at all is therefore not a transcription of what was said.
+LATIN = re.compile(r"[A-Za-z]")
+
+
 def _is_noise(text: str) -> bool:
-    """A grunt the transcriber gave a spelling to, rather than something said.
+    """A transcription artifact rather than something the buyer said.
 
-    A real call produced a buyer message reading `嗯` -- a Chinese filler
-    particle, from someone speaking English who had made an "mm" sound. Two
-    things went wrong and only one of them is here: the session now names the
-    language, which stops the transcriber reaching for another one. But even
-    transcribed as "Mm", that is not a thing the buyer said, and it does not
-    belong in the record a rep reads before phoning them back.
+    Two shapes, and both were seen on real calls:
 
-    Deliberately narrow. Three characters or fewer, with no letter or digit
-    that this assistant could have been speaking -- it is an English-only
-    channel, and the prompt says so. Anything longer, or anything containing a
-    word, is kept whatever it looks like: dropping a message a buyer really
-    sent is far worse than keeping one they did not.
+    * a grunt given a spelling -- `嗯`, from someone making an "mm" sound;
+    * a whole utterance decoded into the wrong script -- `比克拉斯`, from
+      someone saying "E-Class".
+
+    The second is why this is not just a length check. `language: "en"` is
+    sent on every session, but the vendor treats it as a *soft preference*
+    rather than a constraint, and mis-detecting English as Chinese is a
+    reported problem with this model family. A hint we cannot enforce at the
+    provider we can enforce here: no Latin letter, no English, so it is not a
+    record of English speech and does not belong in a transcript a rep reads
+    before phoning someone back.
+
+    What it costs is a buyer who really does speak another language -- and
+    they are already being answered in English by a prompt that says so. The
+    recording keeps every word either way, which is the reason this is safe to
+    drop rather than guess at.
     """
     stripped = (text or "").strip(" .,!?-–—…\"'")
     if not stripped:
         return True
-    return len(stripped) <= 3 and not any(c.isascii() and c.isalnum() for c in stripped)
+    if LATIN.search(stripped):
+        return False
+    # Digits alone are fine -- a year, a price, a phone number.
+    return not any(c.isascii() and c.isdigit() for c in stripped)
 
 
 def _guard_after_the_fact(db: Session, convo: Conversation, spoken: str) -> list[str]:
