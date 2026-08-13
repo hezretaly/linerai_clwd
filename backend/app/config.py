@@ -173,6 +173,19 @@ class Settings(BaseSettings):
     # a call that can be switched off without changing what the assistant can
     # do. Off means a transcript with Liner's half only.
     voice_transcribe: bool = True
+    # Transcribe the buyer's own track again once the call has ended, and keep
+    # that version. The live transcriber works on a stream with no future
+    # context and no second pass; this one gets the whole call as context, can
+    # be retried, and is not racing anybody -- the call is over. It is a
+    # separate charge from the live one and is worth having *as well*: the live
+    # pass is what puts words on the rail while a rep is watching.
+    voice_transcribe_after: bool = True
+    # Batch transcription, not the streaming model. `whisper-1` is the only one
+    # that returns segment timestamps on some accounts, and timestamps are what
+    # make the merge with Liner's turns possible -- so this is its own setting
+    # rather than reusing VOICE_TRANSCRIBE_MODEL, which names a *streaming*
+    # model that this endpoint may not accept at all.
+    voice_transcribe_after_model: str = "gpt-4o-transcribe"
 
     # Dollars per million tokens, for turning recorded usage into money.
     #

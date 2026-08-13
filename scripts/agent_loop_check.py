@@ -535,6 +535,128 @@ def main() -> int:
         finally:
             live_cfg.voice_transcribe = was
 
+        print("\n== transcribing the call after it ends ==")
+        # The vendor call cannot run here -- no key, and api.openai.com is
+        # refused by the egress proxy. Everything either side of it is real and
+        # runs below against a transcription handed over instead of fetched.
+        # This is not a simulation standing in for a missing feature: the
+        # merge, the cross-talk filter and the transcript rewrite are ours,
+        # they have consequences, and none of them should first execute in
+        # production because the only way to reach them was an HTTP request.
+        from app import voice_transcript
+        from app.integrations.voice.transcribe import (
+            MAX_UPLOAD, OpenAITranscriber, ScriptedTranscriber, Span, get_transcriber, parse,
+        )
+        from app.models import CallBuyerTrack, CallRecording, CallSegment, Message
+
+        form = OpenAITranscriber().payload(["E-Class", "Sienna"])
+        check("the request asks for timestamps, without which nothing can be merged",
+              form["response_format"] == "verbose_json"
+              and form["timestamp_granularities[]"] == "segment", str(form))
+        check("and names the language, same as the live session does",
+              form.get("language") == live_cfg.voice_language, str(form.get("language")))
+        check("and carries the dealership's own vocabulary",
+              "E-Class" in form.get("prompt", ""), form.get("prompt", "")[:40])
+        check("with a ceiling below the one the API enforces",
+              MAX_UPLOAD <= 25 * 1024 * 1024, f"{MAX_UPLOAD // 1024 // 1024} MB")
+        check("and it is off unless a dealership has turned voice on",
+              get_transcriber().name == "unconfigured", get_transcriber().name)
+
+        parsed = parse({"segments": [
+            {"start": 5.0, "end": 9.0, "text": " I'm after an E-Class. "},
+            {"start": 20.0, "end": 21.0, "text": "   "},
+        ]}, "test")
+        check("seconds become milliseconds and blank segments are dropped",
+              len(parsed.spans) == 1 and parsed.spans[0].started_ms == 5000
+              and parsed.spans[0].text == "I'm after an E-Class.", str(parsed.spans))
+        # A model that returns no timestamps still returns words, and words in
+        # roughly the right place beat an empty transcript.
+        check("a response with no timestamps still yields its words",
+              parse({"text": "hello"}, "t").spans[0].text == "hello")
+
+        # A whole call: Liner's marks (exact, from the model) and the buyer's
+        # spans (detected, wordless) laid on one clock.
+        voiced = Conversation(channel="voice", stage="opening")
+        db.add(voiced)
+        db.commit()
+        db.add_all([
+            CallRecording(conversation_id=voiced.id, filename="x.webm", duration_ms=30000),
+            CallBuyerTrack(conversation_id=voiced.id, filename="x.buyer.webm", size_bytes=99),
+        ])
+        voice_transcript.record_segments(db, voiced, [
+            {"speaker": "assistant", "started_ms": 500, "ended_ms": 4000,
+             "text": "Riverside Auto, this is Liner."},
+            {"speaker": "buyer", "started_ms": 5000, "ended_ms": 9000},
+            {"speaker": "assistant", "started_ms": 12000, "ended_ms": 15000,
+             "text": "We have two E-Classes."},
+        ])
+        # What the live transcriber made of the same call -- including the
+        # failure this whole path exists for: an English speaker decoded into
+        # Chinese.
+        db.add(Message(conversation_id=voiced.id, role="buyer", content="比克拉斯"))
+        db.commit()
+
+        scripted = ScriptedTranscriber([
+            Span(5100, 8900, "I'm after an E-Class."),
+            # Liner's own voice, back in through a laptop speaker, at a moment
+            # the turn detector never called speech.
+            Span(12500, 14500, "We have two E-Classes."),
+        ])
+        result = voice_transcript.apply_transcription(db, voiced, scripted.spans)
+        check("a transcribed span inside a detected one is kept",
+              result["kept"] == 1, str(result))
+        check("and one nowhere near any speech is dropped as cross-talk",
+              result["dropped"] == 1, str(result))
+
+        lines = voice_transcript.merged(db, voiced)
+        check("the call reads in the order it was spoken",
+              [l["speaker"] for l in lines] == ["assistant", "buyer", "assistant"],
+              str([l["speaker"] for l in lines]))
+        check("with the buyer's words taken from the recording, not the stream",
+              lines[1]["text"] == "I'm after an E-Class."
+              and lines[1]["source"] == "recorded", str(lines[1]))
+        check("and Liner's still quoted from the model, never transcribed",
+              lines[0]["source"] == "model", lines[0]["source"])
+
+        rewritten = db.query(Message).filter_by(conversation_id=voiced.id).order_by(
+            Message.created_at.asc()).all()
+        check("the transcript a rep reads is rewritten from it",
+              [m.content for m in rewritten] == [l["text"] for l in lines],
+              str([m.content[:20] for m in rewritten]))
+        check("so the mis-decoded line is gone rather than sitting alongside",
+              not any("比克拉斯" in m.content for m in rewritten))
+
+        # Running twice would delete the lines the first pass made and pay to
+        # make them again.
+        track = db.query(CallBuyerTrack).filter_by(conversation_id=voiced.id).one()
+        voice_transcript.mark_transcribed(db, track)
+        check("and a second pass is refused rather than paid for",
+              track.transcribed_at is not None)
+
+        # A call whose marks never arrived should get a worse transcript, not
+        # an empty one -- so the cross-talk filter only runs when there is
+        # something to run it against.
+        bare = Conversation(channel="voice", stage="opening")
+        db.add(bare)
+        db.commit()
+        db.add(CallRecording(conversation_id=bare.id, filename="y.webm", duration_ms=1))
+        db.commit()
+        loose = voice_transcript.apply_transcription(db, bare, [Span(0, 1000, "anything")])
+        check("a call with no marks keeps every transcribed line",
+              loose["kept"] == 1 and loose["dropped"] == 0, str(loose))
+        check("but its transcript is not rewritten, since nothing orders Liner",
+              loose["messages"] == 0, str(loose))
+        # Everything above wrote real rows to the real database, so it takes
+        # them out again. A check that leaves fixtures behind is a check that
+        # breaks a different one later: these recordings carry made-up
+        # filenames, and `make smoke` asserts that no two calls share a file.
+        # It did, on the second run.
+        for convo in (voiced, bare):
+            for model in (CallSegment, CallRecording, CallBuyerTrack, Message):
+                db.query(model).filter_by(conversation_id=convo.id).delete()
+            db.delete(convo)
+        db.commit()
+
         return report()
     finally:
         db.close()

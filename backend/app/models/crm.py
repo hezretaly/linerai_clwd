@@ -290,6 +290,85 @@ class CallRecording(Base):
     created_at: Mapped[datetime] = created()
 
 
+class CallBuyerTrack(Base):
+    """The buyer's microphone alone, kept so the call can be transcribed
+    properly after it ends.
+
+    Not a second copy of the recording and never served for playback: the mix
+    in `call_recordings` is the record a rep listens to, and offering two
+    players for one call is a question nobody should have to answer. This is a
+    working file with one job -- a channel containing exactly one speaker, so a
+    transcription of it cannot mis-attribute a line.
+
+    That single-speaker property is the whole value. The mix cannot be
+    transcribed usefully: both halves are on one track, so the result is an
+    undifferentiated stream of words with no way to tell who said which, which
+    is worse than the half-transcript it would replace.
+
+    Its own table rather than a row in `call_recordings`, because
+    `conversation_id` is unique there and widening it would need a migration
+    this codebase does not have. A new table `create_all` simply makes.
+    """
+
+    __tablename__ = "call_buyer_tracks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True, unique=True
+    )
+    filename: Mapped[str] = mapped_column(String(120), default="")
+    content_type: Mapped[str] = mapped_column(String(60), default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    # Stamped when a transcription of this file has been written back. Also the
+    # guard that stops one running twice: the second pass would delete the
+    # lines the first produced and pay to make them again.
+    transcribed_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    created_at: Mapped[datetime] = created()
+
+
+class CallSegment(Base):
+    """Who spoke, when, and what they said -- one row per stretch of speech.
+
+    This is the call's timeline, and it exists because the two halves of a call
+    are known with very different confidence. Liner's words are *not* a
+    transcription: `response.output_audio_transcript.done` is the model's own
+    text, generated alongside the audio it spoke, and therefore exact. The
+    buyer's words come from a separate transcription model that mishears, and
+    on this model family sometimes mis-detects the language entirely.
+
+    So the two are captured differently and joined on time. The browser stamps
+    every segment as an offset from the first byte of audio -- one clock, its
+    own -- and that is what makes the merge trustworthy. Server receipt time
+    cannot do this job: the transcriber runs with `delay: high`, so the buyer's
+    line for a question arrives *after* the answer to it, and a transcript
+    ordered by arrival shows Liner replying before it was asked.
+
+    `text` is empty on a buyer segment until it has been transcribed. That is
+    not a missing value, it is a stage: the span was detected live by the
+    provider's own turn detector, and the words are recovered afterwards from
+    the audio.
+    """
+
+    __tablename__ = "call_segments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    speaker: Mapped[str] = mapped_column(String(12), default="buyer")
+    # Milliseconds from the start of the recording, not a wall clock. The
+    # recording is the only timeline both halves are certainly on.
+    started_ms: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    ended_ms: Mapped[int] = mapped_column(Integer, default=0)
+    text: Mapped[str] = mapped_column(Text, default="")
+    #: `model` -- Liner's own words, exact. `vad` -- a detected span of buyer
+    #: speech with the words not yet recovered. `live` -- the streaming
+    #: transcriber's guess. `recorded` -- transcribed from the buyer's track
+    #: after the call, which is the one to trust.
+    source: Mapped[str] = mapped_column(String(12), default="vad")
+    created_at: Mapped[datetime] = created()
+
+
 class Event(Base):
     """Append-only. Doubles as the audit log and the WebSocket reconnect buffer."""
 

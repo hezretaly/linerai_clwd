@@ -496,6 +496,43 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the vocabulary that comes back mangled ("E-Class" arrived as 比克拉斯). Only
   some transcription models accept keywords, so they are withheld from the rest
   rather than 400-ing the session.
+- **A call is recorded twice, and the second one is not a copy.** The mix is
+  what a rep plays back; the buyer's microphone alone is written to
+  `call_buyer_tracks` so the call can be transcribed properly after it ends.
+  Transcribing the mix is not an option — one track carrying two speakers gives
+  an undifferentiated stream of words with no way to tell who said which, which
+  is worse than the half-transcript it would replace. Both recorders start in
+  the same statement so the two files share an origin.
+  - **Liner's half is never transcribed, because it was never audio to us
+    first.** `response.output_audio_transcript.done` is the model's own text,
+    emitted alongside the audio it spoke, so it is exact by construction.
+    Sending it to a transcriber would spend money to make a worse copy of
+    something already known. Only the buyer's half is a guess, so only the
+    buyer's half gets a second pass.
+  - **The two halves are joined on a clock stamped in the browser.**
+    `call_segments` carries an offset from the first slice of audio, because
+    the browser is the only place that can see both halves happen. Server
+    receipt time cannot do it: the live transcriber runs with `delay: high`, so
+    the buyer's question arrives *after* the answer to it, and a transcript
+    ordered by arrival shows Liner replying before it was asked.
+  - **The buyer's spans come from the provider's own turn detector**
+    (`input_audio_buffer.speech_started`/`stopped`), not from a second detector
+    in the page. A second opinion about when someone started talking is a
+    second thing that can disagree with the model. They arrive wordless — that
+    is a stage, not a missing value — and the words are recovered from the
+    audio afterwards.
+  - **The cross-talk filter only bites when there is something to bite on.** A
+    transcribed span overlapping no detected speech is Liner's voice returning
+    through a laptop speaker, so it is dropped; a call whose marks never
+    arrived keeps every line instead, because a worse transcript beats an empty
+    one. The padding is deliberately generous for the same reason.
+  - **Rewriting the transcript is all or nothing.** Replacing only the buyer's
+    lines would leave the two halves stamped from different clocks, which is
+    the misordering the whole exercise exists to fix, reintroduced at the join.
+    So `_rebuild_messages` refuses unless Liner's marks are there too, and a
+    `rep` message is never touched — that is a person typing after the fact.
+  - **`transcribed_at` is the once-only guard.** A second pass would delete the
+    lines the first produced and pay the provider to make them again.
 - **`language` is a preference at the vendor and a rule here.** Every session
   names `en`, and the model family still mis-detects English as Chinese — 嗯
   for an "mm", 比克拉斯 for "E-Class". A hint that cannot be enforced where it
@@ -571,6 +608,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
 | Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
 | Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |
+| Post-call transcription | **Written and never executed** — same missing key, same blocked host. The buyer's own track is recorded, the marks are stored, and the merge, cross-talk filter and transcript rewrite all run in `make agent-check` against a transcription handed over rather than fetched. Only the request to `/v1/audio/transcriptions` is unproven. |
 | Inventory source | **The local database, and that is the real answer.** Rows arrive by seed, by CSV import or by hand, and `search_inventory` reads them. The scraper works against the fixture site but has no adapter for any real dealer site — no two are laid out alike, so that needs real URLs. An optional second source nobody has chosen is not a missing dependency, and it is not in the banner. |
 | Lead import | **Real, end to end.** ADF/XML is parsed with `defusedxml`, matched against inventory and existing leads, reviewed, then committed. Nothing is fetched: no lead inbox is polled and no feed is subscribed to — you upload the document. |
 | Reminders | **Manual.** There is no scheduler in this system, so a follow-up or reminder is a server-built draft a rep reviews and sends. Not a drip campaign; the page says so. |

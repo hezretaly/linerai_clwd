@@ -113,7 +113,7 @@ def status_of(method: str, path: str, body: dict | None = None) -> tuple[int, st
 
 
 def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 0,
-                 *, complete: bool = True, seq: int = 0) -> dict:
+                 *, complete: bool = True, seq: int = 0, track: str = "call") -> dict:
     """Post one slice of call audio the way the buyer's browser does.
 
     Streamed rather than uploaded whole: the end of a call is the least
@@ -127,7 +127,7 @@ def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 
         f"Content-Type: {content_type}\r\n\r\n"
     ).encode() + blob + f"\r\n--{boundary}--\r\n".encode()
     request = urllib.request.Request(
-        f"{BASE}/api/voice/recording/{convo}/chunk?seq={seq}",
+        f"{BASE}/api/voice/recording/{convo}/chunk?seq={seq}&track={track}",
         data=body, method="POST",
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
@@ -1716,6 +1716,87 @@ def main() -> int:
         check("and a recording from the shared-file era is refused, not served",
               fetch_audio(stale["conversation_id"])[0] == 410,
               str(fetch_audio(stale["conversation_id"])[0]))
+
+    # ----------------------------------------------------------------------
+    # The buyer's own track, and the timeline the two halves are joined on.
+    #
+    # Transcribing the mix is not an option: one track carrying two speakers
+    # gives an undifferentiated stream of words with no way to tell who said
+    # which. A track with exactly one speaker on it cannot mis-attribute a
+    # line, which is why the microphone is recorded a second time.
+    # ----------------------------------------------------------------------
+    mic = b"\x1aE\xdf\xa3" + b"buyer only " * 20
+    apart = upload_audio(vid, "audio/webm", mic, complete=False, track="buyer")
+    check("the buyer's microphone is recorded to a track of its own",
+          apart.get("stored") is True and apart.get("track") == "buyer", str(apart))
+    check("and it does not land in the file a rep plays back",
+          fetch_audio(vid)[1] == head + tail,
+          f"{len(fetch_audio(vid)[1])} bytes, expected {len(head + tail)}")
+    check("an unknown track is refused rather than opening a third file",
+          status_of("POST", f"/api/voice/recording/{vid}/chunk?track=nonsense")[0]
+          in {400, 415, 422},
+          "track=nonsense")
+
+    # Marks, stamped in the browser's clock. Liner's carry its own words --
+    # the model emits the text alongside the audio, so they are exact -- and
+    # the buyer's carry none, because those words are recovered from the audio
+    # afterwards.
+    marked = call("POST", "/api/voice/segments", {
+        "conversation_id": vid,
+        "segments": [
+            {"speaker": "assistant", "started_ms": 500, "ended_ms": 4000,
+             "text": "Riverside Auto, this is Liner.", "source": "model"},
+            {"speaker": "buyer", "started_ms": 5000, "ended_ms": 9000},
+            {"speaker": "assistant", "started_ms": 10000, "ended_ms": 13000,
+             "text": "We have two of those on the lot.", "source": "model"},
+        ],
+    })
+    check("speech marks are stored as the call produces them",
+          marked.get("stored") == 3, str(marked))
+    # An assistant mark with no text is nothing at all: unlike a buyer span,
+    # there is no later pass that could fill it in.
+    empty = call("POST", "/api/voice/segments", {
+        "conversation_id": vid,
+        "segments": [{"speaker": "assistant", "started_ms": 1, "ended_ms": 2}],
+    })
+    check("but a wordless mark from Liner is not, since nothing can fill it",
+          empty.get("stored") == 0, str(empty))
+
+    reading = call("GET", f"/api/voice/transcript/{vid}")
+    check("the transcript is one ordered list built from those marks",
+          [l["speaker"] for l in reading["lines"]] == ["assistant", "assistant"],
+          str([l["speaker"] for l in reading["lines"]]))
+    # Each line says where it came from. `model` is Liner quoting itself and is
+    # exact; `live` is the streaming transcriber's guess -- the one that turns
+    # "E-Class" into 比克拉斯 -- and `recorded` is the version taken from the
+    # buyer's own track afterwards. A rep about to ring someone back should be
+    # able to tell which of those they are reading.
+    check("and every line says which of those it is",
+          {l["source"] for l in reading["lines"]} == {"model"},
+          str({l["source"] for l in reading["lines"]}))
+    check("with the buyer's track recorded but not yet transcribed",
+          reading["buyer_track_bytes"] == len(mic) and reading["transcribed_at"] is None,
+          f"{reading['buyer_track_bytes']} bytes, {reading['transcribed_at']}")
+
+    # Transcribing afterwards is a second model on a second bill, reached at a
+    # different endpoint from the call. Without a key it says which variable is
+    # missing rather than failing vaguely -- and the live transcript stands.
+    after = call("POST", f"/api/voice/transcribe/{vid}")
+    check("transcribing after the call names the key it wants, or does the work",
+          after.get("error") == "not_configured" or after.get("transcribed") is True,
+          str(after)[:90])
+    if after.get("error") == "not_configured":
+        check("and names the variable rather than failing vaguely",
+              after["missing"] == ["OPENAI_API_KEY"], str(after["missing"]))
+        check("while the transcript it could not improve is still there",
+              len(call("GET", f"/api/voice/transcript/{vid}")["lines"]) == 2,
+              "live lines kept")
+
+    # A call with no buyer track cannot be transcribed, and says so rather than
+    # reporting a success that produced nothing.
+    check("a call whose microphone was never recorded says so",
+          call("POST", f"/api/voice/transcribe/{other}").get("reason", "").startswith("no buyer"),
+          str(call("POST", f"/api/voice/transcribe/{other}"))[:80])
 
     # Inventory is the local database and says so. It used to report itself
     # unconfigured for want of SCRAPER_BASE_URL, which put it in the amber

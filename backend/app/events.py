@@ -39,6 +39,9 @@ EVENT_TYPES = {
     "vehicle.status_changed",
     "call.started",
     "call.ended",
+    # A call's transcript has been rewritten from its own recording, which
+    # happens minutes after the call ended and while a rep may be reading it.
+    "call.transcribed",
 }
 
 

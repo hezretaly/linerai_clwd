@@ -50,6 +50,25 @@ interface Line {
 
 type Phase = 'idle' | 'connecting' | 'live' | 'ended'
 
+/** `call` is the mix, and it is what a rep plays back. `buyer` is the
+ *  microphone alone, and it exists only so the call can be transcribed
+ *  afterwards: one speaker on the track means no line can be given to the
+ *  wrong person, which is exactly what transcribing the mix would risk. */
+type Track = 'call' | 'buyer'
+
+/** One recorder, its file on the server, and the chain that keeps its slices
+ *  in order. Per tape rather than one shared chain -- the two files are
+ *  written independently, and making the buyer's track queue behind the mix
+ *  would let one slow upload hold up both. */
+interface Tape {
+  rec: MediaRecorder
+  track: Track
+  queue: Promise<void>
+  pending: Blob[]
+  seq: number
+  sent: number
+}
+
 /* A Bluetooth headset is the most common reason a call goes badly, and the
  * reason is not obvious enough for anyone to guess it. Opening the microphone
  * on AirPods forces the link out of A2DP into the hands-free profile, which
@@ -217,20 +236,35 @@ export function Call() {
    * AudioContext the level meter already runs in -- a second context is a
    * second lot of audio hardware for no gain. */
   const mixer = useRef<MediaStreamAudioDestinationNode | null>(null)
-  const recorder = useRef<MediaRecorder | null>(null)
-  /* Slices already sent, and the queue that keeps them in order.
+
+  /* Two recordings, and they are not two copies of one thing.
    *
-   * A webm or mp4 out of MediaRecorder is a header followed by continuation
-   * clusters: reorder them and the file will not play. So every upload is
-   * chained behind the last one rather than fired in parallel -- this promise
-   * *is* the ordering guarantee the server documents but cannot enforce. */
-  const queue = useRef<Promise<void>>(Promise.resolve())
-  const seq = useRef(0)
-  /** The most recent slice, kept only until it is uploaded, so a closing tab
-   *  has something small to beacon. */
-  const pending = useRef<Blob[]>([])
-  const sentBytes = useRef(0)
+   * `call` is the mix and it is what a rep plays back. `buyer` is the
+   * microphone alone, and it exists to be transcribed after the call: a track
+   * with exactly one speaker on it cannot hand one person's sentence to the
+   * other, which is precisely what transcribing the mix would do.
+   *
+   * Both start in the same statement, so their timelines share an origin and
+   * the marks below are valid against either. */
+  const tapes = useRef<Tape[]>([])
   const startedAt = useRef(0)
+
+  /* When speech began and ended, on one clock.
+   *
+   * The browser is the only place that can see both halves of a call happen,
+   * so it is the only place that can put them on a single timeline. Server
+   * receipt time cannot: the live transcriber runs with `delay: high`, so the
+   * buyer's question reaches us *after* the answer to it, and a transcript
+   * ordered by arrival shows Liner replying before it was asked.
+   *
+   * Liner's marks carry its own words, which are exact -- the model emits the
+   * text alongside the audio it speaks. The buyer's carry none: they are spans
+   * detected by the provider's turn detector, and the words in them are
+   * recovered afterwards from the buyer's track. Using that detector rather
+   * than measuring the level here is deliberate: a second opinion about when
+   * someone started talking is a second thing that can disagree with the model. */
+  const heardFrom = useRef(0)
+  const spokeFrom = useRef(0)
 
   // Hanging up on unmount is not tidiness. Without it, navigating away leaves
   // the microphone live and the meter lit in the browser chrome, which is the
@@ -287,23 +321,26 @@ export function Call() {
    * and a dropped connection -- all go through `hangUp`, which uploads
    * properly and waits for it. */
   const rescue = () => {
-    const rec = recorder.current
-    if (!rec || rec.state === 'inactive' || !convo.current) return
-    if (rec.state === 'recording') rec.requestData()
-    rec.stop()
-    recorder.current = null
     const id = convo.current
-    // Only the slices not yet uploaded, which is at most one interval of
-    // audio. Everything before them is already a file on the server -- which
-    // is the whole reason for streaming, since a beacon is capped near 64 KB
-    // and a whole call is not.
-    const left = pending.current
-    pending.current = []
-    if (left.reduce((n, c) => n + c.size, 0)) {
+    const live = tapes.current.filter((t) => t.rec.state !== 'inactive')
+    if (!live.length || !id) return
+    tapes.current = []
+    for (const tape of live) {
+      if (tape.rec.state === 'recording') tape.rec.requestData()
+      tape.rec.stop()
+      // Only the slices not yet uploaded, which is at most one interval of
+      // audio. Everything before them is already a file on the server -- which
+      // is the whole reason for streaming, since a beacon is capped near 64 KB
+      // and a whole call is not.
+      const left = tape.pending
+      tape.pending = []
+      if (!left.reduce((n, c) => n + c.size, 0)) continue
       const form = new FormData()
-      const type = rec.mimeType.split(';')[0]
+      const type = tape.rec.mimeType.split(';')[0]
       form.append('file', new File(left, 'call', { type }), 'call')
-      navigator.sendBeacon(`/api/voice/recording/${id}/chunk?seq=${seq.current++}`, form)
+      navigator.sendBeacon(
+        `/api/voice/recording/${id}/chunk?seq=${tape.seq++}&track=${tape.track}`, form,
+      )
     }
     // And the end marker, so a tab that closed is not mistaken for a call
     // still being written.
@@ -440,9 +477,29 @@ export function Call() {
         break
       case 'response.output_audio_transcript.done':
         say('assistant', event.transcript || '')
+        // Liner's own words, which is why this mark carries text and the
+        // buyer's does not. The model emits this alongside the audio it just
+        // spoke, so there is nothing to transcribe and nothing to get wrong.
+        mark('assistant', spokeFrom.current || Date.now(), event.transcript || '')
+        spokeFrom.current = 0
+        break
+      // The provider's turn detector -- the same one the model listens to.
+      // These bound the stretches of the buyer's track that are the buyer
+      // talking, so a transcription of it can be placed in the conversation
+      // and the model's own voice coming back through a laptop speaker can be
+      // told from a person.
+      case 'input_audio_buffer.speech_started':
+        heardFrom.current = Date.now()
+        lastHeard.current = Date.now()
+        break
+      case 'input_audio_buffer.speech_stopped':
+        mark('buyer', heardFrom.current)
+        heardFrom.current = 0
+        lastHeard.current = Date.now()
         break
       case 'output_audio_buffer.started':
         setSpeaking(true)
+        spokeFrom.current = Date.now()
         lastHeard.current = Date.now()
         break
       case 'output_audio_buffer.stopped':
@@ -496,6 +553,29 @@ export function Call() {
     tick()
   }
 
+  /** Mark a stretch of speech, at the moment it closes.
+   *
+   *  Posted as they close rather than batched at the end, for the same reason
+   *  the audio is streamed: the end of a call is the least reliable moment
+   *  there is, and a crashed tab should cost one mark rather than the whole
+   *  timeline. They are tiny and carry their own offsets, so unlike the audio
+   *  slices they need no ordering. */
+  const mark = (speaker: 'buyer' | 'assistant', from: number, text = '') => {
+    if (!convo.current || !from) return
+    void api.post('/api/voice/segments', {
+      conversation_id: convo.current,
+      segments: [{
+        speaker,
+        started_ms: Math.max(from - startedAt.current, 0),
+        ended_ms: Math.max(Date.now() - startedAt.current, 0),
+        text,
+        source: text ? 'model' : 'vad',
+      }],
+    }).catch(() => {
+      /* The call is the thing. A lost mark costs ordering on one line. */
+    })
+  }
+
   /** Record the call, and say which half of it if not both.
    *
    *  Every step here can fail on its own, and every one of them used to fail
@@ -506,55 +586,77 @@ export function Call() {
    *  tried first and the bare microphone is the fallback, because half a
    *  conversation is worth having and none of it is not. */
   const startRecording = (mixed: MediaStream, raw: MediaStream) => {
+    tapes.current = []
     const type = recordableType()
     if (!type) {
       setRecording('off')
       return
     }
+
+    // The mix first, falling back to the bare microphone. Every step here can
+    // fail on its own: a browser may refuse to record a stream that came out
+    // of WebAudio (Safari has, historically), and half a conversation is worth
+    // having where none of it is not.
     for (const [stream, kind] of [[mixed, 'both'], [raw, 'mic']] as const) {
-      try {
-        const rec = new MediaRecorder(stream, { mimeType: type })
-        pending.current = []
-        seq.current = 0
-        sentBytes.current = 0
-        queue.current = Promise.resolve()
-        rec.ondataavailable = (e) => { if (e.data.size) send(e.data, rec.mimeType) }
-        // Two seconds, not five. The slice is the window of audio that only
-        // exists in this page, so it is also exactly what a crash loses.
-        rec.start(2000)
-        recorder.current = rec
+      const tape = open(stream, type, 'call')
+      if (tape) {
         setRecording(kind)
-        return
-      } catch {
-        /* Try the next one. */
+        break
       }
+      if (kind === 'mic') setRecording('off')
     }
-    setRecording('off')
+
+    // And the buyer alone, for the transcriber. Optional in a way the mix is
+    // not: without it the call still has audio and a live transcript, it just
+    // never gets the better one. So a failure here is silent rather than
+    // reported -- there is nothing a buyer on a call could do about it.
+    open(raw, type, 'buyer')
   }
 
-  /** Send one slice, behind every slice before it.
+  /** One recorder writing to one file on the server. */
+  const open = (stream: MediaStream, type: string, track: Track): Tape | null => {
+    try {
+      const rec = new MediaRecorder(stream, { mimeType: type })
+      const tape: Tape = {
+        rec, track, queue: Promise.resolve(), pending: [], seq: 0, sent: 0,
+      }
+      rec.ondataavailable = (e) => { if (e.data.size) send(tape, e.data) }
+      // Two seconds, not five. The slice is the window of audio that only
+      // exists in this page, so it is also exactly what a crash loses.
+      rec.start(2000)
+      tapes.current.push(tape)
+      return tape
+    } catch {
+      return null
+    }
+  }
+
+  /** Send one slice, behind every slice before it *on its own tape*.
    *
    *  Chained rather than concurrent: the file on the server is these bytes
-   *  concatenated, and two requests in flight can land the wrong way round. */
-  const send = (slice: Blob, mimeType: string) => {
+   *  concatenated, and two requests in flight can land the wrong way round.
+   *  Per tape rather than one global chain, because the two files are written
+   *  independently and making the buyer's track wait on the mix would double
+   *  the time a slow upload holds either of them. */
+  const send = (tape: Tape, slice: Blob) => {
     const id = convo.current
     if (!id) return
-    pending.current.push(slice)
-    queue.current = queue.current.then(async () => {
-      const mine = pending.current
+    tape.pending.push(slice)
+    tape.queue = tape.queue.then(async () => {
+      const mine = tape.pending
       if (!mine.length) return
-      pending.current = []
-      const type = mimeType.split(';')[0]
+      tape.pending = []
+      const type = tape.rec.mimeType.split(';')[0]
       try {
         await api.upload(
-          `/api/voice/recording/${id}/chunk?seq=${seq.current++}`,
+          `/api/voice/recording/${id}/chunk?seq=${tape.seq++}&track=${tape.track}`,
           new File(mine, 'call', { type }),
         )
-        sentBytes.current += mine.reduce((n, c) => n + c.size, 0)
+        tape.sent += mine.reduce((n, c) => n + c.size, 0)
       } catch {
         // Put them back so the next slice carries them. A dropped request
         // mid-call is a blip; losing the audio to it is not.
-        pending.current = [...mine, ...pending.current]
+        tape.pending = [...mine, ...tape.pending]
       }
     })
   }
@@ -566,20 +668,22 @@ export function Call() {
    *  a mystery: three of the four ways this can end produced no row and no
    *  message, and from the dashboard they all looked identical. */
   const finishRecording = async (conversationId: string) => {
-    const rec = recorder.current
-    recorder.current = null
-    if (!rec || rec.state === 'inactive') {
+    const live = tapes.current.filter((t) => t.rec.state !== 'inactive')
+    tapes.current = []
+    if (!live.length) {
       setSaved(recording === 'off' ? 'This browser did not record the call.' : '')
       return
     }
-    const done = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
-    // Flush whatever is buffered before stopping, or the audio since the last
-    // slice is still inside the recorder when it closes.
-    if (rec.state === 'recording') rec.requestData()
-    rec.stop()
-    await done
-    // Everything queued, including the slice `stop` just produced.
-    await queue.current
+    await Promise.all(live.map(async (tape) => {
+      const done = new Promise<void>((resolve) => { tape.rec.onstop = () => resolve() })
+      // Flush whatever is buffered before stopping, or the audio since the
+      // last slice is still inside the recorder when it closes.
+      if (tape.rec.state === 'recording') tape.rec.requestData()
+      tape.rec.stop()
+      await done
+      // Everything queued, including the slice `stop` just produced.
+      await tape.queue
+    }))
 
     try {
       const end = await api.post<{ complete: boolean; bytes: number }>(
