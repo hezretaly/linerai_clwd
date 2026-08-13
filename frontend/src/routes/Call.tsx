@@ -151,6 +151,10 @@ export function Call() {
   /** '' while deciding, then what is actually being captured. Shown, because
    *  a call that silently failed to record looks identical to one that did. */
   const [recording, setRecording] = useState<'both' | 'mic' | 'off'>('off')
+  /** What became of the audio once the call ended. Shown, because "was that
+   *  recorded?" is otherwise a question you can only answer by going and
+   *  looking at the dashboard. */
+  const [saved, setSaved] = useState('')
 
   const pc = useRef<RTCPeerConnection | null>(null)
   const channel = useRef<RTCDataChannel | null>(null)
@@ -191,6 +195,7 @@ export function Call() {
   /* Set when close_conversation succeeds. The buyer said they were done, so the
    * goodbye is allowed to finish and then the line goes down. */
   const closing = useRef(false)
+  const hangingUp = useRef(false)
   const lastHeard = useRef(Date.now())
   // Read from the event handlers that open the mic, where the `muted` state
   // captured at render time may be a version ago.
@@ -230,23 +235,6 @@ export function Call() {
    * `sendBeacon` is the only thing a page can rely on during unload -- a
    * normal fetch is cancelled with the document. */
   useEffect(() => {
-    const rescue = () => {
-      const rec = recorder.current
-      if (!rec || rec.state === 'inactive' || !convo.current) return
-      rec.requestData()
-      rec.stop()
-      if (!chunks.current.length) return
-      const form = new FormData()
-      const type = rec.mimeType.split(';')[0]
-      form.append('file', new File(chunks.current, 'call', { type }), 'call')
-      navigator.sendBeacon(
-        `/api/voice/recording/${convo.current}` +
-        `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
-        form,
-      )
-      chunks.current = []
-      recorder.current = null
-    }
     window.addEventListener('pagehide', rescue)
     return () => window.removeEventListener('pagehide', rescue)
   }, [])
@@ -266,7 +254,39 @@ export function Call() {
     return () => clearInterval(timer)
   }, [phase])
 
+  /* Salvage the audio when there is no time to upload it properly.
+   *
+   * Closing the tab and navigating away inside the app both skip `hangUp`, so
+   * nothing was ever sent -- the call simply had no recording and nothing said
+   * why. `sendBeacon` is the only thing a page can rely on while it is going
+   * away; a normal fetch is cancelled with the document.
+   *
+   * It is a salvage attempt and not a guarantee: browsers cap a beacon at
+   * about 64 KB, so this saves a short call and loses a long one. The four
+   * ends that matter -- the red button, close_conversation, the idle timeout
+   * and a dropped connection -- all go through `hangUp`, which uploads
+   * properly and waits for it. */
+  const rescue = () => {
+    const rec = recorder.current
+    if (!rec || rec.state === 'inactive' || !convo.current) return
+    if (rec.state === 'recording') rec.requestData()
+    rec.stop()
+    recorder.current = null
+    if (!chunks.current.reduce((n, c) => n + c.size, 0)) return
+    const form = new FormData()
+    const type = rec.mimeType.split(';')[0]
+    form.append('file', new File(chunks.current, 'call', { type }), 'call')
+    navigator.sendBeacon(
+      `/api/voice/recording/${convo.current}` +
+      `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
+      form,
+    )
+    chunks.current = []
+  }
+
   const teardown = () => {
+    // Before the tracks stop, or there is nothing left to salvage.
+    rescue()
     clearTimeout(openTimer.current)
     micOpen.current = false
     closing.current = false
@@ -419,9 +439,7 @@ export function Call() {
    *  Without this, a microphone that is muted at the operating system, or a
    *  headset that handed over a dead input, is indistinguishable from an
    *  assistant that is ignoring you. */
-  const watchLevel = (stream: MediaStream) => {
-    const ctx = new AudioContext()
-    meter.current = ctx
+  const watchLevel = (ctx: AudioContext, stream: MediaStream) => {
     const analyser = ctx.createAnalyser()
     analyser.fftSize = 512
     const source = ctx.createMediaStreamSource(stream)
@@ -434,11 +452,6 @@ export function Call() {
     const mix = ctx.createMediaStreamDestination()
     mixer.current = mix
     source.connect(mix)
-    // Safari starts an AudioContext suspended unless it was created inside a
-    // user gesture, and `start()` has awaited getUserMedia by the time this
-    // runs -- a suspended context produces silence through the mix, and the
-    // level meter reads zero with it.
-    void ctx.resume().catch(() => {})
     startRecording(mix.stream, stream)
     const buffer = new Uint8Array(analyser.frequencyBinCount)
     const tick = () => {
@@ -487,15 +500,34 @@ export function Call() {
     setRecording('off')
   }
 
-  /** Stop and upload. Awaited on hang-up so the last chunk is included. */
+  /** Stop and upload. Awaited on hang-up, so the last few seconds -- usually
+   *  the part with the appointment in it -- are included.
+   *
+   *  Every outcome is reported. Silence here is what made a missing recording
+   *  a mystery: three of the four ways this can end produced no row and no
+   *  message, and from the dashboard they all looked identical. */
   const finishRecording = async (conversationId: string) => {
     const rec = recorder.current
     recorder.current = null
-    if (!rec || rec.state === 'inactive') return
+    if (!rec || rec.state === 'inactive') {
+      setSaved(recording === 'off' ? 'This browser did not record the call.' : '')
+      return
+    }
     const done = new Promise<void>((resolve) => { rec.onstop = () => resolve() })
+    // Flush whatever is buffered before stopping. Without this the audio since
+    // the last five-second slice is still inside the recorder when it closes.
+    if (rec.state === 'recording') rec.requestData()
     rec.stop()
     await done
-    if (!chunks.current.length) return
+
+    const bytes = chunks.current.reduce((n, c) => n + c.size, 0)
+    if (!bytes) {
+      // Almost always a suspended AudioContext: the recorder ran, the mix fed
+      // it nothing. Named rather than swallowed.
+      setSaved('No audio was captured -- the browser gave the recorder silence.')
+      chunks.current = []
+      return
+    }
     const blob = new Blob(chunks.current, { type: rec.mimeType.split(';')[0] })
     chunks.current = []
     const ms = Math.max(Date.now() - startedAt.current, 0)
@@ -504,8 +536,11 @@ export function Call() {
         `/api/voice/recording/${conversationId}?duration_ms=${ms}`,
         new File([blob], 'call', { type: blob.type }),
       )
-    } catch {
-      /* The call happened whether or not its audio was filed. */
+      setSaved(`Recording saved (${Math.round(bytes / 1024)} KB).`)
+    } catch (exc) {
+      // The call happened whether or not its audio was filed, but a rep
+      // looking for it later deserves to know it was not.
+      setSaved(`The recording could not be saved: ${(exc as ApiError).message}`)
     }
   }
 
@@ -521,6 +556,19 @@ export function Call() {
     outstanding.current = 0
     owed.current = false
     generating.current = false
+    hangingUp.current = false
+    setSaved('')
+
+    // Before anything is awaited, because this must happen inside the click.
+    //
+    // This is why calls came back with no audio. An AudioContext created after
+    // an await is created outside the user gesture, and a browser with an
+    // autoplay policy -- Chromium's, and Brave's more strictly -- starts it
+    // *suspended*. A suspended context pushes nothing through the recording
+    // mix, so MediaRecorder captured zero bytes and the upload was skipped for
+    // having nothing to send. Constructed here it starts running.
+    const ctx = new AudioContext()
+    meter.current = ctx
     try {
       // Ours, and the only request that carries the real key. What comes back
       // is good for about a minute and for one call.
@@ -540,7 +588,10 @@ export function Call() {
         },
       })
       mic.current = stream
-      watchLevel(stream)
+      // Suspended anyway -- a background tab, a policy this does not know
+      // about -- is recoverable now that a gesture is still in scope.
+      if (ctx.state === 'suspended') await ctx.resume().catch(() => {})
+      watchLevel(ctx, stream)
       // Labels are only readable once permission exists, so the picker below
       // is populated with real names from here on.
       void navigator.mediaDevices.enumerateDevices()
@@ -614,8 +665,10 @@ export function Call() {
       })
 
       connection.onconnectionstatechange = () => {
+        // A dropped connection ends the call as surely as the red button does,
+        // and used to end it without uploading anything.
         if (['failed', 'disconnected', 'closed'].includes(connection.connectionState)) {
-          setPhase((p) => (p === 'live' ? 'ended' : p))
+          void hangUp()
         }
       }
       setPhase('live')
@@ -623,9 +676,7 @@ export function Call() {
       // The line is up: greet, then listen. Awaited, so the microphone opens
       // only once the buyer has actually heard the opening -- otherwise the
       // turn detector fires on the greeting itself.
-      if (meter.current) {
-        await preroll(meter.current, session.greeting_audio || '', mixer.current)
-      }
+      await preroll(ctx, session.greeting_audio || '', mixer.current)
       openMic()
     } catch (exc) {
       teardown()
@@ -636,6 +687,9 @@ export function Call() {
   }
 
   const hangUp = async () => {
+    // Closing the connection fires onconnectionstatechange, which calls this.
+    if (hangingUp.current) return
+    hangingUp.current = true
     // Before teardown: stopping the microphone first would cut the last few
     // seconds off the recording, which is usually the part with the
     // appointment in it.
@@ -815,6 +869,10 @@ export function Call() {
               </p>
             )}
           </div>
+        )}
+
+        {saved && (
+          <p className="mt-3 text-center text-xs text-muted-foreground">{saved}</p>
         )}
 
         {failed && <p className="mt-4 text-sm text-destructive">{failed}</p>}

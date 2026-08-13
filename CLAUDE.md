@@ -363,6 +363,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   itself worth seeing. `end_call` stamps `ended_at` as well as
   `close_conversation` does, because a call the buyer simply dropped otherwise
   had no length at all.
+- **The recorder's `AudioContext` is created inside the click, before any
+  `await`.** Built after one — after `getUserMedia`, which is where it read
+  naturally — it is outside the user gesture, and a browser with an autoplay
+  policy starts it *suspended*. A suspended context feeds the mix nothing, so
+  `MediaRecorder` captures zero bytes and the upload is skipped for having
+  nothing to send: a finished call with no audio and no error anywhere.
+  Measured, not reasoned — same pipeline, same Chromium, context outside the
+  gesture gives `chunks: 0, bytes: 0` and inside it gives 24 kB in two seconds.
+- **Every way a call can end uploads its audio.** The red button,
+  `close_conversation`, the idle timeout and a dropped connection all go
+  through `hangUp`, which awaits the upload; `hangUp` is re-entrant-guarded
+  because closing the peer connection fires the state change that calls it.
+  A closed tab can only be salvaged with `sendBeacon`, which browsers cap near
+  64 KB — so that path saves a short call and loses a long one, and says so
+  rather than implying coverage it does not have.
 - **Recording a call is somebody's voice, so three things are fixed.** The
   buyer is told before the microphone opens — the line is on `/call`, above the
   button, and several US states require every party to consent, which is a
