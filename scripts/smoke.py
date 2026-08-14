@@ -525,6 +525,12 @@ def main() -> int:
           any(l["id"] == owner for l in call("GET", "/api/overview")["queues"]["unclaimed_leads"]),
           "in both queues")
 
+    # Whether Liner was already held on this thread is not this section's
+    # business -- a rep may have taken it over long before. What is being
+    # checked is that *assigning* does not change it, so the state before is
+    # what the state after is compared against.
+    held_before = call("GET", f"/api/conversations/{flagged['conversation_id']}")["agent_paused"]
+
     given = call("POST", f"/api/leads/{owner}/assign", {"user_id": rep["id"]})
     check("assigning a buyer gives them an owner",
           given["assigned_to"]["id"] == rep["id"], str(given.get("assigned_to"))[:60])
@@ -541,7 +547,7 @@ def main() -> int:
     # the rep gets to them -- the same reason escalating does not gag it.
     thread = call("GET", f"/api/conversations/{flagged['conversation_id']}")
     check("but Liner is not silenced by it -- that is a separate decision",
-          thread["agent_paused"] is False, str(thread["agent_paused"]))
+          thread["agent_paused"] == held_before, f"{held_before} -> {thread['agent_paused']}")
 
     # And back the other way: a rep who takes a thread over takes the buyer.
     loose = next(
