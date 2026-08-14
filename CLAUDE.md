@@ -63,6 +63,18 @@ them, because `book_appointment` refuses a clash and the fixture's week only
 holds about twenty slots. A run that kept them would poison the next one, which
 is exactly what happened once.
 
+**The release of those slots runs in a `finally`, and that is not tidiness.**
+`book_appointment` refuses a clash and the fixture week holds about twenty
+slots, so a run that keeps a booking leaves fewer for the next one. Two ways
+that happened: the rail-driven booking at the top of the script was never
+recorded for release at all, so *every* run leaked one; and the release used to
+be the last section, so any run that failed part-way kept everything it had
+taken. Both make failure self-reinforcing — each bad run leaves fewer slots, so
+the next fails earlier — and it surfaces as `0 times on the card` in a section
+that has nothing to do with the change being tested. It took thirty-six
+stranded appointments to notice, and by then the failure named the wrong
+culprit.
+
 `make shots` also runs every dealer route at 390px and **fails the run if the
 page scrolls sideways**. Reps and managers work from phones, so that is a real
 break: one element wider than the viewport makes the browser shrink-to-fit the
@@ -608,6 +620,32 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   actually used. There is no SMS provider in this system, so there is no SMS
   tab sitting permanently at zero — a tab that is always empty claims a
   capability that does not exist.
+- **One fact, one answer, wherever it is read.** The overview's queues were
+  three unconnected facts about the same people; the same shape turned up in
+  four more places once looked for, and each is a fact written in one row and
+  read from another with nothing keeping the two in step.
+  - **Every way a call ends follows the same closing rule.** `close_conversation`
+    would not close a thread at `handoff` — a buyer who has gone is still owed
+    a call back — but `end_call` closed unconditionally, and hanging up is how
+    most calls end. The row read Closed while sitting in Needs a person.
+  - **A cancelled visit is not an appointment set.** `conversations.stage` is
+    written once by `book_appointment`, so cancelling left the thread claiming
+    a booking forever while the lead beside it derived the truth from
+    appointment rows. It walks back to `contact_capture` — not to `opening`,
+    which would have the rails greet a buyer who has already given their
+    details — and only when nothing else of theirs is still standing.
+  - **Somebody leaving hands their buyers back.** Deactivating dropped a rep
+    off the roster and left their leads pointing at them: not unclaimed, so no
+    queue asked anyone to pick them up, and not workable, because the owner was
+    gone. Appointments are un-assigned, never cancelled. Escalations they
+    claimed reopen only on threads that are still open — on a closed one,
+    claimed is history, and reopening years of it would bury the live queue.
+  - **The resolution ladder runs in both directions.** A stranger who writes to
+    `sales@` before they are anyone is stored unresolved, correctly — but
+    resolution ran once, at delivery, so when they chatted and booked the next
+    day with that same address their earlier mail stayed a stranger's for good.
+    `matching.claim_unresolved` re-runs `_place` when a buyer comes into
+    existence: the same ladder, not a second copy of it.
 - **One matcher decides who a buyer is.** `app/matching.py`, used by the ADF
   importer, manual entry and `book_appointment`. Booking used to match on
   email alone while the importer matched on email *then* phone, so someone who

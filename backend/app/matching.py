@@ -72,3 +72,43 @@ def candidates_for(
                 found.append((lead, "same phone"))
 
     return found
+
+
+def claim_unresolved(db: Session, lead: Lead) -> int:
+    """Mail this buyer sent before we knew who they were.
+
+    Resolution runs once, when a delivery arrives. Somebody who writes to
+    `sales@` before they are anyone here is stored unresolved -- correctly,
+    because at that moment there is no lead to attach them to. But the next day
+    they chat and book, a lead is minted with that same address, and the email
+    they sent stays a stranger's forever: not on their timeline, not on their
+    buyer page, visible only on the mailbox's unmatched tab. One person, two
+    records, and nothing ever joins them.
+
+    So the other half of the ladder runs here: when a buyer comes into
+    existence, anything unplaced that they sent is placed. Exactly the same
+    resolution as the live path -- the receipt is put back to `received` and
+    `_place` re-runs -- rather than a second copy of it, which is how the two
+    would start disagreeing about who a reply belongs to.
+
+    Email exact, and only email. Phone is not on an email envelope, and a name
+    is not identity here or anywhere else in this module.
+    """
+    from app.api.inbound_email import _place
+    from app.models import InboundEmail
+
+    address = (lead.email or "").strip().lower()
+    if not address:
+        return 0
+
+    waiting = [
+        row for row in db.query(InboundEmail).filter(InboundEmail.outcome == "unresolved").all()
+        if (row.from_address or "").strip().lower() == address
+    ]
+    for row in waiting:
+        row.outcome = "received"
+    if waiting:
+        db.commit()
+    for row in waiting:
+        _place(row.id)
+    return len(waiting)

@@ -38,6 +38,7 @@ from app.config import settings
 from app.db import get_db, utcnow
 from app import outreach_send
 from app.events import emit
+from app import matching
 from app.matching import match_lead
 from app.ingest.adf import AdfError, parse_adf
 from app.integrations.registry import get_email_sender
@@ -239,6 +240,12 @@ def commit_adf(
         _write_fields(db, lead, prospect, "adf" if source == "adf" else "typed")
 
     db.commit()
+
+    # Mail these buyers sent before this import told us who they were. After
+    # the commit, because resolution runs in its own session and would not see
+    # a lead that is still only in this one.
+    for lead in created + merged:
+        matching.claim_unresolved(db, lead)
 
     emit(db, "lead.imported", {
         "created": len(created), "merged": len(merged), "by": user.id,

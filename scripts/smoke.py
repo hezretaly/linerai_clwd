@@ -272,6 +272,30 @@ def pick(rails: list[dict], *keywords: str) -> str | None:
     return None
 
 
+#: Every slot this run took, released at the end -- and released even when the
+#: run does not reach the end.
+#:
+#: `book_appointment` refuses a clash, and the fixture week holds about twenty
+#: slots. The release used to be the last section of `main`, so it ran only on
+#: a clean pass: any run that failed part-way kept its bookings forever. That
+#: makes a failure self-reinforcing -- each aborted run leaves fewer slots, so
+#: the next one is likelier to abort earlier, and eventually a change in one
+#: corner of the system shows up as "0 times on the card" in a section that
+#: has nothing to do with it. It took thirty-six stranded appointments to
+#: notice, and by then the failure named the wrong culprit.
+booked_here: list[str] = []
+
+
+def release_slots() -> int:
+    """Give back every slot this run took. Safe to call twice."""
+    released = 0
+    for appt in call("GET", "/api/appointments")["appointments"]:
+        if appt["id"] in booked_here and appt["status"] in ("booked", "confirmed"):
+            code, _ = status_of("POST", f"/api/appointments/{appt['id']}/cancel")
+            released += code == 200
+    return released
+
+
 def main() -> int:
     print("\n== health ==")
     health = call("GET", "/api/health")
@@ -284,8 +308,6 @@ def main() -> int:
     call("POST", "/api/auth/login", LOGIN)
     listener = EventListener()
     listener.start()
-
-    booked_here: list[str] = []
 
     print("\n== buyer books an appointment (rails only, no typing) ==")
     session = call("POST", "/api/chat/sessions")
@@ -320,6 +342,14 @@ def main() -> int:
             convo, content="I'm Jordan Reyes, and my email is jordan.reyes@example.com."
         )
     check("stage reached booked", state["stage"] == "booked", state["stage"])
+    # Recorded so the release at the end gives this slot back too. It was the
+    # one booking in the script that never was, because it is made through the
+    # rails rather than by calling book_appointment directly -- so every run,
+    # passing or failing, quietly ate one of the fixture week's twenty slots
+    # and the failure surfaced runs later as "0 times on the card" here.
+    for appt in call("GET", "/api/appointments")["appointments"]:
+        if appt.get("conversation_id") == convo and appt["status"] in ("booked", "confirmed"):
+            booked_here.append(appt["id"])
 
     print("\n== the booking card offers only times the calendar really has ==")
     card_convo = call("POST", "/api/chat/sessions")
@@ -574,6 +604,78 @@ def main() -> int:
                   for e in call("GET", "/api/overview")["queues"]["needs_a_person"]))
     check("assigning to somebody who does not exist is refused",
           status_of("POST", f"/api/leads/{owner}/assign", {"user_id": "nobody"})[0] == 404)
+
+    print("\n== one fact, one answer, wherever it is read ==")
+    # Everything here is the same shape of bug: a fact written in one row and
+    # read from another, with nothing keeping the two in step. Each was found
+    # by asking "what else could disagree like the queues did?" and each was
+    # reproduced before it was fixed.
+
+    # A call that ended while somebody was still owed a call back. Hanging up
+    # is how most calls end, and it used to close the thread unconditionally --
+    # so the row read Closed while sitting in Needs a person, which tells a
+    # manager two opposite things at once. close_conversation had always been
+    # careful about this; end_call was not.
+    hung = call("POST", "/api/chat/sessions", {"channel": "voice"})["conversation_id"]
+    call("POST", "/api/voice/tools", {
+        "conversation_id": hung, "name": "escalate_to_human",
+        "input": {"reason": "asked for an out-the-door price"}, "tool_call_id": f"otd-{hung}"})
+    call("POST", f"/api/voice/sessions/{hung}/end", {})
+    after_hangup = call("GET", f"/api/conversations/{hung}")
+    check("a call the buyer hung up on does not close a thread a rep still owes",
+          after_hangup["status"] == "handoff", after_hangup["status"])
+    check("and it is still in Needs a person, saying the same thing the badge does",
+          any(e["conversation_id"] == hung
+              for e in call("GET", "/api/overview")["queues"]["needs_a_person"]))
+
+    # A cancelled visit is not an appointment set. `stage` is written once by
+    # book_appointment and nothing walked it back, so the conversation row kept
+    # its green Appointment set badge -- and counted in the Appointed filter --
+    # while the lead beside it derived the same thing from appointment rows and
+    # correctly said there was none.
+    cancelling = call("POST", "/api/chat/sessions", {})["conversation_id"]
+    free = call("POST", "/api/voice/tools", {
+        "conversation_id": cancelling, "name": "check_availability", "input": {},
+        "tool_call_id": f"cav-{cancelling}"})["result"]["slots"]
+    made = call("POST", "/api/voice/tools", {
+        "conversation_id": cancelling, "name": "book_appointment",
+        "input": {"name": "Cancel Probe", "email": "cancel.probe@example.invalid",
+                  "starts_at": free[0]},
+        "tool_call_id": f"cbk-{cancelling}"})["result"]
+    check("booking puts the thread at the booked stage",
+          call("GET", f"/api/conversations/{cancelling}")["stage"] == "booked")
+    call("POST", f"/api/appointments/{made['appointment_id']}/cancel", {})
+    thread_now = call("GET", f"/api/conversations/{cancelling}")
+    lead_now = call("GET", f"/api/leads/{made['lead_id']}")
+    check("cancelling walks it back, so the thread stops claiming an appointment",
+          thread_now["stage"] != "booked", thread_now["stage"])
+    check("and the thread and the buyer now answer Appointed the same way",
+          (thread_now["stage"] == "booked") == (lead_now["stage"] == "appointment"),
+          f"{thread_now['stage']} vs {lead_now['stage']}")
+
+    # A rep who leaves, still holding buyers. They drop off the roster and
+    # their leads stay pointing at them -- not unclaimed, so no queue asks
+    # anyone to pick them up, and not workable, because the owner is gone and
+    # cannot be chosen from the assign menu. The work appears nowhere at all.
+    leaver = next(m for m in call("GET", "/api/team")["members"] if m["role"] == "rep")
+    handful = [l for l in call("GET", "/api/leads")["leads"][:40]][:2]
+    for lead in handful:
+        call("POST", f"/api/leads/{lead['id']}/assign", {"user_id": leaver["id"]})
+    left = call("PATCH", f"/api/team/{leaver['id']}", {"active": False})
+    check("somebody leaving hands their buyers back rather than taking them along",
+          left["leads_returned"] >= len(handful), str(left)[:90])
+    queue = {l["id"] for l in call("GET", "/api/overview")["queues"]["unclaimed_leads"]}
+    check("so those buyers are in a queue somebody is actually looking at",
+          all(lead["id"] in queue for lead in handful),
+          f"{sum(1 for lead in handful if lead['id'] in queue)}/{len(handful)}")
+    # Un-assigned, never cancelled. A visit still happening with nobody to host
+    # it belongs in the unassigned queue; deleting it because a rep left would
+    # be a far worse answer.
+    check("and their future visits are handed back, not cancelled",
+          "appointments_returned" in left and "escalations_reopened" in left, str(left)[:90])
+    call("PATCH", f"/api/team/{leaver['id']}", {"active": True})
+    check("and they are back on the roster when they return",
+          any(m["id"] == leaver["id"] for m in call("GET", "/api/team")["members"]))
 
     print("\n== the charts answer for a chosen window ==")
     for key, expect in (("today", "Today"), ("yesterday", "Yesterday"),
@@ -1148,6 +1250,45 @@ def main() -> int:
     check("and kept, not dropped -- someone really wrote in",
           any(r["message_id"] == f"<smoke-{run}-stranger>"
               for r in call("GET", "/api/email/receipts")["receipts"]))
+
+    # ...and the other half of the ladder, which was missing. Resolution ran
+    # once, at delivery, and never again -- so somebody who wrote to sales@
+    # before they were anybody stayed a stranger for good, even after they
+    # chatted and booked with that same address the next day. One person, two
+    # records, and nothing that would ever join them.
+    early = f"early.{run}@example.invalid"
+    inbound({
+        "messageId": f"<smoke-{run}-early>", "from": early,
+        "to": "sales@example.invalid", "subject": "Is the Sienna still there?",
+        "text": "Saw it on your site.",
+    })
+    check("mail from a buyer we do not know yet waits, unresolved",
+          settled(f"<smoke-{run}-early>").get("outcome") == "unresolved")
+    later = call("POST", "/api/chat/sessions", {})["conversation_id"]
+    when = call("POST", "/api/voice/tools", {
+        "conversation_id": later, "name": "check_availability", "input": {},
+        "tool_call_id": f"eav-{run}"})["result"]["slots"]
+    minted = call("POST", "/api/voice/tools", {
+        "conversation_id": later, "name": "book_appointment",
+        "input": {"name": "Early Writer", "email": early, "starts_at": when[0]},
+        "tool_call_id": f"ebk-{run}"})["result"]
+    joined = settled(f"<smoke-{run}-early>")
+    check("and is placed the moment that buyer comes into existence",
+          joined.get("outcome") == "accepted" and joined.get("lead_id") == minted["lead_id"],
+          f"{joined.get('outcome')} -> {joined.get('lead_id')}")
+    check("landing on their timeline, not on the unmatched pile",
+          any("Sienna still there" in json.dumps(e)
+              for e in call("GET", f"/api/leads/{minted['lead_id']}/timeline")["entries"]))
+    # Through the same resolution as the live path, not a second copy of it --
+    # two ladders is how they start disagreeing about who a reply belongs to.
+    check("by the same rule the live path uses, which is what it records",
+          joined.get("matched_by") == "from_address", str(joined.get("matched_by")))
+    # Given back, like every other appointment this script books. The fixture's
+    # week holds about twenty slots and book_appointment refuses a clash, so a
+    # run that kept one leaves fewer for the next -- and after enough runs the
+    # booking flow fails with "0 times on the card" somewhere unrelated. That
+    # has happened before; this section caused it again.
+    call("POST", f"/api/appointments/{minted['appointment_id']}/cancel", {})
 
     # No session guards this endpoint, so an unbounded body is a firehose
     # anyone who finds the URL can point at it. The limit matches the Worker's.
@@ -1888,13 +2029,17 @@ def main() -> int:
     # week, and after enough runs check_availability has nothing to offer and
     # the booking flow fails -- which is exactly what happened. `make smoke`
     # must stay runnable against a database that has already seen it.
-    released = 0
-    for appt in call("GET", "/api/appointments")["appointments"]:
-        if appt["id"] in booked_here and appt["status"] in ("booked", "confirmed"):
-            code, _ = status_of("POST", f"/api/appointments/{appt['id']}/cancel")
-            released += code == 200
-    check("this run's appointments were released", released == len(booked_here),
-          f"{released}/{len(booked_here)} cancelled")
+    release_slots()
+    # What matters is that none of them is still holding a time, not how many
+    # this call had left to cancel -- several sections cancel their own booking
+    # as part of what they are testing, and counting cancellations here made
+    # those look like failures.
+    holding = [
+        a["id"] for a in call("GET", "/api/appointments")["appointments"]
+        if a["id"] in booked_here and a["status"] in ("booked", "confirmed")
+    ]
+    check("no slot this run took is still held", not holding,
+          f"{len(holding)} of {len(booked_here)} still booked")
     after = call("GET", "/api/overview/trends?range=today")
     check("and the calendar can offer times again",
           bool(call("GET", "/api/appointments")) and after["range"] == "today")
@@ -1912,4 +2057,15 @@ def report() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        # Not tidiness -- this is what stops one bad run degrading every run
+        # after it. A crash mid-script is exactly when the slots are most
+        # likely to be stranded, and least likely to be noticed.
+        try:
+            stranded = release_slots()
+            if stranded:
+                print(f"\nReleased {stranded} appointment(s) held by this run.")
+        except Exception as exc:  # the run is already over; say so and stop
+            print(f"\nCould not release this run's appointments: {exc}")

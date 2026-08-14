@@ -39,6 +39,9 @@ EVENT_TYPES = {
     # A buyer got an owner, which also settles anything of theirs that was
     # sitting in the unowned queue -- so three panels move on one event.
     "lead.assigned",
+    # Somebody left, and their buyers went back to the queue rather than with
+    # them. Three panels change, so it is worth a socket event.
+    "team.deactivated",
     "vehicle.status_changed",
     "call.started",
     "call.ended",

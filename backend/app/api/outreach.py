@@ -53,6 +53,43 @@ def confirm(
     return appointment_out(appointment, db)
 
 
+def _restage(db: Session, appointment: Appointment) -> None:
+    """A cancelled visit is not an appointment set.
+
+    `conversations.stage` is written once, by `book_appointment`, and nothing
+    walked it back -- so a cancelled booking left the thread at `booked`
+    forever. The conversations list reads that stage for its badge and for the
+    Appointed filter, while the lead beside it derives the same thing from
+    appointment rows and correctly said the buyer had none. One buyer, two
+    answers, and no way to tell from the screen which one to believe. This
+    codebase already wrote that failure down as the reason the filters were
+    unified; it was reachable through the cancel button the whole time.
+
+    Only when nothing else of theirs is still standing: a buyer who booked
+    twice and cancelled one visit is still a buyer with an appointment.
+    """
+    if not appointment.conversation_id:
+        return
+    convo = db.query(Conversation).filter_by(id=appointment.conversation_id).one_or_none()
+    if convo is None or convo.stage != "booked":
+        return
+    still_booked = (
+        db.query(Appointment)
+        .filter(
+            Appointment.conversation_id == convo.id,
+            Appointment.id != appointment.id,
+            Appointment.status.in_(["booked", "confirmed"]),
+        )
+        .count()
+    )
+    if still_booked:
+        return
+    # Back to where booking was reached from, not to the beginning. They gave
+    # their contact details and were offered times; none of that un-happened,
+    # and dropping them to `opening` would have the rails greet them again.
+    convo.stage = "contact_capture"
+
+
 @router.post("/{appointment_id}/cancel")
 def cancel(
     appointment_id: str,
@@ -70,6 +107,7 @@ def cancel(
     appointment = get_appointment(db, appointment_id)
     assert_transition(appointment.status, "cancelled")
     appointment.status = "cancelled"
+    _restage(db, appointment)
     db.commit()
     emit(db, "appointment.cancelled", {
         "appointment_id": appointment.id,

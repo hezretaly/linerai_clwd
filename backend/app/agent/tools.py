@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.db import utcnow
 from app.events import emit
+from app import matching
 from app.matching import match_lead
 from app.models import (
     Appointment,
@@ -570,6 +571,10 @@ def book_appointment(
     # The buyer gave the address for this purpose -- that consent is the record.
     lead.email_consent_at = lead.email_consent_at or utcnow()
     convo.lead_id = lead.id
+    # Anything they wrote to us before they were anybody. Runs on an existing
+    # lead too, not only a new one: this is also the moment a buyer's address
+    # is first learnt or corrected, and mail sat unplaced against exactly that.
+    matching.claim_unresolved(db, lead)
 
     vehicle = None
     if args.get("vin"):

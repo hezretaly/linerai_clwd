@@ -456,7 +456,16 @@ def end_call(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     convo = db.query(Conversation).filter_by(id=conversation_id).one_or_none()
     if convo is None:
         raise HTTPException(404, "Conversation not found")
-    convo.status = "closed"
+    # 'closed' only if nobody is waiting on it -- the same rule
+    # `close_conversation` follows, and it has to be the same rule here.
+    # Hanging up is how most calls end, so closing unconditionally was the
+    # common path: a buyer asked for an out-the-door price, Liner raised a
+    # handoff, they rang off, and the row went to Closed while still sitting in
+    # Needs a person. A manager reading "Closed" beside a "Needs a person" tag
+    # on one row is being told two opposite things at once, and the buyer is
+    # still owed a call back either way.
+    if convo.status != "handoff":
+        convo.status = "closed"
     # Stamped here as well as in close_conversation. Without it a call that the
     # buyer simply hung up on had no end time at all, so its length was
     # unknowable -- and "how long was that call?" is the first thing anyone
