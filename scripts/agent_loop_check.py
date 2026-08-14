@@ -398,6 +398,50 @@ def main() -> int:
         check("and both carry the dealership's own facts",
               dealership.name in spoken and dealership.phone in spoken)
 
+        print("\n== the operator's method, filled and not edited ==")
+        from app.agent.prompts import METHOD, UNFILLED, fill
+        # The method is the operator's, stored byte-for-byte, and this is what
+        # stops it drifting: the file on disk goes into the prompt whole, with
+        # only its own `{{VARIABLES}}` replaced -- which the file's own second
+        # line asks for.
+        for label, prompt in (("a call", spoken), ("a chat", written)):
+            body = fill(METHOD, dealership, live_settings(db))
+            check(f"{label} carries the method as supplied, section for section",
+                  body in prompt, f"{len(METHOD)} chars")
+        check("every section survives the fill",
+              all(f"## {n}." in written for n in range(1, 21)),
+              "sections 1-20")
+        # A placeholder left in braces is one a model will eventually type at a
+        # buyer -- "you were trying to get out of the {{CURRENT_CAR}}".
+        for label, prompt in (("a call", spoken), ("a chat", written)):
+            check(f"and no placeholder reaches {label} unfilled",
+                  not UNFILLED.findall(prompt), str(UNFILLED.findall(prompt))[:80])
+        check("the dealership's own name and town are filled in, not described",
+              f"assistant for {dealership.name}" in written, dealership.name)
+
+        # Where the method and this system disagree, this system is last and
+        # says so. Section 5 asks "what days and times are you usually free?",
+        # which is right on a call and wrong on a screen -- there is a card
+        # offering real times, and asking as well gets the same question
+        # answered in the worse place.
+        check("the booking card overrides the method's open question, on chat only",
+              "overrides section 5" in written and "overrides section 5" not in spoken)
+
+        # The method names capabilities this system does not have. Left
+        # unanswered they become promises: a video nobody will shoot, a
+        # follow-up cadence with no scheduler behind it, a credit application
+        # the assistant cannot send.
+        check("a video nobody can shoot is refused rather than offered",
+              "HAS NOT ENABLED VIDEO" in written)
+        check("and the follow-up cadence is named as a rep's job, not a timer",
+              "no scheduler" in written and "a rep composes those" in written)
+        check("and the credit application is handed to a person to send",
+              "you cannot send" in written and "escalate_to_human" in written)
+        # The sentence around this exists to stop invented demand. An empty
+        # placeholder there is an invitation to fill it in.
+        check("demand figures we do not measure say so, rather than sitting empty",
+              "not tracked here" in written)
+
         body = voice.session_payload(spoken, tools.TOOL_DEFS)["session"]
         check("the session body is the shape the realtime API documents",
               body["type"] == "realtime" and bool(body["model"]), str(sorted(body)))

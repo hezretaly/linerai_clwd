@@ -167,6 +167,12 @@ class Settings(BaseSettings):
     # discounted by roughly eighty times, so truncating often costs more than
     # the tokens it saves.
     voice_retention_ratio: float = 0.8
+    # The method's signature move (section 13) is a personalized walkaround
+    # video. Nothing in this system records, stores or sends one, so it is off
+    # -- and the gate in the method text turns into an instruction never to
+    # offer one. An assistant promising a video nobody will shoot is worse than
+    # one that never mentions it.
+    sales_video_enabled: bool = False
     # Transcribing the buyer's side is billed *separately* from the call. It
     # buys the dealer a readable transcript and nothing else -- the model
     # hears the audio directly and never reads it -- so it is the one part of

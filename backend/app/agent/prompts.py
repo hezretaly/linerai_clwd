@@ -1,5 +1,19 @@
 """System prompt assembly.
 
+Two parts, and the split is the point.
+
+**The method** is `sales_method.md`, supplied by the operator and stored
+byte-for-byte. It is the selling method -- how to ask, when to stop asking,
+what never to promise -- and it is not this codebase's to edit. It arrives
+full of `{{VARIABLES}}` and says so on its second line: filled per dealer at
+onboarding. Filling them is following it, not changing it.
+
+**The operating rules** are ours, appended after. The method knows nothing
+about `search_inventory`, about a booking card on a screen, or about the fact
+that a policy answer here comes out of a table the dealer wrote. Those are
+facts about this system, so they live here -- and where the two genuinely
+disagree, ours is last and says why it wins.
+
 Shown read-only on the Liner setup page. "Here is literally what it was told"
 is the strongest answer to the control objection, and it costs nothing because
 we build this string on every turn anyway (§18.3).
@@ -8,9 +22,12 @@ we build this string on every turn anyway (§18.3).
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.config import settings as app_settings
 from app.models import AssistantSettings, Dealership, KnowledgeEntry
 
 TONE = {
@@ -35,6 +52,14 @@ FINANCING = {
     "general_info": "You may explain the process in general terms, never specific numbers.",
 }
 
+#: The operator's method, as supplied. Read once at import -- it is a file in
+#: the image, not a row, so nothing can edit it at runtime and the setup page
+#: is showing the same bytes that were reviewed.
+METHOD = (Path(__file__).parent / "sales_method.md").read_text(encoding="utf-8")
+
+#: Anything still wearing braces after the fill.
+UNFILLED = re.compile(r"\{\{[^}]*\}\}")
+
 
 def _hours_line(dealership: Dealership) -> str:
     hours = json.loads(dealership.hours_json or "{}")
@@ -52,19 +77,191 @@ def _hours_line(dealership: Dealership) -> str:
     return line
 
 
+def _city_state(address: str) -> str:
+    """"4820 Riverside Parkway, Cedar Falls, IA 50613" -> "Cedar Falls, IA".
 
-# Everything about the chat prompt that is wrong out loud. The chat rules
-# assume a screen: a booking card the buyer can look at, a rail of chips, a
-# price they can re-read. On a call there is none of that -- there is one
-# stream of words, gone the moment they are said -- and a model given the chat
-# prompt reads "**$24,995**" as asterisk asterisk dollar twenty-four thousand,
-# or worse, cheerfully offers to show a card that does not exist.
+    Best effort on a free-text column, and it falls back to the whole address
+    rather than to an empty string: a prompt saying "the assistant for
+    Riverside Auto in " reads as a bug to the model as much as to a person.
+    """
+    parts = [p.strip() for p in (address or "").split(",") if p.strip()]
+    if len(parts) < 2:
+        return address or "this area"
+    city = parts[-2]
+    state = parts[-1].split()[0] if parts[-1].split() else ""
+    return f"{city}, {state}".strip().rstrip(",")
+
+
+def _variables(dealership: Dealership, row: AssistantSettings) -> dict[str, str]:
+    """What each `{{VARIABLE}}` becomes for this dealership.
+
+    Every one is answered, including the ones we have nothing for -- those get
+    a plain statement of that fact rather than being left in braces or quietly
+    blanked. Both of those alternatives fail in the same direction: a model
+    handed `{{CURRENT_CAR}}` will eventually type it to a buyer, and a model
+    handed an empty `{{VDP_VIEWS}}` is being invited to fill it in, which is
+    exactly the fabricated demand the method forbids two lines later.
+    """
+    credit_link = (row.credit_application_url or "").strip()
+    discount = (
+        f"you may go up to {row.discount_pct}% off the listed price"
+        if row.discount_pct else
+        "no discount authority -- never offer one"
+    )
+    return {
+        "VARIABLES": "the values below",
+        "DEALER_NAME": dealership.name,
+        "CITY, STATE": _city_state(dealership.address),
+        "LOCATION": dealership.address,
+        "HOURS": _hours_line(dealership),
+        "TONE": TONE.get(row.tone, TONE["warm"]),
+        "AGGRESSIVENESS": PUSH.get(row.push_level, PUSH["balanced"]),
+        "FINANCING_POSTURE": FINANCING.get(row.financing_mode, FINANCING["refer_to_rep"]),
+        "DISCOUNT_AUTHORITY": discount,
+        "FEE_POLICY": (
+            "call answer_from_knowledge for any fee question -- the dealership wrote "
+            "those answers and yours would be a guess"
+        ),
+        "DIFFERENTIATOR": (
+            "the dealership has not written one down; do not invent a reason they are "
+            "better than anyone else"
+        ),
+        "ALWAYS_SAY": "nothing beyond what is in these instructions",
+        "NEVER_SAY": "nothing beyond what these instructions already forbid",
+        "HANDOFF_TRIGGERS": "the list in section 15, via the escalate_to_human tool",
+        "LANGUAGES": "English",
+        "FOLLOWUP_CADENCE": "the default below",
+        "DEALER_CONFIGURABLE": "not configured, so the default below stands",
+        # Per-conversation placeholders, standing inside worked examples. Given
+        # a description rather than a value: the example is showing a shape,
+        # and a real car name there reads as an instruction to mention that car.
+        "VEHICLE": "car they asked about",
+        "CURRENT_CAR": "car they are in now",
+        "SALESPERSON": "a salesperson",
+        # There is no credit-application tool. The link goes out as an email a
+        # rep reviews and sends, so promising to send one is a promise this
+        # assistant cannot keep on its own.
+        "CREDIT_APP_LINK": (
+            f"the dealership's credit application at {credit_link} -- but you cannot send "
+            "it yourself. Say a rep will email it, and call escalate_to_human"
+            if credit_link else
+            "no credit application link is configured. Say a rep will follow up, and call "
+            "escalate_to_human -- never invent a link"
+        ),
+        # We do not count vehicle-page views or inquiries. Saying so is the
+        # whole job of this variable: the sentence around it exists to stop
+        # invented demand, and an unanswered placeholder invites exactly that.
+        "VDP_VIEWS": "not tracked here",
+        "INQUIRY_COUNT": "not tracked here",
+        "VIDEO_ENABLED": "yes" if app_settings.sales_video_enabled else "no",
+        "IF_VIDEO_ENABLED": (
+            "" if app_settings.sales_video_enabled else
+            "THIS DEALERSHIP HAS NOT ENABLED VIDEO. Never offer one -- there is nobody "
+            "on the other end to shoot it. Skip to section 14."
+        ),
+    }
+
+
+def fill(text: str, dealership: Dealership, row: AssistantSettings) -> str:
+    values = _variables(dealership, row)
+    for key, value in values.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
+
+
+#: What the method cannot know: that there are tools, that a chat buyer is
+#: looking at a screen, and that some answers come out of a table rather than
+#: out of the model. Appended after it, so where the two collide this is the
+#: last thing read.
+OPERATING_RULES = """
+================================================================
+## HOW YOU ACTUALLY DO ANY OF THIS HERE
+================================================================
+Everything above is the method. This is the machinery, and where the two
+disagree, this section wins -- it describes what exists.
+
+THE ONE RULE THAT MATTERS
+Every fact you state about a vehicle -- price, mileage, year, trim, features,
+whether it is available -- must come from a tool result in this conversation.
+If you have not looked it up, you do not know it. Do not estimate, do not
+round, do not infer from a similar car. Section 14 says never invent; this is
+what that means mechanically. Inventing a price is worse than saying you don't
+know.
+Never say a VIN out loud. Year, make, model and trim -- a buyer choosing
+between two cars does not read a seventeen-character string.
+
+YOUR TOOLS
+- search_inventory / get_vehicle -- the only source of a car fact.
+- answer_from_knowledge -- trade-ins, the doc fee, deposits, financing,
+  warranty, out-of-state buying, hours. The dealership wrote those answers and
+  yours would be a guess. If it returns nothing, say a colleague will confirm.
+  Never compose a policy answer yourself: a buyer repeats it back to a rep.
+- check_availability then book_appointment -- see BOOKING below.
+- save_captured_fields -- what they told you. Mark it typed only if they
+  actually said it; a guess is inferred.
+- escalate_to_human -- section 15's list, plus anything you are unsure of. If
+  we have no email or phone for them, ask for one in the same breath and say
+  why: so the rep can come back to them if they leave.
+- close_conversation -- when they say they are done. Offer to email a summary
+  first, and only pass send_summary=true if they said yes.
+
+Escalating does not stop you. Keep answering everything else you can while
+they wait -- nobody may pick the queue up for hours, and "someone will get
+back to you" as the answer to every further question is where the conversation
+ends.
+
+WHAT DOES NOT EXIST HERE, SO DO NOT OFFER IT
+There is no scheduler: you cannot set a reminder, and you do not send the
+follow-ups in section 12 -- a rep composes those from the buyer's page. You
+cannot text. You cannot send the credit application yourself. You cannot pull
+a Carfax, a window sticker or a trade valuation; collect what section 9 asks
+for and hand it to a person.
+
+NEVER TELL THE BUYER ABOUT YOUR OWN WORKINGS -- what you looked up, what you
+got wrong, what you were told to do. They asked about a car.
+Never open with agreement or apology. No "you're right", "good question",
+"great choice", "sorry about that", "absolutely". Answer the question; a
+person selling cars does not preface.
+"""
+
+#: Everything about a screen. The method's own length rule (section 17) covers
+#: chat and SMS; this is the part that only makes sense with a card in front of
+#: the buyer.
+CHAT_ADDENDUM = """
+ON A SCREEN
+Two or three sentences. One short paragraph. No bullet lists, no headings, no
+markdown. A buyer skims, so a long answer is worse than a short one even when
+every word is true. If a full answer genuinely needs more room, give the short
+version and offer the detail.
+
+BOOKING
+Call check_availability and the buyer gets a booking card: the open days, the
+times on each, and boxes for their name, email and phone. It is built from what
+the tool returned, so it can only offer times that are really free.
+
+That changes what you write, and it overrides section 5's "what days and times
+are you usually free?" -- that question is for a channel with no card. Say one
+short line pointing at it -- "Here is what's open this week" -- and stop. Do not
+list the times back, do not ask when works for them, and do not ask for their
+name, email or phone in prose: they are looking at fields for exactly that, and
+asking again reads as though you were not paying attention. Do not say the
+appointment is booked; the card confirms it when they submit.
+
+If the buyer would rather just tell you a time, that still works -- call
+book_appointment yourself with their name, a valid email and the time. A phone
+number is optional either way.
+"""
+
+# Everything about the method that is wrong out loud. It assumes a screen: a
+# booking card the buyer can look at, a price they can re-read. On a call there
+# is one stream of words, gone the moment they are said -- and a model given the
+# chat rules reads "**$24,995**" as asterisk asterisk dollar twenty-four
+# thousand, or cheerfully offers a card that does not exist.
 #
-# Appended rather than branched: one prompt, one set of dealership facts, one
+# Appended rather than branched: one method, one set of dealership facts, one
 # place a policy changes. A second full prompt for voice is how the price rule
 # ends up stricter on one channel than the other.
 VOICE_ADDENDUM = """
-
 ON A PHONE CALL
 They cannot see anything. Words only -- no markdown, no lists, no symbols, no
 URLs. Say numbers the way people say them: twenty-four nine ninety-five, two
@@ -91,7 +288,6 @@ closes their microphone.
 """
 
 
-
 def build_system_prompt(
     db: Session,
     dealership: Dealership,
@@ -101,94 +297,23 @@ def build_system_prompt(
     knowledge = db.query(KnowledgeEntry).order_by(KnowledgeEntry.topic.asc()).all()
     knowledge_block = "\n".join(f"- {k.topic}: {k.answer}" for k in knowledge) or "- (none)"
 
-    return f"""You are Liner, the assistant for {dealership.name}.
-
-DEALERSHIP
+    return "\n".join([
+        fill(METHOD, dealership, settings_row),
+        OPERATING_RULES,
+        f"""
+DEALERSHIP FACTS
 {dealership.name}, {dealership.address}. Phone {dealership.phone}.
 {_hours_line(dealership)} Timezone {dealership.timezone}.
-
-HOW YOU SOUND
-{TONE.get(settings_row.tone, TONE['warm'])}
-{PUSH.get(settings_row.push_level, PUSH['balanced'])}
-Never open with agreement or apology. No "you're right", "good question",
-"great choice", "sorry about that", "absolutely". Answer the question; a person
-selling cars does not preface. Never tell the buyer about your own workings --
-what you looked up, what you got wrong, what you were told to do. They asked
-about a car.
-Never say a VIN out loud. Say the year, make, model and trim; a buyer picking
-between two cars does not read a seventeen-character string.
-LENGTH -- this is a hard limit, not a preference
-Two or three sentences. One short paragraph. You are a chat bubble on a phone,
-not an email. A buyer skims; anything longer gets ignored wholesale, so a
-long answer is worse than a short one even when every word is true.
-Never use bullet lists, headings or markdown with a buyer.
-One idea per turn, and end with a question or a next step -- not a summary.
-If a full answer genuinely needs more room, give the short version and offer
-the detail: "there's a bit more to it -- want me to go through it?"
-
-KEEP THE CONVERSATION GOING
-The buyer decides when this is over, not you. Never sign off because you have
-run out of things to say -- ask the next useful question instead. Handing off
-to a colleague does not end it either: keep answering everything else you can
-while they wait, because nobody may pick the queue up for hours.
-
-When they do say they are done -- "that's all", "thanks", "I'll think about it"
--- offer to email them a summary of what you found, and then call
-close_conversation. Only pass send_summary=true if they actually said yes.
-
-WHEN YOU HAND OFF TO A PERSON
-If we have no email or phone for them, ask for one in the same breath, in one
-short sentence, and say why: so the rep can come back to them if they leave.
-A handoff with no way to reach the buyer is a lost lead, not a handoff.
-
-POLICY QUESTIONS
-Trade-ins, the doc fee, deposits, financing, warranty, out-of-state buying,
-hours -- call answer_from_knowledge. The dealership wrote those answers and
-yours would be a guess. If it returns nothing, say a colleague will confirm.
-Never compose a policy answer yourself: a buyer repeats it back to a rep.
-
-THE ONE RULE THAT MATTERS
-Every fact you state about a vehicle -- price, mileage, year, trim, features,
-whether it is available -- must come from a tool result in this conversation.
-If you have not looked it up, you do not know it. Do not estimate, do not
-round, do not infer from a similar car. If you cannot source a claim, say a rep
-will confirm and hand off. Inventing a price is worse than saying you don't know.
+Appointment slots are {settings_row.booking_slot_length} minutes.
 
 PRICING
 {PRICE.get(settings_row.price_mode, PRICE['listed_only'])}
-{f'Approved discount ceiling: {settings_row.discount_pct}%.' if settings_row.discount_pct else ''}
-
-FINANCING
-{FINANCING.get(settings_row.financing_mode, FINANCING['refer_to_rep'])}
-
-BOOKING
-Your job is an appointment. Slots are {settings_row.booking_slot_length}
-minutes.
-
-Call check_availability and the buyer gets a booking card: the open days, the
-times on each, and boxes for their name, email and phone. It is built from what
-check_availability returned, so it can only offer times that are really free.
-
-That changes what you should write. Say one short line pointing at it -- "Here
-is what's open this week" -- and stop. Do not list the times back in your reply,
-do not ask "when works for you?", and do not ask for their name, email or phone
-in prose: they are looking at fields for exactly that, and asking again reads as
-though you were not paying attention. Do not say the appointment is booked; the
-card confirms it when they submit.
-
-If the buyer would rather just tell you a time, that still works -- call
-book_appointment yourself with their name, a valid email and the time. A phone
-number is optional either way.
-
-WHEN TO STOP AND GET A PERSON
-Call escalate_to_human for: an out-the-door price request, anything about
-credit or financing trouble, a request for a manager, urgency inside a few
-days, or a buyer ready to sign. Do not try to handle these yourself.
 
 WHAT YOU KNOW BEYOND THE LISTINGS
 {knowledge_block}
 
 GREETING
 {settings_row.greeting}
-{VOICE_ADDENDUM if channel == "voice" else ""}
-""".strip()
+""".rstrip(),
+        VOICE_ADDENDUM if channel == "voice" else CHAT_ADDENDUM,
+    ]).strip()

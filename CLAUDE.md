@@ -81,6 +81,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `check_availability` builds slots straight from `hours_json` in that frame.
   Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a
   hardcoded 9 PM produced an appointment the calendar could not draw.
+- **The selling method is the operator's file; the operating rules are ours.**
+  `agent/sales_method.md` is supplied and stored byte-for-byte — it is how to
+  sell, and not this codebase's to edit. `prompts.py` fills its
+  `{{VARIABLES}}` (which its own second line asks for) and appends what it
+  cannot know: that there are eight tools, that a chat buyer is looking at a
+  booking card, that a policy answer comes from a table. Ours is appended last,
+  so where the two genuinely disagree ours is what was read most recently — and
+  it says which section it is overriding rather than contradicting it silently.
+  `make agent-check` asserts the filled method appears in both prompts whole.
+  - **Every placeholder is answered, including the ones we have nothing for.**
+    Left in braces, a model eventually types `{{CURRENT_CAR}}` at a buyer; left
+    empty, `{{VDP_VIEWS}}` is an invitation to invent the demand figure the
+    sentence around it exists to forbid. So both get a plain statement of the
+    fact instead, and the gate fails on any `{{` surviving in either channel.
+  - **A capability the method assumes and this system lacks becomes a
+    refusal, not a silence.** The personalized video, the follow-up cadence and
+    sending the credit application are all things it tells the assistant to do
+    and nothing here can do. Each is answered where the method asks for it —
+    there is no scheduler, a rep composes the follow-ups, and video is off — so
+    the assistant never offers a buyer something nobody will deliver.
 - **Rules live in executors, not prompts.** A do-not-discuss vehicle is filtered
   in `search_inventory`, so it never reaches the model at all. Provenance is
   enforced in `save_captured_fields`, which downgrades a dishonest `typed` to
