@@ -14,7 +14,7 @@ from app.agent.tools import when_label
 from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.events import emit
-from app.models import Conversation, Escalation, Message, User, Vehicle
+from app.models import Conversation, Escalation, Lead, Message, User, Vehicle
 from app.schemas.serialize import booking_card, conversation_out, message_out, vehicle_out
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -141,6 +141,14 @@ def takeover(
     if escalation is not None:
         escalation.claimed_by_user_id = user.id
         escalation.claimed_at = utcnow()
+
+    # Taking a thread over takes the buyer with it, so they stop showing as
+    # unclaimed on the overview while somebody is visibly typing to them. Only
+    # when nobody owns them yet: silently moving a buyer off the rep they were
+    # assigned to would be a different act, and one nobody asked for.
+    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+    if lead is not None and not lead.assigned_user_id:
+        lead.assigned_user_id = user.id
 
     db.commit()
     emit(db, "handoff.triggered", {

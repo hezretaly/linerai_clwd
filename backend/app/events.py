@@ -36,6 +36,9 @@ EVENT_TYPES = {
     # URL grow the events table.
     "email.received",
     "lead.imported",
+    # A buyer got an owner, which also settles anything of theirs that was
+    # sitting in the unowned queue -- so three panels move on one event.
+    "lead.assigned",
     "vehicle.status_changed",
     "call.started",
     "call.ended",

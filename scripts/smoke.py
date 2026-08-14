@@ -504,6 +504,71 @@ def main() -> int:
               call("GET", f"/api/conversations/{linked[0]['conversation_id']}")["id"]
               == linked[0]["conversation_id"])
 
+    print("\n== assigning a buyer settles every panel that was asking for one ==")
+    # The overview asks three questions about the same people -- who needs a
+    # person, what is happening, and who belongs to nobody -- and they used to
+    # be three unconnected facts. A rep could assign a lead and still find them
+    # in Needs a person, which is two panels disagreeing about whether somebody
+    # is being looked after.
+    rep = next(m for m in call("GET", "/api/team")["members"] if m["role"] == "rep")
+    flagged = next(
+        (e for e in call("GET", "/api/overview")["queues"]["needs_a_person"] if e.get("lead")),
+        None,
+    )
+    check("the seed has a buyer waiting for a person", flagged is not None)
+    owner = flagged["lead"]["id"]
+    # Set the starting state rather than assume it -- earlier sections of this
+    # run assign leads, and a check that only holds when it happens to run
+    # first is a check that will fail for the wrong reason later.
+    call("POST", f"/api/leads/{owner}/assign", {"user_id": None})
+    check("and while nobody owns them they sit in the unclaimed queue too",
+          any(l["id"] == owner for l in call("GET", "/api/overview")["queues"]["unclaimed_leads"]),
+          "in both queues")
+
+    given = call("POST", f"/api/leads/{owner}/assign", {"user_id": rep["id"]})
+    check("assigning a buyer gives them an owner",
+          given["assigned_to"]["id"] == rep["id"], str(given.get("assigned_to"))[:60])
+    check("and claims what they had waiting, because a person has been found",
+          given["escalations_claimed"] >= 1, str(given["escalations_claimed"]))
+
+    queues = call("GET", "/api/overview")["queues"]
+    check("so they leave Needs a person",
+          not any((e.get("lead") or {}).get("id") == owner for e in queues["needs_a_person"]))
+    check("and leave the unclaimed queue in the same move",
+          not any(l["id"] == owner for l in queues["unclaimed_leads"]))
+
+    # Assigning is not taking over. Liner keeps answering everything else while
+    # the rep gets to them -- the same reason escalating does not gag it.
+    thread = call("GET", f"/api/conversations/{flagged['conversation_id']}")
+    check("but Liner is not silenced by it -- that is a separate decision",
+          thread["agent_paused"] is False, str(thread["agent_paused"]))
+
+    # And back the other way: a rep who takes a thread over takes the buyer.
+    loose = next(
+        (c for c in call("GET", "/api/conversations")["conversations"]
+         if c.get("lead") and not c["lead"].get("assigned_to") and c["status"] != "closed"),
+        None,
+    )
+    if loose:
+        call("POST", f"/api/conversations/{loose['id']}/takeover")
+        check("taking a thread over takes its buyer out of the unclaimed queue",
+              not any(l["id"] == loose["lead"]["id"]
+                      for l in call("GET", "/api/overview")["queues"]["unclaimed_leads"]),
+              loose["lead"]["name"])
+        call("POST", f"/api/conversations/{loose['id']}/handback")
+
+    # Putting somebody back is the same endpoint with no user. What it does not
+    # do is reopen the escalation: somebody really did pick that up, and taking
+    # the buyer off them later does not un-happen it.
+    back = call("POST", f"/api/leads/{owner}/assign", {"user_id": None})
+    check("a buyer can be put back in the queue",
+          back["assigned_to"] is None, str(back.get("assigned_to")))
+    check("but work already claimed stays claimed, not reopened",
+          not any((e.get("lead") or {}).get("id") == owner
+                  for e in call("GET", "/api/overview")["queues"]["needs_a_person"]))
+    check("assigning to somebody who does not exist is refused",
+          status_of("POST", f"/api/leads/{owner}/assign", {"user_id": "nobody"})[0] == 404)
+
     print("\n== the charts answer for a chosen window ==")
     for key, expect in (("today", "Today"), ("yesterday", "Yesterday"),
                         ("week", "Last 7"), ("month", "Last 30")):

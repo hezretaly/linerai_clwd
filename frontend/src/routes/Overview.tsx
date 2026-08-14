@@ -19,6 +19,7 @@ import { relative, waited } from '../lib/format'
 import type { Appointment, Escalation, Lead, Overview } from '../lib/types'
 import { Card, Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
+import { AssignTo } from '../components/dashboard/AssignTo'
 import { PageIntro } from '../components/dashboard/AppShell'
 
 /** Neutral ramp from the token layer -- a share of a total is not a category. */
@@ -483,7 +484,12 @@ export function OverviewPage() {
                         <Waited value={relative(c.last_activity_at ?? c.started_at)} />
                       </td>
                       <td className={ACTION_COL}>
-                        <TakeOver to={`/app/conversations/${c.id}`} />
+                        <AssignTo
+                          leadId={c.lead?.id ?? null}
+                          assignedTo={c.lead?.assigned_to}
+                          conversationId={c.id}
+                          thread={`/app/conversations/${c.id}`}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -556,20 +562,6 @@ function Waited({ value, big = false, title }: { value: string; big?: boolean; t
   )
 }
 
-/** One action across all three panels. A rep does the same thing with a flagged
- *  conversation, a live one and an unclaimed lead: they take it over. */
-function TakeOver({ to }: { to: string }) {
-  return (
-    <Link
-      to={to}
-      onClick={(e) => e.stopPropagation()}
-      className="inline-flex h-8 items-center whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-    >
-      Take over
-    </Link>
-  )
-}
-
 function EscalationRow({ escalation }: { escalation: Escalation }) {
   const navigate = useNavigate()
   const lead = escalation.lead
@@ -613,7 +605,12 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
         />
       </td>
       <td className={ACTION_COL}>
-        <TakeOver to={thread} />
+        <AssignTo
+          leadId={lead?.id ?? null}
+          assignedTo={lead?.assigned_to}
+          conversationId={escalation.conversation_id}
+          thread={thread}
+        />
       </td>
     </tr>
   )
@@ -662,7 +659,12 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
         <Waited value={waited(oldest.created_at)} big />
       </td>
       <td className={ACTION_COL}>
-        <TakeOver to={thread} />
+        <AssignTo
+          leadId={first.lead?.id ?? null}
+          assignedTo={first.lead?.assigned_to}
+          conversationId={first.conversation_id}
+          thread={thread}
+        />
       </td>
     </tr>
   )
@@ -699,7 +701,12 @@ function UnclaimedRow({ lead }: { lead: Lead }) {
         <Waited value={waited(lead.created_at)} />
       </div>
       <div className="w-32 shrink-0 px-6 text-right">
-        <TakeOver to={thread} />
+        <AssignTo
+          leadId={lead.id}
+          assignedTo={lead.assigned_to}
+          conversationId={lead.conversation_id}
+          thread={thread}
+        />
       </div>
     </div>
   )

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import matching, timeline
 from app.recap import lead_recap
 from app.api.deps import current_user
-from app.db import get_db
+from app.db import get_db, utcnow
+from app.events import emit
 from app.models import (
     Appointment,
     CapturedField,
@@ -180,6 +182,76 @@ def get_lead(
     out = lead_out(lead, db, detail=True)
     out.update(lead_summaries(db, [lead]).get(lead.id, {}))
     return out
+
+
+class AssignBody(BaseModel):
+    #: Null hands the buyer back to the unclaimed queue.
+    user_id: str | None = None
+
+
+@router.post("/{lead_id}/assign")
+def assign_lead(
+    lead_id: str,
+    body: AssignBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Give a buyer an owner -- and, with them, everything of theirs that was
+    waiting for one.
+
+    The overview asks three questions about the same people: who needs a
+    person, what is happening now, and who belongs to nobody. Those were three
+    unconnected facts, so a rep could assign a lead and still find them sitting
+    in Needs a person, and claim an escalation without the buyer leaving the
+    unclaimed queue. Two panels disagreeing about whether somebody is being
+    looked after is worse than either panel alone.
+
+    So assignment is one act with one definition, and it is here. An open
+    escalation on a buyer who now has an owner is claimed by that owner: the
+    queue means "waiting for a person to be found", and one has been.
+
+    It does **not** pause Liner. Only a rep pressing Take over does that, which
+    is a different decision -- a buyer whose question a human must answer still
+    wants the other nine answered meanwhile.
+    """
+    lead = _get(db, lead_id)
+    chosen = None
+    if body.user_id:
+        chosen = db.query(User).filter_by(id=body.user_id, active=True).one_or_none()
+        if chosen is None:
+            raise HTTPException(404, "User not found")
+
+    lead.assigned_user_id = chosen.id if chosen else None
+
+    claimed = 0
+    if chosen is not None:
+        threads = [
+            c.id for c in db.query(Conversation.id).filter(Conversation.lead_id == lead.id).all()
+        ]
+        for escalation in (
+            db.query(Escalation)
+            .filter(
+                Escalation.conversation_id.in_(threads or [""]),
+                Escalation.claimed_at.is_(None),
+            )
+            .all()
+        ):
+            escalation.claimed_by_user_id = chosen.id
+            escalation.claimed_at = utcnow()
+            claimed += 1
+    # Unassigning deliberately leaves claimed escalations claimed. Somebody
+    # really did pick that up, and taking the buyer off them later does not
+    # un-happen it -- reopening resolved work because an owner changed is how a
+    # queue starts lying in the other direction.
+
+    db.commit()
+    emit(db, "lead.assigned", {
+        "lead_id": lead.id,
+        "user_id": chosen.id if chosen else None,
+        "user_name": chosen.name if chosen else "",
+        "escalations_claimed": claimed,
+    })
+    return {**lead_out(lead, db), "escalations_claimed": claimed}
 
 
 @router.get("/{lead_id}/timeline")
