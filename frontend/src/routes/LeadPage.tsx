@@ -13,6 +13,7 @@ import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
 import { LeadComposers } from '../components/dashboard/LeadDrawer'
+import { AssignTo } from '../components/dashboard/AssignTo'
 
 /* One buyer, one page.
  *
@@ -146,6 +147,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
         recap={data.recap}
         team={team?.members ?? []}
         duplicates={dupes?.duplicates ?? []}
+        conversation={targetConvo}
       />
 
       <section className="flex min-w-0 flex-1 flex-col">
@@ -160,10 +162,15 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           onEmail={() => setEmailing(!emailing)}
         />
 
+        {/* All is the sum of the tabs beside it, not the number of rows below.
+            Counting rows put `All 20` next to `Email 1` and `Voice call 17`,
+            which do not add up and are not the same unit -- one is entries,
+            the other is now contacts. A strip whose parts do not sum to its
+            total is one a manager has to reverse-engineer. */}
         <ChannelStrip
           channels={data.channels}
           active={channel}
-          total={data.entries.length}
+          total={Object.values(data.channels).reduce((n, c) => n + c, 0)}
           onPick={setChannel}
         />
 
@@ -405,11 +412,13 @@ function LeadRail({
   recap,
   team,
   duplicates,
+  conversation,
 }: {
   lead: Lead | null
   recap: string
   team: TeamMember[]
   duplicates: Duplicate[]
+  conversation: Conversation | null | undefined
 }) {
   const contact: { icon: IconName; value: string; prov?: string }[] = [
     { icon: 'phone', value: lead?.phone || 'Not given', prov: lead?.phone ? 'caller_id' : undefined },
@@ -535,15 +544,36 @@ function LeadRail({
         </div>
       )}
 
-      <div className="border-b border-border p-5">
-        <div className="mb-2 text-xs font-medium text-muted-foreground">Assigned to</div>
-        <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
-          {assignee ? assignee.name : 'Unclaimed — in the pool'}
+      {/* Read-only until now, with a note saying an owner appears when an
+          appointment is assigned from the calendar. So the one screen where a
+          manager reads a buyer's whole history -- and forms the opinion about
+          who should take them -- was the one screen that could not act on it,
+          and a buyer who never booked could not be given to anybody at all.
+          The same control as the overview, because it is the same act: two
+          ways to assign is how one of them stops claiming the escalations. */}
+      {lead && (
+        <div className="border-b border-border p-5">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">Assigned to</div>
+          {/* Stacked, not side by side. The rail is 300px, and putting the
+              button next to the name squeezed it to "Unclaimed — in th…" --
+              which is the one word on this panel a manager is reading. */}
+          <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+            {assignee ? assignee.name : 'Unclaimed — in the pool'}
+          </div>
+          <div className="mt-2">
+            <AssignTo
+              leadId={lead.id}
+              assignedTo={assignee ?? lead.assigned_to}
+              conversationId={conversation?.id ?? null}
+              thread={`/app/leads/${lead.id}`}
+            />
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            Assigning gives them an owner and settles anything of theirs waiting for
+            one. Liner keeps replying unless you take the thread over.
+          </p>
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          Set when an appointment is assigned, from the calendar.
-        </p>
-      </div>
+      )}
     </aside>
   )
 }

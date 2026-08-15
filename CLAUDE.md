@@ -620,6 +620,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   actually used. There is no SMS provider in this system, so there is no SMS
   tab sitting permanently at zero — a tab that is always empty claims a
   capability that does not exist.
+  - **It counts conversations, not turns.** One eight-minute call with sixteen
+    transcript lines read `Voice call 17`, directly under a header saying
+    `1 thread`. Nobody reads that as lines of transcript — it says seventeen
+    phone calls to the manager deciding whether this buyer has been chased
+    enough. The unit is a time somebody made contact: one per conversation, one
+    per email. `All` is the sum of the tabs beside it, not the row count, so
+    the strip's parts add up to its total.
 - **One fact, one answer, wherever it is read.** The overview's queues were
   three unconnected facts about the same people; the same shape turned up in
   four more places once looked for, and each is a fact written in one row and

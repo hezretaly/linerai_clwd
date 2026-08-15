@@ -959,6 +959,30 @@ def main() -> int:
         check("each turn still says which channel it came from",
               all(e["channel"] in {"chat", "voice"}
                   for e in mixed["entries"] if e["kind"] == "message"))
+        # The strip counts conversations, not turns. It used to count entries,
+        # so one eight-minute call with sixteen transcript lines read
+        # `Voice call 17` -- directly under a header saying `1 thread`. Nobody
+        # reads that as lines of transcript; it says seventeen phone calls to
+        # the manager deciding whether this buyer has been chased enough.
+        threads = {}
+        for entry in mixed["entries"]:
+            if entry["kind"] in {"message", "call"} and entry["channel"]:
+                threads.setdefault(entry["channel"], set()).add(entry["conversation_id"])
+        for name, ids in threads.items():
+            check(f"the {name} tab counts conversations, not turns",
+                  mixed["channels"][name] == len(ids),
+                  f"says {mixed['channels'][name]}, has {len(ids)}")
+        spoken = [e for e in mixed["entries"] if e["channel"] == "voice"]
+        check("so a call with a transcript still counts as one call",
+              len(spoken) > mixed["channels"]["voice"],
+              f"{len(spoken)} voice entries, {mixed['channels']['voice']} on the tab")
+        # Each email is its own contact: there is no thread to fold them into,
+        # and two emails on one day are two times we wrote to somebody.
+        emails = [e for e in mixed["entries"] if e["channel"] == "email"]
+        if emails:
+            check("while every email counts on its own",
+                  mixed["channels"]["email"] == len(emails),
+                  f"{mixed['channels']['email']} vs {len(emails)}")
         # The captured fields have their own panel, where each one wears its
         # provenance. Prose cannot carry that, so restating them in the recap
         # turns an inferred guess into a flat assertion a rep repeats on the

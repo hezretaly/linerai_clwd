@@ -246,10 +246,36 @@ def channel_counts(entries: list[dict]) -> dict[str, int]:
 
     Never a fixed list of channels. SMS has no provider in this system, and a
     tab that is always empty claims a capability that does not exist.
+
+    **It counts conversations, not turns.** This used to count entries, so a
+    single eight-minute call with sixteen transcript lines read `Voice call 17`
+    -- directly under a header saying `1 thread`. Nobody reads that number as
+    "lines of transcript"; it says seventeen phone calls, and a manager
+    deciding who to ring next is reading it as how much this buyer has already
+    been through.
+
+    One per conversation, then, and one per email -- the unit is a time
+    somebody made contact, which is what the label already implies. The rows
+    the tab then shows are the detail inside those contacts, and there are
+    naturally more of them.
     """
     counts: dict[str, int] = {}
+    threads: dict[str, set[str | None]] = {}
     for entry in entries:
         channel = entry.get("channel") or ""
-        if channel:
+        if not channel:
+            # Appointments and escalations happened regardless of where they
+            # were arranged, so they belong to no channel and no tab.
+            continue
+        # Each email is its own contact -- there is no thread to fold them
+        # into, and two emails on one day are two times we wrote to somebody.
+        if entry.get("kind") == "outreach":
             counts[channel] = counts.get(channel, 0) + 1
+            continue
+        thread = entry.get("conversation_id")
+        seen = threads.setdefault(channel, set())
+        if thread in seen:
+            continue
+        seen.add(thread)
+        counts[channel] = counts.get(channel, 0) + 1
     return counts
