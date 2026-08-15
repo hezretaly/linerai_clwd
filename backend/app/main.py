@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
         auth,
         chat,
         conversations,
+        demo,
         health,
         inbound_email,
         ingest,
@@ -119,6 +120,7 @@ def create_app() -> FastAPI:
         voice.router,
         team.router,
         settings_api.router,
+        demo.router,
     ):
         app.include_router(router, prefix="/api")
 

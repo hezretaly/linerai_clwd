@@ -711,6 +711,80 @@ def main() -> int:
     check("and they are back on the roster when they return",
           any(m["id"] == leaver["id"] for m in call("GET", "/api/team")["members"]))
 
+    print("\n== the marketing site books a demo ==")
+    stamp = secrets.token_hex(4)
+    # The page's own back end. Its customer is a dealership rather than a car
+    # buyer, which is why it has its own table: putting prospects into `leads`
+    # would put strangers in the list a rep works from.
+    offer = call("GET", "/api/demo/slots")
+    check("the site offers times somebody can really book",
+          bool(offer["days"]) and all(d["slots"] for d in offer["days"]),
+          f"{len(offer['days'])} days")
+    check("and names the timezone they are in",
+          bool(offer["timezone"]), offer["timezone"])
+    # The wording comes from the server so the checkbox and the row it writes
+    # cannot disagree about what somebody agreed to.
+    check("with the consent wording served, not hardcoded in the page",
+          "Reply STOP to opt out" in offer["consent_text"], offer["consent_text"][:50])
+
+    first = offer["days"][0]
+    when = f"{first['date']}T{first['slots'][0]}"
+    payload = {
+        "name": "Smoke Prospect", "dealership": "Test Motors",
+        "email": f"prospect.{stamp}@example.invalid", "phone": "319-555-0111",
+        "dealership_url": "https://testmotors.example", "slot": when, "consent": True,
+    }
+    booked_demo = call("POST", "/api/demo/requests", payload)
+    check("a demo can be booked from the page", booked_demo["kind"] == "demo",
+          str(booked_demo)[:70])
+    check("and it answers with a person to reply to",
+          "@" in (booked_demo.get("reply_to") or ""), str(booked_demo.get("reply_to")))
+    # Re-decided at submit, not at render: the form sits on screen while
+    # somebody types their details, so "still open" a minute ago is not an
+    # answer. Same rule book_appointment follows for a buyer.
+    check("the same time cannot be taken twice",
+          status_of("POST", "/api/demo/requests", payload)[0] == 409)
+    check("and it stops being offered",
+          when.split("T")[1] not in
+          next((d["slots"] for d in call("GET", "/api/demo/slots")["days"]
+                if d["date"] == first["date"]), []),
+          f"{when} still on offer")
+
+    # The tick is the record. Without it the row could not say whether anyone
+    # agreed to be contacted, which is the only thing that row is for.
+    check("a booking with no consent is refused",
+          status_of("POST", "/api/demo/requests", {**payload, "consent": False,
+                                                   "slot": None})[0] == 400)
+    check("and so is one with no way to reach them",
+          status_of("POST", "/api/demo/requests",
+                    {"name": "No Contact", "consent": True})[0] == 400)
+
+    # Support has no slot, and that is the only difference.
+    helped = call("POST", "/api/demo/requests", {
+        "name": "Curious GM", "email": f"gm.{stamp}@example.invalid",
+        "message": "Does this work with two rooftops?", "consent": True,
+    })
+    check("a support message needs no calendar", helped["kind"] == "support",
+          str(helped)[:60])
+    # Names and phone numbers like any other row here.
+    check("but reading them back takes a dealer session",
+          anonymous_status("/api/demo/requests") == 401)
+    mine = call("GET", "/api/demo/requests")["requests"]
+    check("and a rep can see what the page took",
+          any(r["email"] == payload["email"] for r in mine), f"{len(mine)} requests")
+    check("with the moment they consented on the row",
+          all(r["consented_at"] for r in mine if r["email"] == payload["email"]))
+    # Given back, like every other slot this script takes. The demo calendar
+    # rolls forward so this one would heal on its own, but a run that leaves
+    # bookings behind is the habit that cost thirty-six stranded appointments.
+    released = call("POST", f"/api/demo/requests/{booked_demo['id']}/cancel")
+    check("and cancelling gives the time back to the page",
+          released["cancelled"] is True
+          and when.split("T")[1] in next(
+              (d["slots"] for d in call("GET", "/api/demo/slots")["days"]
+               if d["date"] == first["date"]), []),
+          when)
+
     print("\n== the charts answer for a chosen window ==")
     for key, expect in (("today", "Today"), ("yesterday", "Yesterday"),
                         ("week", "Last 7"), ("month", "Last 30")):

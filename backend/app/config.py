@@ -77,6 +77,19 @@ class Settings(BaseSettings):
     # and it should be a specific person's view.
     public_demo_email: str = ""
 
+    # --- The marketing site ------------------------------------------------
+    # Where a visitor writes for help, and where they write when they want a
+    # person. Two addresses on purpose: the footer offers support@, and the
+    # support form answers with founder@, because somebody who has taken the
+    # trouble to write in should reach a person rather than a queue.
+    support_email: str = "support@linerai.us"
+    founder_email: str = "founder@linerai.us"
+    # When a demo can be booked into, local to the timezone named below.
+    # Weekdays only; the endpoint removes anything already taken.
+    demo_hours: str = "10,11,13,14,15,16"
+    demo_days_ahead: int = 14
+    demo_timezone: str = "US/Central"
+
     # --- Email -------------------------------------------------------------
     # outbox  : records a real outreach row, renders in the dev outbox, sends nothing
     # console : prints to stdout (used by scripts)

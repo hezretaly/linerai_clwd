@@ -773,6 +773,102 @@
     .qual-panel-title{ font-size: 19px; }
     .avatar-caption{ font-size: 16px; }
   }
+
+  /* ---------- Booking sheet + support form ----------
+     Embedded, not a page of its own. Somebody who has read this far has the
+     argument in their head; sending them to a fresh URL asks them to hold it
+     while the page reloads, and the fastest way to lose a booking is to make
+     it feel like paperwork. */
+  .nav-try{
+    display:inline-flex; align-items:center; gap:6px;
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border-strong); color: var(--ink);
+  }
+  .nav-try:hover{ background: var(--paper); }
+  .handoff-caption{
+    margin-top: 18px; font-size: 14px; line-height: 1.6; color: var(--muted);
+    max-width: 46ch;
+  }
+  .sheet-backdrop{
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.45); backdrop-filter: blur(3px);
+    display: none; align-items: center; justify-content: center; padding: 20px;
+    opacity: 0; transition: opacity .18s ease;
+  }
+  .sheet-backdrop.is-open{ display:flex; opacity: 1; }
+  .sheet{
+    width: 100%; max-width: 560px; max-height: min(88vh, 780px); overflow-y: auto;
+    background: var(--white); border-radius: 24px; padding: 28px;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.45);
+    transform: translateY(10px); transition: transform .2s ease;
+  }
+  .sheet-backdrop.is-open .sheet{ transform: none; }
+  .sheet-head{ display:flex; align-items:flex-start; gap: 12px; margin-bottom: 18px; }
+  .sheet-title{ font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .sheet-sub{ margin-top: 4px; font-size: 14px; color: var(--muted); }
+  .sheet-close{
+    margin-left:auto; width: 32px; height: 32px; border-radius: 50%;
+    display:flex; align-items:center; justify-content:center;
+    background: var(--paper); color: var(--muted); font-size: 17px; flex-shrink:0;
+  }
+  .sheet-close:hover{ background: var(--paper-2); color: var(--ink); }
+  .sheet-steps{ display:flex; gap: 6px; margin-bottom: 18px; }
+  .sheet-step{ flex:1; height: 3px; border-radius: 2px; background: var(--paper-2); }
+  .sheet-step.is-on{ background: var(--blue); }
+  .day-row{ display:flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 14px; }
+  .day-chip{
+    flex: 0 0 auto; padding: 10px 14px; border-radius: 14px;
+    border: 1px solid var(--border-strong); font-size: 14px; font-weight: 600;
+    white-space: nowrap; background: var(--white);
+  }
+  .day-chip.is-on{ background: var(--ink); color: var(--white); border-color: var(--ink); }
+  .slot-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(96px,1fr)); gap: 8px; }
+  .slot-chip{
+    padding: 12px 8px; border-radius: 14px; border: 1px solid var(--border-strong);
+    font-size: 14px; font-weight: 600; background: var(--white);
+  }
+  .slot-chip:hover{ border-color: var(--blue); color: var(--blue); }
+  .slot-chip.is-on{ background: var(--blue); color: var(--white); border-color: var(--blue); }
+  .sheet-tz{ margin-top: 14px; font-size: 12px; color: var(--muted-2); }
+  .field-row{ display:grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 520px){ .field-row{ grid-template-columns: 1fr; } }
+  .field label{ display:block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
+  .field input, .field textarea{
+    width: 100%; font: inherit; font-size: 15px; padding: 11px 13px;
+    border: 1px solid var(--border-strong); border-radius: 12px; background: var(--white);
+    color: var(--ink);
+  }
+  .field input:focus, .field textarea:focus{ outline: 2px solid var(--blue); outline-offset: -1px; }
+  .field + .field, .field-row + .field, .field + .field-row{ margin-top: 12px; }
+  .consent{
+    display:flex; gap: 10px; align-items:flex-start; margin-top: 16px;
+    font-size: 12.5px; line-height: 1.55; color: var(--muted);
+  }
+  .consent input{ margin-top: 2px; width: 16px; height: 16px; flex-shrink: 0; }
+  .sheet-actions{ display:flex; gap: 10px; align-items:center; margin-top: 20px; }
+  .sheet-back{ font-size: 14px; font-weight: 600; color: var(--muted); background: none; border: none; padding: 0; }
+  .sheet-back:hover{ color: var(--ink); }
+  .sheet-submit{
+    margin-left:auto; font-size: 15px; font-weight: 600; padding: 13px 24px;
+    border-radius: 22px; background: var(--blue); color: var(--white);
+  }
+  .sheet-submit:hover{ background: var(--blue-hover); }
+  .sheet-submit[disabled]{ opacity: .5; cursor: not-allowed; }
+  .sheet-error{ margin-top: 12px; font-size: 13.5px; color: var(--red); }
+  .sheet-done{ text-align:center; padding: 12px 0 4px; }
+  .sheet-done .tick{
+    width: 54px; height: 54px; border-radius: 50%; background: var(--green);
+    color: var(--white); font-size: 26px; display:flex; align-items:center;
+    justify-content:center; margin: 0 auto 16px;
+  }
+  .support-grid{ display:grid; gap: 28px; grid-template-columns: 1fr 1fr; align-items:start; }
+  @media (max-width: 860px){ .support-grid{ grid-template-columns: 1fr; } }
+  .support-card{
+    background: var(--white); border: 1px solid var(--border); border-radius: 20px; padding: 26px;
+  }
+  .support-line{ font-size: 15px; line-height: 1.7; color: var(--muted); }
+  .support-line a{ color: var(--blue); font-weight: 600; }
+
 </style>
 </head>
 <body>
@@ -786,8 +882,10 @@
       <a href="#inventory">How it works</a>
       <a href="#numbers">Results</a>
       <a href="#faq">FAQ</a>
+      <a href="#support">Support</a>
+      <a class="nav-try" href="/chat">Test the chat</a>
     </div>
-    <a class="nav-cta" href="#contact">Book demo</a>
+    <a class="nav-cta" href="#" data-demo>Book demo</a>
   </div>
 </nav>
 
@@ -819,7 +917,7 @@
     </div>
 
     <div class="hero-ctas" style="margin-top:40px;">
-      <a class="btn-primary" href="#contact">
+      <a class="btn-primary" href="#" data-demo>
         Book a 15-min demo
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </a>
@@ -1017,9 +1115,10 @@
         <div class="handoff-note">Handoff trigger detected</div>
         <div class="handoff-rail">
           <div class="handoff-line"><div class="handoff-baton" style="animation-delay:1.1s;"></div></div>
-          <div class="rail-msg is-ai" id="railMsg2">"Sure — please provide your zip code so I can calculate your tax rate."</div>
+          <div class="rail-msg is-ai" id="railMsg2">"That's a real numbers conversation — can I get your best number and an email? A rep will call you with the full out-the-door figure."</div>
         </div>
         <div class="handoff-node"><div class="handoff-avatar human">JR</div><span>Your sales rep</span></div>
+        <div class="handoff-caption">A handoff with no way to reach the buyer is a lost lead. Liner takes the number and the email <em>before</em> it steps aside — your rep opens the thread with the contact details already in it.</div>
       </div>
 
       <div class="trigger-tags reveal reveal-right" id="triggerTags">
@@ -1145,13 +1244,18 @@
 
     <div class="math-box reveal reveal-scale">
       <div>
-        <div class="math-headline">Recover 2 leads a month</div>
+        <div class="math-headline">Where the month actually pays for itself</div>
+        <!-- Conversations to appointments to *one* sale. The old version of
+             this chain went "2 leads recovered -> 2 extra sales", which quietly
+             claims a 100% close rate on recovered leads and is the first thing
+             a GM would argue with. The honest version is stronger anyway,
+             because it only needs to be right once. -->
         <div class="math-chain">
-          <div class="chain-step"><span class="chain-k">2</span><span class="chain-v">leads recovered</span></div>
+          <div class="chain-step"><span class="chain-k">↺</span><span class="chain-v">Answer the conversations you miss after hours</span></div>
           <div class="chain-arrow">↓</div>
-          <div class="chain-step"><span class="chain-k">2</span><span class="chain-v">extra sales</span></div>
+          <div class="chain-step"><span class="chain-k">＋</span><span class="chain-v">More qualified appointments on the board</span></div>
           <div class="chain-arrow">↓</div>
-          <div class="chain-step is-result"><span class="chain-k">$4,400</span><span class="chain-v">gross profit *</span></div>
+          <div class="chain-step is-result"><span class="chain-k">1</span><span class="chain-v">additional sale covers Liner for the month *</span></div>
       </div>
         <div class="scale-visual">
           <div class="scale-col is-cost">
@@ -1159,20 +1263,22 @@
             <div class="scale-bar cost"></div>
           </div>
           <div class="scale-col is-profit">
-            <div class="scale-amount">$4,400</div>
+            <div class="scale-amount">$2,200</div>
             <div class="scale-bar profit"></div>
           </div>
       </div>
         <div class="scale-captions">
-          <div class="scale-caption">What it costs</div>
-          <div class="scale-caption">What it returns</div>
+          <div class="scale-caption">Liner, per month</div>
+          <div class="scale-caption">One average deal</div>
       </div>
       </div>
       <div class="math-copy">
         <span class="brand">Liner AI</span> is <strong>$2,000/mo flat</strong>. You keep everything else.<br><br>
-        You spend $20K+ acquiring leads. <strong>$2K to stop losing them</strong> is the highest ROI move for your lot.
+        We are not going to tell you every recovered conversation becomes a sale — you know it doesn't.
+        The bar is lower than that: <strong>one</strong> deal you would otherwise have missed, and the month is paid for.
+        Everything after it is yours.
       </div>
-      <div class="math-footnote">* National average for a car deal is $2,200 gross profit.</div>
+      <div class="math-footnote">* National average gross on a used car deal is about $2,200. Your close rate on recovered conversations is yours, not ours to claim.</div>
     </div>
   </div>
 </section>
@@ -1261,7 +1367,7 @@
     <h2 class="reveal">Give your closers better customers with <span class="brand">Liner AI</span>.</h2>
     <p class="cta-sub reveal">Every conversation qualified. Every handoff prepared.</p>
     <p class="cta-line reveal">Claim your free 30-day trial — you have nothing to lose.</p>
-    <a class="btn-primary reveal" href="#">
+    <a class="btn-primary reveal" href="#" data-demo>
       Get Started
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
     </a>
@@ -1311,6 +1417,150 @@
   </div>
 </section>
 
+
+<!-- SUPPORT -->
+<section id="support" class="paper">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="eyebrow">Support</div>
+      <h2>Talk to a person.</h2>
+    </div>
+
+    <div class="support-grid">
+      <div class="support-card reveal reveal-left">
+        <div class="sheet-title" style="font-size:19px;">Write to us</div>
+        <p class="support-line" style="margin-top:8px;">
+          Anything at all — a question before you book, something not working, or a bill.
+          We answer from a real inbox, not a ticket queue.
+        </p>
+        <div style="margin-top:18px;">
+          <button class="btn-primary" style="padding:13px 24px; font-size:15px;" data-support>
+            Send us a message
+          </button>
+        </div>
+        <p class="support-line" style="margin-top:16px; font-size:13.5px;">
+          Or email <a href="mailto:support@linerai.us">support@linerai.us</a> directly.
+        </p>
+      </div>
+
+      <div class="support-card reveal reveal-right">
+        <div class="sheet-title" style="font-size:19px;">Already running Liner?</div>
+        <p class="support-line" style="margin-top:8px;">
+          Your dashboard is the fastest way to see what happened on any conversation —
+          every message, every call recording, every handoff, in the order it happened.
+        </p>
+        <p class="support-line" style="margin-top:14px;">
+          <a href="/chat">Test the chat</a> the way a buyer sees it, any time.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- BOOKING / SUPPORT SHEET
+     Two steps, in that order, on purpose. Asking for a name and a phone
+     number first is asking somebody to pay before they know what they are
+     getting; picking a time first is a small commitment they have already
+     made by the time the fields appear, and it is the step they can do
+     without thinking. -->
+<div class="sheet-backdrop" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <div class="sheet-title" id="sheetTitle">Book a 15-minute demo</div>
+        <div class="sheet-sub" id="sheetSub">Pick a time that suits you.</div>
+      </div>
+      <button class="sheet-close" id="sheetClose" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="sheet-steps" id="sheetSteps">
+      <div class="sheet-step is-on"></div>
+      <div class="sheet-step"></div>
+    </div>
+
+    <!-- Step 1: when -->
+    <div id="stepWhen">
+      <div class="day-row" id="dayRow"></div>
+      <div class="slot-grid" id="slotGrid"></div>
+      <div class="sheet-tz" id="sheetTz"></div>
+      <div class="sheet-error" id="whenError" hidden></div>
+    </div>
+
+    <!-- Step 2: who -->
+    <form id="stepWho" hidden autocomplete="on">
+      <div class="field">
+        <label for="fName">Full name</label>
+        <input id="fName" name="name" autocomplete="name" required>
+      </div>
+      <div class="field">
+        <label for="fDealership">Dealership name</label>
+        <input id="fDealership" name="organization" autocomplete="organization" required>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="fEmail">Email</label>
+          <input id="fEmail" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div class="field">
+          <label for="fPhone">Phone</label>
+          <input id="fPhone" name="tel" type="tel" autocomplete="tel" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="fUrl">Dealership website</label>
+        <input id="fUrl" name="url" type="url" placeholder="https://" autocomplete="url">
+      </div>
+
+      <label class="consent">
+        <input type="checkbox" id="fConsent">
+        <span id="consentText">By submitting, you agree that Liner AI may contact you by phone, text, and email about your demo. Consent isn't required to purchase. Reply STOP to opt out.</span>
+      </label>
+
+      <div class="sheet-error" id="whoError" hidden></div>
+
+      <div class="sheet-actions">
+        <button type="button" class="sheet-back" id="sheetBack">&larr; Change the time</button>
+        <button type="submit" class="sheet-submit" id="sheetSubmit">Book the demo</button>
+      </div>
+    </form>
+
+    <!-- Support: the same sheet with no calendar in front of it -->
+    <form id="stepSupport" hidden autocomplete="on">
+      <div class="field-row">
+        <div class="field">
+          <label for="sName">Your name</label>
+          <input id="sName" autocomplete="name" required>
+        </div>
+        <div class="field">
+          <label for="sEmail">Email</label>
+          <input id="sEmail" type="email" autocomplete="email" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="sMessage">What can we help with?</label>
+        <textarea id="sMessage" rows="4" required></textarea>
+      </div>
+      <label class="consent">
+        <input type="checkbox" id="sConsent">
+        <span>By submitting, you agree that Liner AI may contact you by phone, text, and email about your demo. Consent isn't required to purchase. Reply STOP to opt out.</span>
+      </label>
+      <div class="sheet-error" id="supportError" hidden></div>
+      <div class="sheet-actions">
+        <button type="submit" class="sheet-submit" id="supportSubmit">Send</button>
+      </div>
+    </form>
+
+    <div id="stepDone" hidden>
+      <div class="sheet-done">
+        <div class="tick">&check;</div>
+        <div class="sheet-title" id="doneTitle">You're booked.</div>
+        <p class="support-line" id="doneBody" style="margin-top:10px;"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer>
   <div class="wrap">
     <div>
@@ -1323,8 +1573,13 @@
       <a href="#inventory">How it works</a>
       <a href="#numbers">Results</a>
       <a href="#faq">FAQ</a>
+      <a href="#support">Support</a>
+      <a href="/chat">Test the chat</a>
     </div>
-    <div class="footer-note">© 2026 Liner AI</div>
+    <div class="footer-note">
+      Contact <a href="mailto:support@linerai.us" style="color:var(--blue); font-weight:600;">support@linerai.us</a><br>
+      © 2026 Liner AI
+    </div>
   </div>
 </footer>
 
@@ -1342,11 +1597,16 @@
   /* ---------- hero chat loop ---------- */
   const conversationScript = [
     { sender: 'them', text: 'Hi! Is the 2021 GMC Yukon XL still available?' },
-    { sender: 'us', text: "Hi Mike! Yes, it's on the lot right now. Clean title, 3rd row, 34k miles." },
+    { sender: 'us', text: "Hi! Yes, it's on the lot right now. Clean title, 3rd row, 34k miles." },
     { sender: 'them', text: 'Great! Can I come check it out tomorrow evening?' },
-    { sender: 'us', text: "Absolutely! I have 5:30 PM or 6:15 PM open. Which works best for you?" },
+    { sender: 'us', text: "Absolutely \u2014 I have 5:30 PM or 6:15 PM open. Which works best for you?" },
     { sender: 'them', text: '6:15 PM works great for me.' },
-    { sender: 'us', text: "Perfect! I've reserved the 6:15 PM slot for you. Our sales rep Mike will reach out with a confirmation shortly." }
+    // The whole job, in one line. Everything above is a nice conversation; a
+    // conversation with no way to reach the person afterwards is a lost lead,
+    // not a handoff -- so the hero shows the ask rather than implying it.
+    { sender: 'us', text: "Great \u2014 can I get your best phone number and an email? A sales rep will reach out to confirm." },
+    { sender: 'them', text: 'Sure: 319-555-0142, mike.d@example.com' },
+    { sender: 'us', text: "Got it. 6:15 PM tomorrow is held for you, and your rep has the details." }
   ];
   let currentMsgIndex = 0;
   const chatBody = document.getElementById('chatBody');
@@ -1835,6 +2095,212 @@
     const openItem = document.querySelector('.faq-item.open .faq-a');
     if(openItem) openItem.style.maxHeight = openItem.scrollHeight + 'px';
   });
+
+  /* ---------- booking + support sheet ----------
+   *
+   * Talks to the real endpoints. /api/demo/slots only ever returns times that
+   * are genuinely free, and the clash is re-decided at submit rather than at
+   * render -- this form sits on screen while somebody types their details, so
+   * "still open" a minute ago is not an answer. Same rule the buyer-facing
+   * booking card follows.
+   */
+  const sheet = document.getElementById('sheet');
+  const stepWhen = document.getElementById('stepWhen');
+  const stepWho = document.getElementById('stepWho');
+  const stepSupport = document.getElementById('stepSupport');
+  const stepDone = document.getElementById('stepDone');
+  const sheetSteps = document.getElementById('sheetSteps');
+  let picked = null;      // "2026-08-20T14:00"
+  let chosenLabel = '';
+  let slotDays = [];
+
+  function showStep(which){
+    stepWhen.hidden = which !== 'when';
+    stepWho.hidden = which !== 'who';
+    stepSupport.hidden = which !== 'support';
+    stepDone.hidden = which !== 'done';
+    sheetSteps.hidden = which === 'support' || which === 'done';
+    const dots = sheetSteps.querySelectorAll('.sheet-step');
+    dots[0].classList.toggle('is-on', true);
+    dots[1].classList.toggle('is-on', which === 'who');
+    document.getElementById('sheetSub').textContent =
+      which === 'when' ? 'Pick a time that suits you.'
+      // Their choice, still on screen while they type. Replacing it with a
+      // step label means the last thing they see before handing over a phone
+      // number is not the thing they are handing it over for.
+      : which === 'who' ? (chosenLabel || 'Where should we reach you?')
+      : which === 'support' ? 'We read every one of these.'
+      : '';
+  }
+
+  function openSheet(kind){
+    document.getElementById('sheetTitle').textContent =
+      kind === 'support' ? 'Send us a message' : 'Book a 15-minute demo';
+    sheet.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+    if(kind === 'support'){ showStep('support'); return; }
+    showStep('when');
+    loadSlots();
+  }
+
+  function closeSheet(){
+    sheet.classList.remove('is-open');
+    document.body.style.overflow = '';
+    picked = null;
+  }
+
+  async function loadSlots(){
+    const grid = document.getElementById('slotGrid');
+    const row = document.getElementById('dayRow');
+    row.innerHTML = ''; grid.innerHTML = '<div class="sheet-tz">Loading times…</div>';
+    try{
+      const res = await fetch('/api/demo/slots');
+      const data = await res.json();
+      slotDays = data.days || [];
+      document.getElementById('sheetTz').textContent =
+        slotDays.length ? 'Times shown in ' + data.timezone + '. A demo runs about 15 minutes.' : '';
+      if(data.consent_text){
+        // The wording comes from the server, so the checkbox and the row it
+        // writes can never disagree about what somebody agreed to.
+        document.getElementById('consentText').textContent = data.consent_text;
+      }
+      if(!slotDays.length){
+        grid.innerHTML = '<div class="sheet-tz">No times are open right now. Email support@linerai.us and we will find one.</div>';
+        return;
+      }
+      slotDays.forEach((day, i) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'day-chip' + (i === 0 ? ' is-on' : '');
+        chip.textContent = day.label;
+        chip.onclick = () => {
+          row.querySelectorAll('.day-chip').forEach(c => c.classList.remove('is-on'));
+          chip.classList.add('is-on');
+          renderSlots(day);
+        };
+        row.appendChild(chip);
+      });
+      renderSlots(slotDays[0]);
+    }catch(err){
+      grid.innerHTML = '<div class="sheet-error">Could not load times. Email support@linerai.us and we will book you in.</div>';
+    }
+  }
+
+  function renderSlots(day){
+    const grid = document.getElementById('slotGrid');
+    grid.innerHTML = '';
+    day.slots.forEach(time => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'slot-chip';
+      chip.textContent = prettyTime(time);
+      chip.onclick = () => {
+        picked = day.date + 'T' + time;
+        chosenLabel = day.label + ' at ' + prettyTime(time) + ' \u2014 last step';
+        showStep('who');
+      };
+      grid.appendChild(chip);
+    });
+  }
+
+  function prettyTime(hhmm){
+    const [h, m] = hhmm.split(':').map(Number);
+    const suffix = h < 12 ? 'AM' : 'PM';
+    return ((h % 12) || 12) + ':' + String(m).padStart(2, '0') + ' ' + suffix;
+  }
+
+  function fail(id, message){
+    const box = document.getElementById(id);
+    box.textContent = message;
+    box.hidden = false;
+  }
+
+  document.querySelectorAll('[data-demo]').forEach(el => {
+    el.addEventListener('click', (e) => { e.preventDefault(); openSheet('demo'); });
+  });
+  document.querySelectorAll('[data-support]').forEach(el => {
+    el.addEventListener('click', (e) => { e.preventDefault(); openSheet('support'); });
+  });
+  document.getElementById('sheetClose').onclick = closeSheet;
+  document.getElementById('sheetBack').onclick = () => showStep('when');
+  sheet.addEventListener('click', (e) => { if(e.target === sheet) closeSheet(); });
+  document.addEventListener('keydown', (e) => {
+    if(e.key === 'Escape' && sheet.classList.contains('is-open')) closeSheet();
+  });
+
+  async function send(payload, errorBox, button){
+    button.disabled = true;
+    document.getElementById(errorBox).hidden = true;
+    try{
+      const res = await fetch('/api/demo/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if(!res.ok){
+        fail(errorBox, data.detail || 'Something went wrong. Try again?');
+        // The time went while they were typing. Send them back to pick again
+        // rather than leaving a form that cannot be submitted.
+        if(res.status === 409){ picked = null; loadSlots(); showStep('when'); }
+        return null;
+      }
+      return data;
+    }catch(err){
+      fail(errorBox, 'Could not reach us. Email support@linerai.us and we will sort it out.');
+      return null;
+    }finally{
+      button.disabled = false;
+    }
+  }
+
+  stepWho.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if(!document.getElementById('fConsent').checked){
+      fail('whoError', 'Please tick the box so we know we may contact you.');
+      return;
+    }
+    const data = await send({
+      name: document.getElementById('fName').value,
+      dealership: document.getElementById('fDealership').value,
+      email: document.getElementById('fEmail').value,
+      phone: document.getElementById('fPhone').value,
+      dealership_url: document.getElementById('fUrl').value,
+      slot: picked,
+      consent: true,
+    }, 'whoError', document.getElementById('sheetSubmit'));
+    if(!data) return;
+    document.getElementById('doneTitle').textContent = "You're booked.";
+    document.getElementById('doneBody').innerHTML =
+      'We will call you at the time you picked. If anything changes, reply to the ' +
+      'confirmation or write to <a href="mailto:' + data.reply_to + '">' + data.reply_to + '</a> — ' +
+      'that reaches a person, not a queue.';
+    showStep('done');
+  });
+
+  stepSupport.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if(!document.getElementById('sConsent').checked){
+      fail('supportError', 'Please tick the box so we know we may reply.');
+      return;
+    }
+    const data = await send({
+      name: document.getElementById('sName').value,
+      email: document.getElementById('sEmail').value,
+      message: document.getElementById('sMessage').value,
+      consent: true,
+    }, 'supportError', document.getElementById('supportSubmit'));
+    if(!data) return;
+    document.getElementById('doneTitle').textContent = 'Message received.';
+    // The personal address, and only here. It is offered to somebody who has
+    // already taken the trouble to write, which is exactly who should get a
+    // person rather than a shared inbox.
+    document.getElementById('doneBody').innerHTML =
+      'We will come back to you shortly. If it is urgent, write straight to ' +
+      '<a href="mailto:' + data.reply_to + '">' + data.reply_to + '</a> and it lands with the founder.';
+    showStep('done');
+  });
+
 </script>
 
 </body>

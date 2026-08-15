@@ -588,6 +588,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   dealership makes, not a side effect of configuring the chat agent. The key
   itself is shared — `VOICE_PROVIDER_KEY` exists only to bill voice to a
   different project, and asking for the same secret twice is how the two drift.
+- **The marketing site has its own back end, and its own table.** `/api/demo`
+  serves the booking sheet on `landing.html`. Its customer is a dealership
+  buying Liner, not a buyer buying a car, so a `DemoRequest` is not a `Lead` —
+  folding them together would put prospects into the list a rep works from,
+  which is the one list here that has to mean exactly one thing.
+  - **The consent wording is served, not hardcoded in the page, and stored on
+    the row.** A boolean records that a box was ticked; the timestamp plus the
+    exact text records what somebody agreed to, at a moment. The page will be
+    edited one day, and a consent record pointing at whatever it says *now* is
+    not a record of what they agreed to *then*.
+  - **The slot is re-decided at submit.** The sheet sits on screen while
+    somebody types their details, so "still open" a minute ago is not an
+    answer — the same reason `book_appointment` re-checks a clash. A 409 sends
+    them back to pick again rather than leaving a form that cannot be sent.
+  - **Two addresses on purpose.** The footer offers `support@`; the reply after
+    somebody actually writes in offers `founder@`. Someone who has taken the
+    trouble to write should reach a person rather than a queue.
 - **`PUBLIC_DEMO` opens the dashboard to anybody, as a rep, and it is off.**
   The point of a demo is being able to send someone a link, and the point of
   this setting is that it is the one line in `.env` that hands a stranger a
