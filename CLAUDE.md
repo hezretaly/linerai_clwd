@@ -26,6 +26,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
 | `make accept` | One buyer end to end: web form → chat → call → email → book → reschedule → cancel → rebook → handover |
+| `make accept-ui` | The same path through the screens — buyer window and dealer window, real clicks |
 | `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
 | `make agent-ping` | **Debugging live mode.** One real call, the vendor's error printed in full |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
@@ -61,6 +62,13 @@ retaken, then a rep taking over and handing back. That is the failure the
 dashboard was reorganised to prevent and the one no per-feature test can catch,
 because every step passes in isolation. It gives its slots back in a `finally`
 like smoke does, and a failure names the step number a person was on.
+
+`make accept-ui` runs that path again through the browser, in two contexts —
+the buyer's window has no dealer cookie, which is the only honest way to drive
+`/chat`. It asserts what is *rendered*, because a page can be wired to a
+correct endpoint and still show the wrong thing: that is how the closed-thread
+bug below was found, with the API perfectly right and the screen telling a rep
+the conversation was over.
 
 `scripts/e2e_booking.py` goes further: two browser windows, buyer on the left
 tapping chips, dashboard on the right, asserting the KPI moves with no reload.
@@ -170,6 +178,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   master/detail and calendar is an agenda. Admin pages just have to not
   overflow. `make shots` discovers a real buyer page rather than listing one,
   because it is the screen most likely to overflow and the one a rep reads.
+- **Booking does not close the thread.** It used to: the stage reached `booked`
+  and the turn ended the conversation. But a buyer who has just booked very
+  often keeps going — financing, a trade, a second car — so Liner went on
+  answering while the dashboard said *"every thread here is closed"* and
+  offered the rep no composer and no Take over. The one person who could have
+  helped had no way in, and the buyer could not tell. The buyer ends it, via
+  `close_conversation`, and `record_buyer_message` reopens a closed chat that
+  somebody types into again — chat only, because a voice call that ended really
+  did end and its `ended_at` is how long it ran.
 - **Escalating notifies a rep; it does not gag Liner.** Only a rep pressing
   Take over sets `agent_paused`. Stopping on escalation meant a buyer who asked
   one question a human had to answer got "someone is picking this up" to

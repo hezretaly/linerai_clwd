@@ -56,6 +56,22 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
 def record_buyer_message(
     db: Session, convo: Conversation, text: str, rail_id: str | None = None
 ) -> Message:
+    # A buyer typing into a closed thread has reopened it, whatever closed it.
+    #
+    # Booking closes a chat -- the stage reaches `booked` and the turn below
+    # ends it -- but a buyer who has just booked very often keeps going, about
+    # financing or a trade or a second car. Liner answered them, correctly, and
+    # the dashboard meanwhile said "every thread here is closed" and offered a
+    # rep no way to reply or take over: the buyer was in a live conversation
+    # that the people who own it could not see a way into.
+    #
+    # Chat only. A voice call that ended really did end, and its `ended_at` is
+    # how long it ran -- clearing that on a late transcript line would lose the
+    # call's length.
+    if convo.channel == "chat" and convo.status == "closed":
+        convo.status = "active"
+        convo.ended_at = None
+
     message = Message(
         conversation_id=convo.id, role="buyer", content=text.strip(), via_rail_id=rail_id
     )
@@ -142,9 +158,19 @@ def record_assistant_message(
     )
     db.add(message)
 
-    if convo.stage == "booked":
-        convo.status = "closed"
-        convo.ended_at = utcnow()
+    # Booking is not the buyer leaving, so it does not close the thread.
+    #
+    # It used to. A buyer who booked and then kept going -- about financing, a
+    # trade, a second car, which is extremely common -- was in a live
+    # conversation Liner went on answering, while the dashboard told the rep
+    # "every thread here is closed" and offered no composer and no Take over.
+    # The one person who could have helped had no way in, and the buyer could
+    # not tell.
+    #
+    # The buyer ends it, via `close_conversation`, which is the rule everywhere
+    # else here. `record_buyer_message` also reopens a closed chat that somebody
+    # types into again, so a thread that really did end and is revisited comes
+    # back rather than being answered from behind a locked door.
     # close_conversation runs during this same turn and writes a real summary.
     # Overwriting it with the sign-off line ("Take care -- we're here when you
     # need us") threw away the one summary in the system that was actually a
