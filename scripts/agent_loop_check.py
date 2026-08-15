@@ -579,6 +579,36 @@ def main() -> int:
         finally:
             live_cfg.voice_transcribe = was
 
+        print("\n== the public door ==")
+        # Read off the class, not off the running settings, so this is a check
+        # on the *default* rather than on whatever .env happens to say. The
+        # failure worth catching is somebody flipping the default -- which
+        # hands every deployment that has not thought about it a public buyer
+        # list, and would look like nothing at all in a diff.
+        from app.api.auth import demo_rep
+        from app.config import Settings, settings as live_cfg2
+        check("PUBLIC_DEMO is off unless a deployment says otherwise",
+              Settings.model_fields["public_demo"].default is False)
+        was_public = live_cfg2.public_demo
+        try:
+            live_cfg2.public_demo = False
+            check("and with it off there is nobody to let in",
+                  demo_rep(db) is None)
+            live_cfg2.public_demo = True
+            opened = demo_rep(db)
+            # The whole safety of this feature is that it is a rep. A manager
+            # can edit the team, publish the assistant's instructions and change
+            # what it is allowed to say to buyers; handing that to anyone with
+            # the URL is a different thing entirely from showing them a
+            # dashboard.
+            check("and with it on the door opens as a sales rep, never a manager",
+                  opened is not None and opened.role == "rep",
+                  opened.role if opened else "nobody")
+            check("as a real account, so every role check still applies to them",
+                  opened is not None and opened.active and bool(opened.id))
+        finally:
+            live_cfg2.public_demo = was_public
+
         print("\n== transcribing the call after it ends ==")
         # The vendor call cannot run here -- no key, and api.openai.com is
         # refused by the egress proxy. Everything either side of it is real and

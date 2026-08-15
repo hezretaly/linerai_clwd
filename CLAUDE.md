@@ -588,6 +588,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   dealership makes, not a side effect of configuring the chat agent. The key
   itself is shared — `VOICE_PROVIDER_KEY` exists only to bill voice to a
   different project, and asking for the same secret twice is how the two drift.
+- **`PUBLIC_DEMO` opens the dashboard to anybody, as a rep, and it is off.**
+  The point of a demo is being able to send someone a link, and the point of
+  this setting is that it is the one line in `.env` that hands a stranger a
+  dealership's buyer list — names, phone numbers, transcripts, and call
+  recordings, which are somebody's actual voice. So: off by default (asserted
+  on the class default, not on the running config, because a flipped default
+  is invisible in a diff), a warning naming what is exposed at every boot, and
+  only ever pointed at `make seed-demo` data.
+  - **It mints a real session for a real rep account.** Not a bypass in
+    `current_user`, and not a synthetic user: those would give every role check
+    in the system a second path through it, and the one that matters —
+    `require_manager`, which guards the team page and publishing the
+    assistant's instructions — is the one nobody would think to test on that
+    path. A public visitor is a rep in exactly the sense the rest of the code
+    already means, and `make agent-check` asserts the door never opens as a
+    manager.
+  - **Opening the door does not authenticate anyone by itself.** A request with
+    no cookie is still a 401; the visitor is signed in only by asking to be.
+    That keeps one notion of who is signed in for the whole system, and it is
+    what `make smoke` checks in both configurations.
 - **Hours come from `hours_json`.** No page states its own.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the

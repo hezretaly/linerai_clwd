@@ -37,6 +37,24 @@ async def lifespan(app: FastAPI):
             workers,
         )
 
+    # The one setting that hands a stranger a dealership's buyer list. It says
+    # so at every boot, because the way this goes wrong is nobody remembering
+    # it is on -- and by then the URL is somewhere it cannot be taken back.
+    if settings.public_demo:
+        from app.api.auth import demo_rep
+        from app.db import SessionLocal
+
+        with SessionLocal() as db:
+            rep = demo_rep(db)
+        log.warning(
+            "PUBLIC_DEMO is on: anyone with the URL is signed in as %s (sales rep), "
+            "no password. Every buyer name, phone number, email address, transcript "
+            "and call recording in this database is readable by them. Only ever "
+            "point this at demo data -- `make reset-db && make seed-demo`. Managers "
+            "still need a password.",
+            rep.name if rep else "(no active rep -- the door will not open)",
+        )
+
     unconfigured = registry_payload()["unconfigured"]
     if unconfigured:
         log.warning(

@@ -1,13 +1,19 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
 import { Button, Card, Field, Input } from '../components/ui'
+import { usePublicDemo } from './RequireAuth'
 
 export function Login() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [params] = useSearchParams()
+  const { data: demo } = usePublicDemo()
+  // Arriving from the rep view, which is the only reason to be on this page
+  // at all when the door is open.
+  const wantsManager = params.get('as') === 'manager'
   const [email, setEmail] = useState('dana.mercer@example.invalid')
   const [password, setPassword] = useState('liner-dev')
 
@@ -22,8 +28,14 @@ export function Login() {
   return (
     <div className="flex h-full items-center justify-center bg-muted/40 px-4">
       <Card className="w-full max-w-sm p-6">
-        <h1 className="text-lg font-semibold">Sign in to Liner</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Riverside Auto</p>
+        <h1 className="text-lg font-semibold">
+          {wantsManager ? 'Sign in as a sales manager' : 'Sign in to Liner'}
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {wantsManager
+            ? 'The team page, the assistant settings and publishing are managers only.'
+            : 'Riverside Auto'}
+        </p>
 
         <form
           className="mt-5 space-y-4"
@@ -64,6 +76,24 @@ export function Login() {
             {login.isPending ? 'Signing in...' : 'Sign in'}
           </Button>
         </form>
+
+        {/* The way back. Without it, a visitor who followed "log in as a
+            sales manager" out of curiosity is stranded on a form they have no
+            password for -- and the rep view they came from is behind a URL
+            they may not have kept. */}
+        {demo?.available && (
+          <button
+            onClick={() => {
+              void api.post('/api/auth/public').then(async () => {
+                await queryClient.invalidateQueries({ queryKey: ['me'] })
+                navigate('/app')
+              })
+            }}
+            className="mt-4 w-full text-center text-xs text-primary hover:underline"
+          >
+            Or look around as {demo.name ?? 'a sales rep'}, no password needed
+          </button>
+        )}
 
         <p className="mt-4 text-xs text-muted-foreground">
           Seeded accounts use @example.invalid, which RFC 2606 reserves so mail can never

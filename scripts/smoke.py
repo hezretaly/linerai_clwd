@@ -142,6 +142,16 @@ def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 
     return stored
 
 
+def anonymous_status(path: str) -> int:
+    """What a stranger with the URL and no cookie gets. Its own opener, since
+    the shared one is signed in for the rest of the run."""
+    try:
+        with urllib.request.build_opener().open(BASE + path, timeout=30) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
 def fetch_audio(convo: str, *, anonymous: bool = False) -> tuple[int, bytes]:
     """Play a call back. `anonymous` skips the cookie jar, which is the check
     that matters: the file is a buyer's voice and must not be public."""
@@ -302,6 +312,30 @@ def main() -> int:
     check("api is up", health["status"] == "ok")
     check("running on the stub agent", health["llm_mode"] == "stub",
           f"unconfigured: {', '.join(health['unconfigured'])}")
+
+    # The door is shut unless somebody opened it. PUBLIC_DEMO hands a stranger
+    # every buyer name, phone number, transcript and call recording in the
+    # database, so the value that matters most about it is the default -- and
+    # a default is exactly the kind of thing that gets flipped by a merge and
+    # noticed by nobody.
+    door = call("GET", "/api/auth/public")
+    if door["available"]:
+        # Someone turned it on for this run. Say so rather than failing: a
+        # public deployment is a supported configuration, and a gate that goes
+        # red on it teaches people to ignore the gate. What still has to hold
+        # is that the door leads in as a rep.
+        check("PUBLIC_DEMO is ON for this run -- it opens as a sales rep, never a manager",
+              door.get("role") == "rep", str(door))
+    else:
+        check("the public door is shut unless somebody opened it",
+              door["available"] is False, str(door))
+        check("and there is no door to walk through while it is",
+              status_of("POST", "/api/auth/public", {})[0] == 404)
+    # True either way, and the more important half: opening the door does not
+    # authenticate anybody by itself. A visitor is signed in only by asking to
+    # be, which keeps one notion of "who is signed in" for the whole system.
+    check("a dashboard request with no session is refused either way",
+          anonymous_status("/api/overview") == 401, str(anonymous_status("/api/overview")))
 
     # Sign in first so the dealer socket can watch the whole run, exactly as an
     # open dashboard would during a live demo.

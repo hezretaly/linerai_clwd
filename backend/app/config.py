@@ -58,6 +58,25 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
 
+    # --- Public demo -------------------------------------------------------
+    # Let anybody with the URL in, as a sales rep, with no password.
+    #
+    # Off by default and it must stay that way: this is the one setting in the
+    # file that hands a stranger a dealership's buyer list. Everything a rep
+    # can see, they can see -- names, phone numbers, email addresses, call
+    # transcripts and call recordings, which are somebody's actual voice. So it
+    # is only ever safe over a database of demo rows, and `make seed-demo`
+    # exists to make one. Startup says loudly which it is doing.
+    #
+    # It is a real session for a real rep account, not a bypass: `require_manager`
+    # still refuses, so the team page, settings and publishing stay shut. A
+    # manager signs in with a password like always.
+    public_demo: bool = False
+    # Which account the door opens as. Empty picks the first active rep, which
+    # is what the seed produces; naming one matters only where several exist
+    # and it should be a specific person's view.
+    public_demo_email: str = ""
+
     # --- Email -------------------------------------------------------------
     # outbox  : records a real outreach row, renders in the dev outbox, sends nothing
     # console : prints to stdout (used by scripts)

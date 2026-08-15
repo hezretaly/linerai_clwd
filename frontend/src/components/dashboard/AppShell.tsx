@@ -9,6 +9,7 @@ import { hoursLabel, initials } from '../../lib/format'
 import type { IntegrationsPayload, Overview, User } from '../../lib/types'
 import { Button, Unavailable } from '../ui'
 import { Icon, type IconName } from '../Icon'
+import { usePublicDemo } from '../../routes/RequireAuth'
 
 /**
  * Two groups, as the mockups have it: what is happening right now, and the
@@ -338,6 +339,7 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
         />
       </div>
       <div className="ml-auto flex items-center gap-2">
+        <PublicDemoChip />
         <span
           title="Notifications are not built. Work waiting for a person is on the Overview."
           className="inline-flex h-9 w-9 cursor-not-allowed items-center justify-center rounded-md text-muted-foreground/40"
@@ -352,6 +354,46 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
         </span>
       </div>
     </header>
+  )
+}
+
+/**
+ * Who you are looking at this as, and the way up.
+ *
+ * In the header rather than the sidebar footer, where it was first put and
+ * where a visitor never saw it: the sidebar collapses on anything under a wide
+ * desktop, and the collapsed rail hides everything but the avatar. An
+ * affordance that exists only when a panel happens to be expanded is one most
+ * people will never find.
+ *
+ * It also states the obvious thing a public dashboard must state. Everything
+ * on these pages is somebody's buyer -- a name, a phone number, a transcript
+ * -- and a visitor who does not know they are in a demo has no way to tell
+ * whether they are looking at real people.
+ */
+function PublicDemoChip() {
+  const navigate = useNavigate()
+  const { data: demo } = usePublicDemo()
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: User }>('/api/auth/me'),
+    retry: false,
+  })
+  if (!demo?.available || me?.user.role !== 'rep') return null
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="hidden items-center gap-1.5 rounded-md border border-input bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground md:inline-flex">
+        <Icon name="user" className="h-3 w-3 shrink-0" />
+        Demo &mdash; sales rep
+      </span>
+      <button
+        onClick={() => navigate('/login?as=manager')}
+        className="inline-flex h-8 items-center whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+      >
+        Log in as a sales manager
+      </button>
+    </div>
   )
 }
 

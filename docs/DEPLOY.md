@@ -282,6 +282,32 @@ cd /srv/liner && sudo -u liner make set-password EMAIL=dana.mercer@example.inval
 It prompts, so the password never reaches shell history or `ps`. `make reset-db`
 also works and rehashes every account, but deletes the database to do it.
 
+### Showing the dashboard to people without accounts
+
+`PUBLIC_DEMO=true` lets anybody with the URL straight into `/app` as a sales
+rep, no password, with a **Log in as a sales manager** button in the header for
+the other half. Set `PUBLIC_DEMO_EMAIL` to pick which rep; it defaults to the
+first active one.
+
+Read the sentence that follows before you turn it on. Everything a rep can see,
+a stranger can see: every buyer's name, phone number and email address, every
+chat and call transcript, and every call recording — which is somebody's actual
+voice, and in several US states was recorded under a consent rule that assumed
+a dealership would hold it. **Only ever point this at demo data.**
+
+```bash
+make reset-db && make seed-demo     # every address @example.invalid, every phone 555-01xx
+```
+
+The backend logs a warning naming what is exposed at every boot, so a box that
+still has it on says so in `journalctl`. Managers still need a password, so the
+team page, the assistant's instructions and publishing stay shut — and the door
+opens as a rep account, never a manager, which `make agent-check` asserts.
+
+Turning it off is deleting the line and restarting. Sessions already handed out
+survive their cookie's two weeks, so rotate `SESSION_SECRET` too if you need
+everyone out now.
+
 **The buyer surfaces are unauthenticated by design** — `/`, `/chat` and `/call`
 have to be, they are the public product. Anyone with the link can start a
 conversation and book an appointment against real inventory. That is the demo

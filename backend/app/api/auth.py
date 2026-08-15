@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import clear_session, current_user, set_session, verify_password
+from app.config import settings
 from app.db import get_db
 from app.models import User
 from app.schemas.serialize import user_out
@@ -27,6 +28,50 @@ def login(body: LoginBody, response: Response, db: Session = Depends(get_db)) ->
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
     set_session(response, user)
     return {"user": user_out(user)}
+
+
+def demo_rep(db: Session) -> User | None:
+    """The account the public door opens as, or None when it is shut.
+
+    A real rep row, deliberately. The alternative -- a synthetic user, or
+    skipping `current_user` when the flag is on -- would mean every role check
+    in the system has a second path through it, and the one that matters most
+    (`require_manager`, which guards the team page, settings and publishing) is
+    the one nobody would think to test on that path. This way a public visitor
+    is a rep in exactly the sense the rest of the code already means.
+    """
+    if not settings.public_demo:
+        return None
+    query = db.query(User).filter_by(active=True)
+    if settings.public_demo_email:
+        return query.filter_by(email=settings.public_demo_email.lower()).one_or_none()
+    return query.filter_by(role="rep").order_by(User.name.asc()).first()
+
+
+@router.get("/public")
+def public_demo(db: Session = Depends(get_db)) -> dict:
+    """Is the door open, and who does it lead in as?
+
+    Unauthenticated by necessity -- it is the question asked *before* signing
+    in. It reveals only that a demo exists and the name on the seat, which is
+    already on every page that visitor is about to be shown.
+    """
+    rep = demo_rep(db)
+    if rep is None:
+        return {"available": False}
+    return {"available": True, "name": rep.name, "role": rep.role}
+
+
+@router.post("/public")
+def enter_public_demo(response: Response, db: Session = Depends(get_db)) -> dict:
+    """Let a visitor in as that rep, with no password."""
+    rep = demo_rep(db)
+    if rep is None:
+        # 404 rather than 403: with the flag off there is no such door, and
+        # saying "forbidden" tells a stranger there is one to look for.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    set_session(response, rep)
+    return {"user": user_out(rep), "demo": True}
 
 
 @router.post("/logout")
