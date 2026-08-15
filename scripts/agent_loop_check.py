@@ -441,6 +441,14 @@ def main() -> int:
         # placeholder there is an invitation to fill it in.
         check("demand figures we do not measure say so, rather than sitting empty",
               "not tracked here" in written)
+        # Section 8 asks for "anything you'd put down" while building a picture
+        # of the deal. That is a finance manager's question, and an assistant
+        # that asks it sounds like it is sizing up a wallet before it has
+        # helped with anything -- so it is overridden by name, on both channels.
+        for label, prompt in (("a chat", written), ("a call", spoken)):
+            check(f"asking what they can put down is refused on {label}",
+                  "NEVER ASK WHAT THEY CAN PUT DOWN" in prompt
+                  and "overrides the example in section 8" in prompt)
 
         body = voice.session_payload(spoken, tools.TOOL_DEFS)["session"]
         check("the session body is the shape the realtime API documents",

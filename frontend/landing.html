@@ -536,15 +536,15 @@
 
   .scale-visual{ display:flex; align-items:flex-end; justify-content:center; gap: 64px; margin-top: 40px; padding-bottom: 16px; border-bottom: 2px solid rgba(0,122,255,0.25); }
   .scale-col{ display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
-  .scale-amount{ font-size: 26px; font-weight: 800; letter-spacing:-0.03em; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+  .scale-amount{ font-size: 20px; font-weight: 800; letter-spacing:-0.02em; margin-bottom: 12px; }
   .scale-col.is-cost .scale-amount{ color: var(--muted); }
   .scale-col.is-profit .scale-amount{ color: var(--blue); }
   .scale-bar{ width: 104px; border-radius: 14px 14px 0 0; }
-  .scale-bar.cost{ height: 96px; background: var(--muted-2); }
-  .scale-bar.profit{ height: 212px; background: var(--blue); transform-origin: bottom; animation: tipUp 1.6s ease-out both; }
+  .scale-bar.cost{ height: 128px; background: var(--muted-2); }
+  .scale-bar.profit{ height: 188px; background: var(--blue); transform-origin: bottom; animation: tipUp 1.6s ease-out both; }
   @keyframes tipUp{ 0%{ transform: scaleY(0.25); opacity: 0.5; } 100%{ transform: scaleY(1); opacity: 1; } }
   .scale-captions{ display:flex; justify-content:center; gap: 64px; margin-top: 14px; }
-  .scale-caption{ width: 104px; text-align:center; font-size: 15px; font-weight: 700; color: var(--muted); line-height:1.35; }
+  .scale-caption{ width: 128px; text-align:center; font-size: 14px; font-weight: 700; color: var(--muted); line-height:1.35; }
 
   .math-copy{ font-size: 20px; line-height: 1.65; color: var(--ink-soft); }
   .math-copy strong{ color: var(--ink); font-weight: 700; }
@@ -1255,30 +1255,35 @@
           <div class="chain-arrow">↓</div>
           <div class="chain-step"><span class="chain-k">＋</span><span class="chain-v">More qualified appointments on the board</span></div>
           <div class="chain-arrow">↓</div>
-          <div class="chain-step is-result"><span class="chain-k">1</span><span class="chain-v">additional sale covers Liner for the month *</span></div>
+          <div class="chain-step is-result"><span class="chain-k">1</span><span class="chain-v">additional sale covers Liner for the month</span></div>
       </div>
+        <!-- No figures. A number on this page is a number to argue with, and
+             the argument is not about the number -- it is that the bar to
+             break even is one deal. The bars say the same thing without
+             giving anyone a total to dispute. -->
         <div class="scale-visual">
           <div class="scale-col is-cost">
-            <div class="scale-amount">$2,000</div>
+            <div class="scale-amount">One month</div>
             <div class="scale-bar cost"></div>
           </div>
           <div class="scale-col is-profit">
-            <div class="scale-amount">$2,200</div>
+            <div class="scale-amount">One deal</div>
             <div class="scale-bar profit"></div>
           </div>
       </div>
         <div class="scale-captions">
-          <div class="scale-caption">Liner, per month</div>
-          <div class="scale-caption">One average deal</div>
+          <div class="scale-caption">of Liner</div>
+          <div class="scale-caption">covers it</div>
       </div>
       </div>
       <div class="math-copy">
-        <span class="brand">Liner AI</span> is <strong>$2,000/mo flat</strong>. You keep everything else.<br><br>
+        <span class="brand">Liner AI</span> is one <strong>flat monthly fee</strong> — not per lead, not per seat,
+        and it does not grow when it works.<br><br>
         We are not going to tell you every recovered conversation becomes a sale — you know it doesn't.
-        The bar is lower than that: <strong>one</strong> deal you would otherwise have missed, and the month is paid for.
+        The bar is lower than that. <strong>One</strong> deal you would otherwise have missed covers the month.
         Everything after it is yours.
       </div>
-      <div class="math-footnote">* National average gross on a used car deal is about $2,200. Your close rate on recovered conversations is yours, not ours to claim.</div>
+      <div class="math-footnote">Your gross per deal and your close rate on recovered conversations are yours — not ours to put a number on.</div>
     </div>
   </div>
 </section>
@@ -1793,7 +1798,7 @@
   }
   async function typeField(elId, text, checkId, delay){
     await wait(delay);
-    await typeInto(document.getElementById(elId), text, 48);
+    await typeInto(document.getElementById(elId), text, 26);
     document.getElementById(checkId).classList.add('show');
   }
 
@@ -1808,15 +1813,17 @@
     if(scroller && scroller.scrollWidth > scroller.clientWidth){
       scroller.scrollTo({ left: cell.offsetLeft - scroller.clientWidth / 2 + cell.offsetWidth / 2, behavior: 'smooth' });
     }
-    await wait(500);
+    await wait(220);
     cell.classList.add('seeking');
-    await wait(1200);
+    // Long enough to read as "checking the calendar", short enough that
+    // nobody is waiting on it. It was 1.2s, which is a pause.
+    await wait(600);
     cell.classList.remove('seeking');
     cell.classList.add('booked');
     head.classList.add('booked-day');
-    await wait(450);
-    await typeInto(nameEl, 'Michael Reyes', 55);
-    await wait(300);
+    await wait(220);
+    await typeInto(nameEl, 'Michael Reyes', 30);
+    await wait(180);
     document.getElementById('calConfirm').classList.add('show');
   }
 
@@ -1831,12 +1838,17 @@
       setTimeout(() => chip.classList.add('show'), i * 180);
     });
 
-    await typeField('typeName', 'Michael Reyes', 'checkName', 900);
-    await typeField('typeVin', '1GKS2HKJ4MR...', 'checkVin', 450);
-    await typeField('typeIncome', '$78,500 / yr', 'checkIncome', 450);
-    await wait(600);
+    // Paced against the hero chat, which turns over roughly every second.
+    // This ran about twice as slowly, and on a section further down the page
+    // that is worse than it sounds: a visitor who has already scrolled here is
+    // deciding whether to keep reading, and a beat they have to wait through
+    // is a beat they spend leaving.
+    await typeField('typeName', 'Michael Reyes', 'checkName', 350);
+    await typeField('typeVin', '1GKS2HKJ4MR...', 'checkVin', 220);
+    await typeField('typeIncome', '$78,500 / yr', 'checkIncome', 220);
+    await wait(300);
     await bookCalendar();
-    setTimeout(playQualifyingAnimation, 5200);
+    setTimeout(playQualifyingAnimation, 3200);
   }
 
   /* ---------- handoff ---------- */
