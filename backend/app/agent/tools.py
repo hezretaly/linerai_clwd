@@ -348,7 +348,13 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
     if wanted_origin:
         rows = [v for v in rows if _origin_matches(v.make, wanted_origin)]
 
-    keywords = (args.get("keywords") or "").lower().split()
+    # Split on anything that is not a letter or a digit, rather than on spaces.
+    # Splitting on spaces glues the punctuation to the word: "Do you have a BMW
+    # X5?" produced the token `x5?`, which matches nothing, so the most natural
+    # phrasing a buyer could possibly use returned the three cheapest cars on
+    # the lot instead of the car they named. "BMW X5" and "tell me about the
+    # BMW X5" both worked, which is what made it invisible.
+    keywords = [k for k in re.split(r"[^a-z0-9]+", (args.get("keywords") or "").lower()) if k]
     if keywords:
         def score(v: Vehicle) -> int:
             haystack = f"{v.keywords} {v.make} {v.model} {v.trim} {v.body_style}".lower()
@@ -488,11 +494,21 @@ def book_appointment(
     db: Session, convo: Conversation, args: dict, tool_call_id: str | None = None
 ) -> dict:
     # Idempotent: a retried turn must not produce two appointments.
+    #
+    # Live rows only. The card's call id is deterministic on the slot
+    # (`form-<conversation>-<time>`), so a buyer who booked Tuesday at ten,
+    # cancelled, and asked for Tuesday at ten again matched the cancelled row
+    # and got it handed back as `already_booked`. The card said booked, the
+    # calendar showed a cancellation, and nothing had been booked at all.
     if tool_call_id:
         existing = (
             db.query(Appointment)
-            .filter_by(conversation_id=convo.id, tool_call_id=tool_call_id)
-            .one_or_none()
+            .filter(
+                Appointment.conversation_id == convo.id,
+                Appointment.tool_call_id == tool_call_id,
+                Appointment.status.in_(["booked", "confirmed"]),
+            )
+            .first()
         )
         if existing is not None:
             return {"appointment_id": existing.id, "starts_at": existing.starts_at.isoformat(),

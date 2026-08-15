@@ -639,6 +639,89 @@ def main() -> int:
     check("assigning to somebody who does not exist is refused",
           status_of("POST", f"/api/leads/{owner}/assign", {"user_id": "nobody"})[0] == 404)
 
+    print("\n== a buyer who changes their mind, and a visit that moves ==")
+    # Naming a different car is a change of subject at any stage. The rails are
+    # a state machine, so once the thread reached contact_capture "actually,
+    # tell me about the X5" was read as an answer to "what is your email?" --
+    # and the appointment was booked against the car they had moved off.
+    counts: dict[str, int] = {}
+    for vehicle in call("GET", "/api/inventory?status=available")["vehicles"]:
+        counts[vehicle["model"]] = counts.get(vehicle["model"], 0) + 1
+    named = [v for v in call("GET", "/api/inventory?status=available")["vehicles"]
+             if counts[v["model"]] == 1][:2]
+    check("the lot has two cars that name themselves unambiguously", len(named) == 2)
+    first, second = named
+    switch_tag = secrets.token_hex(4)
+    switch_convo = call("POST", "/api/chat/sessions")["conversation_id"]
+    # A fresh thread searches first and offers a shortlist -- that is the
+    # opening move, and naming a car on turn one should not skip it.
+    # Named in the opening search so it is really in the shortlist: the stub
+    # can only focus on a car it has shown, which is the point of searching
+    # first rather than taking the buyer's word for what is on the lot.
+    say(switch_convo, content=f"Do you have a {first['make']} {first['model']}?")
+    check("the opening turn searches rather than jumping to one car",
+          call("GET", f"/api/conversations/{switch_convo}")["focus_vehicle_id"] is None)
+    say(switch_convo, content=f"Tell me about the {first['make']} {first['model']}")
+    check("the thread settles on the first car",
+          call("GET", f"/api/conversations/{switch_convo}")["focus_vehicle_id"] == first["id"])
+    say(switch_convo, content="Can I come in this week?")
+    say(switch_convo, content=f"Actually, tell me about the {second['make']} {second['model']}")
+    check("naming another car moves the focus, even past the booking questions",
+          call("GET", f"/api/conversations/{switch_convo}")["focus_vehicle_id"] == second["id"],
+          str(call("GET", f"/api/conversations/{switch_convo}")["focus_vehicle_id"]))
+    # A car they already own is not a car they are asking to see. Without this
+    # a buyer mentioning their trade-in gets re-focused onto whichever of ours
+    # happens to share the model name.
+    say(switch_convo, content=f"I'm trading in my old {first['make']} {first['model']}")
+    check("but a car they are trading in is not a car they asked about",
+          call("GET", f"/api/conversations/{switch_convo}")["focus_vehicle_id"] == second["id"],
+          str(call("GET", f"/api/conversations/{switch_convo}")["focus_vehicle_id"]))
+
+    # A visit can be moved without being destroyed. Cancel-and-rebook mints a
+    # new row, so the appointment loses its id, its salesperson and the
+    # outreach sent against it -- and the timeline shows a cancellation beside
+    # a fresh booking rather than a move.
+    times = call("GET", f"/api/conversations/{switch_convo}/availability")["days"]
+    open_slots = [s["starts_at"] for day in times for s in day["slots"]]
+    made = call("POST", f"/api/chat/sessions/{switch_convo}/book", {
+        "starts_at": open_slots[0], "name": "Moves Around",
+        "email": f"moves.{switch_tag}@example.invalid", "phone": "319-555-0177",
+    })["appointment"]
+    booked_here.append(made["id"])
+    rep_id = next(m for m in call("GET", "/api/team")["members"] if m["role"] == "rep")["id"]
+    call("POST", f"/api/appointments/{made['id']}/assign", {"user_id": rep_id})
+    moved = call("POST", f"/api/appointments/{made['id']}/reschedule",
+                 {"starts_at": open_slots[1]})
+    check("an appointment can be moved and stays the same appointment",
+          moved["id"] == made["id"] and moved["starts_at"].startswith(open_slots[1][:16]),
+          moved["starts_at"])
+    check("keeping the salesperson it was assigned to",
+          (moved.get("assigned_to") or {}).get("id") == rep_id)
+    check("and the time it left is offered again",
+          open_slots[0] in [
+              s["starts_at"]
+              for day in call("GET", f"/api/conversations/{switch_convo}/availability")["days"]
+              for s in day["slots"]
+          ])
+    check("a time somebody else holds is refused",
+          status_of("POST", f"/api/appointments/{made['id']}/reschedule",
+                    {"starts_at": open_slots[1]})[0] in {200, 409},
+          "same time is a no-op, a taken one is a 409")
+
+    # The card's idempotency key is deterministic on the slot, so a buyer who
+    # booked a time, cancelled, and asked for it again matched the *cancelled*
+    # row and got it handed back as already_booked. The card said booked, the
+    # calendar showed a cancellation, and nothing had been booked at all.
+    call("POST", f"/api/appointments/{made['id']}/cancel")
+    retaken = call("POST", f"/api/chat/sessions/{switch_convo}/book", {
+        "starts_at": open_slots[1], "name": "Moves Around",
+        "email": f"moves.{switch_tag}@example.invalid", "phone": "319-555-0177",
+    })["appointment"]
+    booked_here.append(retaken["id"])
+    check("re-booking a cancelled time makes a new appointment, not the dead one",
+          retaken["id"] != made["id"] and retaken["status"] in {"booked", "confirmed"},
+          f"{retaken['id'][:8]} vs {made['id'][:8]}, {retaken['status']}")
+
     print("\n== one fact, one answer, wherever it is read ==")
     # Everything here is the same shape of bug: a fact written in one row and
     # read from another, with nothing keeping the two in step. Each was found

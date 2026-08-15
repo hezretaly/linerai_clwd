@@ -82,6 +82,17 @@ def detect_escalation(text: str) -> str | None:
     return None
 
 
+#: Phrases that mean the car they are naming is *theirs*, not one of ours. A
+#: buyer saying "I'm trading in my 2015 Civic" is not asking to look at the
+#: Civic on the lot, and re-focusing on it would be the most confusing possible
+#: reading of a sentence they meant helpfully.
+OWN_CAR = re.compile(
+    r"\b(trade|trading|trade-in|my current|i drive|i have a|i own|currently in|"
+    r"driving a|got a)\b",
+    re.IGNORECASE,
+)
+
+
 ORDINALS = [
     (r"\bfirst\b|\bone\b(?!\s*more)|\b1st\b", 0),
     (r"\bsecond\b|\b2nd\b", 1),
@@ -108,21 +119,64 @@ def _referenced_vin(db: Session, convo: Conversation, text: str) -> str | None:
             if re.search(pattern, text, re.IGNORECASE) and index < len(shown):
                 return shown[index]
 
-        # Named by make or model: "tell me about the Sienna".
-        for vin in shown:
-            vehicle = db.query(Vehicle).filter_by(vin=vin).one_or_none()
-            if vehicle is None:
-                continue
-            if re.search(rf"\b{re.escape(vehicle.model)}\b", text, re.IGNORECASE) or re.search(
-                rf"\b{re.escape(vehicle.make)}\b", text, re.IGNORECASE
-            ):
-                return vin
+        # Named by make or model: "tell me about the Sienna". Not when the
+        # sentence is about a car they already own -- "I'm trading in my old
+        # BMW X5" re-targeted the thread onto *our* X5, which is the same
+        # confusion `_switched_vehicle` guards against and reachable through
+        # this older path too.
+        if not OWN_CAR.search(text):
+            for vin in shown:
+                vehicle = db.query(Vehicle).filter_by(vin=vin).one_or_none()
+                if vehicle is None:
+                    continue
+                if re.search(
+                    rf"\b{re.escape(vehicle.model)}\b", text, re.IGNORECASE
+                ) or re.search(rf"\b{re.escape(vehicle.make)}\b", text, re.IGNORECASE):
+                    return vin
 
     if convo.focus_vehicle_id:
         focus = db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
         if focus is not None:
             return focus.vin
     return shown[0] if shown else None
+
+
+
+def _switched_vehicle(db: Session, convo: Conversation, text: str):
+    """A car they have just named that is not the one we were discussing.
+
+    A buyer changing their mind about which vehicle is the single most common
+    thing that breaks a linear script, and this one is a state machine: once
+    the conversation reached contact_capture, "actually, tell me about the X5"
+    was read as an answer to "what is your email?" and the appointment was
+    booked against the first car. The buyer's page then showed them coming in
+    to see a vehicle they had explicitly moved off.
+
+    Matched on the model name rather than the make -- "the Audi" is ambiguous
+    on a lot with four of them, while "X5" is not -- and never when the
+    sentence is about a car they already own.
+    """
+    from app.models import Vehicle
+
+    if OWN_CAR.search(text):
+        return None
+
+    # Only a *change*. With no focus yet there is nothing to switch from, and
+    # the opening turn is meant to search and offer a shortlist -- jumping
+    # straight to the one car they named skips the three the lot actually has,
+    # which is the whole first move of the conversation.
+    focus_id = convo.focus_vehicle_id
+    if not focus_id:
+        return None
+    for vehicle in db.query(Vehicle).filter_by(status="available").all():
+        if vehicle.id == focus_id or not vehicle.rule_discuss:
+            continue
+        model = (vehicle.model or "").strip()
+        if len(model) < 2:
+            continue
+        if re.search(rf"\b{re.escape(model)}\b", text, re.IGNORECASE):
+            return vehicle
+    return None
 
 
 def _budget_from(text: str) -> int | None:
@@ -187,6 +241,14 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
     if EMAIL_IN_TEXT.search(text) and stage != "booked":
         next_stage = "contact_capture"
 
+    # Naming a different car is a change of subject, whatever stage the script
+    # had reached. Checked after the email rule so somebody handing over their
+    # details is still taken as booking, and before the stage branches so it
+    # can override any of them.
+    switched = _switched_vehicle(db, convo, text)
+    if switched is not None:
+        next_stage = "vehicle_focus"
+
     # ---- browsing: search real inventory --------------------------------
     if next_stage == "browsing" or stage in {"opening", "browsing"} and next_stage == stage:
         args: dict = {"keywords": text}
@@ -238,7 +300,10 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
 
     # ---- vehicle_focus: pull one real record ----------------------------
     if next_stage == "vehicle_focus":
-        vin = _referenced_vin(db, convo, text)
+        # An explicitly named car wins over "the one we were talking about" --
+        # `_referenced_vin` falls back to the current focus, which is exactly
+        # the car the buyer has just moved off.
+        vin = switched.vin if switched is not None else _referenced_vin(db, convo, text)
         if vin is None:
             found = call("search_inventory", {"keywords": text})
             if not found["vehicles"]:
@@ -246,7 +311,12 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
             vin = found["vehicles"][0]["vin"]
 
         v = call("get_vehicle", {"vin": vin})
-        convo.stage = "vehicle_focus"
+        # A buyer who has already booked and is now asking about a different
+        # car is still booked -- the appointment is real, and walking the stage
+        # back would make the row stop claiming a visit that exists. Only the
+        # focus follows them, which `get_vehicle` has just moved.
+        if convo.stage != "booked":
+            convo.stage = "vehicle_focus"
         db.commit()
         parts = [
             f"The {v['year']} {v['make']} {v['model']} {v['trim']}".strip()

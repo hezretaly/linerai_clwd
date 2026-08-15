@@ -25,6 +25,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make reset-db` | Delete the database and reseed |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
+| `make accept` | One buyer end to end: web form → chat → call → email → book → reschedule → cancel → rebook → handover |
 | `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
 | `make agent-ping` | **Debugging live mode.** One real call, the vendor's error printed in full |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
@@ -52,6 +53,14 @@ most common way this gets confusing.
 `make smoke` is the gate and it must stay green. It drives a real booking
 through rail chips, asserts the appointment row exists, confirms it, assigns
 it, sends outreach, and checks the expected events arrived on the WebSocket.
+
+`make accept` answers a different question from `make smoke`. Smoke proves each
+part works; this proves they are the **same buyer** throughout — a website form,
+then a chat, then a call, then an email, then a booking moved and cancelled and
+retaken, then a rep taking over and handing back. That is the failure the
+dashboard was reorganised to prevent and the one no per-feature test can catch,
+because every step passes in isolation. It gives its slots back in a `finally`
+like smoke does, and a failure names the step number a person was on.
 
 `scripts/e2e_booking.py` goes further: two browser windows, buyer on the left
 tapping chips, dashboard on the right, asserting the KPI moves with no reload.
@@ -690,6 +699,42 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     day with that same address their earlier mail stayed a stranger's for good.
     `matching.claim_unresolved` re-runs `_place` when a buyer comes into
     existence: the same ladder, not a second copy of it.
+- **A buyer changing their mind about the car is the thing a script breaks
+  on.** The rails are a state machine, so once a thread reached
+  `contact_capture`, "actually, tell me about the X5" was read as an answer to
+  "what is your email?" — and the appointment was booked against the car they
+  had explicitly moved off. Naming a different car now re-focuses at any stage.
+  - **Only when there is a focus to change from.** With none, the opening turn
+    should still search and offer a shortlist; jumping straight to the one car
+    they named skips the three the lot actually has.
+  - **A car they already own is not a car they are asking to see.** "I'm
+    trading in my old X5" must not re-target onto ours, and that guard belongs
+    in both places a make or model can move the focus — it was added to the new
+    path first and the older `_referenced_vin` walked straight round it.
+  - **A booked thread stays booked.** The appointment is real; only the focus
+    follows them. Moving the stage back would make the row stop claiming a
+    visit that exists, which is the disagreement the cancel path was fixed for.
+- **Keywords split on non-alphanumerics, not on spaces.** `"Do you have a BMW
+  X5?"` tokenised to `x5?`, matched nothing, and returned the three cheapest
+  cars on the lot — while `"BMW X5"` and `"tell me about the BMW X5"` both
+  worked, which is exactly what kept it invisible. The most natural phrasing a
+  buyer can use is the one that has to work.
+- **An appointment can be moved without being destroyed.** There was no
+  reschedule, so a rep shifting somebody by an hour had to cancel and rebook —
+  which mints a new row, losing the id, the assigned salesperson and the
+  outreach sent against it, and leaves a timeline showing a cancellation beside
+  a fresh booking rather than a move. A confirmed appointment drops back to
+  booked when it moves: a buyer who confirmed Tuesday has not confirmed
+  Wednesday.
+- **Idempotency keys must only match live rows.** The booking card's key is
+  deterministic on the slot, so a buyer who booked a time, cancelled, and asked
+  for it again matched the *cancelled* appointment and got it back as
+  `already_booked`. The card said booked, the calendar showed a cancellation,
+  and nothing had been booked at all.
+- **Every appointment event names the buyer it is about.** `assigned` and
+  `confirmed` carried only an appointment id, so a buyer's page had no way to
+  tell the event concerned them and no reason to refresh — the two panels
+  showing the same visit drifted apart until somebody reloaded.
 - **One matcher decides who a buyer is.** `app/matching.py`, used by the ADF
   importer, manual entry and `book_appointment`. Booking used to match on
   email alone while the importer matched on email *then* phone, so someone who

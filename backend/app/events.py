@@ -25,6 +25,9 @@ EVENT_TYPES = {
     "appointment.booked",
     "appointment.confirmed",
     "appointment.cancelled",
+    # Moved, not cancelled-and-rebooked. The distinction is the whole point:
+    # one is a buyer changing their day, the other looks like losing them.
+    "appointment.rescheduled",
     "appointment.assigned",
     "handoff.triggered",
     "conversation.declined",

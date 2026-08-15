@@ -1,4 +1,4 @@
-.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db smoke e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db smoke accept e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -58,6 +58,9 @@ agent-ping: ## One real turn against the configured model, errors printed in ful
 
 agent-check: ## Drive the live loop against a fake provider (no API key needed)
 	$(PY) scripts/agent_loop_check.py
+
+accept: ## One buyer end to end -- form, chat, call, email, booking, handover.
+	$(PY) scripts/acceptance.py
 
 smoke: ## Drive the whole booking flow over HTTP. No browser, no credentials.
 	$(PY) scripts/smoke.py

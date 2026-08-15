@@ -8,6 +8,7 @@ thread at the same moment it is dispatched.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -48,7 +49,7 @@ def confirm(
     appointment.status = "confirmed"
     db.commit()
     emit(db, "appointment.confirmed", {
-        "appointment_id": appointment.id, "by": user.id,
+        "appointment_id": appointment.id, "lead_id": appointment.lead_id, "by": user.id,
     })
     return appointment_out(appointment, db)
 
@@ -88,6 +89,71 @@ def _restage(db: Session, appointment: Appointment) -> None:
     # their contact details and were offered times; none of that un-happened,
     # and dropping them to `opening` would have the rails greet them again.
     convo.stage = "contact_capture"
+
+
+class Reschedule(BaseModel):
+    starts_at: datetime
+
+
+@router.post("/{appointment_id}/reschedule")
+def reschedule(
+    appointment_id: str,
+    body: Reschedule,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Move a visit without destroying it.
+
+    There was no way to. A rep who needed to shift somebody by an hour had to
+    cancel and rebook, which mints a new row -- so the appointment loses its
+    id, its assigned salesperson, and the outreach already sent against it,
+    and the buyer's timeline shows a cancellation next to a fresh booking
+    rather than a move. Nobody reading that later can tell whether the buyer
+    rescheduled or walked away and came back.
+
+    The clash check is the same one `book_appointment` runs, for the same
+    reason: the calendar is re-decided at the moment of the move, not when the
+    rep opened the page.
+    """
+    appointment = get_appointment(db, appointment_id)
+    if appointment.status not in {"booked", "confirmed"}:
+        raise HTTPException(409, f"A {appointment.status} appointment cannot be moved.")
+
+    when = body.starts_at.replace(tzinfo=None)
+    if when == appointment.starts_at:
+        return appointment_out(appointment, db)
+    if when < utcnow():
+        raise HTTPException(400, "That time has already passed.")
+
+    clash = (
+        db.query(Appointment)
+        .filter(
+            Appointment.id != appointment.id,
+            Appointment.starts_at == when,
+            Appointment.status.in_(["booked", "confirmed"]),
+        )
+        .first()
+    )
+    if clash is not None:
+        raise HTTPException(409, "Something else is booked at that time.")
+
+    was = appointment.starts_at
+    appointment.starts_at = when
+    # Back to unconfirmed: a buyer who confirmed Tuesday at ten has not
+    # confirmed Wednesday at two, and carrying the tick across would put a
+    # green row on the calendar nobody has actually agreed to.
+    if appointment.status == "confirmed":
+        appointment.status = "booked"
+    db.commit()
+
+    emit(db, "appointment.rescheduled", {
+        "appointment_id": appointment.id,
+        "lead_id": appointment.lead_id,
+        "from": was.isoformat(),
+        "starts_at": when.isoformat(),
+        "by": user.id,
+    })
+    return appointment_out(appointment, db)
 
 
 @router.post("/{appointment_id}/cancel")
@@ -158,8 +224,13 @@ def assign(
         lead.assigned_user_id = chosen.id
     db.commit()
 
+    # `lead_id` on every appointment event, like the others. An event that
+    # names only the appointment cannot be routed to the buyer it belongs to,
+    # so their page has no reason to refresh when their visit is assigned --
+    # and the two panels showing it drift apart until somebody reloads.
     emit(db, "appointment.assigned", {
-        "appointment_id": appointment.id, "user_id": chosen.id, "user_name": chosen.name,
+        "appointment_id": appointment.id, "lead_id": appointment.lead_id,
+        "user_id": chosen.id, "user_name": chosen.name,
         "auto": body.auto,
     })
     return appointment_out(appointment, db)
