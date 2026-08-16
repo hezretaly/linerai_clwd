@@ -28,6 +28,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
 | `make ops-ui` | `/ops` in a browser: the notification clears **and stays cleared** |
+| `make cal-ui` | The calendar's Week/List views, and that no waiting time is unreadable |
 | `make accept` | One buyer end to end: web form → chat → call → email → book → reschedule → cancel → rebook → handover |
 | `make accept-ui` | The same path through the screens — buyer window and dealer window, real clicks |
 | `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
@@ -99,6 +100,14 @@ the next fails earlier — and it surfaces as `0 times on the card` in a section
 that has nothing to do with the change being tested. It took thirty-six
 stranded appointments to notice, and by then the failure named the wrong
 culprit.
+
+`make shots` also **fails on a waiting time nobody can read**. `waited()` is a
+stopwatch and a stopwatch stops being legible long before it stops counting:
+a genuinely two-month-old row in Needs a person rendered as `1349h 36m`, a
+number too long to take in at a glance with minutes of precision on the end.
+It turns to days past 48h, and `STOPWATCH_JS` asserts that across every route.
+The guard was checked by putting the bug back -- a check that has only ever
+been seen to pass is not a check.
 
 `make shots` also runs every dealer route at 390px and **fails the run if the
 page scrolls sideways**. Reps and managers work from phones, so that is a real
@@ -266,6 +275,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   form never comes back. With no `credit_application_url` configured there is
   nothing to send, so the draft refuses with a typed `not_configured` and the
   card says why instead of showing a zero that reads as a quiet day.
+- **The calendar answers two different questions, so it has two views.** The
+  week grid lays out a shape — where the gaps are, what clashes — and is bad
+  at "what is next", which needs one glance down a column rather than paging
+  week by week to find the booking twelve days out. `List` is that, grouped by
+  day and running from now forward. The count above it and the rows in it come
+  from **one predicate**: they were two, and the header said 16 over a list of
+  147. Cancelled and past are excluded by default and each button says how many
+  it would add — "nothing booked" and "they cancelled" are different facts, and
+  only one of them needs a phone call.
 - **Every count comes from `/api/overview`.** No page counts for itself. The
   two charts are the exception and have their own `/api/overview/trends?range=`,
   so moving a chart's window cannot silently change what the KPI cards mean.

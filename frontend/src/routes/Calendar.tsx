@@ -57,9 +57,21 @@ function startOfWeek(date: Date): Date {
   return copy
 }
 
+/** Remembered, because whichever of the two you work from is a habit, not a
+ *  per-visit decision. */
+const VIEW_KEY = 'liner.calendar.view'
+
 export function CalendarPage() {
   const [weekOffset, setWeekOffset] = useState(0)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [view, setView] = useState<'week' | 'list'>(
+    () => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'week'),
+  )
+
+  const setMode = (next: 'week' | 'list') => {
+    localStorage.setItem(VIEW_KEY, next)
+    setView(next)
+  }
 
   const { data: overview } = useQuery({
     queryKey: ['overview'],
@@ -99,27 +111,46 @@ export function CalendarPage() {
     <>
       <PageHeader
         title="Calendar"
-        subtitle={`${days[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} -- ${days[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`}
+        subtitle={
+          view === 'week'
+            ? `${days[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} -- ${days[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}`
+            : 'Everything booked, in the order it happens'
+        }
         actions={
           <>
-            <Button size="sm" onClick={() => setWeekOffset((w) => w - 1)}>
-              Previous
-            </Button>
-            <Button size="sm" onClick={() => setWeekOffset(0)}>
-              Today
-            </Button>
-            <Button size="sm" onClick={() => setWeekOffset((w) => w + 1)}>
-              Next
-            </Button>
+            <ViewToggle view={view} onChange={setMode} />
+            {/* Only the week is paged. The list runs from now to the end of
+                what is booked, so there is nothing to page through -- and
+                leaving dead Previous/Next buttons beside it would be three
+                controls where one of them does nothing. */}
+            {view === 'week' && (
+              <>
+                <Button size="sm" onClick={() => setWeekOffset((w) => w - 1)}>
+                  Previous
+                </Button>
+                <Button size="sm" onClick={() => setWeekOffset(0)}>
+                  Today
+                </Button>
+                <Button size="sm" onClick={() => setWeekOffset((w) => w + 1)}>
+                  Next
+                </Button>
+              </>
+            )}
           </>
         }
       />
+
+      {view === 'list' && (
+        <div className="p-4 md:p-6">
+          <BookedList appointments={data.appointments} onOpen={setOpenId} />
+        </div>
+      )}
 
       {/* A seven-day grid in 390px gives every appointment about 44px, which
           renders as "De..." -- present, unreadable, unusable. On a phone the
           same week becomes an agenda: the question a rep is asking there is
           "what is on today", not "how does my week lay out". */}
-      <div className="p-4 md:hidden">
+      <div className={clsx('p-4 md:hidden', view !== 'week' && 'hidden')}>
         <Agenda
           days={days}
           appointments={data.appointments}
@@ -128,7 +159,7 @@ export function CalendarPage() {
         />
       </div>
 
-      <div className="hidden p-6 md:block">
+      <div className={clsx('hidden p-6', view === 'week' && 'md:block')}>
         <Card className="overflow-hidden">
           <div className="grid grid-cols-[3.5rem_repeat(7,1fr)] border-b border-border">
             <div />
@@ -236,6 +267,198 @@ export function CalendarPage() {
 
       <AppointmentDrawer id={openId} onClose={() => setOpenId(null)} />
     </>
+  )
+}
+
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: 'week' | 'list'
+  onChange: (next: 'week' | 'list') => void
+}) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-md border border-input">
+      {(['week', 'list'] as const).map((mode) => (
+        <button
+          key={mode}
+          onClick={() => onChange(mode)}
+          aria-pressed={view === mode}
+          className={clsx(
+            'h-8 px-3 text-sm font-medium capitalize transition-colors',
+            view === mode
+              ? 'bg-accent text-accent-foreground'
+              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+          )}
+        >
+          {mode}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Every booking in the order it happens, which is the question the grid is
+ * bad at: "what is next" needs one glance down a column, not a week laid out
+ * spatially and then paged through to find the one in twelve days.
+ *
+ * It answers from now forward and says how many it is not showing rather than
+ * silently starting at today -- a list that quietly drops the past is one a
+ * rep cannot use to check what happened this morning. Cancelled and no-show
+ * are here too, greyed: "nothing booked" and "they cancelled" are different
+ * facts and only one of them needs a phone call.
+ */
+function BookedList({
+  appointments,
+  onOpen,
+}: {
+  appointments: Appointment[]
+  onOpen: (id: string) => void
+}) {
+  const [showPast, setShowPast] = useState(false)
+  const [showCancelled, setShowCancelled] = useState(false)
+  const now = Date.now()
+
+  // An appointment is "past" once it has finished, not once it has started --
+  // a rep looking at the list mid-visit should still find the one they are in.
+  const isPast = (a: Appointment) =>
+    new Date(a.starts_at).getTime() + a.duration_min * 60_000 < now
+  const isOff = (a: Appointment) => a.status === 'cancelled' || a.status === 'no_show'
+
+  const { shown, hiddenPast, hiddenOff } = useMemo(() => {
+    const sorted = [...appointments].sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+    // One predicate, used for the rows and for the count above them. Two
+    // copies is how a heading says 16 over a list of 147 -- which this did,
+    // because the count filtered to live bookings and the list did not.
+    const keep = (a: Appointment) =>
+      (showPast || !isPast(a)) && (showCancelled || !isOff(a))
+    return {
+      shown: sorted.filter(keep),
+      // What each toggle would add, so a button can say what it is for.
+      hiddenPast: sorted.filter((a) => isPast(a) && (showCancelled || !isOff(a))).length,
+      hiddenOff: sorted.filter((a) => isOff(a) && (showPast || !isPast(a))).length,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointments, showPast, showCancelled, now])
+
+  if (!appointments.length) {
+    return (
+      <Card>
+        <Empty
+          title="Nothing booked"
+          hint="Appointments appear here the moment Liner books one, or a rep does."
+        />
+      </Card>
+    )
+  }
+
+  // Grouped by day, because a bare list of forty rows makes somebody read
+  // every date to find where tomorrow starts.
+  const days: { key: string; date: Date; rows: Appointment[] }[] = []
+  for (const appointment of shown) {
+    const date = new Date(appointment.starts_at)
+    const key = date.toDateString()
+    if (days.at(-1)?.key !== key) days.push({ key, date, rows: [] })
+    days.at(-1)!.rows.push(appointment)
+  }
+
+  const today = new Date().toDateString()
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="tnum text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">{shown.length}</span>{' '}
+          {shown.length === 1 ? 'appointment' : 'appointments'}
+          {showPast ? '' : ' still to come'}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {(hiddenPast > 0 || showPast) && (
+            <Button size="sm" onClick={() => setShowPast((was) => !was)}>
+              {showPast ? 'Hide past' : `Show ${hiddenPast} past`}
+            </Button>
+          )}
+          {/* Kept off by default: the ask was the booked ones, and a
+              cancellation counted among them would overstate the day. Offered
+              rather than dropped, because "nothing booked" and "they
+              cancelled" are different facts and only one needs a phone call. */}
+          {(hiddenOff > 0 || showCancelled) && (
+            <Button size="sm" onClick={() => setShowCancelled((was) => !was)}>
+              {showCancelled ? 'Hide cancelled' : `Show ${hiddenOff} cancelled`}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {!shown.length ? (
+        <Card>
+          <Empty
+            title="Nothing still to come"
+            hint="Everything booked has already happened. The buttons above bring the rest back."
+          />
+        </Card>
+      ) : (
+        days.map(({ key, date, rows }) => (
+          <Card key={key} className="overflow-hidden">
+            <div className="flex items-baseline justify-between border-b border-border bg-muted/40 px-4 py-2">
+              <span
+                className={clsx('text-sm font-medium', key === today && 'text-primary')}
+              >
+                {date.toLocaleDateString('en-US', {
+                  weekday: 'long', month: 'short', day: 'numeric',
+                })}
+                {key === today && ' -- today'}
+              </span>
+              <span className="tnum text-xs text-muted-foreground">{rows.length}</span>
+            </div>
+            <ul className="divide-y divide-border">
+              {rows.map((appointment) => (
+                <li key={appointment.id}>
+                  <button
+                    onClick={() => onOpen(appointment.id)}
+                    className={clsx(
+                      'flex w-full items-baseline gap-3 px-4 py-3 text-left transition-colors hover:bg-accent',
+                      isOff(appointment) && 'opacity-55',
+                    )}
+                  >
+                    <span className="tnum w-16 shrink-0 text-sm font-medium">
+                      {time(appointment.starts_at)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">
+                        {appointment.lead?.name ?? 'Unknown'}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {appointment.vehicle?.title ?? 'No vehicle'}
+                        {appointment.assigned_to
+                          ? ` -- ${appointment.assigned_to.name}`
+                          : ' -- unassigned'}
+                      </span>
+                    </span>
+                    {/* `destructive` is this dashboard's word for something
+                        that went wrong and needs a person; a cancellation is a
+                        fact, not a failure, so it stays neutral. */}
+                    <Badge
+                      tone={
+                        appointment.status === 'confirmed'
+                          ? 'success'
+                          : isOff(appointment)
+                            ? 'neutral'
+                            : 'primary'
+                      }
+                      className="shrink-0"
+                    >
+                      {appointment.status === 'no_show' ? 'no show' : appointment.status}
+                    </Badge>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ))
+      )}
+    </div>
   )
 }
 

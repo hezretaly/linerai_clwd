@@ -39,19 +39,30 @@ export function relative(iso: string | null | undefined): string {
   return `${Math.round(hours / 24)}d ago`
 }
 
+/** Past this, a stopwatch stops being a stopwatch. See `waited`. */
+const STOPWATCH_HOURS = 48
+
 /**
- * How long something has been waiting, as `11h 01m`.
+ * How long something has been waiting, as `47m`, `11h 01m` or `54d`.
  *
  * Distinct from `relative` on purpose: "11h ago" describes when a thing
  * happened, "11h 01m" is a stopwatch on a buyer who has not been answered,
  * and the minutes matter to whoever is deciding what to pick up next.
+ *
+ * They stop mattering quickly. Left counting hours forever this rendered a
+ * two-month-old row in the Needs a person queue as `1349h 36m`, which nobody
+ * can read as anything -- the number is too long to take in at a glance and
+ * the minutes on the end are a precision claim about something that has been
+ * sitting there since June. Days past two of them: `54d` says the one thing
+ * that reading is for, which is that this is far too old.
  */
 export function waited(iso: string | null | undefined): string {
   if (!iso) return '--'
   const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
   const hours = Math.floor(minutes / 60)
   if (!hours) return `${minutes}m`
-  return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`
+  if (hours < STOPWATCH_HOURS) return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`
+  return `${Math.floor(hours / 24)}d`
 }
 
 /** No page states its own hours -- every surface reads the dealership row. */

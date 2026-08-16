@@ -126,6 +126,24 @@ WARM_JS = """() => {
     return [...new Set(out)];
 }"""
 
+# A waiting time is a stopwatch, and a stopwatch stops being readable long
+# before it stops counting. `1349h 36m` shipped on the overview -- a real
+# two-month-old row in the Needs a person queue, rendered as a number nobody
+# can take in at a glance with minutes of precision on the end. `waited()`
+# turns to days past 48h; this is the assertion that it stays that way.
+#
+# Scoped to the exact shape that formatter produces, so a three-digit number
+# followed by an `h` somewhere else on a page cannot false-positive it.
+STOPWATCH_JS = """() => {
+    const bad = [];
+    document.querySelectorAll('main *, body *').forEach(el => {
+        if (el.children.length) return;
+        const t = (el.textContent || '').trim();
+        if (/^\\d{3,}h \\d{2}m$/.test(t)) bad.push(t);
+    });
+    return [...new Set(bad)].slice(0, 5);
+}"""
+
 OVERFLOW_JS = """() => {
     const root = document.documentElement;
     const vw = root.clientWidth;
@@ -285,6 +303,13 @@ async def main() -> int:
                 real = [e for e in real if "failed to load resource" not in e.lower()]
             for note in excused:
                 print(f"       NOTE  {note}")
+
+            stopwatch = await page.evaluate(STOPWATCH_JS)
+            if stopwatch:
+                real.append(
+                    f"unreadable waiting time {stopwatch[0]} -- `waited()` should "
+                    f"turn to days past 48h"
+                )
 
             if real:
                 failures.append(f"{route}: {real[0][:120]}")
