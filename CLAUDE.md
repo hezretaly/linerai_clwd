@@ -636,9 +636,22 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     somebody types their details, so "still open" a minute ago is not an
     answer — the same reason `book_appointment` re-checks a clash. A 409 sends
     them back to pick again rather than leaving a form that cannot be sent.
-  - **Two addresses on purpose.** The footer offers `support@`; the reply after
-    somebody actually writes in offers `founder@`. Someone who has taken the
-    trouble to write should reach a person rather than a queue.
+  - **Two addresses on purpose, and they are not two support channels.** The
+    form is the way in and `support@` backs it from the footer; `founder@` is
+    one person's address, offered on the Support section and again in the
+    reply after somebody writes. It is styled as ink rather than white
+    because on this page black already means a person — the handoff avatar
+    that takes over from the assistant is the same colour — and the address
+    itself is the link rather than a button standing in front of one. Somebody
+    writing to a founder is taking down an address, not clicking a call to
+    action.
+  - **The consent wording is per form, and both are served.** Somebody
+    reporting a fault is not booking a demo, and the support form takes no
+    phone number — so the booking wording ("phone, text … about your demo …
+    reply STOP") describes something that did not happen, which is the one
+    thing a consent record is for. `SUPPORT_CONSENT` is the second one, sent
+    down `/api/demo/slots` beside the first, because a wording hardcoded in
+    the page is a second copy that drifts from the row.
 - **"Readonly database" takes three things, not one.** SQLite needs the
   database file, the directory (WAL mode writes `liner.db-wal` and
   `liner.db-shm` beside it) and those sidecars, all owned by the running user;

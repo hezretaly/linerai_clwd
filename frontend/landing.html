@@ -861,13 +861,76 @@
     color: var(--white); font-size: 26px; display:flex; align-items:center;
     justify-content:center; margin: 0 auto 16px;
   }
-  .support-grid{ display:grid; gap: 28px; grid-template-columns: 1fr 1fr; align-items:start; }
+  /* The form is the main way in, so it gets the wider column. The founder
+     card is deliberately not its equal -- an "or" rather than an "either". */
+  .support-grid{
+    display:grid; gap: 28px; grid-template-columns: 1.35fr 1fr; align-items:stretch;
+  }
   @media (max-width: 860px){ .support-grid{ grid-template-columns: 1fr; } }
   .support-card{
-    background: var(--white); border: 1px solid var(--border); border-radius: 20px; padding: 26px;
+    background: var(--white); border: 1px solid var(--border); border-radius: 20px;
+    padding: 30px; display:flex; flex-direction:column;
   }
   .support-line{ font-size: 15px; line-height: 1.7; color: var(--muted); }
   .support-line a{ color: var(--blue); font-weight: 600; }
+  .support-foot{
+    margin-top: auto; padding-top: 20px; border-top: 1px solid var(--border);
+    font-size: 13.5px; line-height: 1.7; color: var(--muted-2);
+  }
+  .support-foot a{ color: var(--blue); font-weight: 600; }
+
+  /* ---------- The founder card ----------
+     Ink, because on this page black already means a person: the handoff
+     avatar that takes over from the assistant is the same colour. So the one
+     card on the site that reaches a named human reads as human before a word
+     of it is read, using the page's own vocabulary rather than a new one. */
+  .founder-card{
+    background: var(--ink); color: var(--white); border-radius: 20px; padding: 30px;
+    display:flex; flex-direction:column; position:relative; overflow:hidden;
+  }
+  .founder-card::after{
+    /* A soft light from the top-right. Enough to stop a flat black rectangle
+       reading as a disabled panel, not enough to become a gradient. */
+    content:''; position:absolute; top:-40%; right:-25%; width: 70%; height: 90%;
+    background: radial-gradient(closest-side, rgba(255,255,255,0.10), transparent);
+    pointer-events:none;
+  }
+  .founder-eyebrow{
+    font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+  }
+  .founder-title{
+    font-size: 21px; font-weight: 800; letter-spacing: -0.02em; margin-top: 8px;
+  }
+  .founder-body{
+    font-size: 15px; line-height: 1.7; color: rgba(255,255,255,0.72); margin-top: 10px;
+  }
+  /* The address is the affordance, not a button next to one. Somebody writing
+     to a founder is not clicking a call to action; they are taking down an
+     address. `break-all` because it is the one string here that cannot wrap
+     at a space, and at 390px it would otherwise push the page sideways. */
+  .founder-mail{
+    display:inline-flex; align-items:center; gap: 10px; margin-top: 22px;
+    font-family: var(--font-mono); font-size: 17px; font-weight: 600;
+    color: var(--white); text-decoration: none; letter-spacing: -0.01em;
+    border-bottom: 1px solid rgba(255,255,255,0.32); padding-bottom: 4px;
+    align-self: flex-start; word-break: break-all; transition: border-color 140ms ease;
+  }
+  .founder-mail:hover{ border-bottom-color: var(--white); }
+  .founder-sign{
+    margin-top: auto; padding-top: 24px; display:flex; align-items:center; gap: 11px;
+  }
+  .founder-mono{
+    width: 38px; height: 38px; border-radius: 50%; flex:none;
+    background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+  }
+  .founder-who{ font-size: 14px; font-weight: 600; line-height: 1.35; }
+  .founder-who span{ display:block; font-weight: 500; color: rgba(255,255,255,0.55); font-size: 13px; }
+  @media (max-width: 420px){
+    .founder-mail{ font-size: 15px; }
+  }
 
 </style>
 </head>
@@ -1433,30 +1496,54 @@
 
     <div class="support-grid">
       <div class="support-card reveal reveal-left">
-        <div class="sheet-title" style="font-size:19px;">Write to us</div>
-        <p class="support-line" style="margin-top:8px;">
+        <div class="sheet-title" style="font-size:20px;">Send us a message</div>
+        <p class="support-line" style="margin-top:10px;">
           Anything at all — a question before you book, something not working, or a bill.
-          We answer from a real inbox, not a ticket queue.
+          It goes to a real inbox, not a ticket queue, and a person writes back.
         </p>
-        <div style="margin-top:18px;">
-          <button class="btn-primary" style="padding:13px 24px; font-size:15px;" data-support>
-            Send us a message
+        <div style="margin-top:22px;">
+          <button class="btn-primary" style="padding:14px 26px; font-size:15px;" data-support>
+            Write to us
           </button>
         </div>
-        <p class="support-line" style="margin-top:16px; font-size:13.5px;">
-          Or email <a href="mailto:support@linerai.us">support@linerai.us</a> directly.
+        <p class="support-foot">
+          Already running Liner? Everything that happened on a conversation is on your
+          dashboard — every message, every call recording, every handoff, in order.
+          You can also <a href="/chat">test the chat</a> the way a buyer sees it, any time.
         </p>
       </div>
 
-      <div class="support-card reveal reveal-right">
-        <div class="sheet-title" style="font-size:19px;">Already running Liner?</div>
-        <p class="support-line" style="margin-top:8px;">
-          Your dashboard is the fastest way to see what happened on any conversation —
-          every message, every call recording, every handoff, in the order it happened.
+      <!-- Not a second support channel. It is one person's address, and the
+           card is built to read that way: ink rather than white, first person
+           rather than "we", and the address itself as the thing you click
+           instead of a button standing in front of it. -->
+      <div class="founder-card reveal reveal-right">
+        <div class="founder-eyebrow">A direct line</div>
+        <div class="founder-title">Write to the founder</div>
+        <p class="founder-body">
+          If you would rather say it to whoever built the thing — a hard question, something
+          that broke, an idea we have not had — this reaches my own inbox. No queue, no
+          ticket number, and I answer them myself.
         </p>
-        <p class="support-line" style="margin-top:14px;">
-          <a href="/chat">Test the chat</a> the way a buyer sees it, any time.
-        </p>
+        <a class="founder-mail" href="mailto:founder@linerai.us">founder@linerai.us</a>
+        <div class="founder-sign">
+          <!-- A person, unnamed. Two letters here would be somebody's initials
+               and we have not been given a name to put in them -- inventing one
+               on the page that promises a real human is the wrong place to be
+               approximate. Put the real name and initials in when there is one;
+               the card only gets warmer for it. -->
+          <div class="founder-mono" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+                 stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+          <div class="founder-who">
+            Founder
+            <span>Liner AI</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1548,7 +1635,10 @@
       </div>
       <label class="consent">
         <input type="checkbox" id="sConsent">
-        <span>By submitting, you agree that Liner AI may contact you by phone, text, and email about your demo. Consent isn't required to purchase. Reply STOP to opt out.</span>
+        <!-- Served like the booking one, and different from it: this form
+             takes no phone number, and somebody reporting a fault is not
+             agreeing to be contacted about a demo. -->
+        <span id="supportConsentText">By submitting, you agree that Liner AI may email you back about your message. Consent isn't required to purchase.</span>
       </label>
       <div class="sheet-error" id="supportError" hidden></div>
       <div class="sheet-actions">
@@ -2175,6 +2265,9 @@
         // The wording comes from the server, so the checkbox and the row it
         // writes can never disagree about what somebody agreed to.
         document.getElementById('consentText').textContent = data.consent_text;
+      }
+      if(data.support_consent_text){
+        document.getElementById('supportConsentText').textContent = data.support_consent_text;
       }
       if(!slotDays.length){
         grid.innerHTML = '<div class="sheet-tz">No times are open right now. Email support@linerai.us and we will find one.</div>';

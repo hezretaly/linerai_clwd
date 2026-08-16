@@ -34,6 +34,17 @@ CONSENT = (
     "email about your demo. Consent isn't required to purchase. Reply STOP to opt out."
 )
 
+#: And the other kind. Somebody reporting that something is broken is not
+#: booking a demo, and asking them to agree to be contacted "about your demo"
+#: is a consent record that does not describe what happened -- which is the one
+#: thing a consent record is for. The support form also takes no phone number,
+#: so promising phone and text, and offering an SMS opt-out for messages that
+#: will never be sent, would be wrong in the other direction too.
+SUPPORT_CONSENT = (
+    "By submitting, you agree that Liner AI may email you back about your message. "
+    "Consent isn't required to purchase."
+)
+
 #: A field long enough for any real answer and short enough that an unguarded
 #: public endpoint is not a place to store things.
 LIMIT = 500
@@ -76,6 +87,9 @@ def open_slots(db: Session = Depends(get_db)) -> dict:
     return {
         "timezone": settings.demo_timezone,
         "consent_text": CONSENT,
+        # Both, because the page shows one of them depending on which form is
+        # open and neither may be a second copy living in the HTML.
+        "support_consent_text": SUPPORT_CONSENT,
         "days": [
             {"date": date, "label": datetime.strptime(date, "%Y-%m-%d").strftime("%a %-d %b"),
              "slots": times}
@@ -132,7 +146,9 @@ def book_demo(body: Booking, db: Session = Depends(get_db)) -> dict:
         kind="demo" if at is not None else "support",
         slot_at=at,
         consent_at=utcnow(),
-        consent_text=CONSENT,
+        # The wording that was actually on the checkbox they ticked, which is
+        # a different one on each path.
+        consent_text=CONSENT if at is not None else SUPPORT_CONSENT,
         **fields,
     )
     db.add(row)

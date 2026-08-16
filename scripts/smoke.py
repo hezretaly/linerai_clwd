@@ -849,6 +849,23 @@ def main() -> int:
     })
     check("a support message needs no calendar", helped["kind"] == "support",
           str(helped)[:60])
+    # And agrees to the right thing. Somebody reporting a fault is not booking
+    # a demo, and the support form takes no phone number -- so a consent record
+    # promising phone, text and an SMS opt-out describes something that did not
+    # happen, which is the one thing a consent record is for.
+    check("the site offers a separate wording for a message, not the demo one",
+          offer["support_consent_text"] != offer["consent_text"]
+          and "demo" not in offer["support_consent_text"].lower(),
+          offer.get("support_consent_text", "")[:70])
+    # Read straight from the row: what was shown and what was stored have to
+    # be the same words, and the endpoint that would serve it is ours rather
+    # than the dealership's, so this is the honest way to ask from here.
+    from app.db import SessionLocal as _S
+    from app.models import DemoRequest as _DR
+    with _S() as _db:
+        stored = _db.query(_DR).filter_by(id=helped["id"]).one().consent_text
+    check("and it is the wording stored on the row, not the demo one",
+          stored == offer["support_consent_text"], stored[:70])
     # Ours, not the dealership's. These are other dealerships asking us for a
     # demo -- a list of Riverside Auto's competitors, which is about the last
     # thing their staff should read from inside their own dashboard.
