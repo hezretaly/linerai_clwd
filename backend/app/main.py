@@ -94,6 +94,7 @@ def create_app() -> FastAPI:
         lead_import,
         leads,
         mailbox,
+        ops,
         outreach,
         overview,
         redirect,
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
         team.router,
         settings_api.router,
         demo.router,
+        ops.router,
     ):
         app.include_router(router, prefix="/api")
 

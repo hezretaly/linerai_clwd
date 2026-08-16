@@ -13,7 +13,10 @@ export interface User {
   id: string
   name: string
   email: string
-  role: 'manager' | 'rep'
+  // `owner` is Liner's own staff, not the dealership's. It is a third role
+  // rather than a senior manager: /api/ops is closed to a dealership however
+  // senior, and a dealership's buyer list is closed to us.
+  role: 'manager' | 'rep' | 'owner'
   avatar_initials: string
   daily_cap: number
   notify_channel: 'email' | 'dashboard'

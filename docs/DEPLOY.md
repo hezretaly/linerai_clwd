@@ -133,10 +133,12 @@ sudo tee /srv/liner/.env >/dev/null <<EOF
 ENV=production
 SESSION_SECRET=$(openssl rand -hex 32)
 
-# One password per role. Production refuses to boot if either is still
-# 'liner-dev' or if the two are identical -- see §4.
+# One password per role. Production refuses to boot if any is still
+# 'liner-dev' or if two of them are identical -- see §4.
 MANAGER_PASSWORD=$(openssl rand -base64 12)
 REP_PASSWORD=$(openssl rand -base64 12)
+# Liner's own two accounts, which reach /ops and nothing of the dealership's.
+OWNER_PASSWORD=$(openssl rand -base64 12)
 
 # CORS only, and only for cross-origin browsers. See below.
 ALLOWED_ORIGINS=https://liner.example.com
@@ -244,15 +246,22 @@ free it: the running app keeps reading the old, deleted copy while the new one
 fills up on disk. The symptom is a reseed that appears to do nothing — fresh
 data on disk, an app that still cannot see it, and no error anywhere.
 
-## 4. Two logins, two roles
+## 4. Three roles, and only two of them belong to the dealership
 
 `make reset-db` prints them. The manager account (`dana.mercer@example.invalid`)
 sees every lead, the team page and the assistant settings; the rep account
 (`marcus.vale@example.invalid`) works the floor. Three more rep accounts exist
 on `REP_PASSWORD` — `marcus.vale`, `priya.raman`, `trevor.osei`.
 
-Startup **refuses to run** with `ENV=production` if either password is still
-`liner-dev`, or if the two are the same:
+`founder@linerai.us` and `cto@linerai.us` are **ours**, on `OWNER_PASSWORD`.
+They sign in at `/login?as=owner` and land on `/ops` — the demos dealerships
+booked with us and the mail they sent, and nothing of a dealership's. `owner`
+is a third role rather than a senior manager on purpose: `/api/ops` is closed
+to a dealership's staff however senior, which is the half of the separation
+that matters if you ever run this for someone else's showroom.
+
+Startup **refuses to run** with `ENV=production` if any password is still
+`liner-dev`, or if two of them are the same:
 
 ```
 RuntimeError: MANAGER_PASSWORD still set to 'liner-dev' while ENV=production.
@@ -266,7 +275,8 @@ system. There is still no signup and no self-service reset, so treat these as
 demo credentials for people you have chosen rather than as an access control
 system.
 
-**`MANAGER_PASSWORD` and `REP_PASSWORD` are read at seed time, not at login.**
+**`MANAGER_PASSWORD`, `REP_PASSWORD` and `OWNER_PASSWORD` are read at seed
+time, not at login.**
 The hash lives in the `users` table, so editing `.env` afterwards changes what
 the startup guard checks and nothing else. Worse, the `.env` recipe above calls
 `openssl rand` each time it runs — so writing it twice mints new passwords and

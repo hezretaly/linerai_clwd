@@ -21,6 +21,10 @@ is not available.
 
 - `backend/app/integrations/voice/openai_realtime.py:3` -- the mint call has never run here. There is no OPENAI_API_KEY in this environment, and `api.openai.com` is refused by the egress proxy besides -- `CONNECT tunnel failed, response 403`. Everything either side of that one request is real and asserted offline by `make agent-check`: the session body, the tool conversion, the voice-only instructions, and the fact that `check()` names the missing variable rather than failing vaguely. Only the request itself is unproven.
 
+## openai-transcriptions
+
+- `backend/app/integrations/voice/transcribe.py:3` -- the HTTP call has never run here. There is no OPENAI_API_KEY in this environment and `api.openai.com` is refused by the egress proxy besides. Everything either side of that one request is real and driven by `make smoke` through `ScriptedTranscriber`: the multipart body this builds, the segment parsing, the merge back into the call's timeline, the message rewrite and the once-only guard.
+
 ## resend
 
 - `backend/app/integrations/email/resend.py:3` -- the HTTP call has never run here. There is no RESEND_API_KEY in this environment and inventing one to make a green tick appear is the opposite of what this codebase is for. Everything either side of the request is real and tested -- the allow-list guard, the Reply-To that makes a reply traceable, the row that records what was attempted, the error path that stores what the API said. Only the send itself is unproven, and ``check()`` says so until a key exists.

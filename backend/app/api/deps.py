@@ -59,6 +59,19 @@ def require_manager(user: User = Depends(current_user)) -> User:
     return user
 
 
+def require_owner(user: User = Depends(current_user)) -> User:
+    """Liner's own people, not the dealership's.
+
+    A third role rather than reusing `manager`: a manager runs a showroom and
+    has every reason to read its buyer list, which is exactly what these two
+    have no business reading. The split runs the other way too -- nothing under
+    /api/ops is open to a dealership's staff, however senior.
+    """
+    if user.role != "owner":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Liner staff only")
+    return user
+
+
 def get_dealership(db: Session = Depends(get_db)) -> Dealership:
     dealership = db.query(Dealership).first()
     if dealership is None:

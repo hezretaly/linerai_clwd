@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
+import type { User } from '../lib/types'
 import { Button, Card, Field, Input } from '../components/ui'
 import { usePublicDemo } from './RequireAuth'
 
@@ -14,14 +15,22 @@ export function Login() {
   // Arriving from the rep view, which is the only reason to be on this page
   // at all when the door is open.
   const wantsManager = params.get('as') === 'manager'
-  const [email, setEmail] = useState('dana.mercer@example.invalid')
+  // Liner's own staff, who land on a different dashboard entirely.
+  const wantsOwner = params.get('as') === 'owner'
+  const [email, setEmail] = useState(
+    wantsOwner ? 'founder@linerai.us' : 'dana.mercer@example.invalid',
+  )
   const [password, setPassword] = useState('liner-dev')
 
   const login = useMutation({
-    mutationFn: () => api.post('/api/auth/login', { email, password }),
-    onSuccess: async () => {
+    mutationFn: () => api.post<{ user: User }>('/api/auth/login', { email, password }),
+    onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['me'] })
-      navigate('/app')
+      // Routed off the role that came back, not off the `?as=` that was asked
+      // for. Signing in as an owner and landing on the dealership's overview
+      // means every panel 403s; signing in as a rep and landing on /ops means
+      // the same in the other direction.
+      navigate(data.user.role === 'owner' ? '/ops' : '/app')
     },
   })
 
@@ -29,12 +38,18 @@ export function Login() {
     <div className="flex h-full items-center justify-center bg-muted/40 px-4">
       <Card className="w-full max-w-sm p-6">
         <h1 className="text-lg font-semibold">
-          {wantsManager ? 'Sign in as a sales manager' : 'Sign in to Liner'}
+          {wantsOwner
+            ? 'Sign in as Liner staff'
+            : wantsManager
+              ? 'Sign in as a sales manager'
+              : 'Sign in to Liner'}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {wantsManager
-            ? 'The team page, the assistant settings and publishing are managers only.'
-            : 'Riverside Auto'}
+          {wantsOwner
+            ? 'Our own dashboard -- the demos people book with us, and the mail they send. Nothing about a dealership’s buyers is on it.'
+            : wantsManager
+              ? 'The team page, the assistant settings and publishing are managers only.'
+              : 'Riverside Auto'}
         </p>
 
         <form

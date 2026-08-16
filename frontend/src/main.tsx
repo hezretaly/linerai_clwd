@@ -21,6 +21,10 @@ import { InventoryPage } from './routes/Inventory'
 import { ImportPage } from './routes/Import'
 import { AssistantPage } from './routes/Assistant'
 import { TeamPage } from './routes/Team'
+import { OpsShell } from './routes/ops/OpsShell'
+import { RequireOwner } from './routes/ops/RequireOwner'
+import { OpsCalendarPage } from './routes/ops/OpsCalendar'
+import { OpsMailPage } from './routes/ops/OpsMail'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -77,6 +81,21 @@ createRoot(document.getElementById('root')!).render(
             <Route path="email" element={<EmailSetupPage />} />
             <Route path="assistant" element={<AssistantPage />} />
             <Route path="team" element={<TeamPage />} />
+          </Route>
+
+          {/* Liner's own dashboard, behind its own role. Not nested under
+              /app: that tree is the dealership's and its shell reads
+              /api/overview, which an owner has no business being served. */}
+          <Route
+            path="/ops"
+            element={
+              <RequireOwner>
+                <OpsShell />
+              </RequireOwner>
+            }
+          >
+            <Route index element={<OpsCalendarPage />} />
+            <Route path="mail" element={<OpsMailPage />} />
           </Route>
 
           <Route path="*" element={<LeaveToLanding />} />

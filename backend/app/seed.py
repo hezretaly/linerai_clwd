@@ -49,6 +49,8 @@ SEED_PASSWORD = settings.manager_password  # kept for scripts that import it
 
 
 def _password_for(role: str) -> str:
+    if role == "owner":
+        return settings.owner_password
     return settings.manager_password if role == "manager" else settings.rep_password
 
 
@@ -233,6 +235,12 @@ def _seed_users(db: Session) -> list[User]:
         ("Marcus Vale", "marcus.vale@example.invalid", "rep", "MV", 8),
         ("Priya Raman", "priya.raman@example.invalid", "rep", "PR", 8),
         ("Trevor Osei", "trevor.osei@example.invalid", "rep", "TO", 8),
+        # Us, not the dealership. `owner` is a third role and it is deliberately
+        # not `manager`: a manager runs a showroom, and giving these two that
+        # role would hand them a dealership's buyer list they have no business
+        # reading. They see who asked for a demo and the mail sent to us.
+        ("Liner Founder", "founder@linerai.us", "owner", "LF", 0),
+        ("Liner CTO", "cto@linerai.us", "owner", "LC", 0),
     ]
     users = [
         User(
@@ -376,7 +384,10 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     """A populated yesterday: conversations, leads, appointments, one open escalation."""
     now = utcnow()
     hours = json.loads(db.query(Dealership).first().hours_json)
-    manager, marcus, priya, trevor = users
+    # The dealership's own staff. Liner's two `owner` accounts are in the same
+    # table and must not be here: this history assigns leads and appointments,
+    # and an owner cannot own a buyer at a showroom they do not work for.
+    manager, marcus, priya, trevor = [u for u in users if u.role in ("manager", "rep")]
     by_vin = {v.vin: v for v in vehicles}
     sienna = by_vin["5TDKZ3DC8JS905311"]
     pacifica = by_vin["2C4RC1BG7KR522104"]  # the sold one

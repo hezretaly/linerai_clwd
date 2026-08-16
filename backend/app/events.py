@@ -39,6 +39,10 @@ EVENT_TYPES = {
     # URL grow the events table.
     "email.received",
     "lead.imported",
+    # Somebody asked us for a demo. Ours, not a dealership's -- it is the one
+    # event on this system that nobody clicked for and that we have to act on.
+    "demo.requested",
+    "demo.updated",
     # A buyer got an owner, which also settles anything of theirs that was
     # sitting in the unowned queue -- so three panels move on one event.
     "lead.assigned",

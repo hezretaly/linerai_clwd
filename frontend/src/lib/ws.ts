@@ -6,6 +6,21 @@ export interface DealerEvent {
   type: string
   payload: Record<string, unknown>
   created_at: string
+  /**
+   * This arrived in the `?since=` backlog rather than live.
+   *
+   * Invalidating a query key is the same either way -- the data really did
+   * change. Interrupting somebody is not. Without this flag every page load
+   * replays the events table and pops a notification for each demo booked
+   * this week, including the ones already opened and answered, which is
+   * exactly the tray that teaches people to ignore it.
+   *
+   * A reconnect after a dropped socket replays too, so a booking made during
+   * those two seconds goes uncounted as an interruption. The badge still
+   * carries it: that one is a stored state on the row, and it is the channel
+   * that is allowed to persist.
+   */
+  replayed: boolean
 }
 
 /* Each event invalidates the relevant query keys rather than patching cache by
@@ -26,6 +41,11 @@ const INVALIDATES: Record<string, string[]> = {
   // outreach row -- it exists only as a receipt, and it is exactly the
   // delivery a manager needs to notice.
   'email.received': ['email-messages', 'email-receipts', 'timeline', 'leads', 'conversations'],
+  // Ours, not a dealership's: somebody asking Liner for a demo. Every ops
+  // surface reads the same three keys, so a booking made while the calendar is
+  // open moves the badge, the day and the inbox together.
+  'demo.requested': ['ops-summary', 'ops-demos', 'ops-mail'],
+  'demo.updated': ['ops-summary', 'ops-demos', 'ops-mail'],
   'call.started': ['overview', 'conversations'],
   'call.ended': ['overview', 'conversations'],
 }
@@ -51,16 +71,23 @@ export function useDealerEvents(onEvent?: (event: DealerEvent) => void): void {
       socket = new WebSocket(
         `${protocol}://${window.location.host}/ws/dealer?since=${lastId.current}`,
       )
+      // The server sends the backlog first and `ready` after it, so this flips
+      // exactly once per connection and is the only thing that can tell a
+      // replayed event from a live one.
+      let live = false
 
       socket.onmessage = (message) => {
         const event = JSON.parse(message.data) as DealerEvent
         if (event.id) lastId.current = Math.max(lastId.current, event.id)
-        if (event.type === 'ready') return
+        if (event.type === 'ready') {
+          live = true
+          return
+        }
 
         for (const key of INVALIDATES[event.type] ?? []) {
           void queryClient.invalidateQueries({ queryKey: [key] })
         }
-        handler.current?.(event)
+        handler.current?.({ ...event, replayed: !live })
       }
 
       socket.onclose = () => {

@@ -868,6 +868,81 @@ def main() -> int:
                if d["date"] == first["date"]), []),
           when)
 
+    print("\n== our own dashboard is ours ==")
+    # /ops is Liner's, not a dealership's. The separation is a third role
+    # rather than a senior manager: a manager runs a showroom and has every
+    # reason to read its buyer list, which is exactly what these two do not.
+    check("a dealership's manager cannot reach it",
+          status_of("GET", "/api/ops/summary")[0] == 403)
+    check("and nor can a stranger", anonymous_status("/api/ops/summary") == 401)
+
+    call("POST", "/api/auth/login",
+         {"email": "founder@linerai.us", "password": "liner-dev"})
+    check("but Liner's own account can",
+          call("GET", "/api/ops/summary")["unread"] >= 0)
+
+    before = call("GET", "/api/ops/summary")["unread"]
+    slots = call("GET", "/api/demo/slots")["days"]
+    day = next(d for d in slots if d["slots"])
+    ops_demo = call("POST", "/api/demo/requests", {
+        "name": "Ops Prospect", "dealership": "Ops Motors",
+        "email": f"ops.{stamp}@example.invalid", "phone": "319-555-0112",
+        "slot": f"{day['date']}T{day['slots'][0]}", "consent": True,
+    })
+    check("a booking arrives unread", call("GET", "/api/ops/summary")["unread"] == before + 1,
+          f"{before} -> {call('GET', '/api/ops/summary')['unread']}")
+    # Opening one is what clears it, and it stays cleared -- a notification
+    # that survives being read is one people stop looking at. Deliberately a
+    # state on the row, not a per-person receipt: there are two of us and "I
+    # have seen it" from either is the answer the other needs.
+    seen = call("POST", f"/api/ops/demos/{ops_demo['id']}/status", {"status": "seen"})
+    check("opening it clears the notification", seen["unread"] is False, str(seen)[:60])
+    check("and the count comes back down",
+          call("GET", "/api/ops/summary")["unread"] == before)
+    check("marking it read twice changes nothing",
+          call("POST", f"/api/ops/demos/{ops_demo['id']}/status",
+               {"status": "seen"})["unread"] is False)
+    check("an invented status is refused",
+          status_of("POST", f"/api/ops/demos/{ops_demo['id']}/status",
+                    {"status": "archived"})[0] == 400)
+
+    entry = call("GET", f"/api/ops/demos/{ops_demo['id']}")
+    check("the entry carries the wording they agreed to, not just that they did",
+          "Reply STOP to opt out" in (entry["consent_text"] or "")
+          and bool(entry["consented_at"]), str(entry.get("consent_text"))[:40])
+
+    box = call("GET", "/api/ops/mail")
+    check("the inbox counts what it shows",
+          box["counts"]["all"] == len(box["messages"]), str(box["counts"]))
+    for name in ("demos", "support", "unmatched", "unread"):
+        one = call("GET", f"/api/ops/mail?box={name}")
+        # Two copies of a box's predicate is how a tab says 12 and shows 9.
+        check(f"the {name} box agrees with its own count",
+              one["counts"][name] == len(one["messages"]),
+              f"{one['counts'][name]} vs {len(one['messages'])}")
+    check("an unknown box is a 400, not a silent 'all'",
+          status_of("GET", "/api/ops/mail?box=spam")[0] == 400)
+
+    reply = call("POST", "/api/ops/mail/reply", {
+        "to": f"ops.{stamp}@example.invalid", "subject": "Re: your demo",
+        "body": "See you then.",
+    })
+    # Straight through the same sender and the same outbound limit as a
+    # dealer's composer -- a reply typed to a real prospect from a rehearsal
+    # is exactly what that check exists to stop.
+    check("a reply reports the provider that handled it rather than a green tick",
+          bool(reply.get("provider")) and bool(reply.get("detail") or reply.get("reason")),
+          str(reply)[:90])
+    check("and an address that is not one is refused",
+          status_of("POST", "/api/ops/mail/reply",
+                    {"to": "nobody", "subject": "x", "body": "y"})[0] == 400)
+
+    call("POST", f"/api/demo/requests/{ops_demo['id']}/cancel")
+    # Back to the dealership for everything after this. One jar, one session.
+    call("POST", "/api/auth/login", LOGIN)
+    check("and signing back in as the dealership still works",
+          call("GET", "/api/auth/me")["user"]["role"] == "manager")
+
     print("\n== the charts answer for a chosen window ==")
     for key, expect in (("today", "Today"), ("yesterday", "Yesterday"),
                         ("week", "Last 7"), ("month", "Last 30")):

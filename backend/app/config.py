@@ -259,6 +259,11 @@ class Settings(BaseSettings):
     # to the documented dev value and both are refused in production.
     manager_password: str = DEV_SEED_PASSWORD
     rep_password: str = DEV_SEED_PASSWORD
+    # The two accounts that run Liner itself, rather than the dealership. They
+    # see who has asked for a demo and the mail those people send -- other
+    # companies' names, addresses and phone numbers -- so the same production
+    # guard applies to this password as to the other two.
+    owner_password: str = DEV_SEED_PASSWORD
     # How this install is reached from outside, e.g. https://liner.example.com.
     # Only needed for links that leave the building: a tracked link in an email
     # has to be absolute, and it is built from the request when this is empty.
@@ -357,6 +362,7 @@ def get_settings() -> Settings:
         for name, value in (
             ("MANAGER_PASSWORD", settings.manager_password),
             ("REP_PASSWORD", settings.rep_password),
+            ("OWNER_PASSWORD", settings.owner_password),
         )
         if value == DEV_SEED_PASSWORD
     ]
@@ -374,11 +380,25 @@ def get_settings() -> Settings:
             "would have the dashboard and every lead in it. Set real ones before "
             "deploying."
         )
-    if settings.is_production and settings.manager_password == settings.rep_password:
-        raise RuntimeError(
-            "MANAGER_PASSWORD and REP_PASSWORD are the same. Give the manager "
-            "account its own password, or the role split is decorative."
-        )
+    # Every pair, not just the first two. `owner` reaches /ops and a dealership
+    # never should, so sharing a password with the rep account is the one
+    # collision that hands our own inbox to whoever works the floor.
+    if settings.is_production:
+        for first, second in (
+            ("MANAGER_PASSWORD", "REP_PASSWORD"),
+            ("MANAGER_PASSWORD", "OWNER_PASSWORD"),
+            ("REP_PASSWORD", "OWNER_PASSWORD"),
+        ):
+            values = {
+                "MANAGER_PASSWORD": settings.manager_password,
+                "REP_PASSWORD": settings.rep_password,
+                "OWNER_PASSWORD": settings.owner_password,
+            }
+            if values[first] == values[second]:
+                raise RuntimeError(
+                    f"{first} and {second} are the same. Give each account its "
+                    "own password, or the role split is decorative."
+                )
     return settings
 
 

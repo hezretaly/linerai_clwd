@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db, utcnow
+from app.events import emit
 from app.models import DemoRequest, User
 from app.api.deps import current_user
 from app.schemas.serialize import iso
@@ -137,6 +138,12 @@ def book_demo(body: Booking, db: Session = Depends(get_db)) -> dict:
     db.add(row)
     db.commit()
     db.refresh(row)
+    # The one thing on our own dashboard that nobody clicked for, so it is the
+    # one thing worth interrupting somebody about.
+    emit(db, "demo.requested", {
+        "request_id": row.id, "kind": row.kind, "name": row.name,
+        "dealership": row.dealership, "slot_at": iso(row.slot_at),
+    })
     return {
         "id": row.id,
         "kind": row.kind,

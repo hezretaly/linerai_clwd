@@ -257,6 +257,106 @@ def _spoken(price: int) -> str:
     return f"{thousands} thousand" if not rest else f"{thousands} {rest // 100}{rest % 100 // 10}{rest % 10}"
 
 
+#: Dealerships asking *us* for a demo. Ours, not Riverside Auto's -- these are
+#: the rows behind `/ops`, and they have nothing to do with a car buyer.
+DEALERSHIPS = [
+    ("Priya Raman", "Northgate Motors", "priya", "https://northgate-motors.invalid"),
+    ("Tom Whitlock", "Whitlock Family Auto", "tom", "https://whitlockauto.invalid"),
+    ("Alicia Bermudez", "Cascade Pre-Owned", "alicia", "https://cascadepreowned.invalid"),
+    ("Dev Anand", "Anand Autohaus", "dev", "https://anandautohaus.invalid"),
+    ("Rachel Okoye", "Lakeside Import Center", "rachel", "https://lakesideimports.invalid"),
+    ("Marco Pinto", "Pinto Brothers Used Cars", "marco", "https://pintobrothers.invalid"),
+]
+
+SUPPORT_NOTES = [
+    "We run two rooftops on one DMS export -- can Liner tell them apart?",
+    "How long does it take to point this at our own site's inventory feed?",
+    "Our nights are the busy part. Does the assistant answer after hours?",
+]
+
+
+def _demo_requests(db, rng, now) -> int:
+    """Seed the ops dashboard: demos booked with us, and people asking for help.
+
+    Same `.invalid` rule as everything else here -- these are prospects on
+    paper only, and a configured sender must not be able to reach one.
+
+    Slots follow the demo endpoint's own rule rather than being invented: it
+    offers weekday hours from `demo_hours` for `demo_days_ahead` days, and
+    refuses a time already taken. So the future ones are placed on real
+    weekday hours, and most of the set is in the past -- filling the whole
+    offered window would leave the booking sheet with nothing to sell.
+    """
+    # The wording is taken from the endpoint rather than retyped: a consent
+    # record is only worth anything if it is the text the page really showed.
+    from app.api.demo import CONSENT
+    from app.config import settings as app_settings
+    from app.models import DemoRequest
+
+    if db.query(DemoRequest).count():
+        # Ran twice. More would be fine, but the fixed cast above would repeat
+        # the same six names, which reads as a bug rather than as volume.
+        return 0
+
+    hours = [int(h) for h in app_settings.demo_hours.split(",") if h.strip().isdigit()]
+    if not hours:
+        hours = [10, 14]
+
+    def weekday_at(days_out: int, hour: int):
+        day = (now + timedelta(days=days_out)).replace(
+            hour=hour, minute=0, second=0, microsecond=0
+        )
+        while day.weekday() >= 5:
+            day += timedelta(days=1)
+        return day
+
+    plan = [
+        # (days out, hour, status, kind). Negative is the past.
+        (2, hours[0], "new", "demo"),
+        (3, hours[-1], "new", "demo"),
+        (5, hours[len(hours) // 2], "seen", "demo"),
+        (-6, hours[0], "done", "demo"),
+        (-13, hours[-1], "cancelled", "demo"),
+    ]
+
+    made = 0
+    for index, (days_out, hour, status, kind) in enumerate(plan):
+        who, dealership, handle, url = DEALERSHIPS[index % len(DEALERSHIPS)]
+        slot = weekday_at(days_out, hour)
+        # Somebody booked before the slot, and before now. Taking `slot - a few
+        # days` alone stamped next week's bookings in the future, which every
+        # "3d ago" on the page then rendered as "just now".
+        submitted = min(
+            slot - timedelta(days=rng.randint(1, 4), hours=rng.randint(0, 8)),
+            now - timedelta(hours=rng.randint(2, 90)),
+        )
+        db.add(DemoRequest(
+            kind=kind, name=who, dealership=dealership,
+            email=f"{handle}@{dealership.split()[0].lower()}.invalid",
+            phone=f"555-01{20 + index:02d}", dealership_url=url,
+            slot_at=slot, consent_at=submitted, consent_text=CONSENT,
+            status=status, created_at=submitted,
+        ))
+        made += 1
+
+    # Support requests have no slot, which is the whole reason the calendar
+    # has a "no time picked" panel -- otherwise they would live only in mail.
+    for index, note in enumerate(SUPPORT_NOTES):
+        who, dealership, handle, url = DEALERSHIPS[(index + len(plan)) % len(DEALERSHIPS)]
+        when = now - timedelta(days=index * 3 + 1, hours=rng.randint(0, 12))
+        db.add(DemoRequest(
+            kind="support", name=who, dealership=dealership,
+            email=f"{handle}@{dealership.split()[0].lower()}.invalid",
+            phone="", dealership_url=url, message=note,
+            slot_at=None, consent_at=None, consent_text="",
+            status="new" if index == 0 else "seen", created_at=when,
+        ))
+        made += 1
+
+    db.commit()
+    return made
+
+
 def build(db, count: int) -> dict[str, int]:
     rng = random.Random(20260813 + count)
     now = utcnow()
@@ -277,8 +377,10 @@ def build(db, count: int) -> dict[str, int]:
     made = dict.fromkeys(
         ("leads", "conversations", "messages", "captured_fields", "appointments",
          "outreach", "escalations", "vehicle_mentions", "inbound_emails",
-         "call_usage", "call_segments"), 0,
+         "call_usage", "call_segments", "demo_requests"), 0,
     )
+
+    made["demo_requests"] += _demo_requests(db, rng, now)
 
     for n in range(count):
         name = f"{rng.choice(FIRST)} {rng.choice(LAST)}"

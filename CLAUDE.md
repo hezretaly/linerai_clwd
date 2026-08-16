@@ -40,7 +40,9 @@ Ports: backend **8000**, frontend **5173**, fixture site **8100**.
 Logins: `dana.mercer@example.invalid` (manager) and `marcus.vale@example.invalid`
 (rep), both `liner-dev` in development. They come from `MANAGER_PASSWORD` and
 `REP_PASSWORD`; with `ENV=production` startup refuses to run until each is set
-to something real and the two differ.
+to something real and they all differ. `founder@linerai.us` and
+`cto@linerai.us` (`OWNER_PASSWORD`) are **ours**, not the dealership's: they
+sign in at `/login?as=owner` and land on `/ops`.
 
 Deploying to a real host: **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**. One process
 serves the API, the WebSocket, the landing page and the SPA, so nginx needs a
@@ -631,6 +633,47 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Two addresses on purpose.** The footer offers `support@`; the reply after
     somebody actually writes in offers `founder@`. Someone who has taken the
     trouble to write should reach a person rather than a queue.
+- **`/ops` is Liner's own dashboard, and `owner` is a third role.** Not a
+  senior manager: a manager runs a showroom and has every reason to read its
+  buyer list, which is exactly what these two have no business reading. So
+  `require_owner` guards `/api/ops`, a dealership's staff get a 403 there
+  however senior, and nothing under it touches `leads`, `conversations` or a
+  recording. It has the two things a two-person company actually has —
+  a calendar of the demos people booked with us, and the mail they sent.
+  - **The separation runs one way, and the code says which.** An owner *can*
+    read the showroom: there is one dealership here and it is the demo we run.
+    Claiming a symmetry that does not exist in a comment is worse than the
+    asymmetry, because the next person tests the half that is true.
+  - **A notification is cleared by opening the thing, not by a button.** One
+    left sitting after it has been read is one people learn to ignore, and this
+    is the only dashboard here with something on it that nobody clicked for.
+    `status` goes `new → seen` on open, which is deliberately a state on the
+    row rather than a per-user receipt: there are two of us, and "I have seen
+    it" from either is the answer the other needs. A per-person flag would have
+    the badge arguing with itself across two laptops.
+  - **A replayed event must not raise a notification.** The socket sends the
+    backlog on every connect, so without `DealerEvent.replayed` — set for
+    everything before the server's `ready` frame — each page load popped a
+    toast for every demo booked that week, including the ones already answered.
+    Invalidating a query key on a replayed event is still right: the data
+    really did change. Interrupting somebody about it is not.
+  - **The ops inbox is a union too, for the same reason `/app/email` is.** The
+    marketing site's forms plus `inbound_emails` that resolved to nobody — a
+    stranger writing to `support@` has no buyer page anywhere, and listing one
+    table would leave them visible only on a diagnostics strip. `boxes` defines
+    each tab once, for the counts and the filter both.
+  - **A reply reports the provider, not a green tick.** With the default outbox
+    sender `sent: true` means recorded and nothing left the building, so the
+    composer says *Not delivered* and quotes the provider's own words. It goes
+    through `outreach_send.blocked_reason` like every other send: a composer is
+    exactly where a rehearsal reaches a real prospect.
+  - **A Tailwind grid needs `grid-cols-1` at the base breakpoint.** Without a
+    declared track the implicit one is `auto`, which sizes to its widest
+    child's *min-content* — and the min-content of a `truncate` line is the
+    whole untruncated string. So the card grew past a 390px phone and the
+    ellipsis never appeared. `grid-cols-N` is `minmax(0, 1fr)`, and the
+    `minmax(0, …)` is the part that lets it clip. `make shots` covers `/ops`
+    at 390px, signing in a second time because the role is different.
 - **`PUBLIC_DEMO` opens the dashboard to anybody, as a rep, and it is off.**
   The point of a demo is being able to send someone a link, and the point of
   this setting is that it is the one line in `.env` that hands a stranger a

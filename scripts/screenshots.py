@@ -55,6 +55,12 @@ DEALER = [
     "/app/team",
 ]
 
+# Liner's own dashboard, behind the `owner` role -- a different sign-in, so it
+# is a separate list rather than two more entries above. It gets the same
+# 390px rule as everything else: two people run this company and both of them
+# will read a new demo on a phone.
+OPS = ["/ops", "/ops/mail"]
+
 
 # Reps and managers work from phones, so a route that overflows there is a real
 # break, not a cosmetic one. 390x844 is an iPhone 13/14/15 logical viewport --
@@ -329,6 +335,24 @@ async def main() -> int:
         await page.set_viewport_size(PHONE)
         print(f"\nmobile ({PHONE['width']}px):")
         for route in ["/chat", *routes]:
+            await shot(route)
+
+        # Ours. A second sign-in because `owner` is a third role and a
+        # dealership's session gets a 403 on every one of these.
+        phone = False
+        await page.set_viewport_size(DESKTOP)
+        await page.goto(BASE + "/login?as=owner", wait_until="networkidle")
+        await page.fill('input[type="password"]', "liner-dev")
+        await page.click('button[type="submit"]')
+        await page.wait_for_url("**/ops", timeout=10_000)
+        print("\nops routes:")
+        for route in OPS:
+            await shot(route)
+
+        phone = True
+        await page.set_viewport_size(PHONE)
+        print(f"\nops mobile ({PHONE['width']}px):")
+        for route in OPS:
             await shot(route)
 
         await browser.close()
