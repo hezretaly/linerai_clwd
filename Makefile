@@ -1,4 +1,4 @@
-.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db smoke accept accept-ui e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db smoke accept accept-ui ops-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -61,6 +61,9 @@ agent-check: ## Drive the live loop against a fake provider (no API key needed)
 
 accept-ui: ## The same path through the screens: two windows, real clicks.
 	$(PY) scripts/browser_acceptance.py
+
+ops-ui: ## Our own dashboard in a browser: the notification really clears.
+	$(PY) scripts/ops_browser.py
 
 accept: ## One buyer end to end -- form, chat, call, email, booking, handover.
 	$(PY) scripts/acceptance.py

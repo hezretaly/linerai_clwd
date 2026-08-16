@@ -25,6 +25,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make reset-db` | Delete the database and reseed |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
+| `make ops-ui` | `/ops` in a browser: the notification clears **and stays cleared** |
 | `make accept` | One buyer end to end: web form → chat → call → email → book → reschedule → cancel → rebook → handover |
 | `make accept-ui` | The same path through the screens — buyer window and dealer window, real clicks |
 | `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
