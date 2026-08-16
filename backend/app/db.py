@@ -71,15 +71,17 @@ def readonly_help() -> str:
 
     SQLite reports one error for every way the OS refused a write, and the
     traceback that surfaces is sixty lines of SQLAlchemy with the cause
-    nowhere in it. The cause is almost always ownership -- and specifically
-    ownership of the *directory*, not the file: in WAL mode SQLite creates
-    `liner.db-wal` and `liner.db-shm` alongside the database, so a writable
-    file in a directory somebody else owns still fails. Measured, not
-    reasoned: with the file owned by the running user and the directory owned
-    by root it fails; the other way round it works.
+    nowhere in it. The cause is almost always ownership, and it takes *three*
+    things rather than one: the database file, the directory (WAL mode creates
+    `liner.db-wal` and `liner.db-shm` alongside it), and those sidecars once
+    they exist. Any one of them owned by somebody else fails the write.
 
-    That matters because the obvious fix -- chown the .db -- is the one that
-    does not work, and the second attempt is where an afternoon goes.
+    Measured as an unprivileged user against a real database, inserting a row
+    rather than only opening it: file root-owned in a writable directory
+    fails, and a writable file in a root-owned directory fails. Checking only
+    `ls -l liner.db` is how this gets diagnosed as fixed when it is not --
+    which is why the message below prints every one of them and the fix is a
+    recursive chown rather than a single file.
     """
     path = sqlite_path()
     if path is None:
@@ -102,9 +104,9 @@ def readonly_help() -> str:
         f"\n  running as : {who}"
         f"\n  database   : {path}  (owned by {owner(path)})"
         f"\n  directory  : {directory}  (owned by {owner(directory)})"
-        f"\n\nSQLite writes `-wal` and `-shm` files next to the database, so the "
-        f"DIRECTORY has to be writable -- chowning the .db alone is not enough. "
-        f"Give both to the user the service runs as:"
+        f"\n\nAll of these have to belong to the user the service runs as -- the "
+        f"file, the directory, and the `-wal`/`-shm` sidecars SQLite writes "
+        f"beside it. Chowning one is not enough, so do the tree:"
         f"\n  sudo chown -R liner:liner /srv/liner"
         f"\n  sudo systemctl restart liner"
         f"\n\nIf that user is not `liner`, check `User=` in the systemd unit. A "

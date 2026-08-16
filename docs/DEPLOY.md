@@ -105,16 +105,21 @@ The same slip, seen from the database side. It surfaces as a 500 on login, or
 as a sixty-line SQLAlchemy traceback from `make add-owners` / `make seed`, and
 it means the OS refused the write — not that anything is corrupt.
 
-**The directory is what matters, not the `.db` file.** In WAL mode SQLite
-creates `liner.db-wal` and `liner.db-shm` *next to* the database, so a
-perfectly writable file inside a directory somebody else owns still fails.
-That makes the obvious fix — `chown liner liner.db` — the one that does not
-work, which is where the afternoon goes. Verified both ways: file owned by the
-running user with a root-owned directory fails; the reverse works.
+**It takes three things, not one.** SQLite needs write permission on the
+database file, on the *directory* (WAL mode creates `liner.db-wal` and
+`liner.db-shm` beside it), and on those sidecars once they exist. Any one of
+them owned by somebody else fails every write, and they go wrong
+independently — a directory that looks fine tells you nothing about the file
+inside it.
+
+Measured as an unprivileged user against a real database, inserting a row
+rather than only opening it: a root-owned file in a writable directory fails,
+and a writable file in a root-owned directory fails.
 
 ```bash
-ls -ld /srv/liner/backend            # the directory, not just the file
-sudo chown -R liner:liner /srv/liner
+ls -la /srv/liner/backend/liner.db*   # the file AND its -wal/-shm
+ls -ld /srv/liner/backend             # and the directory
+sudo chown -R liner:liner /srv/liner  # all three; one is never enough
 sudo systemctl restart liner
 ```
 
