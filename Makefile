@@ -1,4 +1,4 @@
-.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db smoke accept accept-ui ops-ui e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db add-owners smoke accept accept-ui ops-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -42,6 +42,9 @@ dev: stop ## Run both servers in the background, logging to .logs/
 set-password: ## Change one account's password in place: make set-password EMAIL=someone@...
 	@test -n "$(EMAIL)" || (echo "Usage: make set-password EMAIL=dana.mercer@example.invalid" && exit 1)
 	cd backend && ../$(PY) -m app.set_password $(EMAIL) $(ARGS)
+
+add-owners: ## Add founder@/cto@ to an existing database without a reseed
+	cd backend && ../$(PY) -m app.add_owners
 
 seed: ## Wipe and rebuild the Riverside Auto fixture
 	cd backend && ../$(PY) -m app.seed

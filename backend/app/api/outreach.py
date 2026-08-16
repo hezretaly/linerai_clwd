@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.appointments import assert_transition, get_appointment
-from app.api.deps import current_user, get_dealership
+from app.api.deps import current_user, find_staff, get_dealership
 from app.api.team import rep_load
 from app.config import settings
 from app.db import get_db, utcnow
@@ -212,7 +212,7 @@ def assign(
             )
         chosen = min(available, key=lambda pair: pair[1]["todays_appointments"])[0]
     elif body.user_id:
-        chosen = db.query(User).filter_by(id=body.user_id, active=True).one_or_none()
+        chosen = find_staff(db, body.user_id)
         if chosen is None:
             raise HTTPException(404, "User not found")
     else:

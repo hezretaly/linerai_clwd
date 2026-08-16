@@ -614,6 +614,13 @@ def main() -> int:
                   opened.role if opened else "nobody")
             check("as a real account, so every role check still applies to them",
                   opened is not None and opened.active and bool(opened.id))
+            # And never one of ours. PUBLIC_DEMO_EMAIL used to be looked up by
+            # address with no role filter, so one mistyped line of `.env` would
+            # have opened Liner's own dashboard to anybody with the URL.
+            live_cfg2.public_demo_email = "founder@linerai.us"
+            check("and PUBLIC_DEMO_EMAIL cannot point it at one of ours",
+                  demo_rep(db) is None, str(demo_rep(db)))
+            live_cfg2.public_demo_email = ""
         finally:
             live_cfg2.public_demo = was_public
 

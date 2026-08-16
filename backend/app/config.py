@@ -374,11 +374,27 @@ def get_settings() -> Settings:
             "as a secret on the Cloudflare Worker."
         )
     if settings.is_production and stale:
+        # Named individually, and OWNER_PASSWORD gets its own sentence: it
+        # arrived after the first deployments did, so the way this is met in
+        # practice is an install that booted yesterday refusing to boot today
+        # on a variable whose .env predates it. A message that reads as "you
+        # misconfigured this" sends somebody hunting for what they broke.
         raise RuntimeError(
             f"{' and '.join(stale)} still set to 'liner-dev' while ENV=production. "
             "That password is printed in the README, so anyone who found the URL "
             "would have the dashboard and every lead in it. Set real ones before "
             "deploying."
+            + (
+                "\n\nOWNER_PASSWORD is newer than the others. If this install "
+                "was running before an upgrade, its .env has no line for it and "
+                "the default is what stopped the boot. Add one and restart:\n"
+                "    echo \"OWNER_PASSWORD=$(openssl rand -base64 12)\" | "
+                "sudo tee -a /srv/liner/.env\n"
+                "Then `make add-owners`, which puts founder@ and cto@ on an "
+                "existing database without the reseed that would take the leads "
+                "with it."
+                if "OWNER_PASSWORD" in stale else ""
+            )
         )
     # Every pair, not just the first two. `owner` reaches /ops and a dealership
     # never should, so sharing a password with the rep account is the one

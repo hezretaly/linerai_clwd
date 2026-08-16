@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import matching, timeline
 from app.recap import lead_recap
-from app.api.deps import current_user
+from app.api.deps import current_user, find_staff
 from app.db import get_db, utcnow
 from app.events import emit
 from app.models import (
@@ -217,7 +217,7 @@ def assign_lead(
     lead = _get(db, lead_id)
     chosen = None
     if body.user_id:
-        chosen = db.query(User).filter_by(id=body.user_id, active=True).one_or_none()
+        chosen = find_staff(db, body.user_id)
         if chosen is None:
             raise HTTPException(404, "User not found")
 

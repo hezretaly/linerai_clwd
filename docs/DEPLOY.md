@@ -297,6 +297,28 @@ system. There is still no signup and no self-service reset, so treat these as
 demo credentials for people you have chosen rather than as an access control
 system.
 
+### Upgrading an install that predates `OWNER_PASSWORD`
+
+`OWNER_PASSWORD` arrived after the first deployments did, and it has a
+development default like the other two — so an install whose `.env` has no line
+for it **refuses to boot** after the upgrade, with `OWNER_PASSWORD still set to
+'liner-dev' while ENV=production`. That is the guard doing its job on a
+published password, but it reads as a misconfiguration when nothing was
+misconfigured. Two commands:
+
+```bash
+echo "OWNER_PASSWORD=$(openssl rand -base64 12)" | sudo tee -a /srv/liner/.env
+sudo -u liner make add-owners      # adds founder@ and cto@ -- no reseed, no data loss
+sudo systemctl restart liner
+```
+
+`make add-owners` exists because the two accounts are created by `_seed_users`,
+which only runs on a fresh seed. Without it the only way to get them onto a
+database that is already taking bookings is `make reset-db`, which deletes the
+leads. It is idempotent and never touches an account that already exists —
+somebody may have changed a password with `make set-password`, and re-hashing it
+here would lock them out silently.
+
 **`MANAGER_PASSWORD`, `REP_PASSWORD` and `OWNER_PASSWORD` are read at seed
 time, not at login.**
 The hash lives in the `users` table, so editing `.env` afterwards changes what

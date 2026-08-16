@@ -32,7 +32,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user, get_dealership
+from app.api.deps import current_user, find_staff, get_dealership
 from app.integrations.base import NotConfigured
 from app.config import settings
 from app.db import get_db, utcnow
@@ -206,7 +206,7 @@ def commit_adf(
 
     assignee = None
     if body.assign_to_user_id:
-        assignee = db.query(User).filter_by(id=body.assign_to_user_id, active=True).one_or_none()
+        assignee = find_staff(db, body.assign_to_user_id)
         if assignee is None:
             raise HTTPException(404, "User not found")
 

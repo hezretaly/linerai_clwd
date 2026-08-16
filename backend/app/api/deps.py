@@ -59,6 +59,35 @@ def require_manager(user: User = Depends(current_user)) -> User:
     return user
 
 
+#: Who works at the dealership. `owner` is us, and the distinction is load
+#: bearing in both directions: an owner must never appear on their roster, be
+#: assigned a buyer, take an appointment, or be the account a public demo
+#: opens as.
+DEALERSHIP_ROLES = ("manager", "rep")
+
+
+def staff_query(db: Session):
+    """Active dealership staff, and nobody else.
+
+    One predicate rather than a `role != 'owner'` at each of the five call
+    sites -- the roster, three assignment paths and the public door. Adding
+    `owner` to the users table made every unfiltered `query(User)` a place our
+    own accounts could surface inside somebody else's showroom, and the copy
+    that gets missed is the one nobody notices.
+    """
+    return db.query(User).filter(User.active.is_(True), User.role.in_(DEALERSHIP_ROLES))
+
+
+def find_staff(db: Session, user_id: str) -> User | None:
+    """The person a lead or an appointment may be handed to, or None.
+
+    None for an unknown id *and* for one that names an owner: from a
+    dealership's side those are the same answer, and saying "that account
+    exists but you may not have it" tells them we are in here.
+    """
+    return staff_query(db).filter(User.id == user_id).one_or_none()
+
+
 def require_owner(user: User = Depends(current_user)) -> User:
     """Liner's own people, not the dealership's.
 

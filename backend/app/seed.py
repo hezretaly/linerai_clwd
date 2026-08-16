@@ -229,27 +229,37 @@ def _seed_dealership(db: Session) -> Dealership:
     return dealership
 
 
+#: Us, not the dealership. `owner` is a third role and it is deliberately not
+#: `manager`: a manager runs a showroom, and giving these two that role would
+#: hand them a dealership's buyer list they have no business reading. They see
+#: who asked for a demo and the mail sent to us.
+#:
+#: Module level so `make add-owners` can put them on a database that was
+#: seeded before this role existed, without a reseed that would take the
+#: leads with it. One definition, two callers.
+OWNERS = [
+    ("Liner Founder", "founder@linerai.us", "owner", "LF", 0),
+    ("Liner CTO", "cto@linerai.us", "owner", "LC", 0),
+]
+
+STAFF = [
+    ("Dana Mercer", "dana.mercer@example.invalid", "manager", "DM", 6),
+    ("Marcus Vale", "marcus.vale@example.invalid", "rep", "MV", 8),
+    ("Priya Raman", "priya.raman@example.invalid", "rep", "PR", 8),
+    ("Trevor Osei", "trevor.osei@example.invalid", "rep", "TO", 8),
+]
+
+
+def build_user(name: str, email: str, role: str, initials: str, cap: int) -> User:
+    return User(
+        name=name, email=email, password_hash=_hash(_password_for(role)),
+        role=role, avatar_initials=initials, daily_cap=cap,
+        notify_channel="email" if role == "manager" else "dashboard",
+    )
+
+
 def _seed_users(db: Session) -> list[User]:
-    people = [
-        ("Dana Mercer", "dana.mercer@example.invalid", "manager", "DM", 6),
-        ("Marcus Vale", "marcus.vale@example.invalid", "rep", "MV", 8),
-        ("Priya Raman", "priya.raman@example.invalid", "rep", "PR", 8),
-        ("Trevor Osei", "trevor.osei@example.invalid", "rep", "TO", 8),
-        # Us, not the dealership. `owner` is a third role and it is deliberately
-        # not `manager`: a manager runs a showroom, and giving these two that
-        # role would hand them a dealership's buyer list they have no business
-        # reading. They see who asked for a demo and the mail sent to us.
-        ("Liner Founder", "founder@linerai.us", "owner", "LF", 0),
-        ("Liner CTO", "cto@linerai.us", "owner", "LC", 0),
-    ]
-    users = [
-        User(
-            name=name, email=email, password_hash=_hash(_password_for(role)),
-            role=role, avatar_initials=initials, daily_cap=cap,
-            notify_channel="email" if role == "manager" else "dashboard",
-        )
-        for name, email, role, initials, cap in people
-    ]
+    users = [build_user(*person) for person in STAFF + OWNERS]
     db.add_all(users)
     db.commit()
     return users

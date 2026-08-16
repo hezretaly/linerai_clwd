@@ -4,7 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import clear_session, current_user, set_session, verify_password
+from app.api.deps import (
+    clear_session,
+    current_user,
+    set_session,
+    staff_query,
+    verify_password,
+)
 from app.config import settings
 from app.db import get_db
 from app.models import User
@@ -42,10 +48,14 @@ def demo_rep(db: Session) -> User | None:
     """
     if not settings.public_demo:
         return None
-    query = db.query(User).filter_by(active=True)
+    # A rep, always. `staff_query` is what keeps PUBLIC_DEMO_EMAIL from being
+    # able to name an owner -- the door that lets a stranger in with no
+    # password must not be a way into Liner's own dashboard, and a typo in one
+    # `.env` line should not be all that stands between the two.
+    query = staff_query(db).filter(User.role == "rep")
     if settings.public_demo_email:
-        return query.filter_by(email=settings.public_demo_email.lower()).one_or_none()
-    return query.filter_by(role="rep").order_by(User.name.asc()).first()
+        return query.filter(User.email == settings.public_demo_email.lower()).one_or_none()
+    return query.order_by(User.name.asc()).first()
 
 
 @router.get("/public")

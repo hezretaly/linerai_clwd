@@ -1990,6 +1990,59 @@ def main() -> int:
     # mailbox, so one verified `linerai.us` makes every address on it legal to
     # send as -- which is what lets two founders each write under their own
     # name on one key, with no per-user credential anywhere.
+    print("\n== an upgrade does not strand an existing install ==")
+    # OWNER_PASSWORD arrived after the first deployments did, and it has a
+    # development default -- so an install whose .env predates it stops booting
+    # after an upgrade. The guard is right to fire; what it must not do is read
+    # as "you misconfigured this" when nothing was misconfigured.
+    import os
+    import subprocess as _sp
+
+    env = {
+        **os.environ, "ENV": "production", "SESSION_SECRET": "x" * 40,
+        "WEBHOOK_SECRET": "y" * 40, "MANAGER_PASSWORD": "real-one",
+        "REP_PASSWORD": "real-two",
+    }
+    env.pop("OWNER_PASSWORD", None)
+    boot = _sp.run(
+        [sys.executable, "-c", "import app.config"],
+        cwd="backend", env=env, capture_output=True, text=True,
+    )
+    check("production still refuses to boot on a published password",
+          boot.returncode != 0 and "OWNER_PASSWORD" in boot.stderr)
+    check("and the message says it is the newer variable, not a mistake",
+          "predates it" in boot.stderr or "was running before an upgrade" in boot.stderr,
+          boot.stderr.strip().splitlines()[-1][:80] if boot.stderr else "")
+    check("and names the command that repairs the database without a reseed",
+          "add-owners" in boot.stderr)
+    # The other half of the same trap: the accounts are created by a fresh
+    # seed, so a database already taking bookings has none and `make reset-db`
+    # would take the leads with it.
+    from app.add_owners import add_owners
+    check("adding them to a database that already has them changes nothing",
+          add_owners() == 0)
+    # Our accounts share the users table with the dealership's, so every
+    # unfiltered query(User) was a place they could surface inside somebody
+    # else's showroom. One predicate covers the roster, the three assignment
+    # paths and the public door.
+    roster = call("GET", "/api/team")["members"]
+    check("and a dealership's team page never lists them",
+          not [u for u in roster if u["role"] == "owner"], f"{len(roster)} on the roster")
+
+    from app.db import SessionLocal as _Session
+    from app.models import User as _User
+    with _Session() as _db:
+        owner_id = _db.query(_User).filter_by(role="owner").first().id
+    lead_id = call("GET", "/api/leads")["leads"][0]["id"]
+    check("a buyer cannot be assigned to one",
+          status_of("POST", f"/api/leads/{lead_id}/assign", {"user_id": owner_id})[0] == 404)
+    appointment = call("GET", "/api/appointments")["appointments"][0]["id"]
+    check("nor can an appointment",
+          status_of("POST", f"/api/appointments/{appointment}/assign",
+                    {"user_id": owner_id})[0] == 404)
+    check("and a manager cannot administer or deactivate one",
+          status_of("PATCH", f"/api/team/{owner_id}", {"daily_cap": 99})[0] == 404)
+
     print("\n== a person's own name on the envelope ==")
     from app.config import settings as app_settings
     from app.integrations.email.outbox import OutboxSender

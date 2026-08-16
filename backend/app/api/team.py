@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user, get_dealership, require_manager
+from app.api.deps import (
+    DEALERSHIP_ROLES,
+    current_user,
+    get_dealership,
+    require_manager,
+    staff_query,
+)
 from app.db import get_db, utcnow
 from app.events import emit
 from app.models import Appointment, Conversation, Dealership, Escalation, Lead, User
@@ -45,7 +51,10 @@ def rep_load(db: Session, user: User) -> dict:
 
 @router.get("/team")
 def list_team(db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
-    rows = db.query(User).filter_by(active=True).order_by(User.role.asc(), User.name.asc()).all()
+    # Dealership staff only. Liner's own `owner` accounts share this table
+    # and have no business on somebody else's roster -- they take no
+    # appointments, own no leads, and are not a manager's to administer.
+    rows = staff_query(db).order_by(User.role.asc(), User.name.asc()).all()
     return {"members": [rep_load(db, u) for u in rows]}
 
 
@@ -63,7 +72,10 @@ def patch_member(
     manager: User = Depends(require_manager),
 ) -> dict:
     member = db.query(User).filter_by(id=user_id).one_or_none()
-    if member is None:
+    if member is None or member.role not in DEALERSHIP_ROLES:
+        # 404 for an owner too, not 403: from a dealership's side "that
+        # account exists but is not yours" is itself something they should
+        # not learn.
         raise HTTPException(404, "Member not found")
     if body.notify_channel is not None and body.notify_channel not in {"email", "dashboard"}:
         raise HTTPException(400, "notify_channel must be 'email' or 'dashboard'")

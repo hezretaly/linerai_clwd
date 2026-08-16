@@ -23,6 +23,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
 | `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
 | `make reset-db` | Delete the database and reseed |
+| `make add-owners` | Put `founder@`/`cto@` on an **existing** database — no reseed, no data loss |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
 | `make ops-ui` | `/ops` in a browser: the notification clears **and stays cleared** |
@@ -634,6 +635,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Two addresses on purpose.** The footer offers `support@`; the reply after
     somebody actually writes in offers `founder@`. Someone who has taken the
     trouble to write should reach a person rather than a queue.
+- **A new role password breaks an existing deployment, and only the boot says
+  so.** `OWNER_PASSWORD` has a development default, so production refuses to
+  boot on it — correct, and it means an install whose `.env` predates the
+  variable stops starting after an upgrade with a message that reads as *you
+  misconfigured this*. The error names it as the newer one and gives the two
+  commands; the second is `make add-owners`, which exists because
+  `_seed_users` only runs on a fresh seed and `make reset-db` would take the
+  leads with it. Anything added to the stale-password list later inherits the
+  same trap.
 - **`/ops` is Liner's own dashboard, and `owner` is a third role.** Not a
   senior manager: a manager runs a showroom and has every reason to read its
   buyer list, which is exactly what these two have no business reading. So
