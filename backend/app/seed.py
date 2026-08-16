@@ -677,5 +677,12 @@ def seed(db: Session | None = None) -> None:
             db.close()
 
 
+def _main() -> None:
+    try:
+        seed()
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from None
+
+
 if __name__ == "__main__":
-    seed()
+    _main()

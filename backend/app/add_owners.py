@@ -163,7 +163,12 @@ def _env_key_for(email: str) -> str:
 
 def main() -> int:
     print("Liner's own accounts:\n")
-    created, moved = add_owners()
+    try:
+        created, moved = add_owners()
+    except RuntimeError as exc:
+        # A permissions problem is not a bug in this script, and a sixty-line
+        # SQLAlchemy traceback buries the one sentence that fixes it.
+        raise SystemExit(str(exc)) from None
     print()
     if not created and not moved:
         print("Nothing to do -- every account is already in ops_users.")

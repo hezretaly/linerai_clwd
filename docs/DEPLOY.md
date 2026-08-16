@@ -99,6 +99,35 @@ sudo rm -rf /srv/liner/frontend/dist
 sudo -u liner make build
 ```
 
+### "attempt to write a readonly database"
+
+The same slip, seen from the database side. It surfaces as a 500 on login, or
+as a sixty-line SQLAlchemy traceback from `make add-owners` / `make seed`, and
+it means the OS refused the write — not that anything is corrupt.
+
+**The directory is what matters, not the `.db` file.** In WAL mode SQLite
+creates `liner.db-wal` and `liner.db-shm` *next to* the database, so a
+perfectly writable file inside a directory somebody else owns still fails.
+That makes the obvious fix — `chown liner liner.db` — the one that does not
+work, which is where the afternoon goes. Verified both ways: file owned by the
+running user with a root-owned directory fails; the reverse works.
+
+```bash
+ls -ld /srv/liner/backend            # the directory, not just the file
+sudo chown -R liner:liner /srv/liner
+sudo systemctl restart liner
+```
+
+If it comes back, the service is writing as somebody else. Check `User=`:
+
+```bash
+systemctl show liner -p User -p ExecStart
+```
+
+A unit with no `User=` runs as **root**, and then every file the app touches at
+runtime is recreated root-owned — so this returns the next time anything runs
+as `liner`. Set `User=liner`, chown once more, and it stops happening.
+
 Then check nothing else is mis-owned, because the same slip breaks `git pull`
 and the database just as quietly:
 

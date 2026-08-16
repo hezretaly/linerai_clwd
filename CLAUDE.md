@@ -639,6 +639,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Two addresses on purpose.** The footer offers `support@`; the reply after
     somebody actually writes in offers `founder@`. Someone who has taken the
     trouble to write should reach a person rather than a queue.
+- **"Readonly database" is about the directory, not the file.** SQLite in WAL
+  mode writes `liner.db-wal` and `liner.db-shm` beside the database, so a
+  writable `.db` inside a directory owned by somebody else still refuses every
+  write — which makes `chown liner liner.db`, the obvious fix, the one that
+  does not work. Measured both ways round. `create_all` catches the error and
+  prints who it is running as, who owns each, and the command, because the
+  bare SQLAlchemy traceback is sixty lines with the cause nowhere in it.
 - **A new role password breaks an existing deployment, and only the boot says
   so.** `OWNER_PASSWORD` has a development default, so production refuses to
   boot on it — correct, and it means an install whose `.env` predates the
