@@ -64,7 +64,9 @@ export function OpsMailPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Everything sent to {summary?.support_email ?? 'us'} and every form on the site.
-          Replies go out as {summary?.founder_email ?? 'a person'}.
+          {summary?.reply_to
+            ? ` What you send from here comes back to ${summary.reply_to}.`
+            : null}
         </p>
       </div>
 
@@ -228,7 +230,7 @@ function Reader({ message, onBack }: { message: MailMessage; onBack: () => void 
           <Composer
             to={message.from_address}
             subject={message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`}
-            signature={summary?.founder_email ?? ''}
+            signature={summary?.reply_to ?? ''}
             onClose={() => setReplying(false)}
           />
         ) : (
@@ -353,8 +355,14 @@ function Composer({
         <Button size="sm" onClick={onClose}>
           Cancel
         </Button>
+        {/* The `From` is the deployment's one configured sender -- one
+            verified domain, one address -- so what is per-person here is the
+            return path, and saying so is the difference between the answer
+            reaching you and reaching the other one of you. */}
         {signature && (
-          <span className="ml-auto text-xs text-muted-foreground">Replies come from {signature}</span>
+          <span className="ml-auto text-xs text-muted-foreground">
+            Their reply comes back to {signature}
+          </span>
         )}
       </div>
     </div>

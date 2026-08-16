@@ -16,6 +16,12 @@ export interface OpsSummary {
   unmatched_mail: number
   support_email: string
   founder_email: string
+  /** Where an answer from *this* signed-in person comes back to.
+   *  Computed server-side by the same function the send uses -- a
+   *  composer promising one return address while the send sets another
+   *  is a lie nobody would ever catch. */
+  reply_to: string
+  sender: string
   timezone: string
 }
 

@@ -668,6 +668,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     composer says *Not delivered* and quotes the provider's own words. It goes
     through `outreach_send.blocked_reason` like every other send: a composer is
     exactly where a rehearsal reaches a real prospect.
+  - **The `From` is the deployment's; the `Reply-To` is the person's.** One
+    install has one configured sender and one verified domain, so every
+    message leaves from that address — there is no per-user mailbox and
+    pretending otherwise would need a credential per person. What *is* per
+    person is where the answer comes back to, and with two of us a reply that
+    always routed to `founder@` sent half of them to the wrong one. `_reply_to`
+    computes it once, for the send and for the line the composer shows, so the
+    promise and the header cannot disagree.
   - **A Tailwind grid needs `grid-cols-1` at the base breakpoint.** Without a
     declared track the implicit one is `auto`, which sizes to its widest
     child's *min-content* — and the min-content of a `truncate` line is the

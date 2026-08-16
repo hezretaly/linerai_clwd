@@ -933,6 +933,21 @@ def main() -> int:
     check("a reply reports the provider that handled it rather than a green tick",
           bool(reply.get("provider")) and bool(reply.get("detail") or reply.get("reason")),
           str(reply)[:90])
+    # Two people share this inbox. The `From` is the deployment's one verified
+    # sender, but the return path is whoever pressed send -- a reply that
+    # always came back to the founder sent half the answers to the wrong one.
+    check("and comes back to whoever sent it, not to a fixed address",
+          reply.get("reply_to") == "founder@linerai.us", str(reply.get("reply_to")))
+    call("POST", "/api/auth/login",
+         {"email": "cto@linerai.us", "password": "liner-dev"})
+    check("so the other account's replies come back to them",
+          call("GET", "/api/ops/summary")["reply_to"] == "cto@linerai.us",
+          call("GET", "/api/ops/summary")["reply_to"])
+    check("and the composer is told the same address the send will use",
+          call("POST", "/api/ops/mail/reply",
+               {"to": f"ops.{stamp}@example.invalid", "subject": "Re: your demo",
+                "body": "Confirming."})["reply_to"]
+          == call("GET", "/api/ops/summary")["reply_to"])
     check("and an address that is not one is refused",
           status_of("POST", "/api/ops/mail/reply",
                     {"to": "nobody", "subject": "x", "body": "y"})[0] == 400)

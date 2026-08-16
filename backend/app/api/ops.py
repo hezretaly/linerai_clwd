@@ -58,6 +58,21 @@ def _entry(row: DemoRequest) -> dict:
     }
 
 
+def _reply_to(user: User) -> str:
+    """Where an answer from this person should come back to.
+
+    Their own address, because a reply from the CTO that routes to the founder
+    reaches the wrong one of two people -- and with two of us that is half the
+    mail. It falls back to `founder@` and then `support@` so a deployment with
+    an account whose address is unset still has somewhere to send it.
+
+    This is not the `From`. One deployment has one configured sender and one
+    verified domain, so every message leaves from that address; only the
+    reply path is per-person.
+    """
+    return (user.email or "").strip() or settings.founder_email or settings.support_email
+
+
 @router.get("/summary")
 def summary(
     db: Session = Depends(get_db), user: User = Depends(require_owner)
@@ -85,6 +100,11 @@ def summary(
         .count(),
         "support_email": settings.support_email,
         "founder_email": settings.founder_email,
+        # Computed here rather than in the page, by the same function the send
+        # uses -- a composer that promises one return address while the send
+        # sets another is a lie nobody would ever catch.
+        "reply_to": _reply_to(user),
+        "sender": get_email_sender().name,
         "timezone": settings.demo_timezone,
     }
 
@@ -274,6 +294,10 @@ def reply(
     `OUTBOUND_ONLY_TO` is exactly as load-bearing here as it is on a dealer's
     composer, and a reply typed to a real prospect from a rehearsal is the
     failure it exists to stop.
+
+    The `From` is the deployment's one configured sender; the `Reply-To` is
+    whoever pressed send. Two people share this inbox, so a reply that always
+    came back to one of them sent half the answers to the wrong person.
     """
     to = (body.to or "").strip()
     if "@" not in to:
@@ -288,7 +312,7 @@ def reply(
             to=to,
             subject=(body.subject or "").strip() or "Liner AI",
             body=body.body or "",
-            reply_to=settings.founder_email or settings.support_email,
+            reply_to=_reply_to(user),
         )
     except NotConfigured as exc:
         return {"sent": False, **exc.as_dict()}
@@ -296,5 +320,6 @@ def reply(
         "sent": result.status == "sent",
         "status": result.status,
         "provider": sender.name,
+        "reply_to": _reply_to(user),
         "detail": result.detail or "",
     }
