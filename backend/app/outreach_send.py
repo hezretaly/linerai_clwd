@@ -12,12 +12,13 @@ passed.
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.integrations.email.base import EmailSender
-from app.models import Outreach
+from app.integrations.email.base import EmailSender, with_name
+from app.models import Outreach, User
 
 
 def blocked_reason(sender: EmailSender, to_address: str) -> str:
@@ -44,6 +45,64 @@ def blocked_reason(sender: EmailSender, to_address: str) -> str:
             if allowed else "It is empty, so every address is refused. "
         )
         + "Add the address to it, or set OUTBOUND_ONLY_TO=everyone to send freely."
+    )
+
+
+@dataclass
+class Identity:
+    """Whose name is on a message, and why it is not theirs when it is not."""
+
+    #: What goes in the `From` header, display name included.
+    from_address: str
+    #: Where an answer comes back to. Their own address, always -- a reply that
+    #: routes to the wrong one of two people is half the mail lost.
+    reply_to: str
+    #: True when `from_address` really is this person's own.
+    personal: bool
+    #: Empty when personal. Otherwise the reason, in words somebody can act on.
+    note: str = ""
+
+
+def identity_for(sender: EmailSender, user: User | None) -> Identity:
+    """Who this message is from, decided once for the send and the screen.
+
+    A person writing from the ops inbox should reach the recipient under their
+    own name -- with two of us, a reply that always came back to the founder
+    sent half the answers to the wrong person, and a From that always said
+    `support@` made a personal answer read like a ticket.
+
+    What makes that safe is that the provider verifies the *domain*: once
+    `linerai.us` is verified in Resend, `founder@` and `cto@` are both legal on
+    the same key, so a third person is a row in the users table and nothing
+    else. There is no per-user credential anywhere in this, and there must not
+    be -- a mailbox password per person is a thing to leak.
+
+    Where the deployment cannot prove it owns the address, the send falls back
+    to the configured sender **and says so**. The alternatives are both worse:
+    putting an unverified address in a From gets the whole message rejected,
+    and quietly swapping it leaves somebody believing they wrote from an
+    address they did not.
+    """
+    fallback = sender.default_from()
+    if user is None:
+        return Identity(from_address=fallback, reply_to=fallback, personal=False)
+
+    address = (user.email or "").strip()
+    reply_to = address or fallback
+    if not address:
+        return Identity(fallback, reply_to, False, "That account has no email address.")
+
+    if sender.can_send_as(address):
+        return Identity(with_name(user.name, address), reply_to, True)
+
+    domain = settings.sending_domain or "(unset)"
+    return Identity(
+        fallback,
+        reply_to,
+        False,
+        f"Sending as {address} needs it to be on SENDING_DOMAIN, which is "
+        f"{domain}. Mail goes out as {fallback or 'the configured sender'} and "
+        "replies still come back to you.",
     )
 
 

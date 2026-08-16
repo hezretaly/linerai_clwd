@@ -168,7 +168,6 @@ export function OpsMailPage() {
 }
 
 function Reader({ message, onBack }: { message: MailMessage; onBack: () => void }) {
-  const { data: summary } = useOpsSummary()
   const [replying, setReplying] = useState(false)
 
   return (
@@ -230,7 +229,6 @@ function Reader({ message, onBack }: { message: MailMessage; onBack: () => void 
           <Composer
             to={message.from_address}
             subject={message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`}
-            signature={summary?.reply_to ?? ''}
             onClose={() => setReplying(false)}
           />
         ) : (
@@ -265,6 +263,10 @@ interface ReplyResult {
   reason?: string
   status?: string
   provider?: string
+  from_address?: string
+  from_is_personal?: boolean
+  from_note?: string
+  reply_to?: string
   detail?: string
   error?: string
   missing?: string[]
@@ -279,14 +281,13 @@ interface ReplyResult {
 function Composer({
   to,
   subject,
-  signature,
   onClose,
 }: {
   to: string
   subject: string
-  signature: string
   onClose: () => void
 }) {
+  const { data: summary } = useOpsSummary()
   const [address, setAddress] = useState(to)
   const [line, setLine] = useState(subject)
   const [body, setBody] = useState('')
@@ -300,6 +301,27 @@ function Composer({
 
   return (
     <div className="space-y-3">
+      {/* Who this goes out as, before it goes out. The From is not a field
+          because it is not a choice -- it is whichever address the deployment
+          can prove it owns -- but showing it is the difference between
+          writing under your own name and finding out later that you did not. */}
+      {summary?.from_address ? (
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+          <div>
+            <span className="text-muted-foreground">From </span>
+            <span className="font-medium">{summary.from_address}</span>
+            {summary.from_is_personal && (
+              <Badge tone="success" className="ml-2">Your own address</Badge>
+            )}
+          </div>
+          <div className="mt-0.5 text-muted-foreground">
+            Replies come back to {summary.reply_to}
+          </div>
+          {summary.from_note && (
+            <p className="mt-1.5 text-warning-foreground">{summary.from_note}</p>
+          )}
+        </div>
+      ) : null}
       <Field label="To">
         <Input value={address} onChange={(e) => setAddress(e.target.value)} />
       </Field>
@@ -335,7 +357,9 @@ function Composer({
               : 'border-success/30 bg-success-muted text-success',
           )}
         >
-          {result.provider === 'outbox' ? 'Not delivered. ' : `Sent through ${result.provider}. `}
+          {result.provider === 'outbox'
+            ? 'Not delivered. '
+            : `Sent through ${result.provider} as ${result.from_address}. `}
           {result.detail}
         </p>
       )}
@@ -355,13 +379,9 @@ function Composer({
         <Button size="sm" onClick={onClose}>
           Cancel
         </Button>
-        {/* The `From` is the deployment's one configured sender -- one
-            verified domain, one address -- so what is per-person here is the
-            return path, and saying so is the difference between the answer
-            reaching you and reaching the other one of you. */}
-        {signature && (
+        {summary && !summary.sender_delivers && (
           <span className="ml-auto text-xs text-muted-foreground">
-            Their reply comes back to {signature}
+            Sender is {summary.sender} -- nothing leaves the building
           </span>
         )}
       </div>

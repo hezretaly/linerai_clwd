@@ -12,6 +12,7 @@ is not available.
 ## gmail
 
 - `backend/app/integrations/email/gmail.py:3` -- unverified. Requires a Google Workspace service account with domain-wide delegation plus GMAIL_IMPERSONATE, neither of which exists in this environment, so this code path has never been executed. The google-api client libraries are also not in pyproject.toml -- add them alongside the credentials. Until then ``check()`` raises and the app falls back to the outbox sender with a visible not-configured state.
+- `backend/app/integrations/email/gmail.py:60` -- this branch has never run. Impersonating a second user needs that user to exist in the Workspace and the delegation to cover them, and neither can be checked from here.
 
 ## llm
 

@@ -21,7 +21,14 @@ export interface OpsSummary {
    *  composer promising one return address while the send sets another
    *  is a lie nobody would ever catch. */
   reply_to: string
+  /** What actually goes in the From header, display name included. */
+  from_address: string
+  /** True when mail really leaves under this person's own name. */
+  from_is_personal: boolean
+  /** Why it does not, when it does not -- the one thing here somebody can fix. */
+  from_note: string
   sender: string
+  sender_delivers: boolean
   timezone: string
 }
 

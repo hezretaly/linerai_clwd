@@ -206,6 +206,28 @@ addresses are minted per send and cannot be enumerated as rules.
 The Worker has never been deployed from here, so treat its first run as
 untested. The endpoint it posts to is covered by `make smoke`.
 
+### Sending under your own name
+
+`SENDING_DOMAIN` also decides who may put their own address in a `From`.
+Resend verifies the **domain**, not the mailbox, so once `linerai.us` is
+verified both `founder@linerai.us` and `cto@linerai.us` are legal to send as on
+the same API key — a reply from the ops inbox goes out as
+`Liner CTO <cto@linerai.us>` and comes back to them. Adding a third person is a
+row in the `users` table and no new credential; there is deliberately no
+per-mailbox password anywhere in this, because that is a thing to leak.
+
+An account whose address is **not** on `SENDING_DOMAIN` falls back to
+`SENDING_FROM` and the composer says why, rather than putting an unverified
+address in the header — a provider rejects the whole message for that, so the
+fallback is the difference between a mail that arrives under the wrong name and
+one that does not arrive at all. The `Reply-To` is their own address either
+way.
+
+This applies to `/ops` only. A dealership's outreach is from the dealership
+rather than from a person, and its `Reply-To` is the `reply+<token>@` address
+that routes an answer back into the buyer's timeline — not a header a rep's
+own address may take over.
+
 ## 3. Build and seed
 
 ```bash

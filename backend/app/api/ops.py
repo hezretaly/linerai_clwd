@@ -58,19 +58,20 @@ def _entry(row: DemoRequest) -> dict:
     }
 
 
-def _reply_to(user: User) -> str:
-    """Where an answer from this person should come back to.
+def _identity(user: User):
+    """Whose name goes on a message this person sends.
 
-    Their own address, because a reply from the CTO that routes to the founder
-    reaches the wrong one of two people -- and with two of us that is half the
-    mail. It falls back to `founder@` and then `support@` so a deployment with
-    an account whose address is unset still has somewhere to send it.
+    One call, used by the composer and by the send, so the address shown and
+    the address written cannot disagree. The rule itself lives in
+    `outreach_send.identity_for`: a From has to be on the verified sending
+    domain, and where it is not the fallback says why.
 
-    This is not the `From`. One deployment has one configured sender and one
-    verified domain, so every message leaves from that address; only the
-    reply path is per-person.
+    Only the ops inbox uses it. A dealership's outreach is from the dealership
+    rather than from a person -- and its Reply-To is the `reply+<token>@`
+    address that routes an answer back into the buyer's timeline, which is not
+    a header a rep's own address may take over.
     """
-    return (user.email or "").strip() or settings.founder_email or settings.support_email
+    return outreach_send.identity_for(get_email_sender(), user)
 
 
 @router.get("/summary")
@@ -82,6 +83,8 @@ def summary(
     Unread is the notification count and nothing else: a demo somebody has
     opened is not news any more, however recently it arrived.
     """
+    sender = get_email_sender()
+    identity = _identity(user)
     now = utcnow()
     upcoming = (
         db.query(DemoRequest)
@@ -101,10 +104,17 @@ def summary(
         "support_email": settings.support_email,
         "founder_email": settings.founder_email,
         # Computed here rather than in the page, by the same function the send
-        # uses -- a composer that promises one return address while the send
-        # sets another is a lie nobody would ever catch.
-        "reply_to": _reply_to(user),
-        "sender": get_email_sender().name,
+        # uses -- a composer that promises one address while the send writes
+        # another is a lie nobody would ever catch.
+        "reply_to": identity.reply_to,
+        "from_address": identity.from_address,
+        #: True when mail really leaves under this person's own name.
+        "from_is_personal": identity.personal,
+        #: Why it does not, when it does not. Shown on the composer, because
+        #: this is the one thing about a send somebody can actually fix.
+        "from_note": identity.note,
+        "sender": sender.name,
+        "sender_delivers": sender.delivers,
         "timezone": settings.demo_timezone,
     }
 
@@ -295,14 +305,16 @@ def reply(
     composer, and a reply typed to a real prospect from a rehearsal is the
     failure it exists to stop.
 
-    The `From` is the deployment's one configured sender; the `Reply-To` is
-    whoever pressed send. Two people share this inbox, so a reply that always
-    came back to one of them sent half the answers to the wrong person.
+    Under the sender's own name where the deployment can prove it owns the
+    address, and back to them either way. Two people share this inbox: a reply
+    that always came from `support@` read like a ticket, and one that always
+    came back to the founder sent half the answers to the wrong person.
     """
     to = (body.to or "").strip()
     if "@" not in to:
         raise HTTPException(400, "That does not look like an email address.")
     sender = get_email_sender()
+    identity = _identity(user)
     blocked = outreach_send.blocked_reason(sender, to)
     if blocked:
         return {"sent": False, "reason": blocked}
@@ -312,7 +324,8 @@ def reply(
             to=to,
             subject=(body.subject or "").strip() or "Liner AI",
             body=body.body or "",
-            reply_to=_reply_to(user),
+            reply_to=identity.reply_to,
+            from_address=identity.from_address,
         )
     except NotConfigured as exc:
         return {"sent": False, **exc.as_dict()}
@@ -320,6 +333,9 @@ def reply(
         "sent": result.status == "sent",
         "status": result.status,
         "provider": sender.name,
-        "reply_to": _reply_to(user),
+        "from_address": identity.from_address,
+        "from_is_personal": identity.personal,
+        "from_note": identity.note,
+        "reply_to": identity.reply_to,
         "detail": result.detail or "",
     }

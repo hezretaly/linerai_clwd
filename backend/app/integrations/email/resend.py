@@ -17,7 +17,7 @@ import httpx
 
 from app.config import settings
 from app.integrations.base import NotConfigured
-from app.integrations.email.base import EmailSender, SendResult
+from app.integrations.email.base import EmailSender, SendResult, bare_address
 
 API = "https://api.resend.com/emails"
 TIMEOUT = 20.0
@@ -63,12 +63,6 @@ class ResendSender(EmailSender):
                 "domain through Cloudflare, so a mismatch breaks receiving too.",
             )
 
-    def from_address(self) -> str:
-        # support@ rather than liner@: it is the address the domain is set up
-        # around, and the one a buyer replying by hand rather than by hitting
-        # Reply will send to -- which the catch-all routes back either way.
-        return settings.sending_from or f"support@{settings.sending_domain}"
-
     def payload(
         self,
         to: str,
@@ -76,6 +70,7 @@ class ResendSender(EmailSender):
         body: str,
         reply_to: str = "",
         in_reply_to: str = "",
+        from_address: str = "",
     ) -> dict:
         """The request body, built separately so it can be asserted without
         being sent. `make smoke` checks the shape offline; the HTTP call is the
@@ -87,8 +82,14 @@ class ResendSender(EmailSender):
         only one of the two is how an email either looks broken in a modern
         client or arrives unreadable in a plain-text one.
         """
+        # Resend verifies the *domain*, not the mailbox, so once linerai.us is
+        # verified any address on it is legal to send as -- which is what lets
+        # the founder and the CTO each write from their own name on one key.
+        # `can_send_as` is re-checked here rather than trusted: this is the
+        # last place before the wire, and a From the provider refuses fails the
+        # whole send rather than degrading.
         out = {
-            "from": self.from_address(),
+            "from": from_address if self.can_send_as(bare_address(from_address)) else self.default_from(),
             "to": [to],
             "subject": subject,
             "text": body,
@@ -114,12 +115,13 @@ class ResendSender(EmailSender):
         body: str,
         reply_to: str = "",
         in_reply_to: str = "",
+        from_address: str = "",
     ) -> SendResult:
         self.check()
         try:
             response = httpx.post(
                 API,
-                json=self.payload(to, subject, body, reply_to, in_reply_to),
+                json=self.payload(to, subject, body, reply_to, in_reply_to, from_address),
                 headers={"Authorization": f"Bearer {settings.resend_api_key}"},
                 timeout=TIMEOUT,
             )

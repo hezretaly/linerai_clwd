@@ -668,14 +668,32 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     composer says *Not delivered* and quotes the provider's own words. It goes
     through `outreach_send.blocked_reason` like every other send: a composer is
     exactly where a rehearsal reaches a real prospect.
-  - **The `From` is the deployment's; the `Reply-To` is the person's.** One
-    install has one configured sender and one verified domain, so every
-    message leaves from that address — there is no per-user mailbox and
-    pretending otherwise would need a credential per person. What *is* per
-    person is where the answer comes back to, and with two of us a reply that
-    always routed to `founder@` sent half of them to the wrong one. `_reply_to`
-    computes it once, for the send and for the line the composer shows, so the
-    promise and the header cannot disagree.
+  - **Both halves of the envelope are the person's, and `SENDING_DOMAIN` is
+    what makes that safe.** A provider verifies the *domain*, not the mailbox,
+    so one verified `linerai.us` makes `founder@` and `cto@` both legal to
+    send as on one key — a third person is a row in `users` and no new
+    credential, which is the point: a per-mailbox password is a thing to leak.
+    `outreach_send.identity_for` decides it once, for the send and for the
+    line the composer shows, so the promise and the header cannot disagree.
+    - **An address it cannot prove falls back, and says so.** Putting an
+      unverified address in a `From` gets the whole message rejected, so
+      guessing costs the send; swapping it quietly leaves somebody believing
+      they wrote from an address they did not. The `Reply-To` is theirs
+      either way — with two of us, a reply that always routed to `founder@`
+      sent half of them to the wrong one.
+    - **The check is on the bare address, never the display name.** A name is
+      text somebody typed and it can contain an `@`; matching a domain
+      against the rendered header is how a permission check says yes to the
+      wrong thing. `formataddr` builds the header, because a name with a
+      comma in it otherwise reads as two recipients.
+    - **`can_send_as` is a method, not one shared function.** Resend
+      authorises a verified domain and Gmail authorises Workspace
+      impersonation, and those are different questions — the shared rule
+      would have to be the loosest of the two.
+    - **Ops only.** A dealership's outreach is from the dealership rather
+      than from a person, and its `Reply-To` is the `reply+<token>@` address
+      that routes an answer back into the buyer's timeline — not a header a
+      rep's own address may take over.
   - **A Tailwind grid needs `grid-cols-1` at the base breakpoint.** Without a
     declared track the implicit one is `auto`, which sizes to its widest
     child's *min-content* — and the min-content of a `truncate` line is the

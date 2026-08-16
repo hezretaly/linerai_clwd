@@ -1986,6 +1986,66 @@ def main() -> int:
     check("and a fresh send carries no threading header at all",
           "headers" not in payload, str(sorted(payload)))
 
+    # Who a message is *from*. Resend verifies the domain rather than the
+    # mailbox, so one verified `linerai.us` makes every address on it legal to
+    # send as -- which is what lets two founders each write under their own
+    # name on one key, with no per-user credential anywhere.
+    print("\n== a person's own name on the envelope ==")
+    from app.config import settings as app_settings
+    from app.integrations.email.outbox import OutboxSender
+    from app.outreach_send import identity_for
+
+    class _Person:
+        def __init__(self, name: str, email: str) -> None:
+            self.name, self.email = name, email
+
+    founder = _Person("Liner Founder", "founder@linerai.us")
+    was_domain, was_from = app_settings.sending_domain, app_settings.sending_from
+    try:
+        app_settings.sending_domain = "linerai.us"
+        app_settings.sending_from = "support@linerai.us"
+        outbox = OutboxSender()
+
+        mine = identity_for(outbox, founder)
+        check("a founder sends under their own name once the domain is verified",
+              mine.personal and mine.from_address == "Liner Founder <founder@linerai.us>",
+              mine.from_address)
+        check("and the display name is a real header, not an f-string",
+              identity_for(outbox, _Person("Vale, Marcus", "m@linerai.us")).from_address
+              == '"Vale, Marcus" <m@linerai.us>',
+              identity_for(outbox, _Person("Vale, Marcus", "m@linerai.us")).from_address)
+        # The whole message is rejected by a provider if the From is not on a
+        # domain it has verified, so guessing is worse than falling back.
+        stranger = identity_for(outbox, _Person("Somebody", "someone@gmail.com"))
+        check("an address off the sending domain is refused, not spoofed",
+              not stranger.personal and "gmail.com" not in stranger.from_address,
+              stranger.from_address)
+        check("and the fallback says which setting decides it",
+              "SENDING_DOMAIN" in stranger.note, stranger.note[:80])
+        check("a reply still comes back to them either way",
+              stranger.reply_to == "someone@gmail.com", stranger.reply_to)
+        # The bare address is what is matched, never the display name: a name
+        # is text somebody typed and it can carry an `@`.
+        forged = identity_for(outbox, _Person("linerai.us", "attacker@evil.test"))
+        check("a display name cannot smuggle a domain past the check",
+              not forged.personal, forged.from_address)
+
+        # The request body Resend would receive, asserted without being sent.
+        resend_from = resend.payload(
+            "b@e.com", "s", "b", from_address=mine.from_address)["from"]
+        check("and resend is handed that From verbatim",
+              resend_from == "Liner Founder <founder@linerai.us>", resend_from)
+        fell_back = resend.payload(
+            "b@e.com", "s", "b", from_address="someone@gmail.com")["from"]
+        check("while one it cannot prove falls back at the wire, not just in the UI",
+              fell_back == "support@linerai.us", fell_back)
+        check("a send with nobody named is still from the deployment",
+              resend.payload("b@e.com", "s", "b")["from"] == "support@linerai.us")
+    finally:
+        app_settings.sending_domain, app_settings.sending_from = was_domain, was_from
+    check("with no sending domain configured, nobody can send as anybody",
+          not identity_for(OutboxSender(), founder).personal)
+
     blocked = call("POST", "/api/email/test-send", {"to": "stranger@example.invalid"})
     check("a test send still goes through the outbound limit",
           blocked["status"] in {"sent", "failed"}, f"{blocked['status']}: {blocked['error'][:60]}")
