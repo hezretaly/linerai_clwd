@@ -849,18 +849,22 @@ def main() -> int:
     })
     check("a support message needs no calendar", helped["kind"] == "support",
           str(helped)[:60])
-    # Names and phone numbers like any other row here.
-    check("but reading them back takes a dealer session",
+    # Ours, not the dealership's. These are other dealerships asking us for a
+    # demo -- a list of Riverside Auto's competitors, which is about the last
+    # thing their staff should read from inside their own dashboard.
+    check("but reading them back takes a session at all",
           anonymous_status("/api/demo/requests") == 401)
-    mine = call("GET", "/api/demo/requests")["requests"]
-    check("and a rep can see what the page took",
-          any(r["email"] == payload["email"] for r in mine), f"{len(mine)} requests")
-    check("with the moment they consented on the row",
-          all(r["consented_at"] for r in mine if r["email"] == payload["email"]))
+    check("and a dealership's manager is refused",
+          status_of("GET", "/api/demo/requests")[0] == 403)
     # Given back, like every other slot this script takes. The demo calendar
     # rolls forward so this one would heal on its own, but a run that leaves
     # bookings behind is the habit that cost thirty-six stranded appointments.
+    # Cancelling is ours now, so it takes an ops session and hands the
+    # dealership's back afterwards -- one cookie jar, one session at a time.
+    call("POST", "/api/auth/login",
+         {"email": "founder@linerai.us", "password": "liner-dev"})
     released = call("POST", f"/api/demo/requests/{booked_demo['id']}/cancel")
+    call("POST", "/api/auth/login", LOGIN)
     check("and cancelling gives the time back to the page",
           released["cancelled"] is True
           and when.split("T")[1] in next(
@@ -880,6 +884,13 @@ def main() -> int:
          {"email": "founder@linerai.us", "password": "liner-dev"})
     check("but Liner's own account can",
           call("GET", "/api/ops/summary")["unread"] >= 0)
+    # And the wall runs the other way too, at the session rather than at each
+    # endpoint: two tables mean a uid from one is meaningless in the other.
+    check("while an ops session is refused by the dealership's API",
+          status_of("GET", "/api/overview")[0] == 403)
+    check("and by its buyer list", status_of("GET", "/api/leads")[0] == 403)
+    check("but who-am-I still answers, or neither dashboard could load",
+          call("GET", "/api/auth/me")["user"]["role"] == "owner")
 
     before = call("GET", "/api/ops/summary")["unread"]
     slots = call("GET", "/api/demo/slots")["days"]
@@ -953,7 +964,10 @@ def main() -> int:
                     {"to": "nobody", "subject": "x", "body": "y"})[0] == 400)
 
     call("POST", f"/api/demo/requests/{ops_demo['id']}/cancel")
-    # Back to the dealership for everything after this. One jar, one session.
+    # Back to the dealership for everything after this -- including the
+    # slot-release `finally`, which reads /api/appointments. One jar, one
+    # session at a time, and leaving an ops session behind here made the
+    # teardown 403 and every run leak its bookings.
     call("POST", "/api/auth/login", LOGIN)
     check("and signing back in as the dealership still works",
           call("GET", "/api/auth/me")["user"]["role"] == "manager")
@@ -2003,15 +2017,21 @@ def main() -> int:
         "WEBHOOK_SECRET": "y" * 40, "MANAGER_PASSWORD": "real-one",
         "REP_PASSWORD": "real-two",
     }
-    env.pop("OWNER_PASSWORD", None)
+    for key in ("OWNER_PASSWORD", "FOUNDER_PASSWORD", "CTO_PASSWORD"):
+        env.pop(key, None)
     boot = _sp.run(
         [sys.executable, "-c", "import app.config"],
         cwd="backend", env=env, capture_output=True, text=True,
     )
     check("production still refuses to boot on a published password",
-          boot.returncode != 0 and "OWNER_PASSWORD" in boot.stderr)
+          boot.returncode != 0 and "FOUNDER_PASSWORD" in boot.stderr,
+          boot.stderr.strip().splitlines()[-1][:70] if boot.stderr else "")
+    # One key per person. A shared password is not a login: a leak cannot be
+    # traced to anybody, and revoking it locks out whoever did not leak it.
+    check("and it names each person's own key, not a shared one",
+          "CTO_PASSWORD" in boot.stderr)
     check("and the message says it is the newer variable, not a mistake",
-          "predates it" in boot.stderr or "was running before an upgrade" in boot.stderr,
+          "running before an upgrade" in boot.stderr,
           boot.stderr.strip().splitlines()[-1][:80] if boot.stderr else "")
     check("and names the command that repairs the database without a reseed",
           "add-owners" in boot.stderr)
@@ -2020,7 +2040,7 @@ def main() -> int:
     # would take the leads with it.
     from app.add_owners import add_owners
     check("adding them to a database that already has them changes nothing",
-          add_owners() == 0)
+          add_owners() == (0, 0))
     # Our accounts share the users table with the dealership's, so every
     # unfiltered query(User) was a place they could surface inside somebody
     # else's showroom. One predicate covers the roster, the three assignment
@@ -2029,10 +2049,16 @@ def main() -> int:
     check("and a dealership's team page never lists them",
           not [u for u in roster if u["role"] == "owner"], f"{len(roster)} on the roster")
 
+    # Our accounts are in `ops_users` now, not a role on the dealership's
+    # table. That fixes a class of bug rather than three instances: an
+    # unfiltered query(User) simply cannot reach one.
     from app.db import SessionLocal as _Session
-    from app.models import User as _User
+    from app.models import OpsUser as _OpsUser, User as _User
     with _Session() as _db:
-        owner_id = _db.query(_User).filter_by(role="owner").first().id
+        owner_id = _db.query(_OpsUser).first().id
+        strays = _db.query(_User).filter(_User.role.notin_(("manager", "rep"))).count()
+    check("and `users` holds nobody but the dealership's own staff", strays == 0,
+          f"{strays} stray row(s)")
     lead_id = call("GET", "/api/leads")["leads"][0]["id"]
     check("a buyer cannot be assigned to one",
           status_of("POST", f"/api/leads/{lead_id}/assign", {"user_id": owner_id})[0] == 404)

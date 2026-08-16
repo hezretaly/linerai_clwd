@@ -138,7 +138,9 @@ SESSION_SECRET=$(openssl rand -hex 32)
 MANAGER_PASSWORD=$(openssl rand -base64 12)
 REP_PASSWORD=$(openssl rand -base64 12)
 # Liner's own two accounts, which reach /ops and nothing of the dealership's.
-OWNER_PASSWORD=$(openssl rand -base64 12)
+# One key per person: a shared password cannot be traced or revoked per person.
+FOUNDER_PASSWORD=$(openssl rand -base64 12)
+CTO_PASSWORD=$(openssl rand -base64 12)
 
 # CORS only, and only for cross-origin browsers. See below.
 ALLOWED_ORIGINS=https://liner.example.com
@@ -307,17 +309,35 @@ published password, but it reads as a misconfiguration when nothing was
 misconfigured. Two commands:
 
 ```bash
-echo "OWNER_PASSWORD=$(openssl rand -base64 12)" | sudo tee -a /srv/liner/.env
-sudo -u liner make add-owners      # adds founder@ and cto@ -- no reseed, no data loss
+printf 'FOUNDER_PASSWORD=%s\nCTO_PASSWORD=%s\n' \
+    "$(openssl rand -base64 12)" "$(openssl rand -base64 12)" \
+    | sudo tee -a /srv/liner/.env
+sudo -u liner make add-owners      # into ops_users -- no reseed, no data loss
 sudo systemctl restart liner
 ```
 
-`make add-owners` exists because the two accounts are created by `_seed_users`,
-which only runs on a fresh seed. Without it the only way to get them onto a
-database that is already taking bookings is `make reset-db`, which deletes the
-leads. It is idempotent and never touches an account that already exists —
-somebody may have changed a password with `make set-password`, and re-hashing it
-here would lock them out silently.
+`make add-owners` exists because the two accounts are only created by a fresh
+seed. Without it the only way onto a database that is already taking bookings
+is `make reset-db`, which deletes the leads. It is idempotent, and it never
+re-hashes an account that already exists — somebody may have changed a password
+with `make set-password`, and doing that silently would lock them out.
+
+It also **moves** any account left in `users` with `role='owner'`, from the
+brief period when ours lived in the dealership's table. Those rows are both a
+stale login and something that can walk back onto the dealership's roster.
+
+### Two tables, two sign-ins
+
+`users` is the dealership's staff; `ops_users` is ours. The session cookie
+records which, so an ops session is refused by every dealership endpoint and a
+rep's is refused by `/api/ops` — `/api/auth/me` and the event socket are the
+only two that answer for both, because "who am I" has to, and the socket
+carries both sides' events.
+
+`make reset-dealership` rebuilds the showroom fixture **in place**, leaving
+`ops_users` and `ops_demo_requests` alone. `make reset-db` deletes the whole
+database file and does lose them, so it is not the one to reach for on a box
+with anything real on it.
 
 **`MANAGER_PASSWORD`, `REP_PASSWORD` and `OWNER_PASSWORD` are read at seed
 time, not at login.**

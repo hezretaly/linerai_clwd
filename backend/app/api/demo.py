@@ -21,8 +21,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db, utcnow
 from app.events import emit
-from app.models import DemoRequest, User
-from app.api.deps import current_user
+from app.models import DemoRequest, OpsUser
+from app.api.deps import require_owner
 from app.schemas.serialize import iso
 
 router = APIRouter(prefix="/demo", tags=["demo"])
@@ -156,7 +156,7 @@ def book_demo(body: Booking, db: Session = Depends(get_db)) -> dict:
 def cancel_demo(
     request_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Give the slot back.
 
@@ -176,10 +176,17 @@ def cancel_demo(
 @router.get("/requests")
 def list_requests(
     db: Session = Depends(get_db),
-    user: User = Depends(current_user),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
-    """Everything the page has taken. A dealer session, because these are
-    people's names and phone numbers like any other row here."""
+    """Everything the page has taken.
+
+    Ours, so `require_owner` and not `current_user`. These are the names,
+    addresses and phone numbers of *other dealerships* asking us for a demo --
+    which is to say a list of Riverside Auto's competitors, and about the last
+    thing their staff should be able to read from inside their own dashboard.
+    That it was ever a dealer session is exactly the confusion `ops_users`
+    exists to end.
+    """
     rows = (
         db.query(DemoRequest).order_by(DemoRequest.created_at.desc()).limit(200).all()
     )

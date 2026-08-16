@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import Dealership, User
+from app.models import Dealership, OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 serializer = URLSafeSerializer(settings.session_secret, salt="liner-session")
@@ -22,10 +22,18 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd.verify(plain, hashed)
 
 
-def set_session(response: Response, user: User) -> None:
+#: Which table a session's `uid` is an id in. Two tables mean an id alone is
+#: ambiguous -- and an ambiguous id is one that could be looked up in the
+#: wrong one. Old cookies carry no realm and are read as the dealership's,
+#: which is what they were.
+DEALER_REALM = "dealer"
+OPS_REALM = "ops"
+
+
+def set_session(response: Response, user: "User | OpsUser") -> None:
     response.set_cookie(
         settings.session_cookie,
-        serializer.dumps({"uid": user.id}),
+        serializer.dumps({"uid": user.id, "realm": realm_of(user)}),
         httponly=True,
         samesite="lax",
         secure=settings.is_production,
@@ -38,16 +46,70 @@ def clear_session(response: Response) -> None:
     response.delete_cookie(settings.session_cookie, path="/")
 
 
-def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+def realm_of(user: "User | OpsUser") -> str:
+    return OPS_REALM if isinstance(user, OpsUser) else DEALER_REALM
+
+
+def _session(request: Request) -> dict:
     raw = request.cookies.get(settings.session_cookie)
     if not raw:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not signed in")
     try:
-        data = serializer.loads(raw)
+        return serializer.loads(raw)
     except BadSignature:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid session") from None
 
+
+def current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    """The signed-in dealership account.
+
+    An ops session is refused here rather than looked up: `users` and
+    `ops_users` are different tables with their own id spaces, so a uid from
+    one is meaningless in the other, and a lookup that happened to miss would
+    read as an expired session rather than as the wrong building.
+    """
+    data = _session(request)
+    if data.get("realm", DEALER_REALM) != DEALER_REALM:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "That account is Liner staff. The dealership's dashboard is a separate sign-in.",
+        )
     user = db.query(User).filter_by(id=data.get("uid"), active=True).one_or_none()
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+    return user
+
+
+def resolve_account(db: Session, data: dict) -> "User | OpsUser | None":
+    """Whoever a session names, from whichever table its realm points at.
+
+    Two endpoints legitimately need this rather than one realm or the other:
+    "who am I" and the event socket. Everything else is deliberately one-sided
+    -- a dependency that quietly accepts either is how a dealership's page ends
+    up rendering for one of us.
+    """
+    uid = data.get("uid")
+    if not uid:
+        return None
+    if data.get("realm", DEALER_REALM) == OPS_REALM:
+        return db.query(OpsUser).filter_by(id=uid, active=True).one_or_none()
+    return db.query(User).filter_by(id=uid, active=True).one_or_none()
+
+
+def current_account(request: Request, db: Session = Depends(get_db)) -> "User | OpsUser":
+    """Either realm. Only for "who am I" -- never for reading anybody's data."""
+    account = resolve_account(db, _session(request))
+    if account is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+    return account
+
+
+def current_owner(request: Request, db: Session = Depends(get_db)) -> OpsUser:
+    """The signed-in Liner account, from our own table."""
+    data = _session(request)
+    if data.get("realm", DEALER_REALM) != OPS_REALM:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Liner staff only")
+    user = db.query(OpsUser).filter_by(id=data.get("uid"), active=True).one_or_none()
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
     return user
@@ -69,11 +131,11 @@ DEALERSHIP_ROLES = ("manager", "rep")
 def staff_query(db: Session):
     """Active dealership staff, and nobody else.
 
-    One predicate rather than a `role != 'owner'` at each of the five call
-    sites -- the roster, three assignment paths and the public door. Adding
-    `owner` to the users table made every unfiltered `query(User)` a place our
-    own accounts could surface inside somebody else's showroom, and the copy
-    that gets missed is the one nobody notices.
+    `users` no longer holds anybody else -- we are in `ops_users` -- so the
+    role filter is an assertion of that rather than a predicate doing real
+    work. It stays because a row left behind by an install that predates the
+    split would otherwise walk straight back onto the roster, and `make smoke`
+    checks the table really is empty of them.
     """
     return db.query(User).filter(User.active.is_(True), User.role.in_(DEALERSHIP_ROLES))
 
@@ -88,16 +150,14 @@ def find_staff(db: Session, user_id: str) -> User | None:
     return staff_query(db).filter(User.id == user_id).one_or_none()
 
 
-def require_owner(user: User = Depends(current_user)) -> User:
+def require_owner(user: OpsUser = Depends(current_owner)) -> OpsUser:
     """Liner's own people, not the dealership's.
 
-    A third role rather than reusing `manager`: a manager runs a showroom and
-    has every reason to read its buyer list, which is exactly what these two
-    have no business reading. The split runs the other way too -- nothing under
-    /api/ops is open to a dealership's staff, however senior.
+    Their own table rather than a role on the dealership's: a role string is a
+    filter every query has to remember, and the ones that forgot put us on the
+    team roster, in the assignment pickers and behind the public demo door. A
+    separate table cannot be queried by accident.
     """
-    if user.role != "owner":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Liner staff only")
     return user
 
 

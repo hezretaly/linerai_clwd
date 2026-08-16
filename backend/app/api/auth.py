@@ -6,14 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import (
     clear_session,
-    current_user,
+    current_account,
     set_session,
     staff_query,
     verify_password,
 )
 from app.config import settings
 from app.db import get_db
-from app.models import User
+from app.models import OpsUser, User
 from app.schemas.serialize import user_out
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -29,11 +29,22 @@ class LoginBody(BaseModel):
 
 @router.post("/login")
 def login(body: LoginBody, response: Response, db: Session = Depends(get_db)) -> dict:
-    user = db.query(User).filter_by(email=body.email.lower(), active=True).one_or_none()
-    if user is None or not verify_password(body.password, user.password_hash):
+    """One form, two tables.
+
+    The dealership's staff are in `users` and we are in `ops_users`, and the
+    address decides which -- not a toggle on the form, which would be a way to
+    probe whether an address exists on the other side. The wrong-password
+    message is identical either way for the same reason.
+    """
+    email = body.email.strip().lower()
+    account = (
+        db.query(User).filter_by(email=email, active=True).one_or_none()
+        or db.query(OpsUser).filter_by(email=email, active=True).one_or_none()
+    )
+    if account is None or not verify_password(body.password, account.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
-    set_session(response, user)
-    return {"user": user_out(user)}
+    set_session(response, account)
+    return {"user": user_out(account)}
 
 
 def demo_rep(db: Session) -> User | None:
@@ -91,5 +102,10 @@ def logout(response: Response) -> dict:
 
 
 @router.get("/me")
-def me(user: User = Depends(current_user)) -> dict:
-    return {"user": user_out(user)}
+def me(account=Depends(current_account)) -> dict:
+    """Either realm -- this is the one question that has to answer for both.
+
+    The dashboards branch on the role that comes back, so a 403 here would
+    mean an ops session could not even discover it was signed in.
+    """
+    return {"user": user_out(account)}

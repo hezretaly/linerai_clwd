@@ -18,7 +18,6 @@ from app.models.crm import (
     CallBuyerTrack,
     CallRecording,
     CallSegment,
-    DemoRequest,
     CallUsage,
     InboundEmail,
     Lead,
@@ -34,8 +33,13 @@ from app.models.dealership import (
     User,
 )
 from app.models.inventory import IngestRun, Vehicle, VehicleMention
+# Ours, in their own tables. Imported last so the `ops_` prefix is the
+# first thing anyone reading this list notices about them.
+from app.models.ops import OPS_TABLES, DemoRequest, OpsUser
 
 __all__ = [
+    "OPS_TABLES",
+    "OpsUser",
     "PROVENANCE",
     "STAGES",
     "Appointment",

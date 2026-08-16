@@ -369,45 +369,6 @@ class CallSegment(Base):
     created_at: Mapped[datetime] = created()
 
 
-class DemoRequest(Base):
-    """Somebody asking Liner AI for a demo, or for help.
-
-    Not a `Lead`. A lead is a person buying a car from the dealership; this is
-    a dealership buying Liner. They share almost nothing -- no inventory, no
-    conversation, no appointment against a vehicle -- and folding them into one
-    table would put strangers into the buyer list a rep works from, which is
-    the one list on this dashboard that has to mean exactly one thing.
-
-    One table for both kinds because the shape is identical: somebody, a way to
-    reach them, and what they said. A support request simply has no slot.
-    """
-
-    __tablename__ = "demo_requests"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    #: demo | support
-    kind: Mapped[str] = mapped_column(String(12), default="demo", index=True)
-    name: Mapped[str] = mapped_column(String(120), default="")
-    dealership: Mapped[str] = mapped_column(String(160), default="")
-    email: Mapped[str] = mapped_column(String(255), default="", index=True)
-    phone: Mapped[str] = mapped_column(String(40), default="")
-    dealership_url: Mapped[str] = mapped_column(String(500), default="")
-    message: Mapped[str] = mapped_column(Text, default="")
-    #: The slot they picked, in the same naive dealership-local frame every
-    #: other timestamp here uses. Null on a support request.
-    slot_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
-    #: When they ticked the box, not whether. A boolean records that a checkbox
-    #: was checked; a timestamp records consent being given at a moment, which
-    #: is the thing anyone would ever have to show.
-    consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    #: The exact words they agreed to, kept with the row. The wording will be
-    #: edited on the page one day, and a consent record that points at whatever
-    #: the page says *now* is not a record of what they agreed to *then*.
-    consent_text: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(20), default="new")
-    created_at: Mapped[datetime] = created()
-
-
 class Event(Base):
     """Append-only. Doubles as the audit log and the WebSocket reconnect buffer."""
 

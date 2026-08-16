@@ -22,8 +22,9 @@ feature reports itself as unavailable rather than simulating a result.
 | `make backend` / `make frontend` | One at a time, in the foreground |
 | `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
 | `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
-| `make reset-db` | Delete the database and reseed |
-| `make add-owners` | Put `founder@`/`cto@` on an **existing** database — no reseed, no data loss |
+| `make reset-db` | Delete the database and reseed — **loses the `ops_` tables too** |
+| `make reset-dealership` | Rebuild the showroom fixture in place, keeping `ops_users` and `ops_demo_requests` |
+| `make add-owners` | Put `founder@`/`cto@` in `ops_users` on an **existing** database — no reseed, no data loss |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
 | `make ops-ui` | `/ops` in a browser: the notification clears **and stays cleared** |
@@ -42,9 +43,12 @@ Ports: backend **8000**, frontend **5173**, fixture site **8100**.
 Logins: `dana.mercer@example.invalid` (manager) and `marcus.vale@example.invalid`
 (rep), both `liner-dev` in development. They come from `MANAGER_PASSWORD` and
 `REP_PASSWORD`; with `ENV=production` startup refuses to run until each is set
-to something real and they all differ. `founder@linerai.us` and
-`cto@linerai.us` (`OWNER_PASSWORD`) are **ours**, not the dealership's: they
-sign in at `/login?as=owner` and land on `/ops`.
+to something real and they all differ. `founder@linerai.us`
+(`FOUNDER_PASSWORD`) and `cto@linerai.us` (`CTO_PASSWORD`) are **ours**, in
+`ops_users` rather than the dealership's table: they sign in at
+`/login?as=owner` and land on `/ops`, and their session is refused by every
+dealership endpoint just as a rep's is refused by `/api/ops`. One key per
+person — a shared password cannot be traced or revoked per person.
 
 Deploying to a real host: **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**. One process
 serves the API, the WebSocket, the landing page and the SPA, so nginx needs a
@@ -651,10 +655,31 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   however senior, and nothing under it touches `leads`, `conversations` or a
   recording. It has the two things a two-person company actually has —
   a calendar of the demos people booked with us, and the mail they sent.
-  - **The separation runs one way, and the code says which.** An owner *can*
-    read the showroom: there is one dealership here and it is the demo we run.
-    Claiming a symmetry that does not exist in a comment is worse than the
-    asymmetry, because the next person tests the half that is true.
+  - **Our tables are our tables: `ops_users` and `ops_demo_requests`.** They
+    started as a role string on `users`, and that meant every unfiltered
+    `query(User)` was a place we could surface inside somebody else's
+    showroom — three did, putting us on the team roster, in the assignment
+    pickers and behind the public demo door. Each was fixed with a predicate
+    and the next missing one would have brought them all back. A separate
+    table cannot be queried by accident, which is the whole argument.
+    - **Still one database.** Two would mean two connections, two backups, two
+      `create_all`s and no way to read both sides in a request — and `events`,
+      which the socket replays from, sits on the other side of that line.
+      These are the only tables that would move if it ever changes.
+    - **The session names its realm.** Two tables mean a bare `uid` is
+      ambiguous, and an ambiguous id is one that can be looked up in the wrong
+      table. The cookie carries `realm`; a cookie without one predates the
+      split and reads as the dealership's, which is what it was.
+    - **The split is symmetric, and both halves are enforced at the session.**
+      An ops session is refused by every dealership endpoint exactly as a
+      rep's is refused by `/api/ops`. `/api/auth/me` and the event socket are
+      the two deliberate exceptions — "who am I" has to answer for either, and
+      the socket carries both sides' events.
+    - **`_clear` never touches an `ops_` table**, so rebuilding the showroom
+      fixture cannot throw away demos real people booked with us.
+      `make reset-dealership` is that; `make reset-db` deletes the file and
+      does lose them, which is why it is not the one to reach for on a box
+      with anything real on it.
   - **A notification is cleared by opening the thing, not by a button.** One
     left sitting after it has been read is one people learn to ignore, and this
     is the only dashboard here with something on it that nobody clicked for.

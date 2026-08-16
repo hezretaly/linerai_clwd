@@ -89,19 +89,20 @@ export function OpsShell() {
           ))}
 
           <div className="px-2 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
-            The demo dealership
+            Elsewhere
           </div>
-          {/* The product itself, one click away. The separation runs one way
-              and only one way: a dealership's staff cannot reach /ops at all,
-              while an owner can read the showroom -- there is one dealership
-              here and it is the demo we run. A full page load rather than a
-              route, because /app has its own shell and its own queries. */}
+          {/* A separate sign-in, and the label says so. The split is symmetric
+              now that the accounts are in their own table: this session is
+              refused by every dealership endpoint exactly as a rep's is
+              refused by /api/ops. Following the link lands on the dealership's
+              login, which is the truth rather than a dead end. */}
           <a
-            href="/app"
+            href="/login"
+            title="A separate sign-in -- an ops session is refused by the dealership's API"
             className="mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           >
-            <Icon name="overview" className="h-4 w-4 shrink-0" />
-            Riverside Auto
+            <Icon name="lock" className="h-4 w-4 shrink-0" />
+            Dealership sign-in
           </a>
           <a
             href="/"

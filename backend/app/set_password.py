@@ -31,7 +31,7 @@ from passlib.context import CryptContext
 
 from app.config import DEV_SEED_PASSWORD, settings
 from app.db import SessionLocal
-from app.models import User
+from app.models import OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -53,9 +53,17 @@ def main() -> int:
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.email == args.email.strip().lower()).one_or_none()
+        # Both tables: our accounts are in `ops_users` and a password change
+        # is exactly as much a password change for one of them.
+        email = args.email.strip().lower()
+        user = (
+            db.query(User).filter(User.email == email).one_or_none()
+            or db.query(OpsUser).filter(OpsUser.email == email).one_or_none()
+        )
         if user is None:
-            known = [u.email for u in db.query(User).order_by(User.email).all()]
+            known = [u.email for u in db.query(User).order_by(User.email).all()] + [
+                u.email for u in db.query(OpsUser).order_by(OpsUser.email).all()
+            ]
             print(f"No account with the email {args.email!r}.", file=sys.stderr)
             if known:
                 print("Accounts on this database:", file=sys.stderr)

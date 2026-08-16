@@ -1,4 +1,4 @@
-.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db add-owners smoke accept accept-ui ops-ui e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -43,8 +43,11 @@ set-password: ## Change one account's password in place: make set-password EMAIL
 	@test -n "$(EMAIL)" || (echo "Usage: make set-password EMAIL=dana.mercer@example.invalid" && exit 1)
 	cd backend && ../$(PY) -m app.set_password $(EMAIL) $(ARGS)
 
-add-owners: ## Add founder@/cto@ to an existing database without a reseed
+add-owners: ## Move/create Liner's own rows in the ops_ tables -- safe on a live box
 	cd backend && ../$(PY) -m app.add_owners
+
+reset-dealership: ## Rebuild the dealership fixture, KEEPING our ops tables
+	cd backend && ../$(PY) -m app.seed
 
 seed: ## Wipe and rebuild the Riverside Auto fixture
 	cd backend && ../$(PY) -m app.seed

@@ -15,11 +15,10 @@ import logging
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from itsdangerous import BadSignature
 
-from app.api.deps import serializer
+from app.api.deps import resolve_account, serializer
 from app.config import settings
 from app.db import SessionLocal
 from app.events import manager, replay
-from app.models import User
 
 log = logging.getLogger("liner.ws")
 
@@ -29,16 +28,20 @@ router = APIRouter()
 @router.websocket("/ws/dealer")
 async def dealer_socket(websocket: WebSocket, since: int = Query(0)) -> None:
     raw = websocket.cookies.get(settings.session_cookie)
-    user_id = None
+    data: dict = {}
     if raw:
         try:
-            user_id = serializer.loads(raw).get("uid")
+            data = serializer.loads(raw)
         except BadSignature:
-            user_id = None
+            data = {}
 
     db = SessionLocal()
     try:
-        user = db.query(User).filter_by(id=user_id, active=True).one_or_none() if user_id else None
+        # Either realm. The socket carries dealership events *and* ours, and
+        # `/ops` is the one dashboard with something on it nobody clicked for
+        # -- resolving only `users` closed the connection for an ops session
+        # and took the demo notification with it.
+        user = resolve_account(db, data) if data else None
         if user is None:
             await websocket.close(code=4401, reason="Not signed in")
             return

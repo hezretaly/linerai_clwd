@@ -2,9 +2,10 @@
 
 Everything here is about *our* customer -- a dealership evaluating Liner -- and
 nothing here reads a buyer's record. That separation is the whole point of the
-module: `/api/ops` is guarded by `require_owner`, which is a third role, and a
-dealership's manager cannot reach it any more than we can reach their leads
-through it.
+module: `/api/ops` is guarded by `require_owner`, and the accounts behind it
+live in `ops_users` -- their own table, not a role on the dealership's. A
+dealership's manager cannot reach any of this, and nothing here reads `leads`,
+`conversations` or a recording.
 
 Three things a two-person company actually needs: who asked for a demo and
 when, the mail those people send, and to be told the moment a new one arrives
@@ -26,7 +27,7 @@ from app.api.deps import require_owner
 from app.events import emit
 from app.integrations.base import NotConfigured
 from app.integrations.registry import get_email_sender
-from app.models import DemoRequest, InboundEmail, User
+from app.models import DemoRequest, InboundEmail, OpsUser
 from app.schemas.serialize import iso
 
 router = APIRouter(prefix="/ops", tags=["ops"])
@@ -58,7 +59,7 @@ def _entry(row: DemoRequest) -> dict:
     }
 
 
-def _identity(user: User):
+def _identity(user: OpsUser):
     """Whose name goes on a message this person sends.
 
     One call, used by the composer and by the send, so the address shown and
@@ -76,7 +77,7 @@ def _identity(user: User):
 
 @router.get("/summary")
 def summary(
-    db: Session = Depends(get_db), user: User = Depends(require_owner)
+    db: Session = Depends(get_db), user: OpsUser = Depends(require_owner)
 ) -> dict:
     """The three numbers the nav needs, in one call.
 
@@ -124,7 +125,7 @@ def list_demos(
     start: datetime | None = Query(None),
     end: datetime | None = Query(None),
     db: Session = Depends(get_db),
-    user: User = Depends(require_owner),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Every demo and support request, newest first.
 
@@ -148,7 +149,7 @@ def list_demos(
 def get_demo(
     request_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(require_owner),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
     row = db.query(DemoRequest).filter_by(id=request_id).one_or_none()
     if row is None:
@@ -165,7 +166,7 @@ def set_status(
     request_id: str,
     body: StatusBody,
     db: Session = Depends(get_db),
-    user: User = Depends(require_owner),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Mark one read, done, or cancelled.
 
@@ -193,12 +194,12 @@ def set_status(
 def inbox(
     box: str = Query("all"),
     db: Session = Depends(get_db),
-    user: User = Depends(require_owner),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Mail addressed to us, which is a different pile from the dealership's.
 
     Two sources, deliberately joined here rather than in a table: the forms on
-    the marketing site (`demo_requests`) and anything that arrived at the
+    the marketing site (`ops_demo_requests`) and anything that arrived at the
     inbound endpoint without resolving to a buyer -- which is what a stranger
     writing to `support@` looks like. The dealership's mailbox shows the other
     half: replies that *did* resolve to one of their buyers.
@@ -296,7 +297,7 @@ class ReplyBody(BaseModel):
 def reply(
     body: ReplyBody,
     db: Session = Depends(get_db),
-    user: User = Depends(require_owner),
+    user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Answer from the ops inbox.
 

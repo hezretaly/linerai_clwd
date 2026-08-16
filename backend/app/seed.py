@@ -31,6 +31,7 @@ from app.models import (
     KnowledgeEntry,
     Lead,
     Message,
+    OpsUser,
     Outreach,
     Rail,
     User,
@@ -205,6 +206,11 @@ RAILS = [
 
 
 def _clear(db: Session) -> None:
+    # The dealership's tables and no others. `ops_users` and
+    # `ops_demo_requests` are ours and are deliberately absent: rebuilding a
+    # showroom fixture must not throw away demos that real people booked with
+    # us. `make reset-db` deletes the whole file and does lose them, which is
+    # why `make reset-dealership` exists for a box with anything real on it.
     for model in (
         VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
         Conversation, Lead, IngestRun, Vehicle, Rail, KnowledgeEntry, HandoffRule,
@@ -229,17 +235,21 @@ def _seed_dealership(db: Session) -> Dealership:
     return dealership
 
 
-#: Us, not the dealership. `owner` is a third role and it is deliberately not
-#: `manager`: a manager runs a showroom, and giving these two that role would
-#: hand them a dealership's buyer list they have no business reading. They see
-#: who asked for a demo and the mail sent to us.
+#: Us, not the dealership -- and in our own table, `ops_users`. Sharing
+#: `users` and separating on a role string meant every unfiltered query(User)
+#: was a place we could surface inside somebody else's showroom, and three of
+#: them did.
 #:
-#: Module level so `make add-owners` can put them on a database that was
-#: seeded before this role existed, without a reseed that would take the
-#: leads with it. One definition, two callers.
+#: `password_env` is the `.env` key each account is seeded from, stored on the
+#: row rather than derived from the address: a third person is a row plus one
+#: line of `.env` and no code. Each falls back to OWNER_PASSWORD when its own
+#: key is unset, so an install written before the split keeps working.
+#:
+#: Module level so `make add-owners` can put them on a database seeded before
+#: any of this existed, without the reseed that would take the leads with it.
 OWNERS = [
-    ("Liner Founder", "founder@linerai.us", "owner", "LF", 0),
-    ("Liner CTO", "cto@linerai.us", "owner", "LC", 0),
+    ("Liner Founder", "founder@linerai.us", "FOUNDER_PASSWORD", "LF"),
+    ("Liner CTO", "cto@linerai.us", "CTO_PASSWORD", "LC"),
 ]
 
 STAFF = [
@@ -258,11 +268,34 @@ def build_user(name: str, email: str, role: str, initials: str, cap: int) -> Use
     )
 
 
+def build_owner(name: str, email: str, password_env: str, initials: str) -> OpsUser:
+    return OpsUser(
+        name=name, email=email, avatar_initials=initials, password_env=password_env,
+        password_hash=_hash(settings.password_for_ops(password_env.lower())),
+    )
+
+
 def _seed_users(db: Session) -> list[User]:
-    users = [build_user(*person) for person in STAFF + OWNERS]
+    users = [build_user(*person) for person in STAFF]
     db.add_all(users)
     db.commit()
     return users
+
+
+def _seed_owners(db: Session) -> int:
+    """Ours, and idempotent -- `_clear` never touches `ops_users`.
+
+    Re-hashing an existing row would undo a password somebody set with
+    `make set-password`, and a reseed of the dealership's fixture is no reason
+    to lock one of us out.
+    """
+    added = 0
+    for person in OWNERS:
+        if db.query(OpsUser).filter_by(email=person[1]).first() is None:
+            db.add(build_owner(*person))
+            added += 1
+    db.commit()
+    return added
 
 
 def _seed_vehicles(db: Session) -> list[Vehicle]:
@@ -622,6 +655,7 @@ def seed(db: Session | None = None) -> None:
         _seed_rules_and_knowledge(db)
         _seed_rails(db)
         _seed_history(db, users, vehicles)
+        _seed_owners(db)
         print(
             f"Seeded {db.query(Vehicle).count()} vehicles, {db.query(Lead).count()} leads, "
             f"{db.query(Conversation).count()} conversations, "
@@ -632,6 +666,12 @@ def seed(db: Session | None = None) -> None:
             f"Manager: dana.mercer@example.invalid / {settings.manager_password}\n"
             f"Rep:     marcus.vale@example.invalid / {settings.rep_password}"
         )
+        # Ours, in ops_users, and named with the key each password comes from
+        # -- otherwise the only way to know which `.env` line to change is to
+        # read the seed.
+        for name, email, env_key, _initials in OWNERS:
+            print(f"{name:15} {email} / {settings.password_for_ops(env_key.lower())}"
+                  f"  ({env_key})")
     finally:
         if owns_session:
             db.close()

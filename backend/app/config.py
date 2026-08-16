@@ -259,11 +259,30 @@ class Settings(BaseSettings):
     # to the documented dev value and both are refused in production.
     manager_password: str = DEV_SEED_PASSWORD
     rep_password: str = DEV_SEED_PASSWORD
-    # The two accounts that run Liner itself, rather than the dealership. They
-    # see who has asked for a demo and the mail those people send -- other
-    # companies' names, addresses and phone numbers -- so the same production
-    # guard applies to this password as to the other two.
+    # The people who run Liner itself, rather than the dealership. They see who
+    # has asked for a demo and the mail those people send -- other companies'
+    # names, addresses and phone numbers -- so the same production guard
+    # applies to these as to the two above.
+    #
+    # One per person, because a shared password is not a login: with two
+    # people on one value, a leak cannot be traced and revoking it locks out
+    # whoever did not leak it. `owner_password` stays as the fallback so an
+    # existing `.env` written before the split keeps working -- and the boot
+    # message says which key each account is actually reading.
     owner_password: str = DEV_SEED_PASSWORD
+    founder_password: str = ""
+    cto_password: str = ""
+
+    def password_for_ops(self, env_key: str) -> str:
+        """The password an ops account is seeded with, and where it came from.
+
+        `env_key` is stored on the row (`ops_users.password_env`) rather than
+        derived from the address, so adding a third person is a row plus one
+        `.env` line and no code -- the alternative is a mapping in here that
+        somebody has to remember to extend.
+        """
+        specific = (getattr(self, env_key.lower(), "") or "").strip()
+        return specific or self.owner_password
     # How this install is reached from outside, e.g. https://liner.example.com.
     # Only needed for links that leave the building: a tracked link in an email
     # has to be absolute, and it is built from the request when this is empty.
@@ -362,7 +381,10 @@ def get_settings() -> Settings:
         for name, value in (
             ("MANAGER_PASSWORD", settings.manager_password),
             ("REP_PASSWORD", settings.rep_password),
-            ("OWNER_PASSWORD", settings.owner_password),
+            # Each ops account resolves to its own key when one is set, so
+            # the guard names the variable somebody actually has to change.
+            ("FOUNDER_PASSWORD", settings.password_for_ops("founder_password")),
+            ("CTO_PASSWORD", settings.password_for_ops("cto_password")),
         )
         if value == DEV_SEED_PASSWORD
     ]
@@ -385,15 +407,17 @@ def get_settings() -> Settings:
             "would have the dashboard and every lead in it. Set real ones before "
             "deploying."
             + (
-                "\n\nOWNER_PASSWORD is newer than the others. If this install "
-                "was running before an upgrade, its .env has no line for it and "
-                "the default is what stopped the boot. Add one and restart:\n"
-                "    echo \"OWNER_PASSWORD=$(openssl rand -base64 12)\" | "
+                "\n\nThese are newer than MANAGER_PASSWORD and REP_PASSWORD. If "
+                "this install was running before an upgrade, its .env has no line "
+                "for them and the defaults are what stopped the boot. Add them and "
+                "restart:\n"
+                "    printf 'FOUNDER_PASSWORD=%s\\nCTO_PASSWORD=%s\\n' "
+                "\"$(openssl rand -base64 12)\" \"$(openssl rand -base64 12)\" | "
                 "sudo tee -a /srv/liner/.env\n"
-                "Then `make add-owners`, which puts founder@ and cto@ on an "
-                "existing database without the reseed that would take the leads "
-                "with it."
-                if "OWNER_PASSWORD" in stale else ""
+                "Then `make add-owners`, which puts founder@ and cto@ into "
+                "ops_users on an existing database without the reseed that would "
+                "take the leads with it."
+                if {"FOUNDER_PASSWORD", "CTO_PASSWORD"} & set(stale) else ""
             )
         )
     # Every pair, not just the first two. `owner` reaches /ops and a dealership

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.integrations.email.base import EmailSender, with_name
-from app.models import Outreach, User
+from app.models import OpsUser, Outreach, User
 
 
 def blocked_reason(sender: EmailSender, to_address: str) -> str:
@@ -63,7 +63,7 @@ class Identity:
     note: str = ""
 
 
-def identity_for(sender: EmailSender, user: User | None) -> Identity:
+def identity_for(sender: EmailSender, user: User | OpsUser | None) -> Identity:
     """Who this message is from, decided once for the send and the screen.
 
     A person writing from the ops inbox should reach the recipient under their
