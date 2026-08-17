@@ -17,7 +17,16 @@ install: ## Install backend and frontend dependencies
 
 build: ## Build the frontend into frontend/dist (the API serves it in production)
 	cd frontend && npm run build
-	@echo "built -> frontend/dist. See docs/DEPLOY.md."
+	@# The bundle a stranger loads. The login form prefills seeded credentials
+	@# on a laptop and must not in here -- `import.meta.env.DEV` is what strips
+	@# them, and a stray `/// <reference types="vite/client" />` going missing
+	@# is enough to turn that into `undefined` and put them back.
+	@if grep -qE "liner-dev|founder@linerai\.us|@example\.invalid" frontend/dist/assets/*.js; then \
+		echo; echo "REFUSING: seeded credentials are in the built bundle."; \
+		grep -ohE "liner-dev|founder@linerai\.us|[a-z.]+@example\.invalid" frontend/dist/assets/*.js | sort -u; \
+		exit 1; \
+	fi
+	@echo "built -> frontend/dist. No seeded credentials in it. See docs/DEPLOY.md."
 
 stop: ## Kill anything bound to our ports
 	@for p in $(BACKEND_PORT) $(FRONTEND_PORT) $(FIXTURE_PORT); do \

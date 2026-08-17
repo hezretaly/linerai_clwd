@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import (
     clear_session,
     current_account,
+    pwd,
     set_session,
     staff_query,
     verify_password,
@@ -27,6 +29,18 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: address rather than the caller -- in short, because behind a proxy an IP key
 #: locks out everybody at once.
 attempts = SlidingWindow(settings.login_max_attempts, settings.login_window_seconds)
+
+#: A hash to check against when the address matches nobody.
+#:
+#: Without it, an unknown address returned in about 2ms while a real one paid
+#: bcrypt and took about 265ms -- so anyone could ask "is founder@ an account
+#: here?" and read the answer off a stopwatch, whatever the response body said.
+#: Measured, not assumed: that 263ms gap was the reason this exists.
+#:
+#: Hashed from a random value at import rather than a constant in the source,
+#: so there is no password on earth that matches it. It costs one bcrypt at
+#: startup and makes the two paths take the same shape.
+_ABSENT_HASH = pwd.hash(secrets.token_hex(32))
 
 
 class LoginBody(BaseModel):
@@ -74,7 +88,12 @@ def login(
         db.query(User).filter_by(email=email, active=True).one_or_none()
         or db.query(OpsUser).filter_by(email=email, active=True).one_or_none()
     )
-    if account is None or not verify_password(body.password, account.password_hash):
+    # Always verify against *something*. Short-circuiting on `account is None`
+    # skips bcrypt, and the hundredfold difference in how long that takes is a
+    # perfectly good answer to "does this account exist" -- one a rate limit
+    # and an identical error message do nothing about.
+    ok = verify_password(body.password, account.password_hash if account else _ABSENT_HASH)
+    if account is None or not ok:
         attempts.record(email)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
 

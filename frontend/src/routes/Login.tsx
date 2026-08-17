@@ -21,10 +21,16 @@ export function Login() {
   // a login form arriving unannounced reads as "your session expired", and
   // theirs has not -- it is simply the wrong account for that door.
   const bouncedFromOps = params.get('why') === 'ops'
+  // Prefilled on a laptop, blank once built. `import.meta.env.DEV` is false in
+  // whatever `make build` produces, which is the only bundle a stranger ever
+  // loads -- and on a public host these two fields were handing over a valid
+  // username and the published development password, which is most of what a
+  // login form is supposed to ask for. `make build` refuses if they survive.
+  const seeded = import.meta.env.DEV
   const [email, setEmail] = useState(
-    wantsOwner ? 'founder@linerai.us' : 'dana.mercer@example.invalid',
+    seeded ? (wantsOwner ? 'founder@linerai.us' : 'dana.mercer@example.invalid') : '',
   )
-  const [password, setPassword] = useState('liner-dev')
+  const [password, setPassword] = useState(seeded ? 'liner-dev' : '')
 
   const login = useMutation({
     mutationFn: () => api.post<{ user: User }>('/api/auth/login', { email, password }),
@@ -125,10 +131,14 @@ export function Login() {
           </button>
         )}
 
-        <p className="mt-4 text-xs text-muted-foreground">
-          Seeded accounts use @example.invalid, which RFC 2606 reserves so mail can never
-          reach a real person. Password is <code className="font-mono">liner-dev</code>.
-        </p>
+        {/* Same reason: a note naming the development password has no business
+            in a bundle served from a real host. */}
+        {seeded && (
+          <p className="mt-4 text-xs text-muted-foreground">
+            Seeded accounts use @example.invalid, which RFC 2606 reserves so mail can never
+            reach a real person. Password is <code className="font-mono">liner-dev</code>.
+          </p>
+        )}
       </Card>
     </div>
   )

@@ -912,9 +912,34 @@ def main() -> int:
     # An unknown address is limited exactly like a real one -- a limit that
     # only bites on accounts that exist is an enumeration oracle, which is a
     # worse leak than the one it guards.
-    check("an address nobody owns is limited the same way, so it leaks nothing",
+    check("an address nobody owns is refused the same way",
           status_of("POST", "/api/auth/login",
                     {"email": victim, "password": "x"})[0] == 429)
+
+    # And takes the same *time*. Skipping bcrypt when the address matches
+    # nobody returned in about 2ms against about 265ms for a real account --
+    # so "is founder@ an account here?" was answerable with a stopwatch,
+    # whatever the status code and the message said. Measured at 262.9ms
+    # before the fix and 0.3ms after.
+    import statistics
+    import time as _time
+
+    def _timed(email: str) -> float:
+        start = _time.perf_counter()
+        status_of("POST", "/api/auth/login", {"email": email, "password": "wrong-one"})
+        return (_time.perf_counter() - start) * 1000
+
+    unknown = [_timed(f"ghost.{stamp}.{i}@example.invalid") for i in range(7)]
+    real = []
+    for _ in range(7):
+        call("POST", "/api/auth/login", LOGIN)      # keep the counter clear
+        real.append(_timed(LOGIN["email"]))
+    quick, slow = statistics.median(unknown), statistics.median(real)
+    # A ratio, not a millisecond count: this runs on whatever machine it runs
+    # on. Under 2x is indistinguishable; the bug was a hundredfold.
+    check("and takes the same time, so a stopwatch cannot name the accounts",
+          max(quick, slow) / max(min(quick, slow), 0.001) < 2.0,
+          f"unknown {quick:.0f}ms vs real {slow:.0f}ms")
 
     # Keyed on the account, not the caller. Behind a proxy every request looks
     # like one IP, so an address key is what stops one bot locking out the
