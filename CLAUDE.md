@@ -717,6 +717,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       rep's is refused by `/api/ops`. `/api/auth/me` and the event socket are
       the two deliberate exceptions — "who am I" has to answer for either, and
       the socket carries both sides' events.
+    - **The wrong door redirects; it never signs anybody out.** No session on
+      `/ops` goes to `/login?as=owner`; a dealership session there goes to the
+      same place with `why=ops`, which is what stops a login form arriving
+      unannounced from reading as *your session expired* — it has not. An
+      owner on `/app` goes to `/ops`, because `RequireAuth` passes (`/auth/me`
+      answers for either realm) and the shell would otherwise render with
+      every panel in it 403ing: broken, rather than "this is not yours".
+      `make ops-ui` asserts all three, and that `/api/auth/me` still answers
+      200 afterwards each time.
     - **`_clear` never touches an `ops_` table**, so rebuilding the showroom
       fixture cannot throw away demos real people booked with us.
       `make reset-dealership` is that; `make reset-db` deletes the file and

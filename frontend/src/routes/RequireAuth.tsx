@@ -53,5 +53,13 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (isError || !data) {
     return <Navigate to="/login" replace />
   }
+  // The mirror of `RequireOwner`. An ops session is refused by every
+  // dealership endpoint, so without this the shell rendered and then every
+  // panel in it 403'd -- a dashboard that looks broken rather than one that
+  // says this is not yours. The session is untouched either way; /ops is
+  // where this account's own dashboard is.
+  if (data.user.role === 'owner') {
+    return <Navigate to="/ops" replace />
+  }
   return <>{children}</>
 }

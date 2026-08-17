@@ -86,15 +86,39 @@ def main() -> int:
             page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
             page.on("pageerror", lambda e: print(f"      [pageerror] {e}"))
 
-            say("a rep cannot get in")
+            say("a stranger is sent to the sign-in this dashboard uses")
+            anon = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
+            anon.goto(f"{BASE}/ops")
+            anon.wait_for_url("**/login?as=owner", timeout=10000)
+            anon.close()
+
+            say("a rep is sent there too, and told their session is intact")
             page.goto(f"{BASE}/login")
             page.fill("input[type=email]", "marcus.vale@example.invalid")
             page.fill("input[type=password]", "liner-dev")
             page.click("button[type=submit]")
             page.wait_for_url("**/app", timeout=15000)
             page.goto(f"{BASE}/ops")
-            page.wait_for_selector("text=This one is ours", timeout=10000)
+            # The login form, not a dead end -- but a login form arriving
+            # unannounced reads as "your session expired", and theirs has not.
+            page.wait_for_url("**/login?as=owner&why=ops", timeout=10000)
+            page.wait_for_selector("text=has not gone anywhere", timeout=8000)
+            still = page.evaluate('async () => (await fetch("/api/auth/me")).status')
+            assert still == 200, f"the dealer session was flushed: /api/auth/me {still}"
             page.screenshot(path=SHOTS / "01-not-ours.png")
+
+            say("and the wall runs the other way: an owner on /app goes to /ops")
+            # Not a flush. An ops session is refused by every dealership
+            # endpoint, so without this the shell rendered and every panel in
+            # it 403'd -- broken rather than "this is not yours".
+            page.goto(f"{BASE}/login?as=owner")
+            page.fill("input[type=password]", "liner-dev")
+            page.click("button[type=submit]")
+            page.wait_for_url("**/ops", timeout=15000)
+            page.goto(f"{BASE}/app")
+            page.wait_for_url("**/ops", timeout=10000)
+            still = page.evaluate('async () => (await fetch("/api/auth/me")).status')
+            assert still == 200, f"the ops session was flushed: /api/auth/me {still}"
 
             say("founder signs in and lands on /ops")
             page.goto(f"{BASE}/login?as=owner")

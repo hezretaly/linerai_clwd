@@ -17,6 +17,10 @@ export function Login() {
   const wantsManager = params.get('as') === 'manager'
   // Liner's own staff, who land on a different dashboard entirely.
   const wantsOwner = params.get('as') === 'owner'
+  // Bounced off /ops while signed in as the dealership's staff. Worth saying:
+  // a login form arriving unannounced reads as "your session expired", and
+  // theirs has not -- it is simply the wrong account for that door.
+  const bouncedFromOps = params.get('why') === 'ops'
   const [email, setEmail] = useState(
     wantsOwner ? 'founder@linerai.us' : 'dana.mercer@example.invalid',
   )
@@ -51,6 +55,17 @@ export function Login() {
               ? 'The team page, the assistant settings and publishing are managers only.'
               : 'Riverside Auto'}
         </p>
+
+        {bouncedFromOps && (
+          <p className="mt-3 rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            You are still signed in to the dealership&rsquo;s dashboard &mdash; that session
+            has not gone anywhere. <code className="font-mono">/ops</code> is a separate
+            account.{' '}
+            <a href="/app" className="font-medium text-primary hover:underline">
+              Back to the dashboard
+            </a>
+          </p>
+        )}
 
         <form
           className="mt-5 space-y-4"
