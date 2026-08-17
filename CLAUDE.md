@@ -147,6 +147,47 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     and nothing here can do. Each is answered where the method asks for it —
     there is no scheduler, a rep composes the follow-ups, and video is off — so
     the assistant never offers a buyer something nobody will deliver.
+- **The greeting is already on the buyer's screen, and the prompt has to say
+  so.** It is client-side only and never a message row, so the model cannot
+  see that anything was said — and the method's own section 1 tells it to
+  disclose it is an AI *at the start*. Told nothing, it obediently opens with
+  "I'm Liner, Riverside Auto's AI assistant" directly under "Hi! I'm Liner,
+  Riverside Auto's assistant": the buyer is greeted twice by something that
+  cannot remember saying hello. So the prompt quotes the greeting back and
+  says it has already been sent. Asked outright whether it is a bot, it still
+  answers yes — that is a question, not an opening.
+- **A budget you cannot convert is still a budget.** "Around $300 a month" is
+  not a price and must never become one — there is no rate, no term and no
+  payment maths here — but a model told only what it may not say answers with
+  no cars at all, which is what a real buyer got. The rule is therefore
+  written as a positive: any question about what they could have is a search,
+  every time, before a word is written, and the monthly number is a person's
+  job. A buyer who asks what they can get and receives a paragraph about why
+  you cannot say has been told nothing and has nothing to look at.
+- **A car the model names must be a car a tool returned.** `search_inventory`
+  is a real guarantee — only `available`, discussable rows come back, so a
+  sold car cannot arrive through a tool — but nothing stopped the model
+  *mentioning* one out of what it knows about cars in general. "We've got a
+  Lexus RX too" carries no price, no mileage and no year, so every other guard
+  waved it through and the buyer drove over for a car that was never on the
+  forecourt. `check_unsourced_vehicles` closes that.
+  - **Makes only, deliberately.** Escape, Focus, Soul and Fit are model names
+    and ordinary English; matching them would reject honest sentences, and a
+    false positive here costs the buyer their answer. Dodge, Ram, Mini, MG and
+    Smart are dropped for the same reason — and Ram loses nothing, since the
+    make it ships under is still watched. You cannot get a buyer to the wrong
+    forecourt without naming a make.
+  - **Grounding is wider than for numbers, and on purpose.** A price is
+    re-read every turn because it can change; a car found earlier in the
+    thread was really found and is still on the buyer's screen. So any tool
+    result in the conversation counts — `tools.earlier_results`, the same one
+    the after-the-fact voice guard reads, because two copies of "what has this
+    conversation been told" is how one channel starts flagging a car the other
+    accepts. A make the *buyer* typed counts too: "nothing from Alfa Romeo
+    right now" is an honest answer, not a claim about a car.
+  - It caught an invented car in `agent_loop_check.py` the day it was written
+    — a hand-authored fixture had been offering a Toyota Corolla this lot has
+    never carried, and passing, for months. That is the argument for it.
 - **Rules live in executors, not prompts.** A do-not-discuss vehicle is filtered
   in `search_inventory`, so it never reaches the model at all. Provenance is
   enforced in `save_captured_fields`, which downgrades a dishonest `typed` to

@@ -15,7 +15,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.agent import guards, stub
+from app.agent import guards, stub, tools
 from app.config import settings
 from app.db import utcnow
 from app.events import emit
@@ -114,6 +114,8 @@ def run_agent_turn(db: Session, convo: Conversation, text: str) -> Message | Non
             booked=convo.stage == "booked",
             tool_inputs=[c["input"] for c in calls if isinstance(c.get("input"), dict)],
             buyer_text=text,
+            makes=tools.known_makes(db),
+            prior_results=tools.earlier_results(db, convo),
         )
         if not verdict.ok:
             log.error(

@@ -248,13 +248,10 @@ def _guard_after_the_fact(db: Session, convo: Conversation, spoken: str) -> list
     """
     from app.agent import guards
 
-    sourced = [
-        result
-        for message in db.query(Message)
-        .filter(Message.conversation_id == convo.id, Message.tool_calls_json.is_not(None))
-        .all()
-        for result in guards.tool_results_from_messages(message.tool_calls_json or "[]")
-    ]
+    # One definition of "what has this conversation been told", shared with
+    # the chat guard -- two copies is how one channel starts flagging a car
+    # the other accepts.
+    sourced = tools.earlier_results(db, convo)
     buyer_said = " ".join(
         m.content or ""
         for m in db.query(Message)

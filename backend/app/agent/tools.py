@@ -84,6 +84,50 @@ ORIGIN_ALIASES = {
 EUROPEAN = {"german", "british", "italian", "swedish"}
 
 
+def known_makes(db: Session) -> set[str]:
+    """Every make the guard should notice in a reply.
+
+    The union of the table above and whatever this dealership actually stocks,
+    because the two answer different halves of the question. A make the lot has
+    never carried has to be in here or "we've got a Ford Escape too" sails past
+    a guard built only from the lot; a make the lot carries that the table
+    happens to miss has to be in here or a real car reads as invented.
+
+    Every status, not only `available`: a sold Accord's make is exactly what
+    the guard needs to recognise when the model names it a week later.
+    """
+    makes = set(ORIGIN_BY_MAKE)
+    for (make,) in db.query(Vehicle.make).distinct().all():
+        for word in re.split(r"[^a-z0-9]+", (make or "").lower()):
+            if len(word) > 2:
+                makes.add(word)
+    # "mercedes-benz" is one key in the table and two words in a reply.
+    for key in list(makes):
+        for word in re.split(r"[^a-z0-9]+", key):
+            if len(word) > 2:
+                makes.add(word)
+    return makes
+
+
+def earlier_results(db: Session, convo: Conversation) -> list[dict]:
+    """Every tool result already in this thread.
+
+    Grounding for the vehicle guard, and the after-the-fact guard on a call
+    reads the same thing -- one definition, because two copies of "what has
+    this conversation been told" is how one channel starts flagging a car the
+    other accepts.
+    """
+    from app.agent.guards import tool_results_from_messages
+
+    return [
+        result
+        for message in db.query(Message)
+        .filter(Message.conversation_id == convo.id, Message.tool_calls_json.is_not(None))
+        .all()
+        for result in tool_results_from_messages(message.tool_calls_json or "[]")
+    ]
+
+
 def origin_of(make: str) -> str:
     return ORIGIN_BY_MAKE.get((make or "").strip().lower(), "")
 

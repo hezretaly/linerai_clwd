@@ -335,12 +335,57 @@ def main() -> int:
         convo = fresh_conversation(db)
         reply, calls = loop.run_turn(db, convo, "What do you have under $20,000?", provider=FakeProvider([
             call_tool("search_inventory", max_price=20000),
-            say("A 2021 Toyota Corolla is the closest under $20,000 -- want the details?"),
+            # A car the search really returns. This script used to name a
+            # Toyota Corolla, which is not on this lot at any price -- and it
+            # passed for months, because no guard read the make. The vehicle
+            # guard caught it the day it was written, in a hand-authored
+            # fixture, which is the argument for having it.
+            say("A 2019 Honda Civic is the closest under $20,000 -- want the details?"),
         ]))
         check("the buyer's own budget, quoted back, is not an invented price",
               "under $20,000" in reply, reply[:70])
         check("and the search that grounded it really ran",
               any(c["name"] == "search_inventory" for c in calls))
+
+        # A car this lot has never had, named with no number attached, so every
+        # other guard here waves it through. The executor cannot serve one --
+        # search_inventory only returns available, discussable rows -- but
+        # nothing stopped the model mentioning it, and a buyer drives over for
+        # a car that is not on the forecourt.
+        convo = fresh_conversation(db)
+        reply, _ = loop.run_turn(db, convo, "anything with a third row?", provider=FakeProvider([
+            call_tool("search_inventory", keywords="third row"),
+            say("We also have a Lexus RX you might like."),
+            say("Here is what we actually have with a third row -- want the details?"),
+        ]))
+        check("a car no tool returned is not offered to a buyer",
+              "Lexus" not in reply, reply[:70])
+
+        # And the half that matters more, because a guard that rejects honest
+        # answers costs the buyer every reply: naming the make they asked about
+        # in order to say no is not a claim about a car.
+        convo = fresh_conversation(db)
+        reply, _ = loop.run_turn(db, convo, "do you have any Alfa Romeos?", provider=FakeProvider([
+            call_tool("search_inventory", keywords="alfa romeo"),
+            say("Nothing from Alfa Romeo on the lot right now -- want to see what is close?"),
+        ]))
+        check("but saying no to the make they asked about still gets through",
+              "Alfa Romeo" in reply, reply[:70])
+
+        # The greeting is client-side only and is never a message row, so the
+        # model cannot see that it was sent. Told nothing, it re-introduces
+        # itself on its first turn and the buyer is greeted twice by something
+        # that cannot remember saying hello.
+        from app.agent.prompts import build_system_prompt as _prompt
+        from app.api.settings import live_settings as _live
+        from app.models import Dealership as _Dealership
+        written = _prompt(db, db.query(_Dealership).first(), _live(db))
+        check("the prompt carries the greeting the buyer has already read",
+              _live(db).greeting in written)
+        check("and says plainly that it was already sent",
+              "ALREADY SENT" in written and "never introduce yourself" in written)
+        check("a monthly payment is answered with cars, not a lecture",
+              "$300 a month" in written and "not a reason to show them nothing" in written)
 
         print("\n== the voice session, as far as it can honestly be checked ==")
         # The mint call needs a key this environment does not have and must not

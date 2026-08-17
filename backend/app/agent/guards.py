@@ -146,6 +146,66 @@ def check_unsourced_facts(
     return violations
 
 
+# Makes that are also ordinary words. "I won't dodge that" and "a mini SUV"
+# are honest sentences, and a guard that rejects them costs the buyer their
+# answer -- which is a worse failure than the one being guarded against. Ram
+# is dropped with Dodge for the same reason and loses nothing: it is a Dodge
+# sub-brand, so the make it ships under is still watched.
+AMBIGUOUS_MAKES = {"dodge", "ram", "mini", "mg", "smart"}
+
+
+def check_unsourced_vehicles(
+    text: str,
+    tool_results: list[dict],
+    *,
+    makes: set[str],
+    tool_inputs: list[dict] | None = None,
+    buyer_text: str = "",
+    prior_results: list[dict] | None = None,
+) -> list[str]:
+    """Which cars in ``text`` this dealership never looked up.
+
+    The executor is the real guarantee -- ``search_inventory`` only ever
+    returns rows that are ``available`` and discussable, so a sold car cannot
+    come back through a tool. What it cannot stop is the model *naming* one
+    anyway, out of what it knows about cars in general rather than about this
+    lot. "We've got a Ford Escape too" carries no price, no mileage and no year,
+    so every other guard here waves it through, and the buyer drives over for a
+    car that is not on the forecourt.
+
+    **Makes only, deliberately.** Escape, Focus, Soul and Fit are model names
+    and also ordinary English; matching them would reject honest sentences, and
+    a false positive is not cosmetic -- the buyer gets the escalation line
+    instead of an answer and it reads as a dead bot. A make is a proper noun
+    that stays a proper noun, and you cannot get a buyer to the wrong forecourt
+    without naming one.
+
+    Grounding is wider here than for numbers, and on purpose. A price has to be
+    re-read every turn because it can change; a car that was found earlier in
+    this conversation was really found, and the buyer is still looking at it on
+    their screen. So anything any tool returned in this thread counts, as does
+    a make the buyer themselves typed -- "no, nothing from Audi right now" is
+    the honest answer to a question about Audis, not a claim about one.
+    """
+    grounded = " ".join([
+        json.dumps(list(tool_results), default=str),
+        json.dumps(list(prior_results or []), default=str),
+        json.dumps(list(tool_inputs or []), default=str),
+        buyer_text or "",
+    ]).lower()
+    said = set(re.split(r"[^a-z0-9]+", text.lower()))
+
+    violations = []
+    for make in sorted(makes):
+        if make in AMBIGUOUS_MAKES:
+            continue
+        # Whole word against the reply, substring against the grounding: a tool
+        # result writes "Mercedes-Benz" where a reply says "Mercedes".
+        if make in said and make not in grounded:
+            violations.append(f"unsourced vehicle make {make}")
+    return violations
+
+
 def check_turn_length(text: str, channel: str) -> bool:
     """Voice caps assistant text -- one idea per turn, roughly 15 words."""
     return channel != "voice" or len(text.split()) <= VOICE_MAX_WORDS
@@ -171,10 +231,17 @@ def run_guards(
     booked: bool = False,
     tool_inputs: list[dict] | None = None,
     buyer_text: str = "",
+    makes: set[str] | None = None,
+    prior_results: list[dict] | None = None,
 ) -> GuardResult:
     violations = check_unsourced_facts(
         text, tool_results, tool_inputs=tool_inputs, buyer_text=buyer_text
     )
+    if makes:
+        violations += check_unsourced_vehicles(
+            text, tool_results, makes=makes, tool_inputs=tool_inputs,
+            buyer_text=buyer_text, prior_results=prior_results,
+        )
 
     if not check_turn_length(text, channel):
         violations.append("too long for voice")

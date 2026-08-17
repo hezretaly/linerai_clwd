@@ -162,6 +162,10 @@ def run_turn(
             booked=convo.stage == "booked",
             tool_inputs=[c["input"] for c in calls if isinstance(c["input"], dict)],
             buyer_text=buyer_text,
+            # A car the model named that no tool ever returned. The executor
+            # cannot serve a sold one; nothing stopped the model mentioning it.
+            makes=tools.known_makes(db),
+            prior_results=tools.earlier_results(db, convo),
         )
 
         if verdict.ok:
