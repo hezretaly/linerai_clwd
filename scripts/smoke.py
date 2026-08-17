@@ -889,6 +889,51 @@ def main() -> int:
                if d["date"] == first["date"]), []),
           when)
 
+    print("\n== guessing a password gets slower ==")
+    # The login form is public on a public host, and the password is the only
+    # thing in front of a dealership's buyer list and of /ops. Nothing used to
+    # slow a guess down or record that one was happening.
+    from app.api.auth import attempts as login_attempts
+    from app.config import settings as cfg
+
+    victim = f"bruteforce.{stamp}@example.invalid"
+    codes = [
+        status_of("POST", "/api/auth/login", {"email": victim, "password": "nope"})[0]
+        for _ in range(cfg.login_max_attempts + 2)
+    ]
+    check("a wrong password is refused, then the attempts run out",
+          codes[: cfg.login_max_attempts] == [401] * cfg.login_max_attempts
+          and codes[cfg.login_max_attempts:] == [429, 429],
+          str(codes))
+    blocked, body = status_of("POST", "/api/auth/login",
+                              {"email": victim, "password": "nope"})
+    check("and it says when to come back rather than just refusing",
+          blocked == 429 and "seconds" in body, body[:70])
+    # An unknown address is limited exactly like a real one -- a limit that
+    # only bites on accounts that exist is an enumeration oracle, which is a
+    # worse leak than the one it guards.
+    check("an address nobody owns is limited the same way, so it leaks nothing",
+          status_of("POST", "/api/auth/login",
+                    {"email": victim, "password": "x"})[0] == 429)
+
+    # Keyed on the account, not the caller. Behind a proxy every request looks
+    # like one IP, so an address key is what stops one bot locking out the
+    # whole company.
+    check("but spraying one account does not lock anybody else out",
+          call("POST", "/api/auth/login", LOGIN)["user"]["role"] == "manager")
+
+    # Somebody who mistyped four times and then got it right must not still be
+    # four attempts from a lockout for the rest of the window.
+    for _ in range(cfg.login_max_attempts - 1):
+        status_of("POST", "/api/auth/login", {"email": LOGIN["email"], "password": "no"})
+    call("POST", "/api/auth/login", LOGIN)
+    check("and a correct password clears the count it took to get there",
+          status_of("POST", "/api/auth/login",
+                    {"email": LOGIN["email"], "password": "no"})[0] == 401)
+    # Leave the gate's own account clean for everything after this.
+    login_attempts.clear(LOGIN["email"])
+    call("POST", "/api/auth/login", LOGIN)
+
     print("\n== our own dashboard is ours ==")
     # /ops is Liner's, not a dealership's. The separation is a third role
     # rather than a senior manager: a manager runs a showroom and has every

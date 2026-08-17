@@ -4,6 +4,7 @@ import clsx from 'clsx'
 
 import { api, ApiError } from '../lib/api'
 import { dateTime, isOpenOn, money, openWindow, time } from '../lib/format'
+import { useNow, zonedParts } from '../lib/clock'
 import type { Appointment, Overview, TeamMember } from '../lib/types'
 import { Badge, Button, Card, Empty, Field, Input, Sheet, Spinner } from '../components/ui'
 import { PageHeader } from '../components/dashboard/AppShell'
@@ -67,6 +68,18 @@ export function CalendarPage() {
   const [view, setView] = useState<'week' | 'list'>(
     () => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'week'),
   )
+  // The red line marking now, in the *dealership's* zone. Slots are naive
+  // timestamps meaning showroom-local, so reading `now.getHours()` off the
+  // browser drew the line an hour out of place for anybody in another state --
+  // the same defect the header clock had. It ticks too, so the line creeps
+  // down the day rather than freezing where the page happened to load.
+  //
+  // Up here with the other hooks, not next to where it is used: there is an
+  // `if (isLoading) return <Spinner />` between the two, and a hook after an
+  // early return changes the hook count between renders. React throws
+  // "Rendered more hooks than during the previous render" and the whole page
+  // goes blank -- which tsc cannot see and only a browser can.
+  const now = useNow()
 
   const setMode = (next: 'week' | 'list') => {
     localStorage.setItem(VIEW_KEY, next)
@@ -103,9 +116,9 @@ export function CalendarPage() {
 
   if (isLoading || !data) return <Spinner />
 
-  const now = new Date()
+  const here = zonedParts(now, dealership?.timezone)
   const showNowLine = days.some((d) => d.toDateString() === now.toDateString())
-  const nowTop = (now.getHours() + now.getMinutes() / 60 - openHour) * HOUR_PX
+  const nowTop = (here.hour + here.minute / 60 - openHour) * HOUR_PX
 
   return (
     <>

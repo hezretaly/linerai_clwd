@@ -291,6 +291,13 @@ class Settings(BaseSettings):
     # http://127.0.0.1:8000 in a buyer's inbox. Set it and the guessing stops.
     public_base_url: str = ""
     session_cookie: str = "liner_session"
+    # How many wrong passwords one account may take in a window before the
+    # form starts refusing. Sized for a person who genuinely cannot remember
+    # theirs -- eight tries and five minutes is several honest attempts and a
+    # coffee -- while a guessing bot gets 8 tries per 5 minutes per account
+    # instead of thousands per second. A correct password clears the count.
+    login_max_attempts: int = 8
+    login_window_seconds: int = 300
 
     # --- Who outbound email may reach ---------------------------------------
     # One setting whose name is the rule. Three ways to write it:

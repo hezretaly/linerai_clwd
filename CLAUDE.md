@@ -787,6 +787,33 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     ellipsis never appeared. `grid-cols-N` is `minmax(0, 1fr)`, and the
     `minmax(0, …)` is the part that lets it clip. `make shots` covers `/ops`
     at 390px, signing in a second time because the role is different.
+- **The login form is rate limited per account, never per IP.** It is the one
+  unauthenticated endpoint where guessing repeatedly gets you something, and
+  the password is all that stands in front of a dealership's buyer list and of
+  `/ops`. Keyed on the address being tried because behind nginx or Cloudflare
+  every request carries the *proxy's* IP unless `--proxy-headers` is set — an
+  IP key would let one bot lock out every real person at once, which is a
+  worse outage than the attack. The limit bites identically on an address
+  nobody owns, or it would answer "this account exists" to anyone who counted
+  the 401s. A correct password clears the count, so four mistypes and a
+  success do not leave somebody four attempts from a lockout. In process like
+  `events.py`, for the same reason: one worker is already required.
+- **The clock in the header is the showroom's, and it ticks in the browser.**
+  Two faults in one line. `const now = new Date()` during render froze at
+  whatever minute the page loaded, because nothing on a quiet dashboard
+  re-renders; and formatting with no `timeZone` uses the *viewer's* device,
+  while every timestamp under it is naive and means dealership-local. A
+  manager checking in from another state read a clock an hour off the
+  appointments below it, and the calendar's now-line was drawn at the wrong
+  height for the same reason. `useNow()` schedules to the next minute boundary
+  — no fetch, no poll, nothing reaches the server — and `zonedStamp` formats
+  in `dealership.timezone`. The zone is named only when the viewer is
+  somewhere else: always is noise, never is an hour-wrong clock.
+  - **A hook cannot go next to the thing it is for.** `useNow()` was put
+    beside the now-line calculation, which sits after `if (isLoading) return
+    <Spinner />` — so the hook count changed between renders and React threw
+    *Rendered more hooks than during the previous render*, blanking the page.
+    `tsc` is silent on it; only opening the page finds it.
 - **`PUBLIC_DEMO` opens the dashboard to anybody, as a rep, and it is off.**
   The point of a demo is being able to send someone a link, and the point of
   this setting is that it is the one line in `.env` that hands a stranger a

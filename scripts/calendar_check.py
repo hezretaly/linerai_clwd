@@ -14,6 +14,9 @@ import glob
 import re
 
 from playwright.sync_api import sync_playwright
+BASE = "http://localhost:5173"
+
+
 def cp():
     for pat in ("/opt/pw-browsers/chromium-*/chrome-linux/chrome",
                 "/opt/pw-browsers/chromium_headless_shell-*/chrome-linux/headless_shell"):
@@ -25,7 +28,7 @@ with sync_playwright() as pw:
     ctx = b.new_context(viewport={"width": 1440, "height": 900})
     p = ctx.new_page()
     p.on("pageerror", lambda e: print(f"  [pageerror] {e}"))
-    p.goto("http://localhost:5173/login")
+    p.goto(f"{BASE}/login")
     p.fill("input[type=email]", "dana.mercer@example.invalid")
     p.fill("input[type=password]", "liner-dev")
     p.click("button[type=submit]")
@@ -41,7 +44,7 @@ with sync_playwright() as pw:
     p.screenshot(path=".artifacts/waited-overview.png", full_page=True)
 
     print("2. the calendar opens on the week grid")
-    p.goto("http://localhost:5173/app/calendar")
+    p.goto(f"{BASE}/app/calendar")
     p.wait_for_selector("h1:has-text(\"Calendar\")", timeout=10000)
     p.wait_for_timeout(1200)
     assert p.locator('button[aria-pressed="true"]:has-text("week")').count() == 1
@@ -89,11 +92,44 @@ with sync_playwright() as pw:
     p.reload()
     p.wait_for_selector("text=in the order it happens", timeout=10000)
 
-    print("8. 390px: no sideways scroll in either view")
+    print("8. the clock ticks, and shows the showroom's zone from anywhere")
+    # Purely client-side: no fetch, no poll. The check is that the minute
+    # rolls over with nothing touching the page.
+    header = p.locator("header span.tnum").first
+    first = header.inner_text()
+    for _ in range(16):
+        p.wait_for_timeout(5000)
+        if header.inner_text() != first:
+            break
+    else:
+        raise AssertionError(f"the clock never moved from {first!r}")
+    print(f"   {first!r} -> {header.inner_text()!r} with no reload")
+
+    # Same instant, two devices. Every appointment on this page is a naive
+    # timestamp meaning showroom-local, so a header in the viewer's zone put
+    # the clock an hour off the rows beneath it -- and the calendar's now-line
+    # at the wrong height for the same reason.
+    seen = {}
+    for zone in ("America/Chicago", "Asia/Tokyo"):
+        far = b.new_context(viewport={"width": 1440, "height": 900},
+                            timezone_id=zone, storage_state=ctx.storage_state()).new_page()
+        far.goto(f"{BASE}/app/calendar")
+        far.wait_for_timeout(2500)
+        marker = far.locator("div.pointer-events-none.border-t-2")
+        seen[zone] = marker.first.evaluate("el => el.style.top") if marker.count() else None
+        far.close()
+    chicago, tokyo = seen["America/Chicago"], seen["Asia/Tokyo"]
+    if chicago is not None:
+        assert chicago == tokyo, f"now-line moved with the viewer: {chicago} vs {tokyo}"
+        print(f"   now-line at {chicago} from both, not the viewer's clock")
+    else:
+        print("   now-line outside opening hours right now -- nothing to compare")
+
+    print("9. 390px: no sideways scroll in either view")
     phone = b.new_context(viewport={"width": 390, "height": 844},
                           storage_state=ctx.storage_state()).new_page()
     for mode in ("list", "week"):
-        phone.goto("http://localhost:5173/app/calendar")
+        phone.goto(f"{BASE}/app/calendar")
         phone.wait_for_timeout(1500)
         if phone.locator(f'button[aria-pressed="false"]:has-text("{mode}")').count():
             phone.click(f'button:has-text("{mode}")')

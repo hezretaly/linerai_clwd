@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -14,9 +16,17 @@ from app.api.deps import (
 from app.config import settings
 from app.db import get_db
 from app.models import OpsUser, User
+from app.ratelimit import SlidingWindow
 from app.schemas.serialize import user_out
 
+log = logging.getLogger("liner.auth")
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+#: Wrong passwords, per account. See `app/ratelimit.py` for why the key is the
+#: address rather than the caller -- in short, because behind a proxy an IP key
+#: locks out everybody at once.
+attempts = SlidingWindow(settings.login_max_attempts, settings.login_window_seconds)
 
 
 class LoginBody(BaseModel):
@@ -28,21 +38,47 @@ class LoginBody(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginBody, response: Response, db: Session = Depends(get_db)) -> dict:
+def login(
+    body: LoginBody,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
     """One form, two tables.
 
     The dealership's staff are in `users` and we are in `ops_users`, and the
     address decides which -- not a toggle on the form, which would be a way to
     probe whether an address exists on the other side. The wrong-password
     message is identical either way for the same reason.
+
+    Rate limited per account. This is a public form on a public host and the
+    password is the only thing in front of a dealership's buyer list and of
+    `/ops`; without a limit, nothing slowed a guess down or recorded that one
+    was happening.
     """
     email = body.email.strip().lower()
+
+    # Asked before the attempt, and identical whether or not the address
+    # exists -- a limit that only bites on real accounts is an account
+    # enumeration oracle, which is a worse leak than the one it is guarding.
+    wait = attempts.retry_after(email)
+    if wait:
+        log.warning("login rate limited for %s -- %ss remaining", email, wait)
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Too many attempts. Try again in {wait} seconds.",
+            headers={"Retry-After": str(wait)},
+        )
+
     account = (
         db.query(User).filter_by(email=email, active=True).one_or_none()
         or db.query(OpsUser).filter_by(email=email, active=True).one_or_none()
     )
     if account is None or not verify_password(body.password, account.password_hash):
+        attempts.record(email)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+
+    attempts.clear(email)
     set_session(response, account)
     return {"user": user_out(account)}
 

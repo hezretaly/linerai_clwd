@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useDealerEvents } from '../../lib/ws'
 import { hoursLabel, initials } from '../../lib/format'
+import { foreignZoneLabel, useNow, zonedStamp } from '../../lib/clock'
 import type { IntegrationsPayload, Overview, User } from '../../lib/types'
 import { Button, Unavailable } from '../ui'
 import { Icon, type IconName } from '../Icon'
@@ -312,7 +313,16 @@ function AccountFooter({ dealership, collapsed }: { dealership: string; collapse
  * what they are rather than as dead chrome that looks clickable.
  */
 function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
-  const now = new Date()
+  // A ticking clock, in the dealership's zone. Both halves were wrong: it was
+  // computed once during render so it stopped, and it was formatted in the
+  // browser's zone while every appointment under it is dealership-local.
+  const now = useNow()
+  const { data: overview } = useQuery({
+    queryKey: ['overview'],
+    queryFn: () => api.get<Overview>('/api/overview'),
+  })
+  const timezone = overview?.dealership.timezone
+  const elsewhere = foreignZoneLabel(now, timezone)
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur md:gap-4 md:px-6">
       {/* Mobile only. At lg and up the rail pins itself from its own header --
@@ -347,10 +357,15 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
           <Icon name="bell" className="h-4 w-4" />
         </span>
         <div className="h-5 w-px bg-border" />
-        <span className="tnum hidden text-sm text-muted-foreground sm:inline">
-          {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-          {' · '}
-          {now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+        <span
+          className="tnum hidden text-sm text-muted-foreground sm:inline"
+          title={elsewhere ? `Showroom time (${timezone})` : undefined}
+        >
+          {zonedStamp(now, timezone)}
+          {/* Named only when the viewer is somewhere else. Always showing it
+              is noise for whoever is sitting in the showroom; never showing it
+              is an hour-wrong clock for whoever is not. */}
+          {elsewhere && <span className="ml-1 text-muted-foreground/70">{elsewhere}</span>}
         </span>
       </div>
     </header>

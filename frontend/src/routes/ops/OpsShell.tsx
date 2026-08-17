@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../../lib/api'
 import { initials, relative } from '../../lib/format'
+import { foreignZoneLabel, useNow, zonedStamp } from '../../lib/clock'
 import type { User } from '../../lib/types'
 import { useDealerEvents } from '../../lib/ws'
 import { Icon, type IconName } from '../../components/Icon'
@@ -205,7 +206,10 @@ function OpsLink({
 
 function OpsTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const { data } = useOpsSummary()
-  const now = new Date()
+  // Same fix as the dealership's header: it ticks, and it is in the zone the
+  // demos are booked in rather than the viewer's.
+  const now = useNow()
+  const elsewhere = foreignZoneLabel(now, data?.timezone)
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur md:px-6">
       <button
@@ -224,8 +228,12 @@ function OpsTopBar({ onOpenNav }: { onOpenNav: () => void }) {
       <div className="ml-auto flex items-center gap-2">
         <NotificationBell />
         <div className="hidden h-5 w-px bg-border sm:block" />
-        <span className="tnum hidden text-sm text-muted-foreground sm:inline">
-          {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+        <span
+          className="tnum hidden text-sm text-muted-foreground sm:inline"
+          title={elsewhere ? `Demo times are in ${data?.timezone}` : undefined}
+        >
+          {zonedStamp(now, data?.timezone)}
+          {elsewhere && <span className="ml-1 text-muted-foreground/70">{elsewhere}</span>}
         </span>
       </div>
     </header>
