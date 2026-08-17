@@ -505,44 +505,15 @@ function LeadRail({
         )}
       </div>
 
-      {(lead?.captured_fields?.length ?? 0) > 0 && (
-        <div className="border-b border-border p-5">
-          <div className="mb-2 text-xs font-medium text-muted-foreground">Captured by Liner</div>
-          <div className="space-y-1.5">
-            {lead!.captured_fields!.map((f) => (
-              <div key={f.id} className="flex items-baseline gap-2 text-sm">
-                <span className="w-[86px] shrink-0 text-xs capitalize text-muted-foreground">
-                  {f.key.replace(/_/g, ' ')}
-                </span>
-                <span
-                  className={clsx('min-w-0 flex-1', !f.verified && 'italic text-muted-foreground')}
-                >
-                  {f.value}
-                </span>
-                <span
-                  className={clsx(
-                    'shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium',
-                    f.verified
-                      ? 'border-border text-muted-foreground'
-                      : 'border-warning/30 bg-warning/10 text-warning',
-                  )}
-                >
-                  {PROVENANCE_LABEL[f.provenance]}
-                </span>
-              </div>
-            ))}
-          </div>
-          {/* The reason this panel exists rather than folding into the
-              Summary above it: prose cannot carry provenance. A recap line
-              reading "financing: likely financing" states a guess as a fact,
-              and a rep repeats it on the phone. */}
-          {lead!.captured_fields!.some((f) => !f.verified) && (
-            <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
-              Italic fields were inferred, not stated. Check before using them on a call.
-            </p>
-          )}
-        </div>
-      )}
+      {/* The Captured by Liner panel stood here: every field Liner picked up,
+          each wearing its provenance badge. Taken out on request -- it is the
+          rail's third block of the same buyer, and the fields are read where
+          they are acted on rather than as a list beside the thread.
+          `captured_fields` is untouched: `save_captured_fields` still records
+          provenance, `buyer_summary` still puts only `typed` fields in the
+          buyer's email, and `lead_recap` above still refuses to restate any of
+          them -- prose cannot carry a badge, and a guess repeated without one
+          is how a rep asserts it on the phone. */}
 
       {/* Read-only until now, with a note saying an owner appears when an
           appointment is assigned from the calendar. So the one screen where a

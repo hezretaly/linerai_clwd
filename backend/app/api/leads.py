@@ -213,6 +213,13 @@ def assign_lead(
     It does **not** pause Liner. Only a rep pressing Take over does that, which
     is a different decision -- a buyer whose question a human must answer still
     wants the other nine answered meanwhile.
+
+    **Handing a buyer to somebody else is the manager's call; taking one
+    yourself is not.** Who works which lead is how a floor is run, and a rep
+    quietly moving buyers off a colleague -- or off themselves, back into the
+    pool -- is the same act as reassigning them. Taking one over is the
+    exception and stays open to everyone, because that is a rep saying "I have
+    this", which is the thing the queues are asking for.
     """
     lead = _get(db, lead_id)
     chosen = None
@@ -220,6 +227,13 @@ def assign_lead(
         chosen = find_staff(db, body.user_id)
         if chosen is None:
             raise HTTPException(404, "User not found")
+
+    if user.role != "manager" and (chosen is None or chosen.id != user.id):
+        raise HTTPException(
+            403,
+            "Only a sales manager can give a buyer to somebody else. "
+            "You can take this one over yourself.",
+        )
 
     lead.assigned_user_id = chosen.id if chosen else None
 

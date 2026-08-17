@@ -29,6 +29,7 @@ from app import matching
 from app.config import settings
 from app.api.deps import current_user
 from app.db import get_db, utcnow
+from app.escalations import owner_of
 from app.events import emit
 from app.schemas.serialize import iso
 from app.models import (
@@ -447,6 +448,15 @@ def _reopen(db: Session, outreach: Outreach | None, lead: Lead) -> bool:
     Only reopens an escalation that was already claimed and closed off -- a
     thread nobody had flagged is not made urgent by a reply, and turning every
     inbound message into a queue entry is how the queue stops meaning anything.
+
+    Whose turn it becomes follows `app/escalations.py`: their owner's if they
+    have one, and the unclaimed queue only if they do not. A buyer with a rep
+    on them does not need a person to be *found*, and dropping them into a
+    queue that says so is how a manager ends up assigning somebody who is
+    already assigned. The reply is not silent for having an owner -- it is an
+    entry on their timeline, a row in `/app/email`, and an `email.received`
+    frame on the socket, which between them say what actually happened rather
+    than "somebody is needed".
     """
     convo_ids = [
         c.id for c in db.query(Conversation).filter_by(lead_id=lead.id).all()
@@ -470,10 +480,17 @@ def _reopen(db: Session, outreach: Outreach | None, lead: Lead) -> bool:
     if claimed is None:
         return False
 
-    claimed.claimed_at = None
-    claimed.claimed_by_user_id = None
+    # Back to whoever owns the buyer, not back to the unclaimed pool. A reply
+    # is their turn again -- it is not news that this buyer has nobody, and
+    # dropping an owned lead into "Needs a person" is the same disagreement
+    # `assign_lead` was written to settle, arriving from the other end.
+    convo = db.query(Conversation).filter_by(id=claimed.conversation_id).one_or_none()
+    owner = owner_of(db, convo) if convo is not None else None
+    claimed.claimed_at = utcnow() if owner else None
+    claimed.claimed_by_user_id = owner
     db.commit()
     emit(db, "handoff.triggered", {
         "conversation_id": claimed.conversation_id, "action": "buyer_replied",
+        "claimed_by_user_id": owner,
     })
     return True

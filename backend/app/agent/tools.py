@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db import utcnow
+from app.escalations import claim_for_owner
 from app.events import emit
 from app import matching
 from app.matching import match_lead
@@ -818,6 +819,10 @@ def escalate_to_human(
         reason=(args.get("reason") or "").strip(),
         tool_call_id=tool_call_id,
     )
+    # Born claimed when the buyer already has a rep. Otherwise a manager who
+    # assigned somebody yesterday watches "Needs a person" reappear next to
+    # that rep's name today, and the queue stops meaning "nobody has this".
+    claimed_for = claim_for_owner(db, escalation, convo)
     db.add(escalation)
     convo.status = "handoff"
     # Deliberately NOT agent_paused. Escalating used to gag Liner immediately,
@@ -838,6 +843,9 @@ def escalate_to_human(
         "rule_key": rule_key,
         "reason": escalation.reason,
         "notify": rule.notify if rule else "dashboard",
+        # Named, so the notification says whose this is rather than raising a
+        # queue entry nobody is looking at.
+        "claimed_by_user_id": claimed_for,
     })
 
     # A handoff with no way to reach the buyer is a lost lead, not a handoff.

@@ -25,6 +25,10 @@ from http.cookiejar import CookieJar
 BASE = "http://127.0.0.1:8000"
 WS = "ws://127.0.0.1:8000/ws/dealer"
 LOGIN = {"email": "dana.mercer@example.invalid", "password": "liner-dev"}
+# The other seeded login, and the only one that is not a manager. Assigning a
+# buyer to somebody else is a manager's act now, so proving that takes a
+# session that is not one.
+REP_LOGIN = {"email": "marcus.vale@example.invalid", "password": "liner-dev"}
 
 jar = CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -638,6 +642,56 @@ def main() -> int:
                   for e in call("GET", "/api/overview")["queues"]["needs_a_person"]))
     check("assigning to somebody who does not exist is refused",
           status_of("POST", f"/api/leads/{owner}/assign", {"user_id": "nobody"})[0] == 404)
+
+    # An escalation raised *after* somebody was assigned used to arrive
+    # unclaimed, so a buyer wore "Needs a person" next to the name of the
+    # person who had them and a manager could not tell a failed assignment
+    # from a lying badge. The rule is one rule now (app/escalations.py) and it
+    # has to hold at both ends, not just at the moment of assigning.
+    tag = secrets.token_hex(4)
+    owned = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(owned, content="I want to see something with a third row")
+    owned_slots = [t["starts_at"] for d in
+                   call("GET", f"/api/conversations/{owned}/availability")["days"]
+                   for t in d["slots"]]
+    call("POST", f"/api/conversations/{owned}/book", {
+        "starts_at": owned_slots[0], "name": "Owned Buyer",
+        "email": f"owned.buyer.{tag}@example.invalid"})
+    for appt in call("GET", "/api/appointments")["appointments"]:
+        if appt["conversation_id"] == owned and appt["status"] in ("booked", "confirmed"):
+            booked_here.append(appt["id"])
+    owned_lead = call("GET", f"/api/conversations/{owned}")["lead"]["id"]
+    call("POST", f"/api/leads/{owned_lead}/assign", {"user_id": rep["id"]})
+
+    say(owned, content="What's the out-the-door price on that?")
+    check("a question a human must answer still stops the thread",
+          call("GET", f"/api/conversations/{owned}")["status"] == "handoff")
+    check("but on a buyer who has a rep it is born theirs, not the queue's",
+          call("GET", f"/api/conversations/{owned}")["open_escalation"] is None)
+    check("so assigning somebody does not have to be done twice",
+          not any((e.get("lead") or {}).get("id") == owned_lead
+                  for e in call("GET", "/api/overview")["queues"]["needs_a_person"]))
+    check("and the lead row stops flying the flag as well",
+          next(l for l in call("GET", "/api/leads?limit=500")["leads"]
+               if l["id"] == owned_lead)["flagged"] is False)
+
+    # Who works which lead is how a floor is run. A rep may say "I have this";
+    # handing a buyer to somebody else -- or back to the pool -- is the
+    # manager's call, and the menu hides what the server refuses.
+    call("POST", "/api/auth/login", REP_LOGIN)
+    marcus = call("GET", "/api/auth/me")["user"]["id"]
+    other = next(m for m in call("GET", "/api/team")["members"] if m["id"] != marcus)
+    denied, why = status_of("POST", f"/api/leads/{owned_lead}/assign", {"user_id": other["id"]})
+    check("a rep cannot hand a buyer to somebody else", denied == 403, f"{denied} {why}"[:90])
+    check("nor put one back in the pool",
+          status_of("POST", f"/api/leads/{owned_lead}/assign", {"user_id": None})[0] == 403)
+    check("but taking one themselves is still theirs to do",
+          call("POST", f"/api/leads/{owned_lead}/assign",
+               {"user_id": marcus})["assigned_to"]["id"] == marcus)
+    call("POST", "/api/auth/login", LOGIN)
+    check("and a manager still assigns anybody",
+          call("POST", f"/api/leads/{owned_lead}/assign",
+               {"user_id": other["id"]})["assigned_to"]["id"] == other["id"])
 
     print("\n== a buyer who changes their mind, and a visit that moves ==")
     # Naming a different car is a change of subject at any stage. The rails are
@@ -1868,6 +1922,9 @@ def main() -> int:
     check("a rep taking over claims it",
           call("GET", f"/api/conversations/{mine}")["open_escalation"] is None)
 
+    reply_lead = call("GET", f"/api/conversations/{mine}")["lead"]["id"]
+    me_id = call("GET", "/api/auth/me")["user"]["id"]
+
     inbound({
         "messageId": f"<smoke-{run}-reopen>", "from": escalation_email,
         "to": "sales@example.invalid", "subject": "Re:",
@@ -1876,7 +1933,28 @@ def main() -> int:
     reopened = settled(f"<smoke-{run}-reopen>")
     check("the reply reaches the buyer it came from",
           reopened.get("outcome") == "accepted", str(reopened.get("outcome")))
-    check("and puts the thread back in the queue -- their turn became ours again",
+    # Their turn became ours again -- and "ours" is the rep who took them over,
+    # not the unclaimed pool. A buyer with somebody on them does not need a
+    # person to be *found*, which is the only question Needs a person asks, so
+    # putting them there is how a manager assigns somebody already assigned.
+    owner_now = call("GET", f"/api/conversations/{mine}")["open_escalation"]
+    check("a reply on an owned buyer does not ask for a person again",
+          owner_now is None, str(owner_now))
+    check("it goes back to the rep who owns them",
+          any(e["kind"] == "escalation" and (e.get("claimed_by") or {}).get("id") == me_id
+              for e in call("GET", f"/api/leads/{reply_lead}/timeline")["entries"]))
+
+    # And the other half of the same rule: with nobody on the buyer, the reply
+    # really does raise a person, because now there is nobody to raise it to.
+    call("POST", f"/api/conversations/{mine}/handback")
+    call("POST", f"/api/leads/{reply_lead}/assign", {"user_id": None})
+    inbound({
+        "messageId": f"<smoke-{run}-reopen-loose>", "from": escalation_email,
+        "to": "sales@example.invalid", "subject": "Re:",
+        "text": "Still waiting on that number",
+    })
+    settled(f"<smoke-{run}-reopen-loose>")
+    check("with nobody on the buyer, the same reply does ask for a person",
           call("GET", f"/api/conversations/{mine}")["open_escalation"] is not None)
 
     # A mail server is entitled to rewrite the case of a local part, and

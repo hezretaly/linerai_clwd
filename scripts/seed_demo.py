@@ -505,10 +505,13 @@ def build(db, count: int) -> dict[str, int]:
 
             if flagged:
                 reason = ESCALATES[next(q for q in asked if q in ESCALATES)]
-                # Claimed only where somebody owns the buyer. An escalation
-                # claimed by a rep who is not on the lead is the disagreement
-                # the overview queues were fixed for.
-                claimed = owner is not None and n % 4 == 0
+                # Claimed exactly where somebody owns the buyer -- the same
+                # rule `app/escalations.py` enforces at runtime, because a
+                # fixture that breaks the invariant is a bug report about the
+                # product. It read `owner is not None and n % 4 == 0`, so three
+                # owned buyers in four wore "Needs a person" next to the name of
+                # the person who had them, and assigning somebody looked broken.
+                claimed = owner is not None
                 db.add(Escalation(
                     conversation_id=convo.id,
                     reason=reason,

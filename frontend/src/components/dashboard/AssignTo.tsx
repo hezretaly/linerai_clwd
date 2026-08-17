@@ -47,18 +47,20 @@ export function AssignTo({
   const navigate = useNavigate()
   const client = useQueryClient()
 
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: User }>('/api/auth/me'),
+    staleTime: 5 * 60_000,
+  })
   const { data: team } = useQuery({
     queryKey: ['team'],
     queryFn: () => api.get<{ members: TeamMember[] }>('/api/team'),
     // Every row on the overview renders one of these, and the roster does not
     // change while a rep triages a queue.
     staleTime: 5 * 60_000,
-    enabled: open,
-  })
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => api.get<{ user: User }>('/api/auth/me'),
-    staleTime: 5 * 60_000,
+    // Fetched only when the menu can show it. A rep never sees the roster, so
+    // asking /api/team on their behalf is a request with nowhere to land.
+    enabled: open && me?.user.role === 'manager',
   })
 
   const assign = useMutation({
@@ -129,10 +131,18 @@ export function AssignTo({
     }
   }, [open])
 
-  // An anonymous thread has nobody to assign -- a lead is minted when something
-  // books, so most live chats have none. Saying "Assign to" over a menu that
-  // could only fail is worse than offering the one thing that does work.
-  if (!leadId) {
+  // Who works which lead is how a floor is run, so the roster is a manager's.
+  // A rep still gets Take over myself, which is a different act -- and the
+  // server enforces exactly this split, so hiding it here is the honest label
+  // rather than the guard.
+  const canAssign = me?.user.role === 'manager'
+
+  // Nothing to offer: an anonymous thread has nobody to assign -- a lead is
+  // minted when something books, so most live chats have none -- or a rep is
+  // looking at a lead with no live thread to take over. Saying "Assign to"
+  // over a menu that could only fail is worse than offering the one thing
+  // that does work.
+  if (!leadId || (!canAssign && !conversationId)) {
     return (
       <button
         onClick={(e) => { e.stopPropagation(); navigate(thread) }}
@@ -168,7 +178,10 @@ export function AssignTo({
             <span className="truncate">{mine ? 'You' : assignedTo.name.split(' ')[0]}</span>
           </>
         ) : (
-          'Assign to'
+          // What this button opens, which is not the same for both roles: a
+          // rep is offered one entry, and it is theirs to take rather than
+          // theirs to hand out.
+          canAssign ? 'Assign to' : 'Take over'
         )}
         <svg viewBox="0 0 20 20" className="h-3 w-3 shrink-0 opacity-60" aria-hidden>
           <path d="M5 8l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" />
@@ -203,6 +216,8 @@ export function AssignTo({
             </>
           )}
 
+          {canAssign && (
+          <>
           <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Assign to
           </div>
@@ -232,8 +247,10 @@ export function AssignTo({
               )}
             </button>
           ))}
+          </>
+          )}
 
-          {assignedTo && (
+          {canAssign && assignedTo && (
             <>
               <div className="my-1 border-t border-border" />
               <button

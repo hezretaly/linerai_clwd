@@ -209,6 +209,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   one question a human had to answer got "someone is picking this up" to
   everything afterwards — and with nobody watching the queue at 9pm, that was
   the end of the conversation. The buyer ends it, via `close_conversation`.
+- **Handing a buyer to somebody else is the manager's call; taking one
+  yourself is not.** Who works which lead is how a floor is run, and a rep
+  quietly moving buyers off a colleague — or off themselves, back into the
+  pool — is reassignment either way. Taking one over is the exception and
+  stays open to everyone, because that is a rep saying *I have this*, which is
+  the thing the queues are asking for. `POST /leads/{id}/assign` enforces
+  exactly that split and `AssignTo` renders it: a rep sees Take over and no
+  roster, so the control on screen is the one the server will accept rather
+  than a menu that can only 403.
 - **Cost columns never enter the database.** `NEVER_IMPORT` in
   `ingest/csv_import.py` drops `acquisition_cost`, margin and salesperson
   fields before a row is built. A DMS export carries what the dealership paid;
@@ -227,12 +236,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   purpose: a model-written summary is a second place a fact can be invented,
   and there is no model at all in stub mode. `summary` still backs the
   one-line preview in the list. Two rules keep it honest:
-  - **It never restates the captured fields.** They sit below it on the rail
-    where each wears its provenance, and prose cannot carry that: "Financing:
-    likely financing" reads as something the buyer said when the row says
-    `inferred`. Repeating a guess without the badge marking it a guess is how
-    a rep ends up asserting it on the phone. Two panels are only redundant
-    when they say the same thing equally well.
+  - **It never restates the captured fields.** Prose cannot carry provenance:
+    "Financing: likely financing" reads as something the buyer said when the
+    row says `inferred`, and repeating a guess without the badge marking it a
+    guess is how a rep ends up asserting it on the phone. The Captured by
+    Liner panel that used to carry those badges beside the recap was taken off
+    the rail on request — the rule outlives it, and matters more without it:
+    `save_captured_fields` still records provenance and `buyer_summary` still
+    puts only `typed` fields in the buyer's email, so the recap is not the
+    place to leak an inference back in.
   - **`lead_recap` is not `conversation_recap` on the newest thread.** Devon
     booked on the website and rang back next morning, so the newest thread is
     the call while the appointment hangs off the chat — the rail told a rep
@@ -835,6 +847,17 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     That keeps one notion of who is signed in for the whole system, and it is
     what `make smoke` checks in both configurations.
 - **Hours come from `hours_json`.** No page states its own.
+- **Live means still being said, not merely still open.** Only the buyer
+  closes a thread, so an abandoned tab stays open for ever — and *In progress*
+  counted every chat anybody ever walked away from, which is a number a
+  manager reads as *fourteen conversations happening right now*.
+  `LIVE_AFTER_MINUTES` is thirty, and it is a conversation's own patience
+  rather than a business rule: a buyer comparing two cars pauses for minutes,
+  and a buyer who has gone is gone. The badge is split on the **same**
+  predicate as the chip — a row badged In progress that the In progress filter
+  does not contain is a page arguing with itself — so an open thread gone
+  quiet reads *Gone quiet*, which is a third thing and not Closed: it still
+  has an owner and still takes a reply.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the
   cross-channel Conversations list all read it. They were three copies of the
@@ -877,6 +900,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   three unconnected facts about the same people; the same shape turned up in
   four more places once looked for, and each is a fact written in one row and
   read from another with nothing keeping the two in step.
+  - **An escalation belongs to whoever owns the buyer.** `assign_lead` decided
+    this — giving somebody an owner claims everything of theirs that was
+    waiting, because *Needs a person* asks whether a person has been **found**
+    — and then only ever applied it at the moment of assigning. Two later
+    events walked round it: `raise_handoff` on a buyer who already had a rep,
+    and an inbound reply un-claiming one. Both put an owned buyer back in the
+    queue, so a row wore *Needs a person* beside the name of the person who
+    had them, and a manager could not tell a failed assignment from a lying
+    badge. The rule lives in `app/escalations.py` and every writer calls it,
+    the demo seed included — a fixture that breaks the invariant is a bug
+    report about the product, and this one generated three in four.
+    - **Claimed is not silenced.** The thread still sits at `handoff`,
+      `handoff.triggered` still fires and now names the owner, and the
+      escalation is on their timeline wearing its claim. What stops is asking
+      for a person who is already there.
   - **Every way a call ends follows the same closing rule.** `close_conversation`
     would not close a thread at `handoff` — a buyer who has gone is still owed
     a call back — but `end_call` closed unconditionally, and hanging up is how
