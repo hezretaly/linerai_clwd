@@ -187,6 +187,27 @@ def main() -> int:
             print(f"      {page.locator('text=Not delivered').first.inner_text()}")
             page.screenshot(path=SHOTS / "08-reply-outbox.png")
 
+            say("and a first message can be written to somebody who never wrote in")
+            # Reply could only answer an existing message, so reaching a
+            # dealership we want to talk to meant leaving for a mail client --
+            # where the send is invisible to this system for good and goes out
+            # under whatever address that client is configured with.
+            page.click('button:has-text("Cancel")')      # one composer at a time
+            page.wait_for_timeout(400)
+            page.click('button:has-text("Write")')
+            page.wait_for_selector("text=New message", timeout=5000)
+            fields = page.locator("input")
+            assert fields.count() >= 2, "the composer should offer To and Subject"
+            assert fields.first.input_value() == "", (
+                "Write opened prefilled -- this is a first message, not a reply"
+            )
+            fields.first.fill("first.contact@example.invalid")
+            fields.nth(1).fill("About Liner")
+            page.fill("textarea", "Reaching out about a demo.")
+            page.click('button:has-text("Send")')
+            page.wait_for_selector("text=Not delivered", timeout=10000)
+            page.screenshot(path=SHOTS / "08b-write-outbox.png")
+
             say("390px: neither page scrolls sideways")
             phone = browser.new_context(
                 viewport={"width": 390, "height": 844},

@@ -299,7 +299,11 @@ def reply(
     db: Session = Depends(get_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
-    """Answer from the ops inbox.
+    """Write from the ops inbox -- an answer, or a first message.
+
+    Both, through one handler. Reaching a dealership we want to talk to is the
+    same act as answering one that wrote in, and a second endpoint for it is
+    how one of the two stops going through `blocked_reason`.
 
     Through the same sender and the same outbound limit as everything else --
     `OUTBOUND_ONLY_TO` is exactly as load-bearing here as it is on a dealer's

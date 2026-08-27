@@ -1106,6 +1106,17 @@ def main() -> int:
           status_of("POST", "/api/ops/mail/reply",
                     {"to": "nobody", "subject": "x", "body": "y"})[0] == 400)
 
+    # One handler for both, because reaching a dealership we want to talk to
+    # is the same act as answering one that wrote in -- and a second endpoint
+    # for it is how one of the two stops going through blocked_reason.
+    cold = call("POST", "/api/ops/mail/reply", {
+        "to": f"never.wrote.{stamp}@example.invalid",
+        "subject": "About Liner", "body": "Reaching out about a demo.",
+    })
+    check("a first message to somebody who never wrote in goes the same way",
+          bool(cold.get("provider")) and cold.get("reply_to") == "cto@linerai.us",
+          str(cold)[:80])
+
     call("POST", f"/api/demo/requests/{ops_demo['id']}/cancel")
     # Back to the dealership for everything after this -- including the
     # slot-release `finally`, which reads /api/appointments. One jar, one

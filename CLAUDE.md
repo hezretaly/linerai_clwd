@@ -820,6 +820,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     stranger writing to `support@` has no buyer page anywhere, and listing one
     table would leave them visible only on a diagnostics strip. `boxes` defines
     each tab once, for the counts and the filter both.
+  - **Write and Reply are one act and one endpoint.** Reaching a dealership
+    we want to talk to is the same thing as answering one that wrote in, and
+    the composer could only ever do the second — so the first meant leaving
+    for a mail client, where the message is invisible to this system for good
+    and goes out under whatever address that client is configured with rather
+    than the one the deployment can prove it owns. A second endpoint for it is
+    how one of the two stops going through `blocked_reason`.
   - **A reply reports the provider, not a green tick.** With the default outbox
     sender `sent: true` means recorded and nothing left the building, so the
     composer says *Not delivered* and quotes the provider's own words. It goes

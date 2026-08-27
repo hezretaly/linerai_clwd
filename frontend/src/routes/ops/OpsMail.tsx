@@ -35,6 +35,7 @@ const BOXES = [
 ] as const
 
 export function OpsMailPage() {
+  const [writing, setWriting] = useState(false)
   const [box, setBox] = useState<string>('all')
   const [openId, setOpenId] = useState<string | null>(null)
   const { data: summary } = useOpsSummary()
@@ -60,15 +61,33 @@ export function OpsMailPage() {
 
   return (
     <div className="p-4 md:p-6">
-      <div className="mb-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Everything sent to {summary?.support_email ?? 'us'} and every form on the site.
-          {summary?.reply_to
-            ? ` What you send from here comes back to ${summary.reply_to}.`
-            : null}
-        </p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">Inbox</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Everything sent to {summary?.support_email ?? 'us'} and every form on the site.
+            {summary?.reply_to
+              ? ` What you send from here comes back to ${summary.reply_to}.`
+              : null}
+          </p>
+        </div>
+        {/* Reply could only answer somebody who wrote first, so reaching a
+            dealership we want to talk to meant leaving for a mail client --
+            where the message is invisible to this system for good, and goes
+            out under whatever address that client is configured with rather
+            than the one the deployment can prove. Same endpoint, same
+            identity, same OUTBOUND_ONLY_TO: only the starting point is new. */}
+        <Button variant="primary" size="sm" onClick={() => setWriting(true)}>
+          Write
+        </Button>
       </div>
+
+      {writing && (
+        <Card className="mb-4 p-4 md:p-5">
+          <div className="mb-3 text-sm font-medium">New message</div>
+          <Composer to="" subject="" onClose={() => setWriting(false)} />
+        </Card>
+      )}
 
       {/* Three panes at xl, two at md (boxes collapse to a row of chips), one
           on a phone -- where opening a message replaces the list rather than
@@ -333,7 +352,7 @@ function Composer({
           rows={7}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Write the reply..."
+          placeholder={to ? 'Write the reply...' : 'Write the message...'}
           className="w-full rounded-md border border-input bg-background p-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </Field>
