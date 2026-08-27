@@ -225,8 +225,17 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the marketing page, served at the root by a small Vite plugin and byte-for-
   byte as supplied. It carries its own reset, palette and animation JS, none of
   which may be folded into the token layer: those loops never clean up and only
-  behave because the page unloads. The SPA owns `/chat`, `/call`, `/login` and
-  `/app/*`.
+  behave because the page unloads. The SPA owns `/chat`, `/call`, `/login`,
+  `/app/*` and `/ops/*`.
+  - **`SPA_PREFIXES` is a hand-written list that development cannot check.**
+    Vite's history fallback serves `index.html` for any path, so every browser
+    gate here passes against `:5173` whatever the list says; only the built
+    bundle enforces it. `/ops` shipped missing and the whole ops dashboard
+    answered `{"detail":"Not found"}` on a real host — a JSON 404 from the
+    catch-all, so the request never reached React and no session or redirect
+    logic ran at all. It reads as a broken login and is nothing of the kind.
+    `make smoke` reads the top-level routes out of `main.tsx`, fails on one
+    the API would not serve, and fetches each against a real build.
 - **Mobile is a supported surface, not an afterthought.** Reps work from
   phones. Two rules keep it that way: a `<table>` never reflows, so any table
   either scrolls inside its own `overflow-x-auto` card or has a card layout

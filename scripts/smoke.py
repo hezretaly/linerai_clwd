@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import pathlib
 import secrets
 import re
 import sys
@@ -23,6 +24,7 @@ from hashlib import sha256
 from http.cookiejar import CookieJar
 
 BASE = "http://127.0.0.1:8000"
+TSX = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "src" / "main.tsx"
 WS = "ws://127.0.0.1:8000/ws/dealer"
 LOGIN = {"email": "dana.mercer@example.invalid", "password": "liner-dev"}
 # The other seeded login, and the only one that is not a manager. Assigning a
@@ -2631,6 +2633,44 @@ def main() -> int:
     check("and is not counted among the unconfigured",
           "scraper" not in integrations["unconfigured"],
           str(integrations["unconfigured"]))
+
+    print("\n== every screen the SPA owns is actually served ==")
+    # `/ops` shipped missing from SPA_PREFIXES, so on a real host the whole ops
+    # dashboard answered {"detail":"Not found"} -- FastAPI's JSON 404 from the
+    # catch-all, which means the request never reached React and no session,
+    # role or redirect logic ever ran. Every gate was green, because every
+    # browser check drives Vite on :5173 and Vite's history fallback serves
+    # index.html for any path at all. Only the built bundle enforces the list,
+    # and nothing was reading it.
+    sys.path.insert(0, "backend")
+    from app.static import DIST, RESERVED, SPA_PREFIXES
+
+    routes = re.findall(r'<Route\s+path="(/[^"*]*)"', TSX.read_text())
+    top = sorted({"/" + r.strip("/").split("/")[0] for r in routes if r.strip("/")})
+    check("main.tsx has the top-level routes this expects", len(top) >= 5, str(top))
+    missing = [r for r in top if r not in SPA_PREFIXES]
+    check("every top-level SPA route is one the API will serve", not missing,
+          f"missing from SPA_PREFIXES: {missing}")
+    stale = [p for p in SPA_PREFIXES if p not in top]
+    check("and nothing is listed that the SPA no longer routes", not stale, str(stale))
+
+    # The list is only half of it: assert the built bundle really answers. This
+    # section is the one place the *production* path is exercised, so it runs
+    # only when there is a build to exercise.
+    if (DIST / "index.html").is_file():
+        for path in SPA_PREFIXES:
+            status, body = status_of("GET", path)
+            check(f"{path} serves the app rather than a JSON 404",
+                  status == 200 and "<div id=" in body, f"{status} {body[:40]}")
+        check("the landing page is still what / serves",
+              "<!doctype html" in status_of("GET", "/")[1].lower())
+        for reserved in RESERVED:
+            check(f"/{reserved} is still reserved, not swallowed by the catch-all",
+                  status_of("GET", f"/{reserved}/nothing-here")[0] == 404)
+        check("and a mistyped path still says so instead of returning a page",
+              status_of("GET", "/notaroute")[0] == 404)
+    else:
+        print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to

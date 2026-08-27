@@ -10,12 +10,23 @@ the API, the WebSocket, the landing page and the built SPA. nginx has a single
 `proxy_pass` and no `try_files`.
 
 That is deliberate. The routing rule the site needs — `/` is the landing
-document, `/chat` `/call` `/login` `/app/*` are the SPA, anything else is a real
-file or a 404 — used to live only in the Vite dev plugin. Re-expressing it in an
+document, `/chat` `/call` `/login` `/app/*` `/ops/*` are the SPA, anything else
+is a real file or a 404 — used to live only in the Vite dev plugin. Re-expressing it in an
 nginx config means two copies that drift, and when they drift the failure is
 silent: `/` serves the SPA, whose catch-all bounces to `/`, and you get a blank
 page with nothing in any log. It now lives in `backend/app/static.py`, which
 ships with the frontend and cannot drift from it.
+
+**One trap survived that move, and it bit.** `SPA_PREFIXES` in that file is
+still a hand-written list, and *nothing in development disagrees with it*: Vite
+serves `index.html` for any path at all, so every browser check in this repo
+passes against `:5173` whatever the list says. `/ops` shipped missing from it,
+and the entire ops dashboard answered `{"detail":"Not found"}` on a real host —
+FastAPI's JSON 404 from the catch-all, which means the request never reached
+React and none of its redirect logic ever ran. It reads as an auth problem and
+is not one. `make smoke` now parses the top-level routes out of `main.tsx` and
+fails on any that the API would not serve, and — when `frontend/dist` exists —
+fetches each one to check it really answers with the app.
 
 ---
 

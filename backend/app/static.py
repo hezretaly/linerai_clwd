@@ -25,7 +25,16 @@ DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 # Paths the SPA owns. Anything else that is not a real file is a 404, rather
 # than index.html -- a mistyped API path should say so, not return a page.
-SPA_PREFIXES = ("/chat", "/call", "/login", "/app")
+#
+# **This list has to match the top-level routes in `frontend/src/main.tsx`,
+# and nothing in development will tell you when it does not.** Vite's history
+# fallback serves index.html for any path at all, so every browser check here
+# -- `make ops-ui` included -- passes against :5173 whatever this says. Only
+# the built bundle enforces it, and only in production. `/ops` shipped missing
+# from here: the whole dashboard answered `{"detail":"Not found"}` on a real
+# host while every gate was green. `make smoke` now reads main.tsx and fails
+# on a route that is not listed.
+SPA_PREFIXES = ("/chat", "/call", "/login", "/app", "/ops")
 
 # Never let a request walk out of dist/ via the catch-all.
 # /r is the outreach click hop -- a real route, not an SPA path.
