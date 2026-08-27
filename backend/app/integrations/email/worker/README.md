@@ -65,9 +65,22 @@ development default.
    the dashboard and in git:
 
 ```bash
+cd backend/app/integrations/email/worker
+npm install                          # postal-mime; wrangler cannot resolve it otherwise
 wrangler secret put WEBHOOK_SECRET   # same value as the backend's
 wrangler deploy
 ```
+
+**Redeploying does not touch the secret, and does overwrite the vars.** A
+secret survives a deploy, so `WEBHOOK_SECRET` is set once. `vars` are the
+other way round: whatever `wrangler.jsonc` declares *replaces* what is in the
+dashboard, so a `WEBHOOK_URL` set by hand and absent from this file is lost
+silently on the next deploy. It is declared here for exactly that reason.
+
+Deploy after **any** source change — the recipient filter and the payload
+shape are compiled into the bundle, and no runtime variable can alter them.
+Confirm the new code is live by opening the Worker's URL: it answers with a
+plain-text status, where an older bundle answers `No fetch handler!`.
 
 `WEBHOOK_URL` in `wrangler.jsonc` must be the **public** origin. The Worker
 runs on Cloudflare's edge and cannot reach a private address.
