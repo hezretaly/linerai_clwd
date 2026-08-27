@@ -413,6 +413,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     `X-Webhook-Secret` (plain, what the deployed Worker sends), on
     `/api/inbound-email` or `/api/emails/inbound`. Both are live
     configuration, so `make smoke` drives both rather than trusting either.
+  - **The Worker's recipient filter is upstream of every receipt, so what it
+    drops leaves no trace at all.** It filters before posting, because a
+    catch-all sweeps up spam — and `founder@` was missing from that list while
+    `landing.html` published it as the way to reach a person directly. Mail to
+    the one address we tell people to use was thrown away in Cloudflare with a
+    `console.log`: no receipt, no row, no error, indistinguishable from nobody
+    having written. That is exactly the failure `inbound_emails` exists to make
+    visible, and it sits one step above it. `make smoke` reads the Worker's
+    list and fails on any address the product publishes that it would refuse.
   - **A reply that cannot be placed is stored, never dropped.** Resolution
     goes token → `In-Reply-To` → the shared lead matcher, and stops there: a
     name is never part of it, so a stranger stays a stranger instead of being

@@ -17,15 +17,45 @@ import PostalMime from "postal-mime";
 interface Env {
 	WEBHOOK_URL: string;
 	WEBHOOK_SECRET: string;
+	/** Comma-separated local parts to accept, overriding the default below. */
+	ALLOWED_RECIPIENTS?: string;
 }
 
-// Addresses we actually accept. Catch-all sweeps up spam to random
-// addresses, so filter before hitting the CRM.
-const ALLOWED_PREFIXES = ["support@", "sales@", "reply+"];
+/**
+ * Addresses we actually accept. The catch-all sweeps up spam to random
+ * addresses, so this filters before hitting the CRM.
+ *
+ * **Everything the product publishes has to be in here, and `founder@` was
+ * not.** The landing page offers founder@ as the way to reach a person
+ * directly, and founder@/cto@ are the two ops identities that answer from
+ * /ops -- so mail to the one address we tell people to write to was dropped
+ * here, with a console.log and nothing else. No receipt, no row, no error:
+ * from the app's side it is indistinguishable from nobody having written.
+ * That is the exact failure the receipts table exists to make visible, and
+ * this filter sits upstream of it.
+ *
+ * Overridable with ALLOWED_RECIPIENTS so a third person is a `wrangler
+ * secret`/var away rather than a code change and a redeploy.
+ */
+const DEFAULT_PREFIXES = [
+	"support@",
+	"sales@",
+	"founder@",
+	"cto@",
+	"reply+",
+];
 
-function isAcceptedRecipient(to: string): boolean {
-	const addr = to.toLowerCase();
-	return ALLOWED_PREFIXES.some((p) => addr.startsWith(p));
+function allowedPrefixes(env: Env): string[] {
+	const configured = (env.ALLOWED_RECIPIENTS || "")
+		.split(",")
+		.map((p) => p.trim().toLowerCase())
+		.filter(Boolean);
+	return configured.length ? configured : DEFAULT_PREFIXES;
+}
+
+function isAcceptedRecipient(to: string, env: Env): boolean {
+	const addr = (to || "").toLowerCase();
+	return allowedPrefixes(env).some((p) => addr.startsWith(p));
 }
 
 /**
@@ -74,13 +104,48 @@ async function postWithRetry(
 }
 
 export default {
+	/**
+	 * Nothing routes mail here, so this is not how a message arrives -- but a
+	 * Worker with no fetch handler answers a browser with "No fetch handler!"
+	 * in the Cloudflare log, which reads as a broken deploy and is not one.
+	 * Email Routing calls `email()` below; `fetch` exists so opening the URL
+	 * says that rather than erroring.
+	 *
+	 * It reports whether the two bindings are *present*, never their values:
+	 * this URL is public, and WEBHOOK_SECRET is the only thing standing in
+	 * front of an endpoint that writes into a buyer's history.
+	 */
+	async fetch(request: Request, env: Env): Promise<Response> {
+		const lines = [
+			"Liner inbound email worker.",
+			"",
+			"This is an Email Worker. Mail arrives through Cloudflare Email",
+			"Routing, which calls the email() handler -- not this one, and not",
+			"by visiting this URL.",
+			"",
+			`WEBHOOK_URL:    ${env.WEBHOOK_URL ? "set" : "MISSING"}`,
+			`WEBHOOK_SECRET: ${env.WEBHOOK_SECRET ? "set" : "MISSING"}`,
+			`accepting:      ${allowedPrefixes(env).join(", ")}`,
+			"",
+			"A message dropped here leaves no trace in the app at all. Check the",
+			"Worker log for 'Ignored mail to ...' before suspecting the backend.",
+		];
+		return new Response(lines.join("\n") + "\n", {
+			headers: { "Content-Type": "text/plain; charset=utf-8" },
+		});
+	},
+
 	async email(
 		message: ForwardableEmailMessage,
 		env: Env,
 		ctx: ExecutionContext
 	): Promise<void> {
-		if (!isAcceptedRecipient(message.to)) {
-			console.log(`Ignored mail to ${message.to}`);
+		if (!isAcceptedRecipient(message.to, env)) {
+			// The one line that explains a missing email, so it names what
+			// would have had to be true instead of just saying no.
+			console.log(
+				`Ignored mail to ${message.to} -- not one of ${allowedPrefixes(env).join(", ")}`
+			);
 			return;
 		}
 

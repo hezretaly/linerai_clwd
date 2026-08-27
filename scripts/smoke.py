@@ -2672,6 +2672,41 @@ def main() -> int:
     else:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
+    print("\n== every address we publish is one the intake accepts ==")
+    # The Worker filters recipients before it posts anything, because a
+    # catch-all sweeps up spam. `founder@` was not on that list while
+    # landing.html published it as the way to reach a person directly -- so
+    # the one address we tell people to write to was thrown away in
+    # Cloudflare, with a console.log and nothing else. No receipt, no row, no
+    # error: from this side it is indistinguishable from nobody writing.
+    #
+    # Nothing here can run a Worker, so what is checked is the agreement
+    # between the two lists. That is the half that was actually wrong.
+    worker = (pathlib.Path("backend/app/integrations/email/worker/src/index.ts")).read_text()
+    prefixes = re.findall(r'"([a-z0-9_+@.-]+)"', worker.split("DEFAULT_PREFIXES")[1].split("]")[0])
+    check("the worker declares the recipients it accepts", len(prefixes) >= 3, str(prefixes))
+
+    from app.config import settings as _cfg
+    from app.db import SessionLocal as _Sess
+    from app.models import OpsUser as _Ops
+    _db = _Sess()
+    published = {_cfg.founder_email} | {
+        row.email for row in _db.query(_Ops).all() if row.email
+    }
+    _db.close()
+    # Whoever the outbound envelope is from can be replied to, by definition.
+    published.add((_cfg.sending_from or "support@").split("<")[-1].strip(" >"))
+    check("we publish at least the two ops addresses", len(published) >= 2, str(sorted(published)))
+
+    unroutable = sorted(
+        addr for addr in published
+        if not any(addr.lower().startswith(p) for p in prefixes)
+    )
+    check("every published address is one the worker would let through",
+          not unroutable, f"dropped in Cloudflare, silently: {unroutable}")
+    check("and a reply token still routes, which is most inbound mail",
+          any(p == "reply+" for p in prefixes), str(prefixes))
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's

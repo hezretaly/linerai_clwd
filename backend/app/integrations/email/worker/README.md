@@ -51,7 +51,17 @@ development default.
 2. **A catch-all rule** to this Worker. Not optional: `reply+<token>@`
    addresses are minted per send and cannot be enumerated as rules. Explicit
    `support@` / `sales@` rules to the same Worker are fine alongside it.
-3. **The secret**, which is not in `wrangler.jsonc` — `vars` are plaintext in
+3. **A rule, or the catch-all, for every address you publish.** The Worker
+   filters recipients before it posts anything, because a catch-all sweeps up
+   spam to random addresses. It accepts `support@`, `sales@`, `founder@`,
+   `cto@` and `reply+` — override with an `ALLOWED_RECIPIENTS` var
+   (comma-separated local parts) rather than editing the source. **A dropped
+   recipient leaves no trace anywhere in the app**: no receipt, no row, no
+   error, indistinguishable from nobody having written. `founder@` was missing
+   from that list while the landing page published it as the way to reach a
+   person, so the one address we tell people to use was the one being thrown
+   away.
+4. **The secret**, which is not in `wrangler.jsonc` — `vars` are plaintext in
    the dashboard and in git:
 
 ```bash
@@ -129,6 +139,32 @@ The list updates itself: the dealer socket carries `email.received` the moment
 a delivery is filed, and a five-minute poll covers a dropped connection. The
 "Checked *n* ago" line above the mailbox is there so a quiet morning is
 distinguishable from a stuck page.
+
+## When mail does not arrive
+
+Work down this list. It is ordered so the invisible failures come first — the
+ones where the app cannot tell you anything, because nothing reached it.
+
+1. **`/app/email` → Receive.** Any receipt at all for the message? A receipt
+   means it got here and the rest of this list does not apply: read the
+   outcome. `bad_signature` is the Worker's `WEBHOOK_SECRET` differing from the
+   backend's; `unresolved` means it arrived and could not be placed, which is
+   working as designed and still visible.
+2. **No receipt at all → it never reached the app.** Everything below is
+   upstream, in Cloudflare, and none of it can leave a row here.
+3. **The Worker log.** `Ignored mail to ...` means the recipient filter
+   dropped it, and the line names what it would have had to start with.
+   `Inbound: ...` means it was parsed and posted; a `CRM rejected payload` or
+   `DELIVERY FAILED` line after it names the status the backend returned.
+4. **No Worker log line at all → Email Routing never called it.** The MX
+   records, the catch-all rule, or the address is not routed to this Worker.
+5. **Open the Worker's URL in a browser.** It reports whether `WEBHOOK_URL`
+   and `WEBHOOK_SECRET` are bound, and which recipients it accepts. It never
+   prints their values. (Before there was a `fetch` handler this answered
+   `No fetch handler!`, which reads like a broken deploy and is not one —
+   Email Routing calls `email()`, never `fetch()`.)
+6. **`WEBHOOK_URL` must be the public origin.** The Worker runs on
+   Cloudflare's edge and cannot reach a private address.
 
 ## Writing one
 
