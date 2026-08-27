@@ -52,20 +52,32 @@ export interface DemoEntry {
 
 export interface MailMessage {
   id: string
-  /** form (a marketing-site submission) | email (arrived and never resolved). */
+  /** form (a marketing-site submission) | email (arrived and never
+   *  resolved) | ours (a draft or something we sent). */
   source: string
   kind: string
+  /** in | out. Which end of the envelope this row is about, and therefore
+   *  whether the list should show who wrote it or who it went to. */
+  direction: string
   from_name: string
   from_address: string
+  to_address: string
   subject: string
   body: string
   at: string | null
   unread: boolean
+  trashed: boolean
   status: string
   slot_at: string | null
   phone: string
   dealership: string
   dealership_url: string
+  /** Set on our own messages only. */
+  provider?: string
+  detail?: string
+  reply_to?: string
+  author?: string
+  mine?: boolean
 }
 
 export interface MailBox {
@@ -86,6 +98,40 @@ export function useDemos() {
     queryKey: ['ops-demos'],
     queryFn: () => api.get<{ requests: DemoEntry[] }>('/api/ops/demos'),
   })
+}
+
+/**
+ * Read, unread, trash and restore, for every kind of row in the mailbox.
+ *
+ * One hook rather than one per source: the two marks live in different places
+ * server-side -- a form answers from its own `status` because the
+ * notification bell reads that, everything else from `ops_mail_state` -- and
+ * a caller that had to know which is which would be a second copy of that
+ * rule waiting to disagree with the first.
+ */
+export function useMailMark() {
+  const queryClient = useQueryClient()
+  const settle = () => {
+    for (const key of ['ops-summary', 'ops-demos', 'ops-mail']) {
+      void queryClient.invalidateQueries({ queryKey: [key] })
+    }
+  }
+  const read = useMutation({
+    mutationFn: (v: { kind: string; id: string; read: boolean }) =>
+      api.post('/api/ops/mail/read', v),
+    onSuccess: settle,
+  })
+  const trash = useMutation({
+    mutationFn: (v: { kind: string; id: string; trashed: boolean }) =>
+      api.post('/api/ops/mail/trash', v),
+    onSuccess: settle,
+  })
+  return { read, trash }
+}
+
+/** What `kind` the mark endpoints want for a row of this source. */
+export function markKind(message: MailMessage): string {
+  return message.source === 'ours' ? 'ours' : message.source
 }
 
 /**

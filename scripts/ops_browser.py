@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import glob
 import pathlib
+import re
 import sys
 import time
 
@@ -74,6 +75,39 @@ def wait_for_badge(page, want: int) -> None:
             return
         time.sleep(0.25)
     raise AssertionError(f"badge stuck at {badge(page)}, wanted {want}")
+
+
+def _clear_run_mail() -> int:
+    """Delete the ops_messages rows this run composed, by their fixed address.
+
+    Straight at the database rather than through an endpoint, because there is
+    no delete endpoint and there should not be: Trash is a timestamp precisely
+    so nobody can destroy a message somebody wrote. A test clearing up after
+    itself is a different act from a person binning their mail.
+    """
+    sys.path.insert(0, "backend")
+    from app.db import SessionLocal
+    from app.models import OpsMessage
+
+    with SessionLocal() as db:
+        rows = (
+            db.query(OpsMessage)
+            # Every address this script ever sends to. The reply in step 11
+            # answers whichever unmatched message is on top, which is a smoke
+            # fixture -- so that one accumulated a row a run too, from before
+            # sends were recorded at all.
+            .filter(OpsMessage.to_address.in_((
+                "draft.check@example.invalid",
+                "first.contact@example.invalid",
+                "nobody@nowhere.invalid",
+                "stranger@nowhere.invalid",
+            )))
+            .all()
+        )
+        for row in rows:
+            db.delete(row)
+        db.commit()
+        return len(rows)
 
 
 def main() -> int:
@@ -192,7 +226,7 @@ def main() -> int:
             # dealership we want to talk to meant leaving for a mail client --
             # where the send is invisible to this system for good and goes out
             # under whatever address that client is configured with.
-            page.click('button:has-text("Cancel")')      # one composer at a time
+            page.click('button:has-text("Close")')       # one composer at a time
             page.wait_for_timeout(400)
             page.click('button:has-text("Write")')
             page.wait_for_selector("text=New message", timeout=5000)
@@ -207,6 +241,78 @@ def main() -> int:
             page.click('button:has-text("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
             page.screenshot(path=SHOTS / "08b-write-outbox.png")
+
+            say("mail arrives unread, and can be put back")
+            # This shipped hardcoded read -- `inbound_emails` had no column
+            # for it and there is no Alembic here -- so the one box holding
+            # mail from strangers was the one that could never tell you which
+            # of it was new. The mark lives in its own table now, which a
+            # database that already exists does get.
+            def box_count(label):
+                import re as _re
+                text = page.get_by_role(
+                    "button", name=_re.compile(rf"^{label}\s")
+                ).first.inner_text()
+                digits = [t for t in text.split() if t.isdigit()]
+                return int(digits[-1]) if digits else 0
+
+            # The Unread box itself, so the row picked is certainly unread --
+            # an earlier step in this run has already opened one of the others.
+            page.get_by_role("button", name=re.compile(r"^Unread\s")).first.click()
+            page.wait_for_timeout(1000)
+            unread_before = box_count("Unread")
+            page.locator("ul li button").first.click()
+            page.wait_for_timeout(1200)
+            assert box_count("Unread") == unread_before - 1, (
+                "opening a message should read it"
+            )
+            page.get_by_role("button", name="Mark unread", exact=True).click()
+            page.wait_for_timeout(1200)
+            assert box_count("Unread") == unread_before, (
+                "marking unread should put it back -- an inbox is a queue"
+            )
+            print(f"      unread {unread_before} -> read -> {box_count('Unread')}")
+
+            say("a draft is kept, and sending moves it rather than copying it")
+            drafts_before, sent_before = box_count("Drafts"), box_count("Sent")
+            page.click('button:has-text("Write")')
+            page.wait_for_selector("text=New message", timeout=5000)
+            fields = page.locator("input")
+            fields.first.fill("draft.check@example.invalid")
+            fields.nth(1).fill("Half a thought")
+            page.fill("textarea", "Started this, will finish later.")
+            page.click('button:has-text("Save draft")')
+            page.wait_for_selector("text=Draft kept", timeout=8000)
+            page.wait_for_timeout(1200)   # the sidebar counts refetch after the save
+            assert box_count("Drafts") == drafts_before + 1, "the draft should be kept"
+            page.click('button:has-text("Send")')
+            page.wait_for_selector("text=Not delivered", timeout=10000)
+            page.wait_for_timeout(1000)
+            # One message a person wrote must not become two rows in two boxes.
+            assert box_count("Drafts") == drafts_before, "sending should empty the draft"
+            assert box_count("Sent") == sent_before + 1, "and it should land in Sent"
+            page.screenshot(path=SHOTS / "08c-draft-sent.png", full_page=True)
+
+            say("trash keeps what you put in it, and restore puts it back")
+            page.click('button:has-text("Sent")')
+            page.wait_for_timeout(1000)
+            page.locator("ul li button").first.click()
+            page.wait_for_timeout(800)
+            trash_before = box_count("Trash")
+            # The sidebar box is also called Trash and comes first in the DOM.
+            page.get_by_role("button", name="Trash", exact=True).click()
+            page.wait_for_timeout(1200)
+            assert box_count("Trash") == trash_before + 1, "trashing should bin it"
+            page.get_by_role("button", name=re.compile(r"^Trash\s")).first.click()
+            page.wait_for_timeout(1000)
+            page.locator("ul li button").first.click()
+            page.wait_for_timeout(800)
+            assert page.locator('button:has-text("Restore")').count(), (
+                "trash without restore is a delete wearing a friendlier word"
+            )
+            page.get_by_role("button", name="Restore", exact=True).click()
+            page.wait_for_timeout(1200)
+            assert box_count("Trash") == trash_before, "restore should put it back"
 
             say("390px: neither page scrolls sideways")
             phone = browser.new_context(
@@ -230,6 +336,14 @@ def main() -> int:
             client.post(f"/api/demo/requests/{request_id}/cancel")
         if made:
             print(f"\nCancelled {len(made)} demo request(s) held by this run.")
+        # And the mail this run wrote. Every run composes a draft and sends
+        # it, so without this Drafts and Sent grow by two a run -- and the
+        # counts these very assertions read drift further from a fresh
+        # database each time, which is how a check starts failing for a reason
+        # that has nothing to do with the change being tested.
+        binned = _clear_run_mail()
+        if binned:
+            print(f"Removed {binned} message(s) this run composed.")
         client.close()
 
     print("\nOPS BROWSER PASS")

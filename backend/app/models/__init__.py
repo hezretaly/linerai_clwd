@@ -35,10 +35,18 @@ from app.models.dealership import (
 from app.models.inventory import IngestRun, Vehicle, VehicleMention
 # Ours, in their own tables. Imported last so the `ops_` prefix is the
 # first thing anyone reading this list notices about them.
-from app.models.ops import OPS_TABLES, DemoRequest, OpsUser
+from app.models.ops import (
+    OPS_TABLES,
+    DemoRequest,
+    OpsMailState,
+    OpsMessage,
+    OpsUser,
+)
 
 __all__ = [
     "OPS_TABLES",
+    "OpsMailState",
+    "OpsMessage",
     "OpsUser",
     "PROVENANCE",
     "STAGES",

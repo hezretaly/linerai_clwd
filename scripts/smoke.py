@@ -1117,6 +1117,92 @@ def main() -> int:
           bool(cold.get("provider")) and cold.get("reply_to") == "cto@linerai.us",
           str(cold)[:80])
 
+    # Sending used to leave no row at all, so there was no Sent box to have
+    # and no way to answer "did I already write to them?" the next morning.
+    sent_box = call("GET", "/api/ops/mail?box=sent")
+    check("and it is kept, so Sent is a real box rather than a label",
+          any(m["id"] == cold["message_id"] for m in sent_box["messages"]),
+          f"{sent_box['counts']['sent']} in Sent")
+
+    # A draft is the same row before it goes. Copying it across tables on send
+    # is how one message a person wrote becomes two rows in two boxes.
+    draft = call("POST", "/api/ops/mail/draft", {
+        "to": f"draft.{stamp}@example.invalid", "subject": "Half written",
+        "body": "Will finish this later.",
+    })
+    drafts = call("GET", "/api/ops/mail?box=drafts")
+    check("a half-written message is kept on the server, not in the tab",
+          any(m["id"] == draft["id"] for m in drafts["messages"]), str(drafts["counts"]))
+    check("an empty one is refused, so Drafts does not fill with ghosts",
+          status_of("POST", "/api/ops/mail/draft", {"to": "", "subject": "", "body": ""})[0]
+          == 400)
+    before = call("GET", "/api/ops/mail")["counts"]
+    call("POST", "/api/ops/mail/send", {
+        "draft_id": draft["id"], "to": f"draft.{stamp}@example.invalid",
+        "subject": "Half written", "body": "Finished it.",
+    })
+    after = call("GET", "/api/ops/mail")["counts"]
+    check("sending a draft moves that row rather than minting a second",
+          after["drafts"] == before["drafts"] - 1 and after["sent"] == before["sent"] + 1,
+          f"{before['drafts']}/{before['sent']} -> {after['drafts']}/{after['sent']}")
+
+    # Unresolved deliveries used to be hardcoded read, so the one box holding
+    # mail from strangers could never say which of it was new.
+    # Delivered here rather than picked off the top of the box: an earlier run
+    # of `make ops-ui` reads one, and a check that only holds on a database
+    # nobody has touched is a check that fails for the wrong reason later.
+    fresh_id = f"<ops-unread-{stamp}>"
+    inbound({
+        "messageId": fresh_id, "from": f"stranger.{stamp}@nowhere.invalid",
+        "to": "support@example.invalid", "subject": "Is this thing on?",
+        "text": "Writing in cold.",
+    })
+    # Polled on the ops mailbox rather than with settled(), which reads
+    # /api/email/receipts -- a dealership endpoint, and an ops session is
+    # refused by every one of those exactly as a rep is refused by /api/ops.
+    stranger: list[dict] = []
+    for _ in range(40):
+        stranger = [
+            m for m in call("GET", "/api/ops/mail?box=unmatched")["messages"]
+            if m["subject"] == "Is this thing on?"
+        ]
+        if stranger:
+            break
+        time.sleep(0.25)
+    check("a delivery that resolved to nobody reaches the ops mailbox",
+          bool(stranger), "it should be in Unmatched")
+    if stranger:
+        first = stranger[0]
+        check("mail from a stranger arrives unread", first["unread"], str(first["unread"]))
+        call("POST", "/api/ops/mail/read",
+             {"kind": "email", "id": first["id"], "read": True})
+        check("reading it clears it",
+              not next(m for m in call("GET", "/api/ops/mail?box=unmatched")["messages"]
+                       if m["id"] == first["id"])["unread"])
+        call("POST", "/api/ops/mail/read",
+             {"kind": "email", "id": first["id"], "read": False})
+        check("and it can be put back, which is what makes an inbox a queue",
+              next(m for m in call("GET", "/api/ops/mail?box=unmatched")["messages"]
+                   if m["id"] == first["id"])["unread"])
+
+        # Trash is a timestamp. A message somebody wrote is the last thing to
+        # destroy on their behalf.
+        call("POST", "/api/ops/mail/trash",
+             {"kind": "email", "id": first["id"], "trashed": True})
+        binned = call("GET", "/api/ops/mail?box=trash")
+        check("trashing takes it out of every box but Trash",
+              any(m["id"] == first["id"] for m in binned["messages"])
+              and not any(m["id"] == first["id"]
+                          for m in call("GET", "/api/ops/mail")["messages"]))
+        call("POST", "/api/ops/mail/trash",
+             {"kind": "email", "id": first["id"], "trashed": False})
+        check("and restoring puts it back where it was",
+              any(m["id"] == first["id"]
+                  for m in call("GET", "/api/ops/mail?box=unmatched")["messages"]))
+
+    check("an unknown box is refused rather than answered with the default",
+          status_of("GET", "/api/ops/mail?box=archive")[0] == 400)
+
     call("POST", f"/api/demo/requests/{ops_demo['id']}/cancel")
     # Back to the dealership for everything after this -- including the
     # slot-release `finally`, which reads /api/appointments. One jar, one

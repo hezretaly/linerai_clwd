@@ -820,6 +820,38 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     stranger writing to `support@` has no buyer page anywhere, and listing one
     table would leave them visible only on a diagnostics strip. `boxes` defines
     each tab once, for the counts and the filter both.
+  - **The ops mailbox is a mailbox: Drafts, Sent, Trash, and mail that
+    arrives unread.** Two new tables rather than new columns, because that is
+    what a database which already exists actually gets — `create_all` adds a
+    table and never a column, and there is no Alembic here by design.
+    `ops_messages` is what we wrote, one row that starts as a draft and
+    becomes the sent message rather than being copied on send; `ops_mail_state`
+    carries read and trash marks for what we did not write.
+    - **A delivery that resolved to nobody used to arrive already read**, and
+      hardcoded so — there was no column for it and a migration was judged not
+      worth it. So the one box holding mail from strangers was the one that
+      could never say which of it was new. Reading is still done by *opening*,
+      never a button; what the button does is the other direction, because "I
+      have seen this and not dealt with it" is the only thing that makes an
+      inbox a queue.
+    - **Forms answer from `ops_demo_requests.status`, not from the new
+      table.** That column is already this fact and the notification bell
+      reads it; a second copy is how the bell and the mailbox start
+      disagreeing about the same message. One function computes `unread` for
+      both sources so the two cannot drift.
+    - **Trash is a timestamp, never a delete**, and Restore is the same call
+      with `false`. A message somebody wrote is the last thing to destroy on
+      their behalf, and a Trash that cannot be undone is a delete button
+      wearing a friendlier word. There is deliberately no delete endpoint —
+      `make ops-ui` clears its own rows at the database, which is a different
+      act from a person binning their mail.
+    - **A refused send is kept as `failed`, not discarded.** It is the one a
+      person most needs to find again, and dropping the row loses what they
+      typed with it.
+    - **Drafts are the author's own; Sent is shared.** An unfinished message
+      is not something to put in front of somebody else, while "has anyone
+      answered these people yet" is exactly what two people sharing an inbox
+      ask.
   - **Write and Reply are one act and one endpoint.** Reaching a dealership
     we want to talk to is the same thing as answering one that wrote in, and
     the composer could only ever do the second — so the first meant leaving

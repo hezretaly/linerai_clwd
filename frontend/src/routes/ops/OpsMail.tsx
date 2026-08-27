@@ -16,30 +16,70 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { useMutation } from '@tanstack/react-query'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../../lib/api'
 import { dateTime, relative } from '../../lib/format'
 import { Badge, Button, Card, Empty, Field, Input, Spinner } from '../../components/ui'
 import { Icon } from '../../components/Icon'
-import { useOpsSummary, useSetStatus, type MailBox, type MailMessage } from './data'
+import {
+  markKind,
+  useMailMark,
+  useOpsSummary,
+  type MailBox,
+  type MailMessage,
+} from './data'
 
 const BOXES = [
-  { id: 'all', label: 'All' },
+  { id: 'all', label: 'Inbox' },
   { id: 'unread', label: 'Unread' },
   { id: 'demos', label: 'Demos' },
   { id: 'support', label: 'Support' },
   // Mail that arrived and matched nobody. It has no buyer page to appear on,
   // which is the entire reason it needs a box of its own.
   { id: 'unmatched', label: 'Unmatched' },
+  // What we wrote. Drafts are the author's own -- an unfinished message is
+  // not something to put in front of somebody else -- while Sent is shared,
+  // because "has anyone answered these people yet" is what two people sharing
+  // an inbox actually ask.
+  { id: 'drafts', label: 'Drafts' },
+  { id: 'sent', label: 'Sent' },
+  // Defined by the mark rather than the source, so a discarded draft and a
+  // binned form land in the same place a person looks for them.
+  { id: 'trash', label: 'Trash' },
 ] as const
 
+/** Why a box is empty, which is not the same sentence for all of them --
+ *  an empty Unmatched is the good outcome, an empty Drafts is just tidy. */
+const EMPTY_HINT: Record<string, string> = {
+  all: 'Forms on the marketing site land here the moment they are sent.',
+  unread: 'Everything here has been opened.',
+  demos: 'Nobody has booked a demo yet.',
+  support: 'Nobody has written in for help.',
+  unmatched: 'Mail that arrives and matches nobody lands here. Empty is the good outcome.',
+  drafts: 'Nothing half-written. Write starts one, and Save draft keeps it.',
+  sent: 'Nothing has gone out from here yet.',
+  trash: 'Nothing binned. Trash keeps what you put in it -- Restore puts it back.',
+}
+
 export function OpsMailPage() {
-  const [writing, setWriting] = useState(false)
+  const [writing, setWriting] = useState<Draft | null>(null)
+  /* Bumped every time a composer is opened, and part of its key.
+   *
+   * Without it, opening Write twice in a row reuses the same component: React
+   * keys on `id ?? 'new'`, which is 'new' both times, so the fields still hold
+   * the last message and the "Sent" line from it sits above a blank one. Two
+   * different acts have to be two different components. */
+  const [writeSeq, setWriteSeq] = useState(0)
+  const compose = (draft: Draft) => {
+    setWriteSeq((n) => n + 1)
+    setWriting(draft)
+  }
   const [box, setBox] = useState<string>('all')
   const [openId, setOpenId] = useState<string | null>(null)
+  const [held, setHeld] = useState<MailMessage | null>(null)
   const { data: summary } = useOpsSummary()
-  const setStatus = useSetStatus()
+  const mark = useMailMark()
 
   const { data, isLoading } = useQuery({
     queryKey: ['ops-mail', box],
@@ -47,14 +87,23 @@ export function OpsMailPage() {
   })
 
   const messages = data?.messages ?? []
-  const open = messages.find((m) => m.id === openId) ?? null
+  /* Held separately so reading one does not make it disappear mid-sentence.
+   *
+   * Opening a message marks it read, which drops it out of Unread -- and with
+   * the reader derived from the list alone, the pane it was being read in
+   * unmounted underneath the person reading it. The same happens on Trash.
+   * The list is still the source of truth while the row is in it, so an
+   * `unread` or `trashed` change is picked up; `held` only covers the moment
+   * after it leaves. */
+  const open = messages.find((m) => m.id === openId) ?? held
 
-  // Same rule as the calendar: reading it is what clears it. A form row is
-  // the only kind with a read state -- an unresolved delivery has no column
-  // for one, and lives in its own box instead.
+  // Same rule as the calendar: reading it is what clears it, not a button.
+  // Every kind now, rather than forms only -- an unresolved delivery used to
+  // arrive already marked read, so the one box holding mail from strangers
+  // was the one that could never tell you which of it was new.
   useEffect(() => {
-    if (open && open.source === 'form' && open.unread) {
-      setStatus.mutate({ id: open.id, status: 'seen' })
+    if (open && open.unread) {
+      mark.read.mutate({ kind: markKind(open), id: open.id, read: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open?.id, open?.unread])
@@ -77,15 +126,21 @@ export function OpsMailPage() {
             out under whatever address that client is configured with rather
             than the one the deployment can prove. Same endpoint, same
             identity, same OUTBOUND_ONLY_TO: only the starting point is new. */}
-        <Button variant="primary" size="sm" onClick={() => setWriting(true)}>
+        <Button variant="primary" size="sm" onClick={() => compose({ to: '', subject: '', body: '' })}>
           Write
         </Button>
       </div>
 
       {writing && (
         <Card className="mb-4 p-4 md:p-5">
-          <div className="mb-3 text-sm font-medium">New message</div>
-          <Composer to="" subject="" onClose={() => setWriting(false)} />
+          <div className="mb-3 text-sm font-medium">
+            {writing.id ? 'Draft' : 'New message'}
+          </div>
+          <Composer
+            key={`${writing.id ?? 'new'}-${writeSeq}`}
+            draft={writing}
+            onClose={() => setWriting(null)}
+          />
         </Card>
       )}
 
@@ -104,6 +159,7 @@ export function OpsMailPage() {
                 onClick={() => {
                   setBox(item.id)
                   setOpenId(null)
+                  setHeld(null)
                 }}
                 className={clsx(
                   'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-2 text-sm font-medium transition-colors xl:w-full',
@@ -129,18 +185,14 @@ export function OpsMailPage() {
           ) : !messages.length ? (
             <Empty
               title="Nothing in here"
-              hint={
-                box === 'unmatched'
-                  ? 'Mail that arrives and matches nobody lands here. Empty is the good outcome.'
-                  : 'Forms on the marketing site land here the moment they are sent.'
-              }
+              hint={EMPTY_HINT[box] ?? 'Nothing here yet.'}
             />
           ) : (
             <ul className="max-h-[70vh] divide-y divide-border overflow-y-auto">
               {messages.map((message) => (
                 <li key={message.id}>
                   <button
-                    onClick={() => setOpenId(message.id)}
+                    onClick={() => { setOpenId(message.id); setHeld(message) }}
                     className={clsx(
                       'block w-full px-3 py-2.5 text-left transition-colors hover:bg-accent',
                       openId === message.id && 'bg-accent',
@@ -156,7 +208,12 @@ export function OpsMailPage() {
                           message.unread ? 'font-semibold' : 'font-medium',
                         )}
                       >
-                        {message.from_name || message.from_address || '(no sender)'}
+                        {/* A Sent row labelled by its sender says our own
+                            name over and over; what a person scans for is who
+                            it went to. */}
+                        {message.direction === 'out'
+                          ? `To ${message.to_address || '(no recipient yet)'}`
+                          : message.from_name || message.from_address || '(no sender)'}
                       </span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {relative(message.at)}
@@ -174,7 +231,11 @@ export function OpsMailPage() {
 
         <div className={clsx('min-w-0', !open && 'hidden xl:block')}>
           {open ? (
-            <Reader message={open} onBack={() => setOpenId(null)} />
+            <Reader
+              message={open}
+              onBack={() => { setOpenId(null); setHeld(null) }}
+              onEdit={(d) => { compose(d); setOpenId(null); setHeld(null) }}
+            />
           ) : (
             <Card className="hidden xl:block">
               <Empty title="Nothing open" hint="Pick a message on the left." />
@@ -186,8 +247,18 @@ export function OpsMailPage() {
   )
 }
 
-function Reader({ message, onBack }: { message: MailMessage; onBack: () => void }) {
+function Reader({
+  message,
+  onBack,
+  onEdit,
+}: {
+  message: MailMessage
+  onBack: () => void
+  onEdit: (draft: Draft) => void
+}) {
   const [replying, setReplying] = useState(false)
+  const mark = useMailMark()
+  const kind = markKind(message)
 
   return (
     <Card className="min-w-0 p-4 md:p-5">
@@ -246,14 +317,67 @@ function Reader({ message, onBack }: { message: MailMessage; onBack: () => void 
       <div className="mt-5 border-t border-border pt-4">
         {replying ? (
           <Composer
-            to={message.from_address}
-            subject={message.subject.startsWith('Re:') ? message.subject : `Re: ${message.subject}`}
+            draft={{
+              to: message.from_address,
+              subject: message.subject.startsWith('Re:')
+                ? message.subject
+                : `Re: ${message.subject}`,
+              body: '',
+              reply_to_kind: kind,
+              reply_to_id: message.id,
+            }}
             onClose={() => setReplying(false)}
           />
         ) : (
-          <Button variant="primary" size="sm" onClick={() => setReplying(true)}>
-            Reply
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {message.source === 'ours' && message.kind === 'draft' ? (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() =>
+                  onEdit({
+                    id: message.id,
+                    to: message.to_address,
+                    subject: message.subject === '(no subject)' ? '' : message.subject,
+                    body: message.body,
+                  })
+                }
+              >
+                Keep writing
+              </Button>
+            ) : (
+              <Button variant="primary" size="sm" onClick={() => setReplying(true)}>
+                Reply
+              </Button>
+            )}
+
+            {/* Reading is done by opening; this is the other direction, and
+                it is the only way an inbox works as a queue -- "I have seen
+                this and have not dealt with it" needs somewhere to live. */}
+            {message.direction === 'in' && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  mark.read.mutate({ kind, id: message.id, read: false })
+                  onBack()
+                }}
+              >
+                Mark unread
+              </Button>
+            )}
+
+            {/* A timestamp, never a delete: a message somebody wrote is the
+                last thing to destroy on their behalf. */}
+            <Button
+              size="sm"
+              onClick={() => {
+                mark.trash.mutate({ kind, id: message.id, trashed: !message.trashed })
+                onBack()
+              }}
+            >
+              {message.trashed ? 'Restore' : 'Trash'}
+            </Button>
+          </div>
         )}
       </div>
     </Card>
@@ -277,6 +401,17 @@ function Fact({ label, value, href }: { label: string; value: string; href?: str
   )
 }
 
+/** What the composer is editing: a blank message, a reply, or a saved draft. */
+interface Draft {
+  /** Present once it has been saved, so Save updates rather than duplicates. */
+  id?: string
+  to: string
+  subject: string
+  body: string
+  reply_to_kind?: string
+  reply_to_id?: string
+}
+
 interface ReplyResult {
   sent: boolean
   reason?: string
@@ -298,22 +433,56 @@ interface ReplyResult {
  * rather than failing silently.
  */
 function Composer({
-  to,
-  subject,
+  draft,
   onClose,
 }: {
-  to: string
-  subject: string
+  draft: Draft
   onClose: () => void
 }) {
   const { data: summary } = useOpsSummary()
-  const [address, setAddress] = useState(to)
-  const [line, setLine] = useState(subject)
-  const [body, setBody] = useState('')
+  const client = useQueryClient()
+  const [id, setId] = useState(draft.id)
+  const [address, setAddress] = useState(draft.to)
+  const [line, setLine] = useState(draft.subject)
+  const [body, setBody] = useState(draft.body)
+  const [saved, setSaved] = useState<string | null>(null)
+
+  const settle = () => {
+    for (const key of ['ops-summary', 'ops-mail']) {
+      void client.invalidateQueries({ queryKey: [key] })
+    }
+  }
+
+  /* Saved on the server, not in the tab.
+   *
+   * The dealership's composer deliberately has no Drafts box, because nothing
+   * there stores one -- it is built from the lead's state and lives in the
+   * browser until send, and a tab that is always empty claims a feature that
+   * does not exist. This is the other case: a first message to somebody we
+   * want to talk to gets written over a morning, and a browser tab is the
+   * wrong place for that to live. */
+  const saveDraft = useMutation({
+    mutationFn: () =>
+      api.post<{ id: string; updated_at: string }>('/api/ops/mail/draft', {
+        id, to: address, subject: line, body,
+        reply_to_kind: draft.reply_to_kind ?? '',
+        reply_to_id: draft.reply_to_id ?? '',
+      }),
+    onSuccess: (row) => {
+      setId(row.id)
+      setSaved(row.updated_at)
+      settle()
+    },
+  })
 
   const send = useMutation({
     mutationFn: () =>
-      api.post<ReplyResult>('/api/ops/mail/reply', { to: address, subject: line, body }),
+      api.post<ReplyResult>('/api/ops/mail/send', {
+        to: address, subject: line, body, draft_id: id ?? null,
+        reply_to_kind: draft.reply_to_kind ?? '',
+        reply_to_id: draft.reply_to_id ?? '',
+      }),
+    onSuccess: settle,
   })
 
   const result = send.data
@@ -352,7 +521,7 @@ function Composer({
           rows={7}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder={to ? 'Write the reply...' : 'Write the message...'}
+          placeholder={draft.reply_to_id ? 'Write the reply...' : 'Write the message...'}
           className="w-full rounded-md border border-input bg-background p-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
       </Field>
@@ -386,7 +555,7 @@ function Composer({
         <p className="text-sm text-destructive">{(send.error as ApiError).message}</p>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="primary"
           size="sm"
@@ -395,9 +564,23 @@ function Composer({
         >
           {send.isPending ? 'Sending...' : 'Send'}
         </Button>
-        <Button size="sm" onClick={onClose}>
-          Cancel
+        <Button
+          size="sm"
+          disabled={
+            saveDraft.isPending || !(address.trim() || line.trim() || body.trim())
+          }
+          onClick={() => saveDraft.mutate()}
+        >
+          {saveDraft.isPending ? 'Saving...' : 'Save draft'}
         </Button>
+        <Button size="sm" onClick={onClose}>
+          Close
+        </Button>
+        {saved && !result && (
+          <span className="text-xs text-muted-foreground">
+            Draft kept {relative(saved)}
+          </span>
+        )}
         {summary && !summary.sender_delivers && (
           <span className="ml-auto text-xs text-muted-foreground">
             Sender is {summary.sender} -- nothing leaves the building

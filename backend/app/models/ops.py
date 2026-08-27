@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, Text
+from sqlalchemy import Boolean, DateTime, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -102,8 +102,106 @@ class DemoRequest(Base):
     created_at: Mapped[datetime] = created()
 
 
+class OpsMessage(Base):
+    """Mail *we* wrote: a draft being written, or one that has gone out.
+
+    Sending used to leave no row at all -- `sender.send()` was called and the
+    result returned to the browser -- so there was no Sent box to have, and no
+    way to answer "did I already write to them?" a day later. Outbound is the
+    half of a mailbox you reread most.
+
+    A draft is the same row before it goes. One state column rather than two
+    tables, because a draft becoming a sent message is the ordinary path and
+    copying it across tables is how the two versions drift.
+
+    **This is ours and only ours.** A dealership's outreach is an `Outreach`
+    row against a lead, carrying a `reply+<token>@` return path that routes an
+    answer into that buyer's timeline. Nothing here has a lead, and the
+    `Reply-To` is a person's own address.
+    """
+
+    __tablename__ = "ops_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: Who wrote it. Drafts are private to their author; Sent is shared,
+    #: because "has anyone answered these people yet" is the question two
+    #: people sharing an inbox actually ask.
+    author_id: Mapped[str] = mapped_column(String(36), index=True)
+    to_address: Mapped[str] = mapped_column(String(255), default="")
+    subject: Mapped[str] = mapped_column(String(500), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    #: draft | sent | failed. `failed` is kept rather than discarded: a send
+    #: the provider refused is the one a person most needs to find again, and
+    #: dropping it loses what they typed.
+    state: Mapped[str] = mapped_column(String(12), default="draft", index=True)
+    #: The envelope as it actually went, resolved by `outreach_send`. Stored
+    #: rather than recomputed, because SENDING_DOMAIN can change and a Sent
+    #: item must keep saying what was really on it.
+    from_address: Mapped[str] = mapped_column(String(320), default="")
+    reply_to: Mapped[str] = mapped_column(String(255), default="")
+    provider: Mapped[str] = mapped_column(String(40), default="")
+    provider_message_id: Mapped[str] = mapped_column(String(255), default="")
+    #: The provider's own words on the outcome, verbatim. With the outbox
+    #: sender this is what says nothing left the building.
+    detail: Mapped[str] = mapped_column(Text, default="")
+    #: What it answers, when it answers something: 'form' or 'email' plus that
+    #: row's id. Free text rather than a foreign key, because the two sources
+    #: live in different tables and a nullable pair of FKs buys nothing.
+    reply_to_kind: Mapped[str] = mapped_column(String(12), default="")
+    reply_to_id: Mapped[str] = mapped_column(String(36), default="")
+    created_at: Mapped[datetime] = created()
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    #: Trash is a timestamp, never a delete. A message somebody wrote is the
+    #: last thing to destroy on their behalf, and Trash that cannot be undone
+    #: is a delete button wearing a friendlier word.
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class OpsMailState(Base):
+    """Read and trash marks for mail we did *not* write.
+
+    A separate table because the two sources it covers are separate tables and
+    neither can gain a column: there is no Alembic here by design, so a new
+    column simply does not appear on a database that already exists, while a
+    new table does. That constraint is why an unresolved delivery was
+    hardcoded `"unread": False` -- every one of them arrived looking already
+    read, which is the opposite of what an inbox is for.
+
+    Keyed on (kind, ref_id) rather than per person. Two of us share this
+    mailbox, and "I have read it" from either is the answer the other needs --
+    the same reasoning that made `ops_demo_requests.status` a state on the row
+    instead of a per-user receipt. A per-person flag would have the unread
+    count arguing with itself across two laptops.
+
+    **Forms are not in here for read state.** `ops_demo_requests.status` is
+    already that fact and the notification bell reads it; a second copy is how
+    the bell and the mailbox start disagreeing about the same message. This
+    table carries read state for `inbound_emails`, and trash for both.
+    """
+
+    __tablename__ = "ops_mail_state"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: form | email -- which table `ref_id` points into.
+    kind: Mapped[str] = mapped_column(String(12), index=True)
+    ref_id: Mapped[str] = mapped_column(String(36), index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    trashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = created()
+
+    __table_args__ = (
+        UniqueConstraint("kind", "ref_id", name="uq_ops_mail_state_ref"),
+    )
+
+
 #: Every table on our side of the line, by name. `make reset-db` reads this to
 #: leave them alone: rebuilding the dealership's fixture must not throw away
 #: the demos people booked with us, which are real bookings with real people
-#: on the other end.
-OPS_TABLES = (OpsUser.__tablename__, DemoRequest.__tablename__)
+#: on the other end -- nor the mail we wrote them.
+OPS_TABLES = (
+    OpsUser.__tablename__,
+    DemoRequest.__tablename__,
+    OpsMessage.__tablename__,
+    OpsMailState.__tablename__,
+)

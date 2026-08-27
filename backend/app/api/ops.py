@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import outreach_send
@@ -27,7 +28,13 @@ from app.api.deps import require_owner
 from app.events import emit
 from app.integrations.base import NotConfigured
 from app.integrations.registry import get_email_sender
-from app.models import DemoRequest, InboundEmail, OpsUser
+from app.models import (
+    DemoRequest,
+    InboundEmail,
+    OpsMailState,
+    OpsMessage,
+    OpsUser,
+)
 from app.schemas.serialize import iso
 
 router = APIRouter(prefix="/ops", tags=["ops"])
@@ -190,30 +197,46 @@ def set_status(
     return _entry(row)
 
 
-@router.get("/mail")
-def inbox(
-    box: str = Query("all"),
-    db: Session = Depends(get_db),
-    user: OpsUser = Depends(require_owner),
-) -> dict:
-    """Mail addressed to us, which is a different pile from the dealership's.
+def _states(db: Session) -> dict[tuple[str, str], OpsMailState]:
+    """Read and trash marks, keyed the way the rows are."""
+    return {(row.kind, row.ref_id): row for row in db.query(OpsMailState).all()}
 
-    Two sources, deliberately joined here rather than in a table: the forms on
-    the marketing site (`ops_demo_requests`) and anything that arrived at the
-    inbound endpoint without resolving to a buyer -- which is what a stranger
-    writing to `support@` looks like. The dealership's mailbox shows the other
-    half: replies that *did* resolve to one of their buyers.
+
+def _state_row(db: Session, kind: str, ref_id: str) -> OpsMailState:
+    row = (
+        db.query(OpsMailState)
+        .filter(OpsMailState.kind == kind, OpsMailState.ref_id == ref_id)
+        .one_or_none()
+    )
+    if row is None:
+        row = OpsMailState(kind=kind, ref_id=ref_id)
+        db.add(row)
+    return row
+
+
+def _inbound(db: Session) -> list[dict]:
+    """The two sources of mail addressed to us, in one shape.
+
+    Joined here rather than in a table: the forms on the marketing site
+    (`ops_demo_requests`) and anything that arrived at the inbound endpoint
+    without resolving to a buyer -- which is what a stranger writing to
+    `support@` looks like. The dealership's mailbox shows the other half.
     """
+    marks = _states(db)
     rows: list[dict] = []
+
     for request in (
         db.query(DemoRequest).order_by(DemoRequest.created_at.desc()).limit(300).all()
     ):
+        mark = marks.get(("form", request.id))
         rows.append({
             "id": request.id,
             "source": "form",
             "kind": request.kind,
+            "direction": "in",
             "from_name": request.name,
             "from_address": request.email,
+            "to_address": "",
             "subject": (
                 f"Demo request -- {request.dealership or request.name}"
                 if request.kind == "demo"
@@ -221,13 +244,18 @@ def inbox(
             ),
             "body": request.message or _demo_body(request),
             "at": iso(request.created_at),
+            # `status` is already this fact and the notification bell reads
+            # it. A second copy in ops_mail_state is how the bell and the
+            # mailbox start disagreeing about the same message.
             "unread": request.status == "new",
             "status": request.status,
+            "trashed": bool(mark and mark.trashed_at),
             "slot_at": iso(request.slot_at),
             "phone": request.phone,
             "dealership": request.dealership,
             "dealership_url": request.dealership_url,
         })
+
     for mail in (
         db.query(InboundEmail)
         .filter(InboundEmail.outcome == "unresolved")
@@ -235,40 +263,253 @@ def inbox(
         .limit(300)
         .all()
     ):
+        mark = marks.get(("email", mail.id))
         rows.append({
             "id": mail.id,
             "source": "email",
             "kind": "unmatched",
+            "direction": "in",
             "from_name": "",
             "from_address": mail.from_address,
+            "to_address": mail.to_address or "",
             "subject": mail.subject or "(no subject)",
             "body": mail.body or "",
             "at": iso(mail.created_at),
-            # An unresolved delivery has no read state of its own -- there is
-            # no column for one and it is not worth a migration. It is shown in
-            # its own box instead, which is where somebody goes looking.
-            "unread": False,
+            # Unread until somebody opens it. This was hardcoded False,
+            # because `inbound_emails` has no column for it and there is no
+            # Alembic here -- so every delivery arrived looking already read,
+            # which is the opposite of what an inbox is for. The mark lives in
+            # its own table, which a database that already exists does get.
+            "unread": not (mark and mark.read_at),
             "status": mail.outcome,
+            "trashed": bool(mark and mark.trashed_at),
             "slot_at": None,
             "phone": "",
             "dealership": "",
             "dealership_url": "",
         })
+    return rows
 
+
+def _outbound(db: Session, user: OpsUser) -> list[dict]:
+    """What we wrote: drafts still being written, and what has gone out.
+
+    Drafts are the author's own -- an unfinished message is not something to
+    put in front of somebody else -- while Sent is shared, because "has anyone
+    answered these people yet" is the question two people sharing an inbox
+    actually ask.
+    """
+    rows = []
+    for msg in (
+        db.query(OpsMessage)
+        .filter(
+            or_(OpsMessage.state != "draft", OpsMessage.author_id == user.id),
+        )
+        .order_by(OpsMessage.created_at.desc())
+        .limit(300)
+        .all()
+    ):
+        author = db.query(OpsUser).filter_by(id=msg.author_id).one_or_none()
+        rows.append({
+            "id": msg.id,
+            "source": "ours",
+            "kind": msg.state,
+            "direction": "out",
+            "from_name": author.name if author else "",
+            "from_address": msg.from_address or (author.email if author else ""),
+            "to_address": msg.to_address,
+            "subject": msg.subject or "(no subject)",
+            "body": msg.body or "",
+            "at": iso(msg.sent_at or msg.updated_at or msg.created_at),
+            # Nothing we wrote is ever unread -- we wrote it. A Sent box that
+            # accrues an unread count is a mailbox arguing with itself.
+            "unread": False,
+            "status": msg.state,
+            "trashed": bool(msg.trashed_at),
+            "provider": msg.provider,
+            "detail": msg.detail,
+            "reply_to": msg.reply_to,
+            "author": author.name if author else "",
+            "mine": msg.author_id == user.id,
+            "slot_at": None,
+            "phone": "",
+            "dealership": "",
+            "dealership_url": "",
+        })
+    return rows
+
+
+#: Every box, defined exactly once, for the counts and the filter both. Two
+#: copies is how a tab says 12 and shows 9 -- the mistake the dealership's
+#: mailbox already made.
+BOXES = {
+    "all": lambda r: r["direction"] == "in" and not r["trashed"],
+    "unread": lambda r: r["direction"] == "in" and not r["trashed"] and r["unread"],
+    "demos": lambda r: r["kind"] == "demo" and not r["trashed"],
+    "support": lambda r: r["kind"] == "support" and not r["trashed"],
+    "unmatched": lambda r: r["kind"] == "unmatched" and not r["trashed"],
+    "drafts": lambda r: r["kind"] == "draft" and not r["trashed"],
+    "sent": lambda r: r["kind"] in ("sent", "failed") and not r["trashed"],
+    # The one box defined by the mark rather than the source, so a discarded
+    # draft and a deleted form land in the same place a person looks.
+    "trash": lambda r: r["trashed"],
+}
+
+
+@router.get("/mail")
+def inbox(
+    box: str = Query("all"),
+    db: Session = Depends(get_db),
+    user: OpsUser = Depends(require_owner),
+) -> dict:
+    """The whole mailbox: what arrived, what we wrote, and what was binned."""
+    if box not in BOXES:
+        raise HTTPException(400, f"box must be one of {', '.join(BOXES)}")
+    rows = _inbound(db) + _outbound(db, user)
     rows.sort(key=lambda r: r["at"] or "", reverse=True)
-    boxes = {
-        "all": lambda r: True,
-        "demos": lambda r: r["kind"] == "demo",
-        "support": lambda r: r["kind"] == "support",
-        "unmatched": lambda r: r["kind"] == "unmatched",
-        "unread": lambda r: r["unread"],
-    }
-    if box not in boxes:
-        raise HTTPException(400, f"box must be one of {', '.join(boxes)}")
-    # Counted from the same predicates the filter uses, so a box saying 12
-    # cannot show 9 -- the mistake the dealership's mailbox already made once.
-    counts = {name: sum(1 for r in rows if match(r)) for name, match in boxes.items()}
-    return {"box": box, "counts": counts, "messages": [r for r in rows if boxes[box](r)]}
+    counts = {name: sum(1 for r in rows if match(r)) for name, match in BOXES.items()}
+    return {"box": box, "counts": counts, "messages": [r for r in rows if BOXES[box](r)]}
+
+
+class MarkBody(BaseModel):
+    #: form | email | ours
+    kind: str
+    id: str
+
+
+class ReadBody(MarkBody):
+    read: bool = True
+
+
+class TrashBody(MarkBody):
+    trashed: bool = True
+
+
+def _target(db: Session, body: MarkBody):
+    if body.kind == "ours":
+        row = db.query(OpsMessage).filter_by(id=body.id).one_or_none()
+    elif body.kind == "form":
+        row = db.query(DemoRequest).filter_by(id=body.id).one_or_none()
+    elif body.kind == "email":
+        row = db.query(InboundEmail).filter_by(id=body.id).one_or_none()
+    else:
+        raise HTTPException(400, "kind must be form, email or ours")
+    if row is None:
+        raise HTTPException(404, "No such message")
+    return row
+
+
+@router.post("/mail/read")
+def mark_read(
+    body: ReadBody,
+    db: Session = Depends(get_db),
+    user: OpsUser = Depends(require_owner),
+) -> dict:
+    """Opening a message reads it; the button is for putting it back.
+
+    Reading is still done by opening the thing rather than by pressing
+    something -- a notification left sitting after it has been read is one
+    people learn to ignore. What this adds is the other direction: marking
+    something unread on purpose is a person saying "I have not dealt with this
+    yet", which is the only way an inbox can be used as a queue.
+
+    Forms answer from `status`, because the bell reads that and two copies of
+    one fact is how the two start disagreeing. Everything else answers from
+    `ops_mail_state`.
+    """
+    row = _target(db, body)
+    if body.kind == "form":
+        row.status = "seen" if body.read else "new"
+    elif body.kind == "email":
+        _state_row(db, "email", body.id).read_at = utcnow() if body.read else None
+    # Our own messages are never unread; marking one is a no-op rather than an
+    # error, so a client can send the same call for every row.
+    db.commit()
+    return {"ok": True, "kind": body.kind, "id": body.id, "read": body.read}
+
+
+@router.post("/mail/trash")
+def mark_trashed(
+    body: TrashBody,
+    db: Session = Depends(get_db),
+    user: OpsUser = Depends(require_owner),
+) -> dict:
+    """Trash is a timestamp, and Restore is the same call with false.
+
+    Never a delete. A message somebody wrote, or a demo somebody booked, is
+    the last thing to destroy on their behalf -- and a Trash that cannot be
+    undone is a delete button wearing a friendlier word.
+    """
+    row = _target(db, body)
+    when = utcnow() if body.trashed else None
+    if body.kind == "ours":
+        row.trashed_at = when
+    else:
+        _state_row(db, body.kind, body.id).trashed_at = when
+    db.commit()
+    return {"ok": True, "kind": body.kind, "id": body.id, "trashed": body.trashed}
+
+
+class DraftBody(BaseModel):
+    #: Present when updating one that already exists.
+    id: str | None = None
+    to: str = ""
+    subject: str = ""
+    body: str = ""
+    reply_to_kind: str = ""
+    reply_to_id: str = ""
+
+
+@router.post("/mail/draft")
+def save_draft(
+    body: DraftBody,
+    db: Session = Depends(get_db),
+    user: OpsUser = Depends(require_owner),
+) -> dict:
+    """Keep an unfinished message.
+
+    The dealership's composer deliberately has no Drafts tab, because nothing
+    there stores one -- it is built from the lead's state and lives in the
+    browser until send. This is the other case: a first message to somebody we
+    want to talk to is written over a morning, and a browser tab is not where
+    that should live.
+
+    An empty draft is not saved. A row with nothing in it is a Drafts box that
+    fills with ghosts every time somebody opens the composer and changes their
+    mind.
+    """
+    if not (body.to.strip() or body.subject.strip() or body.body.strip()):
+        raise HTTPException(400, "Nothing to save yet.")
+    if body.id:
+        draft = db.query(OpsMessage).filter_by(id=body.id).one_or_none()
+        if draft is None:
+            raise HTTPException(404, "No such draft")
+        if draft.author_id != user.id:
+            raise HTTPException(403, "That draft is somebody else's.")
+        if draft.state != "draft":
+            raise HTTPException(409, "That message has already been sent.")
+    else:
+        draft = OpsMessage(author_id=user.id, state="draft")
+        db.add(draft)
+    draft.to_address = body.to.strip()
+    draft.subject = body.subject.strip()
+    draft.body = body.body
+    draft.reply_to_kind = body.reply_to_kind
+    draft.reply_to_id = body.reply_to_id
+    draft.updated_at = utcnow()
+    db.commit()
+    db.refresh(draft)
+    return {"id": draft.id, "state": draft.state, "updated_at": iso(draft.updated_at)}
+
+
+class ReplyBody(BaseModel):
+    to: str
+    subject: str
+    body: str
+    #: The draft this is being sent from, if it was written as one.
+    draft_id: str | None = None
+    reply_to_kind: str = ""
+    reply_to_id: str = ""
 
 
 def _demo_body(request: DemoRequest) -> str:
@@ -287,13 +528,8 @@ def _demo_body(request: DemoRequest) -> str:
     return "\n".join(lines)
 
 
-class ReplyBody(BaseModel):
-    to: str
-    subject: str
-    body: str
-
-
 @router.post("/mail/reply")
+@router.post("/mail/send")
 def reply(
     body: ReplyBody,
     db: Session = Depends(get_db),
@@ -320,9 +556,46 @@ def reply(
         raise HTTPException(400, "That does not look like an email address.")
     sender = get_email_sender()
     identity = _identity(user)
+
+    # The row for this message exists before the send is attempted, and it is
+    # the draft's own row when it was written as one. Minting a new row on
+    # send would leave the draft sitting in Drafts as well, so one message a
+    # person wrote would be two rows in two boxes.
+    message = None
+    if body.draft_id:
+        message = db.query(OpsMessage).filter_by(id=body.draft_id).one_or_none()
+        if message is not None and message.author_id != user.id:
+            raise HTTPException(403, "That draft is somebody else's.")
+    if message is None:
+        message = OpsMessage(author_id=user.id)
+        db.add(message)
+    message.to_address = to
+    message.subject = (body.subject or "").strip()
+    message.body = body.body or ""
+    message.reply_to_kind = body.reply_to_kind or message.reply_to_kind
+    message.reply_to_id = body.reply_to_id or message.reply_to_id
+    message.from_address = identity.from_address
+    message.reply_to = identity.reply_to
+    message.provider = sender.name
+
+    def _record(state: str, detail: str, provider_id: str = "") -> None:
+        """What happened, kept whatever it was.
+
+        A refused send stays as `failed` rather than being discarded: it is
+        the one a person most needs to find again, and dropping the row loses
+        what they typed along with it.
+        """
+        message.state = state
+        message.detail = detail
+        message.provider_message_id = provider_id
+        message.updated_at = utcnow()
+        message.sent_at = utcnow() if state == "sent" else None
+        db.commit()
+
     blocked = outreach_send.blocked_reason(sender, to)
     if blocked:
-        return {"sent": False, "reason": blocked}
+        _record("failed", blocked)
+        return {"sent": False, "reason": blocked, "message_id": message.id}
 
     try:
         result = sender.send(
@@ -333,8 +606,15 @@ def reply(
             from_address=identity.from_address,
         )
     except NotConfigured as exc:
-        return {"sent": False, **exc.as_dict()}
+        _record("failed", exc.as_dict().get("error", "Not configured."))
+        return {"sent": False, "message_id": message.id, **exc.as_dict()}
+    _record(
+        "sent" if result.status == "sent" else "failed",
+        result.detail or "",
+        getattr(result, "provider_message_id", "") or "",
+    )
     return {
+        "message_id": message.id,
         "sent": result.status == "sent",
         "status": result.status,
         "provider": sender.name,
