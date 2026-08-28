@@ -22,10 +22,11 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import utcnow
+from app.ingest import snapshot
 from app.ingest.extract import Listing, extract, list_adapter_for
 # Imported for the side effect: each module registers itself onto the ladder.
 import app.ingest.sites  # noqa: F401,E402
-from app.models import IngestRun, Vehicle
+from app.models import Dealership, IngestRun, Vehicle
 
 log = logging.getLogger("liner.ingest")
 
@@ -222,6 +223,27 @@ def run_ingest(db: Session, base_url: str) -> IngestRun:
                     )
                 listings, errors = fetch_and_extract(client, urls)
                 method = "jsonld"
+
+        # Written before the diff, and before anything is published: a
+        # snapshot is what the site said, and it is most useful for a run that
+        # went wrong. An IngestRun keeps what *changed*, so a field the
+        # adapter never read leaves no trace once a run is published.
+        dealer = db.query(Dealership).first()
+        name = dealer.name if dealer else ""
+        try:
+            written = snapshot.write(listings, source_url=base_url, method=method,
+                                     errors=errors, dealership_name=name)
+            log.info("snapshot: %d vehicles -> %s", len(listings), written)
+            if settings.scraper_save_photos:
+                # One request per car, so it is behind a setting. Their CDN
+                # 404ing a sold car mid-demo is the failure this prevents.
+                got = snapshot.fetch_photos(listings, dealership_name=name)
+                log.info("photos: %d saved, %d already had, %d failed",
+                         got["saved"], got["already_had"], len(got["failed"]))
+        except OSError as exc:
+            # Never fatal. The crawl's result belongs in the database whether
+            # or not a disk somewhere would take a copy of it.
+            log.warning("could not write the snapshot: %s", exc)
 
         diff = build_diff(db, listings)
         # What actually read the pages. This was hardcoded "jsonld", which was

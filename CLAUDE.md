@@ -992,6 +992,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - `run.method` records which rung read the pages. It was hardcoded
     `"jsonld"` — true while that was the only rung, and a lie the moment it
     was not, on the record somebody reads to find out why a field is missing.
+- **A crawl keeps its own record, per dealership.**
+  `backend/var/inventory/<dealership>/` holds `snapshot.json` and
+  `photos/<VIN>.jpg`. The database answers "what is on the lot"; this answers
+  "what did the site say, when", and an `IngestRun` cannot: it keeps a *diff*,
+  so a field the adapter never read leaves no trace once a run is published.
+  Per dealership because two prospects' cars in one folder is one prospect's
+  inventory turning up in the other's demo.
+  - **Photos are downloaded only with `SCRAPER_SAVE_PHOTOS`,** because it is a
+    request per car. What it buys is a demo that survives their CDN: a
+    hotlinked image 404s the moment a car sells, on the screen somebody is
+    watching. `/api/photos/{vin}` serves the stored file when there is one and
+    falls back to the drawn placeholder, which a CSV-imported lot still needs.
+  - **One photo per car** — the one on the listing card, which is the only one
+    a list crawl sees. The rest live on each detail page: 481 extra fetches
+    and ~19,000 images, for pictures nothing in this product displays.
+  - **A lookup must not create a directory.** `photo_path` runs on every
+    `/api/photos` request, so while it shared `folder()` every placeholder
+    ever drawn left an empty folder behind — all under the same fallback name,
+    so the debris read as a real dealership's. `_dir` computes, `folder`
+    creates, and `make smoke` fails if a lookup makes one.
 - **Hours come from `hours_json`.** No page states its own.
 - **Live means still being said, not merely still open.** Only the buyer
   closes a thread, so an abandoned tab stays open for ever — and *In progress*

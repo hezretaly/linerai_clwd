@@ -13,6 +13,7 @@ from __future__ import annotations
 import hmac
 import json
 import pathlib
+import shutil
 import secrets
 import re
 import sys
@@ -2871,6 +2872,85 @@ def main() -> int:
         other = riverside[-1].read_text()
         check("and it does not claim a site that is not its platform",
               list_adapter_for(other, "http://x/") is None)
+
+    print("\n== what a crawl found, kept on disk ==")
+    # The database is the product's answer to "what is on the lot"; this is
+    # the crawl's answer to "what did the site say, when". An IngestRun keeps
+    # a diff -- what *changed* -- so a field the adapter never read leaves no
+    # trace at all once a run is published.
+    from app.ingest import snapshot as snap
+    from app.ingest.extract import Listing as _Listing
+
+    was_profile = cfg.dealership
+    try:
+        cfg.dealership = f"smoke-{stamp}"
+        cars = DealerCarSearch().parse_list(dcs_html, "https://example.invalid/newandusedcars")
+        written = snap.write(cars, source_url="https://example.invalid/newandusedcars",
+                             method="dealercarsearch", errors=[{"url": "x", "error": "y"}],
+                             dealership_name="Smoke Motors")
+        check("a crawl writes a snapshot into the dealership's own folder",
+              written.is_file() and f"smoke-{stamp}" in str(written), str(written)[-60:])
+
+        kept = json.loads(written.read_text())
+        check("with the run's own provenance on it, not just the rows",
+              kept["source_url"].endswith("newandusedcars")
+              and kept["method"] == "dealercarsearch" and kept["captured_at"],
+              f"{kept['method']} @ {kept['captured_at']}")
+        check("and every field the adapter read, per car",
+              kept["count"] == 3
+              and {"vin", "year", "make", "model", "trim", "price", "mileage",
+                   "photo_url", "listing_url", "features"} <= set(kept["vehicles"][0]),
+              str(sorted(kept["vehicles"][0])[:6]))
+        # The rows an adapter could not read are the most useful thing in the
+        # file, so they are kept beside the ones it could.
+        check("including what it could not read", kept["errors"] == [{"url": "x", "error": "y"}])
+
+        # Two prospects' cars in one folder is one prospect's inventory
+        # appearing in the other's demo.
+        cfg.dealership = f"other-{stamp}"
+        check("a second dealership gets a second folder",
+              snap.read("Smoke Motors") is None, "it should be empty")
+        cfg.dealership = f"smoke-{stamp}"
+        check("and the first one still has its own", (snap.read("Smoke Motors") or {}).get("count") == 3)
+
+        # Photos: never fatal, and never written from something that is not
+        # an image -- the bytes come from somebody else's server.
+        not_an_image = _Listing(vin="1FTFW1RG2SFC60236",
+                                photo_url="http://127.0.0.1:1/nothing.jpg")
+        got = snap.fetch_photos([not_an_image], dealership_name="Smoke Motors")
+        check("a photo that will not download is reported, not raised",
+              got["saved"] == 0 and len(got["failed"]) == 1, str(got["failed"])[:70])
+        check("and nothing is written for it",
+              snap.photo_path("1FTFW1RG2SFC60236", "Smoke Motors") is None)
+    finally:
+        cfg.dealership = was_profile
+        for folder in (f"smoke-{stamp}", f"other-{stamp}"):
+            path = cfg.inventory_dir / folder
+            if path.is_dir():
+                shutil.rmtree(path)
+
+    # A car with no stored photo still renders: a lot imported from a CSV has
+    # no photos at all and its rows have to draw something.
+    drawn = status_of("GET", "/api/photos/NOSUCHVIN00000000")
+    check("a vehicle with no photo on disk still gets a picture",
+          drawn[0] == 200 and "<svg" in drawn[1], str(drawn[0]))
+
+    # And looking for one does not create anything. `/api/photos/{vin}` runs
+    # this on every request, so a lookup that made directories left an empty
+    # folder behind for every placeholder ever drawn -- all with the same
+    # fallback name, so the debris read as a real dealership's directory.
+    probe = cfg.inventory_dir / "never-crawled-anything"
+    was = cfg.dealership
+    try:
+        cfg.dealership = "never-crawled-anything"
+        snap.photo_path("NOSUCHVIN00000000")
+        snap.read()
+        check("and looking one up creates no folder for a dealership with none",
+              not probe.exists(), str(probe))
+    finally:
+        cfg.dealership = was
+        if probe.is_dir():
+            shutil.rmtree(probe)
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to

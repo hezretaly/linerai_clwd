@@ -132,16 +132,34 @@ def create_app() -> FastAPI:
     # it has to be short enough to read in an email client's status bar.
     app.include_router(redirect.router)
 
+    @app.get("/api/photos/{vin}")
     @app.get("/api/photos/{vin}.svg")
     def vehicle_photo(vin: str) -> Response:
+        """The car's own photo when the crawl saved one; a drawing otherwise.
+
+        A stored photo wins because it is the real car. The drawn placeholder
+        is the fallback, and it stays the fallback rather than being replaced:
+        a lot imported from a CSV has no photos at all and its rows still have
+        to render.
+        """
+        from fastapi.responses import FileResponse
+        from app.ingest import snapshot
         from app.models import Vehicle
         from app.photos import placeholder_svg
 
+        bare = vin[:-4].upper() if vin.lower().endswith(".svg") else vin.upper()
+        stored = snapshot.photo_path(bare)
+        if stored is not None:
+            return FileResponse(
+                stored,
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
+
         db = SessionLocal()
         try:
-            vehicle = db.query(Vehicle).filter_by(vin=vin.upper()).one_or_none()
+            vehicle = db.query(Vehicle).filter_by(vin=bare).one_or_none()
             if vehicle is None:
-                svg = placeholder_svg(vin, 0, "Unknown", "vehicle")
+                svg = placeholder_svg(bare, 0, "Unknown", "vehicle")
             else:
                 svg = placeholder_svg(
                     vehicle.vin, vehicle.year, vehicle.make, vehicle.model, vehicle.trim

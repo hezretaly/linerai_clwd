@@ -255,6 +255,12 @@ class Settings(BaseSettings):
     #: hours from the showroom it says it is standing in. Empty keeps
     #: everything, which is right for a single-location dealer.
     scraper_dealer_id: str = ""
+    #: Download each listing's photo into the dealership's own folder rather
+    #: than hotlinking the dealer's image host. Off by default because it is
+    #: one request per car and the default behaviour has always worked; on for
+    #: a demo, where their CDN 404ing a sold car mid-presentation is a failure
+    #: on the screen somebody is watching.
+    scraper_save_photos: bool = False
 
     # --- Core --------------------------------------------------------------
     database_url: str = f"sqlite:///{BACKEND_DIR / 'liner.db'}"
@@ -351,6 +357,11 @@ class Settings(BaseSettings):
     # A sample lot, loaded on top of the curated fixtures by `make seed`. One
     # copy, read from where it lives, rather than duplicated into the backend.
     inventory_csv: Path = REPO_DIR / "dash" / "cars.csv"
+    #: Where a crawl's own record lives: one folder per dealership, holding
+    #: `snapshot.json` and the photos. Under `var/` with the call recordings,
+    #: for the same reason -- these are files a deployment accumulates, not
+    #: source, and a database growing by megabytes a row ruins every backup.
+    inventory_dir: Path = BACKEND_DIR / "var" / "inventory"
 
     @property
     def origins(self) -> list[str]:
