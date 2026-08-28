@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from app import voice_transcript
 from app.agent import tools
+from app.brand import brand
 from app.agent.runner import record_buyer_message
 from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings
@@ -108,6 +109,9 @@ def mint_session(
         # assistant talking to itself, and is the single most confusing thing
         # this page can show without saying why.
         "transcribed": settings.voice_transcribe,
+        # The same colours the chat page gets: /call is a buyer surface too,
+        # and the two arriving in different liveries reads as two products.
+        "brand": brand(),
     }
 
 

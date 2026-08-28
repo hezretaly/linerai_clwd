@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import utcnow
-from app.ingest.extract import Listing, extract
+from app.ingest.extract import Listing, extract, list_adapter_for
+# Imported for the side effect: each module registers itself onto the ladder.
+import app.ingest.sites  # noqa: F401,E402
 from app.models import IngestRun, Vehicle
 
 log = logging.getLogger("liner.ingest")
@@ -108,6 +110,47 @@ def fetch_and_extract(client: httpx.Client, urls: list[str]) -> tuple[list[Listi
     return listings, errors
 
 
+def crawl_list(
+    client: httpx.Client, adapter, base_url: str, first_page: str
+) -> tuple[list[Listing], list[dict], str]:
+    """Page through a listing site, keeping what each page already tells us.
+
+    The first page is handed in because `run_ingest` has already fetched it to
+    decide which adapter applies -- fetching it twice would be a wasted
+    request against somebody else's server on every single import.
+    """
+    listings: list[Listing] = []
+    errors: list[dict] = []
+    delay = 1.0 / max(settings.scraper_rate_limit, 0.1)
+    html, url, page = first_page, base_url, 1
+
+    while page <= settings.scraper_max_pages:
+        for listing in adapter.parse_list(html, url):
+            if listing.errors:
+                errors.append({"url": listing.listing_url or url,
+                               "error": "; ".join(listing.errors),
+                               "method": adapter.name})
+                continue
+            listings.append(listing)
+
+        page += 1
+        following = adapter.page_url(base_url, page, html)
+        if not following:
+            break
+        time.sleep(delay)
+        try:
+            response = client.get(following, timeout=25)
+        except httpx.HTTPError as exc:
+            errors.append({"url": following, "error": str(exc)})
+            break
+        if response.status_code != 200:
+            errors.append({"url": following, "error": f"HTTP {response.status_code}"})
+            break
+        html, url = response.text, following
+
+    return listings, errors, adapter.name
+
+
 def build_diff(db: Session, listings: list[Listing]) -> dict:
     existing = {v.vin: v for v in db.query(Vehicle).all()}
     seen_vins = {listing.vin for listing in listings}
@@ -162,15 +205,30 @@ def run_ingest(db: Session, base_url: str) -> IngestRun:
             if not _robots_allows(client, root, parsed.path or "/"):
                 raise IngestError(f"robots.txt disallows crawling {base_url}")
 
-            urls = discover(client, base_url)
-            if not urls:
-                raise IngestError(
-                    "No vehicle detail pages found. Check the URL, or import a CSV instead."
-                )
-            listings, errors = fetch_and_extract(client, urls)
+            # A platform whose listing page already carries every field is
+            # crawled through that page, not through 481 detail fetches for
+            # facts five list pages already stated. Tried first because where
+            # it applies it is both faster and far less to ask of a dealer's
+            # server.
+            first = client.get(base_url, timeout=20)
+            adapter = list_adapter_for(first.text, base_url)
+            if adapter is not None:
+                listings, errors, method = crawl_list(client, adapter, base_url, first.text)
+            else:
+                urls = discover(client, base_url)
+                if not urls:
+                    raise IngestError(
+                        "No vehicle detail pages found. Check the URL, or import a CSV instead."
+                    )
+                listings, errors = fetch_and_extract(client, urls)
+                method = "jsonld"
 
         diff = build_diff(db, listings)
-        run.method = "jsonld"
+        # What actually read the pages. This was hardcoded "jsonld", which was
+        # true while that was the only rung and a lie the moment it was not --
+        # and the run record is where somebody looks to find out why a field
+        # is missing.
+        run.method = method
         run.listings_found = len(listings)
         run.created_count = len(diff["created"])
         run.updated_count = len(diff["updated"])

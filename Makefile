@@ -99,6 +99,10 @@ fixture-site: ## Serve the scraper fixture dealer site on :8100
 	$(PY) backend/fixtures/build_site.py
 	cd backend/fixtures/sites/riverside && ../../../../$(PY) -m http.server $(FIXTURE_PORT)
 
+capture: ## Fetch a dealer site's listings and report what can be read: URL=https://...
+	@test -n "$(URL)" || (echo "Usage: make capture URL=https://a-dealer-site/inventory [PAGES=8]"; exit 1)
+	$(PY) scripts/capture_site.py "$(URL)" --pages $(or $(PAGES),8)
+
 placeholders: ## Collect every PLACEHOLDER marker into docs/PLACEHOLDERS.md
 	$(PY) scripts/placeholders.py
 

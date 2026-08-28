@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 
+import { applyBrand, type Brand } from '../lib/brand'
 import { api, ApiError } from '../lib/api'
 import { Button, Card } from '../components/ui'
 
@@ -40,6 +41,7 @@ interface Session {
   greeting: string
   greeting_audio: string
   transcribed: boolean
+  brand?: Brand
 }
 
 interface Line {
@@ -731,6 +733,9 @@ export function Call() {
       // Ours, and the only request that carries the real key. What comes back
       // is good for about a minute and for one call.
       const session = await api.post<Session>('/api/voice/sessions')
+      // /call is a buyer surface too, and the two arriving in different
+      // liveries reads as two products rather than one.
+      applyBrand(session.brand)
       convo.current = session.conversation_id
 
       // Constraints, not `audio: true`. Echo cancellation is the load-bearing

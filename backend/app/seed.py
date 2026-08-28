@@ -220,8 +220,48 @@ def _clear(db: Session) -> None:
     db.commit()
 
 
+#: What a profile has to say before anything is built from it. Hours are
+#: separate below, because "closed every day" is a legitimate shape for the
+#: file and a meaningless one for a showroom.
+REQUIRED_PROFILE_FIELDS = ("name", "timezone", "address", "phone")
+
+
+def _check_profile(raw: dict, path) -> None:
+    """Refuse a profile that is still a template.
+
+    A prospect's real details cannot be reached from here, so a half-filled
+    file is the expected state of a new one -- and seeding from it would mint
+    a dealership with a blank address and no phone number, which every surface
+    would then print at a buyer. Worse would be filling the gaps with
+    something plausible: an invented address survives a demo and gets repeated
+    back to a customer.
+
+    So this fails, and names what is missing rather than saying "invalid".
+    """
+    missing = [f for f in REQUIRED_PROFILE_FIELDS if not str(raw.get(f) or "").strip()]
+    hours = raw.get("hours") or {}
+    if not any(hours.values()):
+        missing.append("hours (every day is null, so the calendar has no slots)")
+    if missing:
+        raise SystemExit(
+            f"\n{path} is not filled in yet.\n\n"
+            "  Missing: " + ", ".join(missing) + "\n\n"
+            "These are that dealership's real details and nothing here can look\n"
+            "them up. Fill them in from their own site, then seed again.\n"
+        )
+
+
 def _seed_dealership(db: Session) -> Dealership:
-    raw = yaml.safe_load(settings.dealership_config.read_text())
+    path = settings.dealership_config
+    if not path.is_file():
+        available = sorted(p.stem for p in settings.dealership_dir.glob("*.yaml"))
+        raise SystemExit(
+            f"\nNo dealership profile at {path}.\n\n"
+            + ("  Available: " + ", ".join(available) + "\n" if available else "")
+            + "  Pick one with DEALERSHIP=<name>, or leave it unset for the default.\n"
+        )
+    raw = yaml.safe_load(path.read_text())
+    _check_profile(raw, path)
     dealership = Dealership(
         name=raw["name"],
         timezone=raw.get("timezone", "America/Chicago"),

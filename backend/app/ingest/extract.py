@@ -162,6 +162,53 @@ class Adapter:
 ADAPTERS: list[Adapter] = []
 
 
+class ListAdapter:
+    """A platform whose *listing* page already carries every field.
+
+    The rung above assumes one page is one vehicle, which is what a site
+    emitting JSON-LD on its detail pages gives you. Some platforms do not work
+    that way: Dealer Car Search puts VIN, price, mileage and a photo on every
+    card of the search results, and 481 vehicles is 481 detail fetches to
+    learn what five list pages already said. That is not an optimisation -- it
+    is the difference between a polite crawl and one a dealer would be right
+    to block.
+
+    So a list adapter takes one page and yields many listings, and
+    `pipeline.run_ingest` tries it before falling back to discovering detail
+    pages. `page_url` is how it paginates; returning None ends the crawl.
+    """
+
+    name = "base-list"
+
+    def matches(self, html: str, url: str) -> bool:
+        raise NotImplementedError
+
+    def parse_list(self, html: str, url: str) -> list[Listing]:
+        raise NotImplementedError
+
+    def page_url(self, base: str, page: int, html: str) -> str | None:
+        """The next page, or None when there is no next page."""
+        return None
+
+
+LIST_ADAPTERS: list[ListAdapter] = []
+
+
+def extract_list(html: str, url: str = "") -> tuple[list[Listing], str]:
+    """Every vehicle one listing page describes. ([], "none") if none can."""
+    for adapter in LIST_ADAPTERS:
+        if adapter.matches(html, url):
+            return adapter.parse_list(html, url), adapter.name
+    return [], "none"
+
+
+def list_adapter_for(html: str, url: str = "") -> ListAdapter | None:
+    for adapter in LIST_ADAPTERS:
+        if adapter.matches(html, url):
+            return adapter
+    return None
+
+
 def extract(html: str, url: str = "") -> tuple[Listing | None, str]:
     """Returns (listing, method)."""
     listing = parse_jsonld(html, url)

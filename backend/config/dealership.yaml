@@ -20,3 +20,9 @@ hours:
   friday:    { open: "08:00", close: "20:00" }
   saturday:  { open: "08:00", close: "20:00" }
   sunday:    null   # closed
+
+# Runtime accent for the buyer surfaces. See app/brand.py.
+brand:
+  accent: "#0a84ff"
+  accent_ink: "#ffffff"
+  logo_url: ""

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 
+import { applyBrand, type Brand } from '../lib/brand'
 import { api, streamMessages } from '../lib/api'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
@@ -77,7 +78,11 @@ export function Chat() {
         conversation_id: string
         greeting: string
         rails: Rail[]
+        dealership?: { name: string; brand?: Brand }
       }>('/api/chat/sessions')
+      // Their colour, before the first paint the buyer notices. Late, failed
+      // or absent leaves the surface the blue it has always been.
+      applyBrand(session.dealership?.brand)
       localStorage.setItem(STORAGE_KEY, session.conversation_id)
       setConversationId(session.conversation_id)
       setRails(session.rails)

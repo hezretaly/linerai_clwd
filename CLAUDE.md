@@ -944,6 +944,54 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     no cookie is still a 401; the visitor is signed in only by asking to be.
     That keeps one notion of who is signed in for the whole system, and it is
     what `make smoke` checks in both configurations.
+- **One dealership at a time, one profile per prospect.**
+  `backend/config/dealerships/<name>.yaml`, chosen with `DEALERSHIP=<name>`.
+  There is still no dealership id on any table and multi-tenancy is still out
+  of scope — switching is a reseed, not a second tenant. What the directory
+  buys is not losing the prospect you are not currently demoing.
+  - **A half-filled profile is refused, never seeded around.** A prospect's
+    real address, phone and hours cannot be looked up from here, so a template
+    is the expected state of a new one — and seeding from it would mint a
+    dealership with a blank address that every surface then prints at a buyer.
+    Filling the gaps with something plausible is worse: an invented address
+    survives a demo and gets repeated back to a customer. `_check_profile`
+    fails and names the fields.
+  - **Brand is served, not stored.** `app/brand.py` reads the accent off the
+    profile per request. Not a column, because `create_all` adds a table to a
+    database that already exists and never a column; not per-row data, because
+    which dealership this instance *is* already lives in a file. Only the
+    accent family travels — `.theme-buyer` takes `--brand-accent` with the
+    existing blue as its fallback, so every structural token still comes from
+    the one theme layer and a prospect's colour cannot restyle the product
+    into something unreadable. Validated to a hex and dropped otherwise: the
+    value lands in a stylesheet.
+- **A listing page that already carries every field is crawled as one.**
+  `ListAdapter` is a second rung beside the JSON-LD one: `extract` assumes a
+  page is a vehicle, and Dealer Car Search puts VIN, price, mileage and a
+  photo on every card of its search results. 481 vehicles is five list pages
+  or 481 detail fetches, which is the difference between a polite crawl and
+  one a dealer would be right to block.
+  - **Written against a real capture, never a guess.** The `Adapter` docstring
+    has said since the beginning that this needs a real site; the trimmed
+    fixture in `ingest/fixtures/dealercarsearch_list.html` is that site, and
+    `make smoke` parses it. `make capture URL=…` is how the next one is
+    obtained — it saves the raw pages and says whether an adapter is needed at
+    all, since a site emitting JSON-LD needs none.
+  - **The price is read by class, not by label.** `price-0` is the asking
+    price; the words next to it are "Craig's Best Price" at one store and
+    "Internet Value Price" at another, and matching those breaks the day a
+    dealer renames their own pricing.
+  - **`SCRAPER_DEALER_ID` keeps one lot.** A DCS site can list three stores on
+    one page, each card carrying its own dealer id — and this app holds one
+    dealership. Without it Liner offers a buyer a car two hours from the
+    showroom it says it is standing in.
+  - **Body style and seat count are left empty rather than derived.** They
+    live only in the sidebar filters, so those two `search_inventory` filters
+    narrow nothing for such a dealer. A missing field is a smaller error than
+    an invented one, and the keyword haystack still matches.
+  - `run.method` records which rung read the pages. It was hardcoded
+    `"jsonld"` — true while that was the only rung, and a lie the moment it
+    was not, on the record somebody reads to find out why a field is missing.
 - **Hours come from `hours_json`.** No page states its own.
 - **Live means still being said, not merely still open.** Only the buyer
   closes a thread, so an abandoned tab stays open for ever — and *In progress*

@@ -187,6 +187,23 @@
 .theme-buyer {
   --accent: oklch(0.964 0.021 253.6);
   --accent-foreground: oklch(0.47 0.17 253.6);
+
+  /* A prospect's own colour, when their profile carries one.
+   *
+   * `--brand-accent` is set on <html> at runtime from the dealership profile
+   * (see lib/brand.ts and app/brand.py) and is otherwise undefined, so the
+   * fallback here is what the buyer surfaces have always used. That is the
+   * whole extent of it: the buyer's own bubble and the primary button take
+   * their colour, and nothing structural moves. Greys, borders and radii
+   * still come from classic above, so a dealership whose brand is orange gets
+   * an orange chat rather than a differently-built product.
+   *
+   * Only ever a validated hex -- app/brand.py drops anything else rather than
+   * escaping it, because this value lands in a stylesheet. */
+  --primary: var(--brand-accent, oklch(0.47 0.17 253.6));
+  --primary-foreground: var(--brand-accent-ink, oklch(1 0 0));
+  --bubble-buyer: var(--brand-accent, oklch(0.505 0.163 272));
+  --bubble-buyer-foreground: var(--brand-accent-ink, oklch(1 0 0));
 }
 
 @theme inline {

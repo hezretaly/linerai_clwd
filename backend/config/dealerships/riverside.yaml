@@ -1,0 +1,35 @@
+# The made-up showroom every test and fixture is written against.
+#
+# One profile per prospect, chosen with DEALERSHIP=<name> (or
+# `make seed DEALERSHIP=riverside`). There is still exactly one dealership in
+# the database at a time -- no table has a dealership id -- so switching is a
+# reseed, not a second tenant. What the directory buys is not losing the
+# profile you are not currently demoing.
+#
+# Addresses here are deliberately fictional. Nothing in this file describes a
+# real business.
+
+name: Riverside Auto
+timezone: America/Chicago
+address: 4820 Riverside Parkway, Cedar Falls, IA 50613
+phone: (319) 555-0142
+website_url: ""   # set this, and SCRAPER_BASE_URL, to ingest a real site
+
+# Fixed at 8 AM - 8 PM, closed Sunday (plan §20). No page states its own hours;
+# every surface reads these values.
+hours:
+  monday:    { open: "08:00", close: "20:00" }
+  tuesday:   { open: "08:00", close: "20:00" }
+  wednesday: { open: "08:00", close: "20:00" }
+  thursday:  { open: "08:00", close: "20:00" }
+  friday:    { open: "08:00", close: "20:00" }
+  saturday:  { open: "08:00", close: "20:00" }
+  sunday:    null   # closed
+
+# What the buyer's screens look like. Only the accent moves: every structural
+# token still comes from the one theme layer, so a prospect's colour cannot
+# quietly restyle the whole product into something that no longer reads.
+brand:
+  accent: "#0a84ff"        # the iOS blue the buyer surfaces already use
+  accent_ink: "#ffffff"    # text on top of the accent
+  logo_url: ""             # optional; the name is used when this is empty

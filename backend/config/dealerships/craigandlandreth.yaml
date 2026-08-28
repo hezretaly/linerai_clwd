@@ -1,0 +1,43 @@
+# Craig and Landreth Cars -- a real dealership, for a booked demo.
+#
+# Everything filled in below was read off their own inventory page: the
+# header address block and the schema.org AutoDealer block in the footer both
+# state it, and they agree. Nothing here is inferred.
+#
+# `hours` is still empty, and that is the point: their opening times are not
+# on the page that was captured, nothing here can reach their site (the egress
+# proxy refuses that host), and the calendar builds appointment slots straight
+# from these values. An invented hour is an appointment nobody is there for.
+# `make seed DEALERSHIP=craigandlandreth` refuses until they are filled in and
+# names what is missing.
+
+name: Craig and Landreth Cars
+
+# Louisville, KY. Their site lists three lots -- Louisville (dealer id 1123),
+# Clarksville IN (1129) and Bullitt County (3833) -- on one page, and this app
+# holds exactly one dealership. SCRAPER_DEALER_ID=1123 keeps the ingest to the
+# St. Matthews store this address belongs to.
+timezone: America/Kentucky/Louisville
+address: 4156 Shelbyville Rd., Louisville, KY 40207
+phone: 502-447-3450
+website_url: "https://www.craigandlandrethcars.com/"
+
+# STILL NEEDED. From their site: the St. Matthews store's opening times.
+# `null` for any day they are closed.
+hours:
+  monday:    null
+  tuesday:   null
+  wednesday: null
+  thursday:  null
+  friday:    null
+  saturday:  null
+  sunday:    null
+
+# STILL NEEDED: `accent`, picked off their real site. The logo is theirs, from
+# the page. Only the accent family moves -- every structural token still comes
+# from the one theme layer, so their colour cannot restyle the product into
+# something that no longer reads.
+brand:
+  accent: ""
+  accent_ink: "#ffffff"
+  logo_url: "https://imagescdn.dealercarsearch.com/DealerImages/1123/20820/logow2.png"

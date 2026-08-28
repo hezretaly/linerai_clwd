@@ -2804,6 +2804,74 @@ def main() -> int:
     check("and a reply token still routes, which is most inbound mail",
           any(p == "reply+" for p in prefixes), str(prefixes))
 
+    print("\n== a real dealer platform, parsed from its own markup ==")
+    # The first adapter written against a real site rather than the JSON-LD
+    # fixture. Dealer Car Search puts the whole vehicle on each search-result
+    # card, so 481 vehicles cost five list pages rather than 481 detail
+    # fetches -- which is the difference between a polite crawl and one a
+    # dealer would be right to block.
+    from app.ingest.extract import list_adapter_for, valid_vin
+    from app.ingest.sites.dealercarsearch import DealerCarSearch
+    import app.ingest.sites  # noqa: F401 -- registers the adapter
+
+    dcs_html = pathlib.Path(
+        "backend/app/ingest/fixtures/dealercarsearch_list.html"
+    ).read_text()
+    picked = list_adapter_for(dcs_html, "https://example.invalid/newandusedcars")
+    check("a Dealer Car Search listing page is recognised",
+          picked is not None and picked.name == "dealercarsearch",
+          picked.name if picked else "nothing matched")
+
+    cards = DealerCarSearch().parse_list(dcs_html, "https://example.invalid/newandusedcars")
+    check("every card on it yields a vehicle", len(cards) == 3, str(len(cards)))
+    first = cards[0]
+    check("with the fields Liner cannot talk about a car without",
+          (first.year, first.make, first.model, first.price, first.mileage)
+          == (2018, "Dodge", "Challenger", 110500, 9029),
+          f"{first.year} {first.make} {first.model} {first.price} {first.mileage}")
+    check("and a VIN that is a real VIN", valid_vin(first.vin), first.vin)
+    check("the photo comes from data-src, not the lazy-load placeholder",
+          first.photo_url.startswith("https://imagescdn."), first.photo_url[:40])
+
+    # The price label differs per store -- "Craig's Best Price" against
+    # "Internet Value Price" -- so the class is what is read. Matching the
+    # label would break the day a dealer renames their own pricing.
+    check("a differently-labelled price is still read",
+          cards[1].price == 83500, str(cards[1].price))
+
+    # A two-word make split on the first space is a Rover, which is not a car.
+    rover = DealerCarSearch().parse_list(
+        '<div class="v-card"><div class="v-card-body"><a href="/vdp/1/x"></a>'
+        '<h4 class="vehicleTitle"> 2025 Land Rover Range Rover Sport</h4>'
+        '<span class="vehicleTrim">P400 Dynamic</span>'
+        '<p class="v-feature i13r_optVin"><label>VIN:</label>&nbsp;'
+        'SAL1P9EU9SA601106</p></div></div>', "https://example.invalid/")[0]
+    check("a two-word make survives the split",
+          (rover.make, rover.model) == ("Land Rover", "Range Rover Sport"),
+          f"{rover.make} / {rover.model}")
+
+    # One DCS site can list several stores, each card carrying its own dealer
+    # id -- and this app holds exactly one dealership. Without the filter
+    # Liner offers a buyer a car two hours from the showroom it says it is in.
+    one_lot = DealerCarSearch(dealer_id="1123").parse_list(dcs_html, "https://example.invalid/")
+    check("another store's stock is left on another store's forecourt",
+          len(one_lot) == 2 and all(c.raw["dealer_id"] == "1123" for c in one_lot),
+          f"{len(one_lot)} of {len(cards)} kept")
+
+    check("paging asks for the next page and the biggest page size",
+          "page=2" in DealerCarSearch().page_url("https://x/n", 2, "Page: 1 of 21")
+          and "pagesize=100" in DealerCarSearch().page_url("https://x/n", 2, "Page: 1 of 21"))
+    check("and stops when the pager says there is no next page",
+          DealerCarSearch().page_url("https://x/n", 22, "Page: 21 of 21 (481 vehicles)") is None)
+
+    # The rung it sits beside must not be disturbed: the fixture site emits
+    # JSON-LD and is not a DCS site.
+    riverside = sorted(pathlib.Path("backend/fixtures/sites/riverside").rglob("*.html"))
+    if riverside:
+        other = riverside[-1].read_text()
+        check("and it does not claim a site that is not its platform",
+              list_adapter_for(other, "http://x/") is None)
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's

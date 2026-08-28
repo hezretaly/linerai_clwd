@@ -248,6 +248,13 @@ class Settings(BaseSettings):
     scraper_user_agent: str = "LinerAI-Ingest/0.1 (+https://liner.ai/bot)"
     scraper_rate_limit: float = 1.5
     scraper_max_pages: int = 60
+    #: Which lot to keep when a listing page carries several. A Dealer Car
+    #: Search site can show three stores' stock in one list, each card
+    #: carrying its own dealer id -- and this app holds exactly one
+    #: dealership, so without this Liner offers a buyer a car that is two
+    #: hours from the showroom it says it is standing in. Empty keeps
+    #: everything, which is right for a single-location dealer.
+    scraper_dealer_id: str = ""
 
     # --- Core --------------------------------------------------------------
     database_url: str = f"sqlite:///{BACKEND_DIR / 'liner.db'}"
@@ -322,7 +329,25 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     email_allowlist: str = ""
     allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-    dealership_config: Path = BACKEND_DIR / "config" / "dealership.yaml"
+    #: Which prospect this instance is currently set up as. Empty keeps the
+    #: single `config/dealership.yaml` an existing install already has; a name
+    #: picks `config/dealerships/<name>.yaml` instead.
+    #:
+    #: There is still exactly one dealership in the database at a time -- no
+    #: table has a dealership id and multi-tenancy is deliberately out of
+    #: scope. What this buys is not running two at once but *switching*
+    #: between them without losing the one you are not demoing: a profile per
+    #: prospect, rather than one file edited over the top of the last.
+    dealership: str = ""
+    dealership_config_default: Path = BACKEND_DIR / "config" / "dealership.yaml"
+    dealership_dir: Path = BACKEND_DIR / "config" / "dealerships"
+
+    @property
+    def dealership_config(self) -> Path:
+        if not self.dealership.strip():
+            return self.dealership_config_default
+        return self.dealership_dir / f"{self.dealership.strip()}.yaml"
+
     # A sample lot, loaded on top of the curated fixtures by `make seed`. One
     # copy, read from where it lives, rather than duplicated into the backend.
     inventory_csv: Path = REPO_DIR / "dash" / "cars.csv"

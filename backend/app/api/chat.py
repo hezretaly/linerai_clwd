@@ -29,6 +29,7 @@ from app.agent.tools import when_label
 from app.api.settings import live_settings
 from app.config import settings
 from app.db import SessionLocal, get_db
+from app.brand import brand
 from app.events import emit
 from app.integrations.base import NotConfigured
 from app.models import Appointment, Conversation, Dealership, Rail
@@ -78,7 +79,13 @@ def start_session(channel: str = "chat", db: Session = Depends(get_db)) -> dict:
     return {
         "conversation_id": convo.id,
         "greeting": settings_row.greeting,
-        "dealership": {"name": dealership.name if dealership else "", },
+        "dealership": {
+            "name": dealership.name if dealership else "",
+            # Their colours, so the buyer's screen looks like the site they
+            # came from rather than like our demo. Served rather than stored:
+            # see app/brand.py.
+            "brand": brand(),
+        },
         "rails": [rail_out(r) for r in rails_for(db, convo)],
     }
 
