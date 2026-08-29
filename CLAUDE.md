@@ -979,6 +979,35 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   There is still no dealership id on any table and multi-tenancy is still out
   of scope — switching is a reseed, not a second tenant. What the directory
   buys is not losing the prospect you are not currently demoing.
+  - **A fact about the dealership goes in the profile; a fact about the box
+    goes in `.env`.** That line decides where each setting lives, and getting
+    it wrong has a specific cost. Their listing URL and their Dealer Car
+    Search store id were environment variables, so switching `DEALERSHIP=` to
+    another prospect and leaving `SCRAPER_BASE_URL` alone crawled the first
+    dealer's site into the second one's instance — silently, because a
+    successful crawl of the wrong site looks exactly like a successful crawl
+    of the right one. They live in `inventory:` now; the env vars remain the
+    fallback for the fixture site and for older deployments, and where both
+    speak the profile wins, because switching dealership has to be one line.
+    Which store to keep is read **per crawl** (`ListAdapter.for_dealer`) and
+    not baked into the registered adapter at import, where it was whoever the
+    process started as.
+  - **Two halves, refreshed differently, and they must not disagree
+    silently.** The name, address, hours and staff are rows and need
+    `make reset-db`; the brand, the storefront copy and the crawl source are
+    read from the profile file per request, but *which* file is
+    `settings.dealership`, read once at startup. So reseeding without
+    restarting leaves a dashboard saying Craig and Landreth over a storefront
+    still wearing Riverside's blue, and restarting without reseeding does it
+    backwards. Both read as a broken page and neither is, so
+    `_report_dealership` names the profile at every boot and warns when the
+    seeded name and the loaded profile differ.
+  - **A profile carries its own people.** A prospect's instance shipping with
+    Dana Mercer and Marcus Vale on the roster is the same failure as greeting
+    somebody as Riverside Auto — invented names in every assignment picker,
+    on a page their real manager is reading. `staff:` is seeded instead, with
+    a password generated and printed once; `make add-user` is the other half,
+    for a live box where a reseed would take the leads with it.
   - **A half-filled profile is refused, never seeded around.** A prospect's
     real address, phone and hours cannot be looked up from here, so a template
     is the expected state of a new one — and seeding from it would mint a

@@ -1,22 +1,19 @@
 # Craig and Landreth Cars -- a real dealership, for a booked demo.
 #
-# Everything filled in below was read off their own inventory page: the
-# header address block and the schema.org AutoDealer block in the footer both
-# state it, and they agree. Nothing here is inferred.
+# Everything here was read off their own pages: the header address block and
+# the schema.org AutoDealer block agree, and the hours and copy come from their
+# home page. Nothing is inferred, with one stated exception -- the brand accent
+# below, which was read off a screenshot by eye because nothing here can reach
+# their site.
 #
-# `hours` is still empty, and that is the point: their opening times are not
-# on the page that was captured, nothing here can reach their site (the egress
-# proxy refuses that host), and the calendar builds appointment slots straight
-# from these values. An invented hour is an appointment nobody is there for.
-# `make seed DEALERSHIP=craigandlandreth` refuses until they are filled in and
-# names what is missing.
+# This one file is the whole dealership: who they are, when they open, what
+# their storefront says, where their cars come from, and who works there.
+# `DEALERSHIP=craigandlandreth` is the only line `.env` needs.
 
 name: Craig and Landreth Cars
 
-# Louisville, KY. Their site lists three lots -- Louisville (dealer id 1123),
-# Clarksville IN (1129) and Bullitt County (3833) -- on one page, and this app
-# holds exactly one dealership. SCRAPER_DEALER_ID=1123 keeps the ingest to the
-# St. Matthews store this address belongs to.
+# The St. Matthews store. Their site lists three lots on one page; which one
+# this instance is comes from `inventory.dealer_id` further down.
 timezone: America/Kentucky/Louisville
 address: 4156 Shelbyville Rd., Louisville, KY 40207
 phone: 502-447-3450
@@ -89,12 +86,31 @@ site:
 # sample CSV lot and its populated yesterday are invented for a demo of a
 # dealership that does not exist -- seeded here they would put a Toyota Sienna
 # from Cedar Falls, Iowa in front of a Louisville buyer. Their lot comes from
-# their own site:
+# their own site, below.
+
+# Where their cars come from. Facts about this dealership, so they live here
+# rather than in `.env` -- switching DEALERSHIP= to another prospect and
+# forgetting to change a SCRAPER_ line crawled Craig's site into somebody
+# else's instance, silently, because a successful crawl of the wrong site
+# looks exactly like a successful crawl.
 #
-#   SCRAPER_BASE_URL=https://www.craigsbestcars.com/newandusedcars
-#   SCRAPER_DEALER_ID=1123
+# Press Import on /app/inventory, review the run, then publish.
+inventory:
+  source_url: "https://www.craigsbestcars.com/newandusedcars"
+  # Their listing page mixes three stores -- Louisville (1123), Clarksville IN
+  # (1129) and Bullitt County (3833) -- each card carrying its own id. This app
+  # holds exactly one dealership, so without this Liner offers a buyer a car
+  # that is a two-hour drive from the showroom it says it is standing in.
+  dealer_id: "1123"
+
+# Their people, so a reseed rebuilds them. `make add-user` adds somebody to a
+# live box without one; this is the other half, so a prospect's own manager
+# does not disappear the next time the fixture is rebuilt.
 #
-# then Import on /app/inventory, review the run, publish.
+# Each gets a generated password, printed once by the seed. Only `manager` and
+# `rep` -- our own accounts are in `ops_users` and never come from here.
+staff:
+  - { name: Austin, email: austin@craigandlandrethcars.com, role: manager }
 
 # Their own answers, quoted verbatim to a buyer and never composed -- which is
 # why this list is empty rather than borrowed. Riverside's doc fee is $189 and

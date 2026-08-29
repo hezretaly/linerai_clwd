@@ -29,7 +29,7 @@ from app.agent.tools import when_label
 from app.api.settings import live_settings
 from app.config import settings
 from app.db import SessionLocal, get_db
-from app.brand import brand
+from app.profile import brand
 from app.events import emit
 from app.integrations.base import NotConfigured
 from app.models import Appointment, Conversation, Dealership, Rail

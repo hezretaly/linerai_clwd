@@ -36,9 +36,20 @@ import re
 import secrets
 import sys
 
+from passlib.context import CryptContext
+
 from app.db import SessionLocal, create_all
 from app.models import OpsUser, User
-from app.seed import _hash
+
+#: Its own context rather than importing the seed's. The dependency has to run
+#: this way round -- `seed` builds a profile's `staff:` list through `initials`
+#: here -- and two modules importing each other is an ImportError at startup,
+#: not a style point. Same scheme and same defaults, which is what matters.
+pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _hash(password: str) -> str:
+    return pwd.hash(password)
 
 #: What a role means here, and the whole list. `owner` is deliberately absent:
 #: that is us, it lives in `ops_users`, and it is `make add-owners`.

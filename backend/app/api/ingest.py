@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
+from app import profile
 from app.config import settings
 from app.db import get_db
 from app.ingest.csv_import import COLUMNS, import_csv
@@ -17,18 +18,32 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 @router.get("/runs")
 def list_runs(db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
     rows = db.query(IngestRun).order_by(IngestRun.started_at.desc()).limit(25).all()
+    source = profile.inventory()
     return {
         "runs": [ingest_run_out(r) for r in rows],
-        "source_url": settings.scraper_base_url,
-        "configured": bool(settings.scraper_base_url),
+        "source_url": source["source_url"],
+        "configured": bool(source["source_url"]),
         "csv_columns": COLUMNS,
-        "detail": (
-            f"Ingesting from {settings.scraper_base_url}."
-            if settings.scraper_base_url
-            else "No dealer website is configured. Set SCRAPER_BASE_URL to crawl a site, "
-                 "or upload a CSV -- the CSV path needs no configuration."
-        ),
+        # Naming the source *and where it was read from* before the button is
+        # pressed. A crawl of the wrong dealer's site succeeds exactly like a
+        # crawl of the right one, so the moment to notice is now.
+        "detail": _source_detail(source),
     }
+
+
+def _source_detail(source: dict) -> str:
+    if not source["source_url"]:
+        return (
+            "No dealer website is configured. Put an `inventory.source_url` in this "
+            "dealership's profile to crawl their site, or upload a CSV -- the CSV path "
+            "needs no configuration."
+        )
+    where = {
+        "profile": f"from {settings.dealership_config.name}",
+        "env": "from SCRAPER_BASE_URL in .env",
+    }.get(source["origin"], "")
+    lot = f", store {source['dealer_id']}" if source["dealer_id"] else ""
+    return f"Ingesting from {source['source_url']}{lot} ({where})."
 
 
 @router.get("/runs/{run_id}")
@@ -41,17 +56,22 @@ def get_run(run_id: str, db: Session = Depends(get_db), user: User = Depends(cur
 
 @router.post("/runs")
 def start_run(db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
-    if not settings.scraper_base_url:
+    source = profile.inventory()
+    if not source["source_url"]:
         raise HTTPException(
             503,
             {
                 "error": "not_configured",
                 "integration": "scraper",
-                "missing": ["SCRAPER_BASE_URL"],
-                "detail": "No dealer website is configured. Upload a CSV instead.",
+                "missing": ["inventory.source_url"],
+                "detail": (
+                    "No dealer website is configured for "
+                    f"{settings.dealership_config.name}. Add an `inventory.source_url` to "
+                    "their profile, or upload a CSV instead."
+                ),
             },
         )
-    run = run_ingest(db, settings.scraper_base_url)
+    run = run_ingest(db, source["source_url"])
     return ingest_run_out(run)
 
 

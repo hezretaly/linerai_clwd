@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.tools import offerable
 from app.api.settings import live_settings
-from app.brand import brand, site
+from app.profile import brand, site
 from app.config import settings
 from app.db import get_db
 from app.models import Dealership, Vehicle

@@ -5,6 +5,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import yaml
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -17,6 +19,32 @@ from app.integrations.registry import registry_payload
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("liner")
+
+
+def _report_dealership() -> None:
+    from app.db import SessionLocal
+    from app.models import Dealership
+
+    profile_name = ""
+    path = settings.dealership_config
+    if path.is_file():
+        try:
+            profile_name = str((yaml.safe_load(path.read_text()) or {}).get("name") or "")
+        except (OSError, yaml.YAMLError):
+            profile_name = ""
+    with SessionLocal() as db:
+        row = db.query(Dealership).first()
+    seeded = row.name if row else ""
+
+    log.info("dealership: %s (profile %s)", seeded or "not seeded yet", path.name)
+    if seeded and profile_name and seeded != profile_name:
+        log.warning(
+            "The database was seeded as %r but this process is serving the profile for "
+            "%r (%s, from DEALERSHIP=%s). The dashboard will show one and the storefront "
+            "the other. Fix whichever half is wrong: `make reset-db` to rebuild the rows, "
+            "or set DEALERSHIP and restart to load the right file.",
+            seeded, profile_name, path.name, settings.dealership or "<unset>",
+        )
 
 
 @asynccontextmanager
@@ -36,6 +64,22 @@ async def lifespan(app: FastAPI):
             "miss events. Run a single worker until events.py moves to Redis pub/sub.",
             workers,
         )
+
+    # Which dealership this process is, said out loud once.
+    #
+    # There are two halves and they refresh differently, which is the whole
+    # reason this is here. The *name*, address, hours and staff are rows, put
+    # there by the seed -- so changing DEALERSHIP= needs `make reset-db`. The
+    # brand, the storefront copy and the inventory source are read from the
+    # profile *file*, per request -- but which file is `settings.dealership`,
+    # read once when this process started.
+    #
+    # So editing .env and reseeding without a restart leaves a dashboard that
+    # says Craig and Landreth over a storefront still wearing Riverside's
+    # blue, and restarting without reseeding does the same thing backwards.
+    # Both look like the page is broken and neither is: they are two sources
+    # disagreeing, which is the one thing worth shouting about.
+    _report_dealership()
 
     # The one setting that hands a stranger a dealership's buyer list. It says
     # so at every boot, because the way this goes wrong is nobody remembering

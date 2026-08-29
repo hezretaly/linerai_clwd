@@ -180,6 +180,16 @@ class ListAdapter:
 
     name = "base-list"
 
+    def for_dealer(self, dealer_id: str) -> "ListAdapter":
+        """This adapter, narrowed to one lot. The default ignores it.
+
+        Which lot to keep is a fact about the dealership, and the dealership
+        is chosen per deployment and read per request -- so it cannot be baked
+        into the registered instance at import time, which is what it was.
+        Most platforms list one store and have nothing to narrow.
+        """
+        return self
+
     def matches(self, html: str, url: str) -> bool:
         raise NotImplementedError
 

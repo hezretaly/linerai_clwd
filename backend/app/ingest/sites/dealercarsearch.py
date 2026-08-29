@@ -72,6 +72,15 @@ class DealerCarSearch(ListAdapter):
         #: single-location dealer and wrong for this one.
         self.dealer_id = str(dealer_id or "").strip()
 
+    def for_dealer(self, dealer_id: str) -> "DealerCarSearch":
+        """A copy pinned to one store, built per crawl.
+
+        A copy rather than a mutation: the registered instance is shared, and
+        a crawl that reassigned its `dealer_id` would leave the next one
+        filtering to whichever store ran last.
+        """
+        return DealerCarSearch(dealer_id)
+
     def matches(self, html: str, url: str = "") -> bool:
         # Two independent signals, and both are the platform's own rather than
         # this dealer's: the body class it ships on every listing page, and the

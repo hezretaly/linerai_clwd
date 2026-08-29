@@ -209,7 +209,10 @@ def _scraper_status() -> IntegrationStatus:
     has chosen yet is not a broken dependency, and listing it as one trains
     whoever reads that banner to ignore it.
     """
-    scraping = bool(settings.scraper_base_url)
+    from app import profile
+
+    source = profile.inventory()
+    scraping = bool(source["source_url"])
     return IntegrationStatus(
         key="scraper",
         label="Inventory source",
@@ -217,12 +220,12 @@ def _scraper_status() -> IntegrationStatus:
         impl="http" if scraping else "database",
         missing=[],
         detail=(
-            f"Ingesting from {settings.scraper_base_url}, on top of the local database."
+            f"Ingesting from {source['source_url']}, on top of the local database."
             if scraping
             else "Vehicles come from the local database -- seeded, imported from CSV, or "
             "edited by hand. Scraping a dealer's own site is an optional second source "
-            "and needs a per-dealership adapter, so set SCRAPER_BASE_URL only once "
-            "there is a real site to point at."
+            "and needs a per-dealership adapter, so set `inventory.source_url` in the "
+            "dealership's profile only once there is a real site to point at."
         ),
     )
 

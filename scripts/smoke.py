@@ -2907,7 +2907,7 @@ def main() -> int:
     # value into one, so an unknown word must never reach the DOM -- and it is
     # read only by /showroom: a rep's dashboard is a working tool and should
     # not change colour because a prospect's marketing site is dark.
-    from app.brand import brand as _brand_fn
+    from app.profile import brand as _brand_fn
 
     check("a brand surface is one of two words, never whatever was typed",
           shop["brand"]["surface"] in ("light", "dark"), shop["brand"]["surface"])
@@ -2930,6 +2930,44 @@ def main() -> int:
     check("and only ever as dealership staff, never as one of ours",
           set(_ROLES) == {"manager", "rep"}, str(sorted(_ROLES)))
     check("their avatar comes from their name", _initials("Austin Reed") == "AR")
+
+    # Their listing URL and their store id are facts about the dealership, so
+    # they live in the profile. As environment variables, switching
+    # DEALERSHIP= to a second prospect and leaving SCRAPER_BASE_URL alone
+    # crawled the first dealer's site into the second one's instance --
+    # silently, because a successful crawl of the wrong site looks exactly
+    # like a successful crawl of the right one.
+    from app.profile import inventory as _inventory
+
+    check("the crawl source comes from the profile, not from .env",
+          "source_url" in (craig.get("inventory") or {}),
+          str(sorted((craig.get("inventory") or {}))))
+    check("and the env vars remain the fallback, so a fixture site still works",
+          _inventory()["origin"] in ("env", "none"), _inventory()["origin"])
+    # Which store to keep cannot be baked in at import: the dealership is
+    # chosen per deployment and read per request, so an adapter narrowed when
+    # the process started is narrowed to whoever it started as.
+    from app.ingest.sites.dealercarsearch import DealerCarSearch as _DCS
+
+    check("and which lot to keep is decided per crawl, not at import",
+          _DCS().dealer_id == "" and _DCS().for_dealer("1123").dealer_id == "1123")
+    check("narrowing returns a copy, so one crawl cannot bind the next",
+          _DCS().for_dealer("1123") is not _DCS())
+
+    # Two halves that refresh differently: rows come from the seed, the
+    # profile file is read per request but chosen once at startup. Editing
+    # .env without reseeding -- or reseeding without restarting -- leaves a
+    # dashboard showing one dealership over a storefront wearing the other's
+    # colours, which reads as a broken page and is nothing of the kind.
+    check("a mismatch between the seeded rows and the loaded profile is shouted about",
+          "_report_dealership" in pathlib.Path("backend/app/main.py").read_text())
+
+    # A prospect's instance should not ship with Dana Mercer on the roster.
+    check("a profile can carry its own staff, so a reseed rebuilds them",
+          [p["email"] for p in (craig.get("staff") or [])] != [],
+          str([p.get("email") for p in (craig.get("staff") or [])]))
+    check("and only ever as manager or rep",
+          all((p.get("role") or "rep") in ("manager", "rep") for p in (craig.get("staff") or [])))
 
     check("the greeting is built from whichever name that is",
           _possessive("Riverside Auto") == "Riverside Auto's"

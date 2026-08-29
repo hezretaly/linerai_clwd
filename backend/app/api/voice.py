@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 
 from app import voice_transcript
 from app.agent import tools
-from app.brand import brand
+from app.profile import brand
 from app.agent.runner import record_buyer_message
 from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings

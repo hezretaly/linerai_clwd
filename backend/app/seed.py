@@ -10,12 +10,15 @@ Idempotent by wipe: ``seed()`` clears the tables it owns and rebuilds them.
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime, timedelta
 
 import yaml
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+from app import profile
+from app.add_user import initials
 from app.config import settings
 from app.db import SessionLocal, create_all, utcnow
 from app.models import (
@@ -394,10 +397,47 @@ def build_owner(name: str, email: str, password_env: str, initials: str) -> OpsU
     )
 
 
-def _seed_users(db: Session) -> list[User]:
-    users = [build_user(*person) for person in STAFF]
+def _seed_users(db: Session, raw: dict) -> list[User]:
+    """The dealership's staff: the fixture's four, or the profile's own people.
+
+    A prospect's instance should not ship with Dana Mercer and Marcus Vale on
+    the roster -- they are invented, they appear in every assignment picker,
+    and a real manager looking at their own team page reading four names they
+    have never heard of is the same failure as being greeted as Riverside
+    Auto. So a profile with a `staff:` list gets exactly that list.
+
+    Their passwords are generated here and printed once, for the reason
+    `add_user` generates rather than reading `.env`: an environment variable
+    per person is one somebody has to add to the deployment. A reseed rebuilds
+    the database, so it rotates them -- which is honest, and is why the seed
+    prints them where it prints the fixture logins.
+
+    The fixture's four keep their `.env`-driven passwords, because every test,
+    screenshot and smoke run signs in as one of them.
+    """
+    people = profile.staff() if not _has_fixture(raw) else []
+    if not people:
+        users = [build_user(*person) for person in STAFF]
+        db.add_all(users)
+        db.commit()
+        return users
+
+    users, minted = [], []
+    for person in people:
+        password = secrets.token_urlsafe(12)
+        users.append(User(
+            name=person["name"], email=person["email"], role=person["role"],
+            password_hash=_hash(password),
+            avatar_initials=initials(person["name"]),
+            active=True, daily_cap=6 if person["role"] == "manager" else 8,
+        ))
+        minted.append((person, password))
     db.add_all(users)
     db.commit()
+    print(f"  {len(users)} staff account(s) from {settings.dealership_config.name}:")
+    for person, password in minted:
+        print(f"    {person['role']:8} {person['email']}  /  {password}")
+    print("  Shown once -- only the hash is stored. Change one with `make set-password`.")
     return users
 
 
@@ -826,7 +866,7 @@ def seed(db: Session | None = None) -> None:
         _unplace_inbound(db)
         _clear(db)
         _seed_dealership(db, raw)
-        users = _seed_users(db)
+        users = _seed_users(db, raw)
         if _has_fixture(raw):
             vehicles = _seed_vehicles(db)
             _seed_csv_inventory(db)

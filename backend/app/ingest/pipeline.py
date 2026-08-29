@@ -20,6 +20,7 @@ import httpx
 from selectolax.parser import HTMLParser
 from sqlalchemy.orm import Session
 
+from app import profile
 from app.config import settings
 from app.db import utcnow
 from app.ingest import snapshot
@@ -214,6 +215,12 @@ def run_ingest(db: Session, base_url: str) -> IngestRun:
             first = client.get(base_url, timeout=20)
             adapter = list_adapter_for(first.text, base_url)
             if adapter is not None:
+                # Which of the stores on this page is ours, read now rather
+                # than at import: the dealership is a per-deployment choice
+                # and the profile is read per call, so an adapter narrowed
+                # when the process started is narrowed to whoever it started
+                # as.
+                adapter = adapter.for_dealer(profile.inventory()["dealer_id"])
                 listings, errors, method = crawl_list(client, adapter, base_url, first.text)
             else:
                 urls = discover(client, base_url)

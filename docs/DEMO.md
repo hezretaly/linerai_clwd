@@ -74,16 +74,31 @@ and is deliberately *not* inherited.
 Copy `.env.example` to `.env` and set these. Anything not listed keeps its
 default.
 
-### Always
+### Always — and this is the line people miss
 
 ```dotenv
 DEALERSHIP=craigandlandreth
 ```
 
-This picks the profile, and it has to be in `.env` rather than only prefixed
-onto the seed command: the running server reads it too — it is how
-`/api/showroom` knows whose colour to serve and which folder the crawl writes
-into.
+**It must be in `.env`, not just prefixed onto the seed command, and the
+backend must be restarted after you add it.** There are two halves and they
+refresh differently:
+
+| What | Comes from | Refreshed by |
+|---|---|---|
+| Name, address, hours, staff | rows | `make reset-db` |
+| Brand, storefront copy, crawl source | the profile **file** | a restart (the *choice* of file is read once at startup) |
+
+Reseed without restarting and the dashboard says Craig and Landreth over a
+storefront still wearing Riverside's blue. Restart without reseeding and it is
+the same thing backwards. Both look like a broken page and neither is.
+
+The boot log names the profile it loaded and **warns loudly if the two
+disagree** — check `.logs/backend.log`:
+
+```
+INFO  liner: dealership: Craig and Landreth Cars (profile craigandlandreth.yaml)
+```
 
 ### The assistant, unscripted
 
@@ -97,17 +112,19 @@ real appointments and obeys the same guards — but the wording is canned, and
 the chat says so in a banner the prospect will read. **Set them.** This is the
 one thing a dealer is actually judging.
 
-### Their inventory
+### Their inventory — nothing to set
 
-```dotenv
-SCRAPER_BASE_URL=https://www.craigsbestcars.com/newandusedcars
-SCRAPER_DEALER_ID=1123
-```
+Their listing URL and their store id are **in the profile**, not here. They are
+facts about the dealership, and as environment variables they were a trap:
+switch `DEALERSHIP=` to a second prospect, forget to change `SCRAPER_BASE_URL`,
+and you crawl the first dealer's site into the second one's instance —
+silently, because a successful crawl of the wrong site looks exactly like a
+successful crawl of the right one.
 
-`SCRAPER_DEALER_ID` is not optional for them. Their listing page mixes three
-stores — Louisville (1123), Clarksville IN (1129) and Bullitt County (3833) —
-and this app holds exactly one dealership. Without it Liner offers a buyer a
-car two hours from the showroom it says it is standing in.
+`SCRAPER_BASE_URL` and `SCRAPER_DEALER_ID` are still read as the fallback, for
+the local fixture site and for deployments written before this. Where the
+profile says something, the profile wins, and the import screen prints which
+it used before you press the button.
 
 Optional:
 
@@ -222,13 +239,24 @@ Toyota Sienna from Cedar Falls, Iowa in front of a Louisville buyer.
 
 ---
 
-## Step 3b — Give their people accounts
+## Step 3b — Their people
 
-The seeded staff (`dana.mercer@`, `marcus.vale@`) are fixture names. A real
-person at the dealership gets a real account **without a reseed**:
+Austin is **in the profile**, so `make reset-db` creates him and prints a
+generated password once:
+
+```yaml
+staff:
+  - { name: Austin, email: austin@craigandlandrethcars.com, role: manager }
+```
+
+A prospect's instance no longer ships with Dana Mercer and Marcus Vale on the
+roster — a real manager reading four names they have never heard of is the
+same failure as being greeted as Riverside Auto.
+
+To add somebody **without** a reseed:
 
 ```bash
-make add-user EMAIL=austin@theirdomain.com NAME="Austin ..." ROLE=manager
+make add-user EMAIL=someone@theirdomain.com NAME="Their Name" ROLE=rep
 ```
 
 `manager` sees every lead, the team page, the assistant settings and can
