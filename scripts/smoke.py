@@ -2929,6 +2929,38 @@ def main() -> int:
             if path.is_dir():
                 shutil.rmtree(path)
 
+    # Where a car's picture comes from, in order. The dealer's own URL is the
+    # default and stays the default: their CDN is faster and closer than this
+    # box, costs nothing, and stays current when they swap a photo -- a
+    # downloaded copy quietly goes stale. A stored copy wins only where one
+    # exists, which is only when somebody turned SCRAPER_SAVE_PHOTOS on.
+    from app.ingest.pipeline import _photo_for
+
+    check("photos are hotlinked from the dealer by default, not copied",
+          _photo_for({"vin": "1FTFW1RG2SFC60236",
+                      "photo_url": "https://imagescdn.example.invalid/a.jpg"})
+          == "https://imagescdn.example.invalid/a.jpg")
+    check("and downloading is off unless a deployment asks for it",
+          cfg.__class__().scraper_save_photos is False)
+
+    was = cfg.dealership
+    try:
+        cfg.dealership = f"photos-{stamp}"
+        kept = snap.folder() / "photos"
+        kept.mkdir(parents=True, exist_ok=True)
+        (kept / "1FTFW1RG2SFC60236.jpg").write_bytes(b"\xff\xd8\xff")
+        # If a copy is downloaded and the rows still point at the internet,
+        # the setting downloaded 481 files for nothing.
+        check("but a stored copy is actually the one served",
+              _photo_for({"vin": "1FTFW1RG2SFC60236",
+                          "photo_url": "https://imagescdn.example.invalid/a.jpg"})
+              == "/api/photos/1FTFW1RG2SFC60236")
+    finally:
+        cfg.dealership = was
+        stale = cfg.inventory_dir / f"photos-{stamp}"
+        if stale.is_dir():
+            shutil.rmtree(stale)
+
     # A car with no stored photo still renders: a lot imported from a CSV has
     # no photos at all and its rows have to draw something.
     drawn = status_of("GET", "/api/photos/NOSUCHVIN00000000")

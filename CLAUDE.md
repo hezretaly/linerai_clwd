@@ -999,11 +999,20 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   so a field the adapter never read leaves no trace once a run is published.
   Per dealership because two prospects' cars in one folder is one prospect's
   inventory turning up in the other's demo.
-  - **Photos are downloaded only with `SCRAPER_SAVE_PHOTOS`,** because it is a
-    request per car. What it buys is a demo that survives their CDN: a
-    hotlinked image 404s the moment a car sells, on the screen somebody is
-    watching. `/api/photos/{vin}` serves the stored file when there is one and
-    falls back to the drawn placeholder, which a CSV-imported lot still needs.
+  - **A car's picture comes from the dealer's own URL, and downloading it is
+    the exception.** Their CDN is faster than this box and closer to the
+    viewer, it costs no requests and no disk, and it stays current: a dealer
+    who swaps a photo has swapped ours. `SCRAPER_SAVE_PHOTOS` is off, because
+    a copy is a request per car, and what it buys is narrow — a demo that
+    survives a venue's wifi or an image host that turns out to refuse
+    off-site referrers. `_photo_for` in `ingest/pipeline.py` is the order:
+    stored copy where one exists, the dealer's URL otherwise, the drawn
+    placeholder last, which a CSV-imported lot still needs.
+    - **The setting has to actually change what is served.** `publish()` kept
+      the remote URL unconditionally and every surface renders `photo_url`,
+      so turning it on downloaded 481 files that nothing ever read — a
+      feature that costs a crawl and delivers nothing, which is worse than
+      not having it. `make smoke` pins all three branches.
   - **One photo per car** — the one on the listing card, which is the only one
     a list crawl sees. The rest live on each detail page: 481 extra fetches
     and ~19,000 images, for pictures nothing in this product displays.

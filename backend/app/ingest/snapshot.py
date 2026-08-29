@@ -14,10 +14,13 @@ Three things it buys:
   adapter extracted and the URL each row came from, so "why is body_style
   empty" is answered by looking rather than by re-running a crawl against
   somebody else's server.
-* **A demo that survives their CDN.** Photos are otherwise hotlinked from the
-  dealer's image host. That works right up until a car sells and the URL
-  404s, or the host refuses an off-site referrer — mid-demo, on the screen
-  they are watching. Downloaded once, they are ours to serve.
+* **A demo that survives their CDN.** Photos are hotlinked from the dealer's
+  image host by default, and that is the right default: it is faster, closer
+  to the viewer, free, and it stays current when they swap a picture. What a
+  copy insures against is narrow — a venue with bad wifi, a URL that 404s
+  once a car sells, an image host that turns out to refuse an off-site
+  referrer. None of those can be checked from here, which is exactly why the
+  copy is opt-in rather than the default.
 * **A way in for a machine that cannot reach the site.** The snapshot is a
   complete inventory in a file, so a crawl run where the site is reachable can
   be replayed anywhere.

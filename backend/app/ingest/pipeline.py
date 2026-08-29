@@ -270,6 +270,31 @@ def run_ingest(db: Session, base_url: str) -> IngestRun:
     return run
 
 
+def _photo_for(payload: dict) -> str:
+    """Where a car's picture comes from, in the order that is usually right.
+
+    **The dealer's own URL by default, and that is deliberate rather than
+    lazy.** Their CDN is faster than this box and closer to the viewer, it
+    costs no requests and no disk, and it stays current: a dealer who swaps a
+    photo has swapped ours too, where a downloaded copy quietly goes stale.
+
+    A stored copy wins only where one exists, which means only when somebody
+    turned SCRAPER_SAVE_PHOTOS on. That is demo insurance -- a venue with bad
+    wifi, or an image host that turns out to refuse off-site referrers -- and
+    it has to actually take effect, or the setting is a lie: it downloaded 481
+    files and every row still pointed at the internet.
+
+    The drawn placeholder is last, and stays: a CSV-imported lot has no photos
+    at all and its rows still have to render.
+    """
+    from app.ingest import snapshot
+
+    vin = payload.get("vin") or ""
+    if vin and snapshot.photo_path(vin) is not None:
+        return f"/api/photos/{vin.upper()}"
+    return payload.get("photo_url") or f"/api/photos/{vin}.svg"
+
+
 def publish(db: Session, run: IngestRun) -> dict:
     if run.status != "ready":
         raise IngestError(f"Run is {run.status}; only a reviewed 'ready' run can be published.")
@@ -285,7 +310,7 @@ def publish(db: Session, run: IngestRun) -> dict:
             trim=payload.get("trim") or "", price=payload.get("price"),
             mileage=payload.get("mileage"), body_style=payload.get("body_style") or "",
             seats=payload.get("seats"),
-            photo_url=payload.get("photo_url") or f"/api/photos/{payload['vin']}.svg",
+            photo_url=_photo_for(payload),
             listing_url=payload.get("listing_url") or "",
             status="available", source="scrape", ingest_run_id=run.id,
             features_json=json.dumps(payload.get("features") or []),
