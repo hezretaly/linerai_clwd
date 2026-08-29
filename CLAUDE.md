@@ -1219,6 +1219,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   confirmation twice and every follow-up once — a dealership that appears to
   have mailed you twice. A mirror and its row fold into one entry keyed on the
   outreach id. `make smoke` asserts the count.
+- **A disabled button is a tab that is always empty.** The rail carried a
+  "Liner is answering" card from the mockups, and all three of its parts were
+  claims rather than facts: a green pulsing dot asserting a health check
+  nothing performs, an open-conversation count the Conversations nav badge
+  already showed, and a **Pause Liner** button permanently disabled because
+  pausing is per conversation and there is no dealership-wide switch. Saying
+  so in a tooltip is better than a button that lies, and better still is not
+  drawing a control for a thing that does not exist. Removed rather than
+  reworded.
 - **The channel strip is counted, never declared.** It offers what the buyer
   actually used. There is no SMS provider in this system, so there is no SMS
   tab sitting permanently at zero — a tab that is always empty claims a

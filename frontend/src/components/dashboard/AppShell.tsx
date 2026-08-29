@@ -8,7 +8,7 @@ import { useDealerEvents } from '../../lib/ws'
 import { hoursLabel, initials } from '../../lib/format'
 import { foreignZoneLabel, useNow, zonedStamp } from '../../lib/clock'
 import type { IntegrationsPayload, Overview, User } from '../../lib/types'
-import { Button, Unavailable } from '../ui'
+import { Button } from '../ui'
 import { Icon, type IconName } from '../Icon'
 import { usePublicDemo } from '../../routes/RequireAuth'
 
@@ -201,7 +201,6 @@ export function AppShell() {
           ))}
         </nav>
 
-        <LinerStatus collapsed={!open} />
         <AccountFooter dealership={hoursLabel(overview?.dealership)} collapsed={!open} />
       </aside>
 
@@ -209,55 +208,6 @@ export function AppShell() {
         <TopBar onOpenNav={() => setNavOpen(true)} />
         <IntegrationBanner />
         <Outlet />
-      </div>
-    </div>
-  )
-}
-
-/**
- * The mockups put a "Liner is answering / Pause Liner" card at the foot of the
- * rail. Pausing is per conversation in this system -- `conversations.agent_paused`,
- * set when a rep takes over -- and there is no dealership-wide kill switch
- * behind it, so the button says so instead of pretending to throw one.
- */
-function LinerStatus({ collapsed }: { collapsed: boolean }) {
-  const { data } = useQuery({
-    queryKey: ['overview'],
-    queryFn: () => api.get<Overview>('/api/overview'),
-  })
-  const open = data?.badges.conversations ?? 0
-
-  if (collapsed) {
-    // At strip width the card has nowhere to go, but the fact it carries --
-    // Liner is answering -- is worth one dot.
-    return (
-      <div className="hidden justify-center border-t border-border py-3 lg:flex">
-        <span className="relative flex h-2.5 w-2.5" title={`Liner is answering -- ${open} open`}>
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
-        </span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="border-t border-border p-3">
-      <div className="rounded-md border border-border bg-background p-3">
-        <div className="mb-1 flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-          </span>
-          <span className="text-sm font-medium">Liner is answering</span>
-        </div>
-        <p className="tnum text-xs text-muted-foreground">
-          {open} open conversation{open === 1 ? '' : 's'}
-        </p>
-        <Unavailable
-          className="mt-2.5 w-full"
-          label="Pause Liner"
-          why="Pausing is per conversation -- take one over from its thread. There is no dealership-wide switch."
-        />
       </div>
     </div>
   )
