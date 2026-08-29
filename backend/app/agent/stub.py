@@ -20,7 +20,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.agent import tools
+from app.agent import phrasing, tools
 from app.models import Conversation, Rail
 
 # Anchored on word characters at both ends so sentence punctuation ("...my
@@ -272,31 +272,13 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         # The buyer reads this list top to bottom, so "the first one" has to
         # mean the first row here -- record the order they actually saw.
         convo.last_results_json = json.dumps([v["vin"] for v in shown])
-        lines = [
-            f"{v['year']} {v['make']} {v['model']} {v['trim']}".strip()
-            + f" -- {_money(v['price'])}, {v['mileage']:,} miles"
-            for v in shown
-        ]
-
-        count = {2: "two", 3: "three"}.get(len(shown), str(len(shown)))
-        cheapest = min(shown, key=lambda v: v["price"] or 10**9)
-        fewest = min(shown, key=lambda v: v["mileage"] or 10**9)
-        if len(shown) == 1:
-            top, reason = shown[0], "the only one that fits right now"
-        elif cheapest["vin"] == fewest["vin"]:
-            top, reason = cheapest, f"the cheapest of the {count} and the lowest mileage"
-        else:
-            top, reason = fewest, f"the lowest mileage of the {count}"
-
         convo.stage = "browsing"
         convo.focus_vehicle_id = None
         db.commit()
-        body = "Here's what fits:\n" + "\n".join(lines)
-        return (
-            f"{body}\n\nI'd start with the {top['make']} {top['model']} -- it's {reason}. "
-            "Want the details on that one?",
-            calls,
-        )
+        # One phrasing, shared with the chips that answer themselves. Two
+        # versions of "here are three cars" is how one channel starts quoting
+        # a price the other rounds.
+        return phrasing.describe_results(shown), calls
 
     # ---- vehicle_focus: pull one real record ----------------------------
     if next_stage == "vehicle_focus":

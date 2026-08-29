@@ -2772,6 +2772,69 @@ def main() -> int:
     else:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
+    print("\n== chips that answer themselves ==")
+    # A rail is a button the dealership put on screen and its meaning is
+    # fixed: "What's under $20k?" can only mean one search. Sending that to a
+    # model asks it to re-derive an intent somebody already decided, and pays
+    # a round trip in front of a buyer for the privilege.
+    from app.agent import rail_actions as _actions
+
+    chip_convo = call("POST", "/api/chat/sessions")
+    chip_id = chip_convo["conversation_id"]
+    opening = chip_convo["rails"]
+    check("the opening chips are the dealership's own", len(opening) >= 3,
+          str([r["label"] for r in opening]))
+
+    reply, state, events = say(chip_id, rail_id=pick(opening, "under $20k"))
+    said = (reply or {}).get("content", "")
+    shown = [
+        v for _e, d in events if _e == "vehicles" for v in (d.get("vehicles") or [])
+    ]
+    check("pressing one answers from the tool, not from a model",
+          "under $20,000" in said, said.splitlines()[0] if said else "(nothing)")
+    check("and it puts cars on the screen", len(shown) > 0, f"{len(shown)} card(s)")
+    over = [v for v in shown if (v.get("price") or 0) >= 20000]
+    check("every car it names really is under that price", not over,
+          str([v.get("price") for v in over]))
+
+    # A price from an earlier turn is deliberately not sourced -- prices are
+    # re-read every turn because they can change -- so a relative chip must
+    # not speak its bound. Written with the number in, the guard rejected the
+    # whole reply and the buyer read the escalation line instead of three
+    # cars. Measured; this is the check that caught it.
+    cheaper_chip = pick(state["rails"], "cheaper")
+    check("a chip relative to what is on screen is offered once something is",
+          bool(cheaper_chip), str([r["label"] for r in state["rails"]]))
+    if cheaper_chip:
+        reply2, _state2, _events2 = say(chip_id, rail_id=cheaper_chip)
+        answer = (reply2 or {}).get("content", "")
+        # Two honest outcomes: cheaper cars, or "those are the cheapest".
+        # The failure being watched for is the third one -- the guard's
+        # escalation line, which is what a bound quoted from a previous turn
+        # produced, and which reads to a buyer like a dead bot.
+        check("and it answers rather than tripping the price guard",
+              "person on our team" not in answer.lower()
+              and "confirm that before I answer" not in answer,
+              answer[:60])
+        check("without quoting a bound it was not just handed",
+              not re.search(r"under \$[\d,]+", answer) or "cheaper:" in answer,
+              answer[:60])
+
+    # "Anything cheaper?" before anything has been shown is a question about
+    # nothing: there is no price to be cheaper than.
+    check("and is not offered before anything has been shown",
+          pick(opening, "cheaper") is None and pick(opening, "lower mileage") is None,
+          str([r["label"] for r in opening]))
+
+    # Free text still goes to the model. This is not a return to the scripted
+    # assistant -- what is short-circuited is only the pre-written question.
+    actions = {name for name in _actions.ACTIONS}
+    check("only chips with a fixed meaning carry one",
+          actions == {"under_price", "with_seats", "matching", "cheaper", "fewer_miles"},
+          str(sorted(actions)))
+    check("and a malformed action falls back to the model rather than raising",
+          _actions.action_of(SimpleNamespace(action_json="{not json")) == ("", {}))
+
     print("\n== the dealership is served, never written into a page ==")
     import yaml as _yaml
 

@@ -166,50 +166,66 @@ HANDOFF_RULES = [
 ]
 
 # Rails: (kind, stage, label, message_text, advances_to, sort, requires_vehicle)
+#: (kind, stage, label, message_text, advances_to, sort_order, requires_vehicle,
+#:  action)
+#:
+#: `action` is what makes a chip answer itself: the tool runs, the sentence is
+#: built from its result, and no model turn happens. It is only ever set where
+#: the chip's meaning is fixed by whoever wrote it -- "What's under $20k?" can
+#: only mean one search. A chip with no action is read by the model like any
+#: other buyer message, which is every chip that asks something open.
 RAILS = [
-    ("opener", "opening", "What's under $20k?", "What do you have under $20,000?", "browsing", 1, False),
+    ("opener", "opening", "What's under $20k?", "What do you have under $20,000?",
+     "browsing", 1, False, {"do": "under_price", "args": {"max_price": 20000}}),
     ("opener", "opening", "Anything with a third row?",
-     "I need something with a third row for the kids.", "browsing", 2, False),
+     "I need something with a third row for the kids.", "browsing", 2, False,
+     {"do": "with_seats", "args": {"min_seats": 7}}),
     ("opener", "opening", "Something reliable for commuting",
-     "I'm after something reliable for a daily commute.", "browsing", 3, False),
+     "I'm after something reliable for a daily commute.", "browsing", 3, False,
+     {"do": "matching", "args": {"keywords": "commuter reliable fuel efficient",
+                                 "lead_in": "Here's what I'd put you in for a daily commute:"}}),
 
+    # No action: "the first one" is a reference into the conversation, and
+    # resolving a reference is the model's job rather than a fixed search.
     ("followup", "browsing", "Tell me about the first one",
-     "Tell me more about the first one.", "vehicle_focus", 1, False),
+     "Tell me more about the first one.", "vehicle_focus", 1, False, None),
     ("followup", "browsing", "Anything cheaper?",
-     "Do you have anything cheaper than those?", "browsing", 2, False),
+     "Do you have anything cheaper than those?", "browsing", 2, False,
+     {"do": "cheaper", "args": {}}),
     ("followup", "browsing", "Lower mileage options?",
-     "Do you have anything with lower mileage?", "browsing", 3, False),
+     "Do you have anything with lower mileage?", "browsing", 3, False,
+     {"do": "fewer_miles", "args": {}}),
 
     ("followup", "vehicle_focus", "Can I see it this week?",
-     "Can I come see it this week?", "slot_offered", 1, True),
+     "Can I come see it this week?", "slot_offered", 1, True, None),
     ("followup", "vehicle_focus", "Is the price negotiable?",
-     "Is the price negotiable on that one?", "objection", 2, True),
+     "Is the price negotiable on that one?", "objection", 2, True, None),
     ("followup", "vehicle_focus", "How many miles on it?",
-     "How many miles does it have?", "vehicle_focus", 3, True),
+     "How many miles does it have?", "vehicle_focus", 3, True, None),
 
     ("followup", "objection", "That works for me",
-     "Okay, that works for me.", "qualifying", 1, False),
+     "Okay, that works for me.", "qualifying", 1, False, None),
     ("followup", "objection", "I'd have a trade-in",
-     "I'd want to trade in my current car.", "qualifying", 2, False),
+     "I'd want to trade in my current car.", "qualifying", 2, False, None),
 
     ("followup", "qualifying", "Looking to buy in a couple weeks",
-     "I'm hoping to buy in the next couple of weeks.", "slot_offered", 1, False),
+     "I'm hoping to buy in the next couple of weeks.", "slot_offered", 1, False, None),
     ("followup", "qualifying", "I'd be financing",
-     "I'd be financing rather than paying cash.", "qualifying", 2, False),
+     "I'd be financing rather than paying cash.", "qualifying", 2, False, None),
 
     ("followup", "slot_offered", "Saturday morning works",
-     "Saturday morning works for me.", "contact_capture", 1, False),
+     "Saturday morning works for me.", "contact_capture", 1, False, None),
     ("followup", "slot_offered", "Anything later in the day?",
-     "Do you have anything later in the day?", "slot_offered", 2, False),
+     "Do you have anything later in the day?", "slot_offered", 2, False, None),
 
     ("followup", "contact_capture", "Send it to my email",
-     "I'm Jordan Reyes, and my email is jordan.reyes@example.com.", "booked", 1, False),
+     "I'm Jordan Reyes, and my email is jordan.reyes@example.com.", "booked", 1, False, None),
 
     ("followup", "booked", "What should I bring?",
-     "What should I bring with me?", "booked", 1, False),
+     "What should I bring with me?", "booked", 1, False, None),
 
-    ("knowledge", "", "What's your doc fee?", "What's your doc fee?", "", 1, False),
-    ("knowledge", "", "Do you take trade-ins?", "Do you take trade-ins?", "", 2, False),
+    ("knowledge", "", "What's your doc fee?", "What's your doc fee?", "", 1, False, None),
+    ("knowledge", "", "Do you take trade-ins?", "Do you take trade-ins?", "", 2, False, None),
 ]
 
 
@@ -608,7 +624,7 @@ def _seed_rails(db: Session) -> None:
     """
     knowledge = {k.topic: k for k in db.query(KnowledgeEntry).all()}
     topic_for = {"What's your doc fee?": "Doc fee", "Do you take trade-ins?": "Trade-ins"}
-    for kind, stage, label, text, advances, order, needs_vehicle in RAILS:
+    for kind, stage, label, text, advances, order, needs_vehicle, action in RAILS:
         topic = topic_for.get(label, "")
         entry = knowledge.get(topic)
         if topic and entry is None:
@@ -617,6 +633,7 @@ def _seed_rails(db: Session) -> None:
             kind=kind, stage=stage, label=label, message_text=text,
             advances_to=advances, sort_order=order, requires_vehicle=needs_vehicle,
             knowledge_entry_id=entry.id if entry else None, enabled=True,
+            action_json=json.dumps(action) if action else "",
         ))
     db.commit()
 

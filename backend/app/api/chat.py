@@ -147,7 +147,10 @@ async def send_message(
         rail = db.query(Rail).filter_by(id=rail_id, enabled=True).one_or_none()
         if rail is None:
             raise HTTPException(404, "Rail not found")
-        # Tapping a chip is exactly the same as typing its text.
+        # Tapping a chip is exactly the same as typing its text -- unless the
+        # chip carries an action, in which case it is better than that: the
+        # search it means runs directly. The buyer's message is its text
+        # either way, so the transcript reads the same.
         text = rail.message_text
     if not text:
         raise HTTPException(400, "Empty message")
@@ -174,7 +177,15 @@ async def send_message(
         try:
             convo_local = session.query(Conversation).filter_by(id=convo_id).one()
             try:
-                message = await asyncio.to_thread(run_agent_turn, session, convo_local, text)
+                # Re-read in this session: the row above belongs to the
+                # request's session, and the turn runs on its own.
+                chip = (
+                    session.query(Rail).filter_by(id=rail_id).one_or_none()
+                    if rail_id else None
+                )
+                message = await asyncio.to_thread(
+                    run_agent_turn, session, convo_local, text, chip
+                )
             except NotConfigured as exc:
                 # LLM_MODE=live with no key, or a key the vendor rejected. The
                 # response has already started, so an exception here cannot

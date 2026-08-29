@@ -309,6 +309,37 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     the call while the appointment hangs off the chat — the rail told a rep
     "nothing booked yet" about a booked buyer. Anything that can span threads
     is asked across all of them.
+- **A chip whose meaning is fixed answers itself, with no model turn.**
+  "What's under $20k?" is a button the dealership put on screen and it can
+  only mean `search_inventory(max_price=20000)`. Sending that to a model asks
+  it to re-derive an intent somebody already decided, and pays a round trip in
+  front of a buyer for the privilege. `rails.action_json` names one of
+  `agent/rail_actions.py`'s handlers; the tool runs, the sentence is built
+  from its result, and the guards run on it exactly as they would on a model's
+  reply. Four rules:
+  - **Free text always goes to the model.** This is not a return to the
+    scripted assistant: a buyer who *types* "something cheap and reliable"
+    gets a model reading the sentence, which is the thing being sold. Only the
+    pre-written question is short-circuited, and a chip with no action — "Tell
+    me about the first one", which is a reference to resolve — behaves exactly
+    as it always did.
+  - **The sentence is built from the arguments the search ran with**, so the
+    two cannot disagree. A lead-in reading "under $20,000" over a `max_price`
+    of 25,000 is what writing both by hand produces.
+  - **A relative chip must not speak its bound.** "Anything cheaper?" means
+    cheaper than what is on screen, and that price came from a *previous*
+    turn — which is deliberately not sourced, because a price is re-read every
+    turn precisely because it can change. Written with the number in, the
+    guard rejected the whole reply and the buyer read the escalation line
+    instead of three cars. The lead-in says "cheaper" and every figure in it
+    is one the search just returned.
+  - **A chip that needs cars on screen is not offered before there are any.**
+    "Anything cheaper?" as an opener is a question about nothing.
+    `requires_vehicle` does not cover it: these need the *list* the buyer is
+    looking at, not the one car they have narrowed to.
+- **One phrasing for a list of cars**, in `agent/phrasing.py`, shared by the
+  stub and the chips. Two versions of "here are three cars" is how one channel
+  starts quoting a price the other rounds — the same argument as `app/recap.py`.
 - **The booking card is built from a tool result, never composed.** When
   `check_availability` runs, the buyer gets days, times and contact fields
   (`BookingCard.tsx`); the card can only offer what that tool returned, and its

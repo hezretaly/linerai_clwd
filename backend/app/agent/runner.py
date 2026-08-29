@@ -15,7 +15,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.agent import guards, stub, tools
+from app.agent import guards, rail_actions, stub, tools
 from app.config import settings
 from app.db import utcnow
 from app.events import emit
@@ -41,7 +41,19 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
         query = db.query(Rail).filter_by(kind="followup", stage=convo.stage, enabled=True)
         if not convo.focus_vehicle_id:
             query = query.filter(Rail.requires_vehicle.is_(False))
-        followups = query.order_by(Rail.sort_order.asc()).limit(3).all()
+        followups = query.order_by(Rail.sort_order.asc()).all()
+
+        # "Anything cheaper?" before anything has been shown is a question
+        # about nothing -- there is no price to be cheaper than, so the chip
+        # can only answer by saying it cannot. `requires_vehicle` does not
+        # cover it: these need a *list*, which is what the buyer is looking
+        # at, not the one car they have narrowed to.
+        if not json.loads(convo.last_results_json or "[]"):
+            followups = [
+                rail for rail in followups
+                if rail_actions.action_of(rail)[0] not in rail_actions.NEEDS_RESULTS
+            ]
+        followups = followups[:3]
 
     knowledge = (
         db.query(Rail)
@@ -85,12 +97,28 @@ def record_buyer_message(
     return message
 
 
-def run_agent_turn(db: Session, convo: Conversation, text: str) -> Message | None:
+def run_agent_turn(
+    db: Session, convo: Conversation, text: str, rail: Rail | None = None
+) -> Message | None:
     """Returns the assistant message, or None when the agent is held."""
     if convo.agent_paused:
         # Liner is holding this conversation -- it will not reply again until
         # someone takes over or hands it back.
         return None
+
+    # A chip whose meaning is fixed answers itself: the tool runs and the
+    # sentence is built from its result. No model turn, in any LLM_MODE --
+    # asking one to re-derive an intent the dealership already decided costs a
+    # round trip in front of a buyer and buys nothing. Free text always goes
+    # to the model; this is only for the questions somebody pre-wrote.
+    #
+    # The guards below still run on it. A templated reply is sourced by
+    # construction, so it passes -- and running them is what would catch a
+    # template that stopped being.
+    fixed = rail_actions.run(db, convo, rail) if rail is not None else None
+    if fixed is not None:
+        reply, calls = fixed
+        return record_assistant_message(db, convo, _guarded(db, convo, reply, calls, text), calls)
 
     if settings.llm_mode == "live":
         from app.agent import loop
@@ -98,33 +126,43 @@ def run_agent_turn(db: Session, convo: Conversation, text: str) -> Message | Non
         reply, calls = loop.run_turn(db, convo, text)
     else:
         reply, calls = stub.run_turn(db, convo, text)
-
-        # Guards run in every mode. If a stubbed turn can slip an unsourced
-        # price through, that is a hole in the guard and it should fail here
-        # rather than in front of a prospect.
-        assistant_turns = (
-            db.query(Message).filter_by(conversation_id=convo.id, role="assistant").count()
-        )
-        verdict = guards.run_guards(
-            reply,
-            [c["result"] for c in calls],
-            channel=convo.channel,
-            attempt=2,  # the stub has no retry: it is deterministic
-            assistant_turns=assistant_turns,
-            booked=convo.stage == "booked",
-            tool_inputs=[c["input"] for c in calls if isinstance(c.get("input"), dict)],
-            buyer_text=text,
-            makes=tools.known_makes(db),
-            prior_results=tools.earlier_results(db, convo),
-        )
-        if not verdict.ok:
-            log.error(
-                "stub turn failed guards on conversation %s: %s -- this is a guard or "
-                "template bug, not a model problem", convo.id, verdict.violations,
-            )
-            reply = verdict.text
+        reply = _guarded(db, convo, reply, calls, text)
 
     return record_assistant_message(db, convo, reply, calls)
+
+
+def _guarded(
+    db: Session, convo: Conversation, reply: str, calls: list[dict], text: str
+) -> str:
+    """The guards, for a reply this system composed rather than a model.
+
+    They run in every mode and on every composed path. If something we wrote
+    ourselves can slip an unsourced price through, that is a hole in the guard
+    and it should fail here rather than in front of a prospect -- so a failure
+    is logged as *our* bug, not the model's.
+    """
+    assistant_turns = (
+        db.query(Message).filter_by(conversation_id=convo.id, role="assistant").count()
+    )
+    verdict = guards.run_guards(
+        reply,
+        [c["result"] for c in calls],
+        channel=convo.channel,
+        attempt=2,  # nothing composed here retries: it is deterministic
+        assistant_turns=assistant_turns,
+        booked=convo.stage == "booked",
+        tool_inputs=[c["input"] for c in calls if isinstance(c.get("input"), dict)],
+        buyer_text=text,
+        makes=tools.known_makes(db),
+        prior_results=tools.earlier_results(db, convo),
+    )
+    if verdict.ok:
+        return reply
+    log.error(
+        "composed turn failed guards on conversation %s: %s -- this is a guard or "
+        "template bug, not a model problem", convo.id, verdict.violations,
+    )
+    return verdict.text
 
 
 def _summarise(reply: str) -> str:

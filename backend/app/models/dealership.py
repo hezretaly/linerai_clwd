@@ -109,3 +109,15 @@ class Rail(Base):
     advances_to: Mapped[str] = mapped_column(String(30), default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: `{"do": "under_price", "args": {"max_price": 20000}}`, or empty.
+    #:
+    #: A chip's meaning is fixed by whoever put it on screen, so the ones that
+    #: are just a search answer themselves -- the tool runs, the sentence is
+    #: built from its result, and no model turn happens. See
+    #: `agent/rail_actions.py`. Empty means the model reads the chip's text
+    #: like any other buyer message, which is what every chip did before.
+    #:
+    #: Deliberately not four columns. `do` and `args` vary per action and a
+    #: column per argument would be a schema change every time somebody adds a
+    #: chip, in a codebase with no migrations.
+    action_json: Mapped[str] = mapped_column(Text, default="")
