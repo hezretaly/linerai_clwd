@@ -120,20 +120,50 @@ def crawl_list(
     The first page is handed in because `run_ingest` has already fetched it to
     decide which adapter applies -- fetching it twice would be a wasted
     request against somebody else's server on every single import.
+
+    **A page that yields no new VIN ends the crawl.** Pagination is a request
+    the *site* has to honour, and a site that does not simply hands back page
+    one again: an unknown `pagesize`, a filter that resets, a session that
+    expired, a proxy serving a cached copy. Nothing about that response says
+    it is a repeat -- it is HTTP 200 with a page full of cars -- so without
+    this the crawl reads page one twenty-one times, reports "481 vehicles
+    found", and hands the diff forty-two copies of two cars. Measured: exactly
+    that, against a server that ignores query strings.
+
+    Stopping on *no new VINs* rather than on identical bytes, because a real
+    site can differ by a timestamp or an ad slot and still be the same page.
     """
     listings: list[Listing] = []
     errors: list[dict] = []
+    seen: set[str] = set()
     delay = 1.0 / max(settings.scraper_rate_limit, 0.1)
     html, url, page = first_page, base_url, 1
 
     while page <= settings.scraper_max_pages:
+        fresh = 0
         for listing in adapter.parse_list(html, url):
             if listing.errors:
                 errors.append({"url": listing.listing_url or url,
                                "error": "; ".join(listing.errors),
                                "method": adapter.name})
                 continue
+            # Deduplicated by VIN, which is the identity a vehicle actually
+            # has. A car legitimately appearing on two pages -- a "featured"
+            # strip above the results is common -- should be one row, not two.
+            if listing.vin and listing.vin in seen:
+                continue
+            if listing.vin:
+                seen.add(listing.vin)
             listings.append(listing)
+            fresh += 1
+
+        if page > 1 and fresh == 0:
+            errors.append({
+                "url": url,
+                "error": "this page repeated the previous one -- pagination is not advancing",
+                "method": adapter.name,
+            })
+            break
 
         page += 1
         following = adapter.page_url(base_url, page, html)

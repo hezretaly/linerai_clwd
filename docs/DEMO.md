@@ -279,7 +279,25 @@ it on your laptop or the demo server.
 make dev
 ```
 
-Then, signed in at `/app/inventory/import`, press **Import from website**. It:
+**Run it from the terminal the first time** — the web button gives you a
+spinner and one line of error, which is useless when it fails:
+
+```bash
+make ingest                        # crawl, report everything, write nothing
+make ingest ARGS=--publish         # ... and apply it when the numbers look right
+make ingest ARGS="--pages 2 --save-html"    # short run, keep the pages to read
+```
+
+It narrates every stage — robots.txt, the HTTP status and body, which adapter
+matched, per-field fill rates, the diff — and every failure names what to do
+next. Without `--publish` nothing is written to the database at all, so it is
+safe to run on a live box.
+
+It also **refuses to publish a crawl that would empty the lot**: a car the
+crawl did not see looks identical to a car that sold, so a run cut short by
+`--pages` or by errors would take the rest off sale.
+
+The web button at `/app/inventory/import` runs the identical pipeline. It:
 
 1. checks `robots.txt` for our user agent, and stops if it says no;
 2. recognises Dealer Car Search and reads the *list* pages — five pages of 100

@@ -1,4 +1,4 @@
-.PHONY: help install build set-password agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
+.PHONY: help install build set-password add-user ingest agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -102,6 +102,9 @@ e2e: ## Book through two browser windows and assert the dashboard reacts
 fixture-site: ## Serve the scraper fixture dealer site on :8100
 	$(PY) backend/fixtures/build_site.py
 	cd backend/fixtures/sites/riverside && ../../../../$(PY) -m http.server $(FIXTURE_PORT)
+
+ingest: ## Crawl the dealership's own site, every step narrated. ARGS=--publish to apply.
+	$(PY) scripts/ingest.py $(ARGS)
 
 capture: ## Fetch a dealer site's listings and report what can be read: URL=https://...
 	@test -n "$(URL)" || (echo "Usage: make capture URL=https://a-dealer-site/inventory [PAGES=8]"; exit 1)

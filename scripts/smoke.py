@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from types import SimpleNamespace
 from urllib.parse import quote
 from hashlib import sha256
 from http.cookiejar import CookieJar
@@ -3086,6 +3087,42 @@ def main() -> int:
         other = riverside[-1].read_text()
         check("and it does not claim a site that is not its platform",
               list_adapter_for(other, "http://x/") is None)
+
+    # Pagination is a request the site has to honour, and a site that does not
+    # hands back page one again: an unknown pagesize, a filter that resets, a
+    # proxy serving a cache. Nothing in that response says it is a repeat -- it
+    # is HTTP 200 full of cars -- so the crawl read page one twenty-one times,
+    # reported 481 vehicles, and handed the diff forty-two copies of two cars.
+    # Measured against a server that ignores query strings, not reasoned.
+    from app.ingest.pipeline import crawl_list as _crawl
+
+    class _Stuck:
+        """A site whose pager always answers with the same page."""
+
+        def __init__(self, body):
+            self.body = body
+            self.calls = 0
+
+        def get(self, url, timeout=0):
+            self.calls += 1
+            return SimpleNamespace(text=self.body, status_code=200)
+
+    stuck = _Stuck(dcs_html)
+    was_rate = cfg.scraper_rate_limit
+    try:
+        cfg.scraper_rate_limit = 1000.0  # do not sleep through the check
+        found, problems, _method = _crawl(
+            stuck, DealerCarSearch("1123"), "https://example.invalid/n", dcs_html
+        )
+    finally:
+        cfg.scraper_rate_limit = was_rate
+
+    check("a pager that never advances ends the crawl instead of looping",
+          stuck.calls <= 2, f"{stuck.calls} extra page fetch(es)")
+    check("and every car comes back once, not once per repeated page",
+          len(found) == len({car.vin for car in found}), f"{len(found)} rows")
+    check("and the repeat is reported, not swallowed",
+          any("not advancing" in p["error"] for p in problems), str(problems)[:80])
 
     print("\n== what a crawl found, kept on disk ==")
     # The database is the product's answer to "what is on the lot"; this is

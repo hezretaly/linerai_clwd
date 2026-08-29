@@ -35,6 +35,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make agent-ping` | **Debugging live mode.** One real call, the vendor's error printed in full |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
+| `make ingest` | **Crawl the dealership's own site, every step narrated.** `ARGS=--publish` applies it |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
 | `make build` | Build the frontend into `frontend/dist` (the API serves it in production) |
@@ -1109,6 +1110,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   photo on every card of its search results. 481 vehicles is five list pages
   or 481 detail fetches, which is the difference between a polite crawl and
   one a dealer would be right to block.
+  - **A page that yields no new VIN ends the crawl.** Pagination is a request
+    the *site* has to honour, and one that does not simply returns page one
+    again — an unknown `pagesize`, a filter that resets, a proxy cache.
+    Nothing in that response says it is a repeat: it is HTTP 200 full of cars.
+    So the crawl read page one twenty-one times, reported "481 vehicles", and
+    handed the diff forty-two copies of two cars. Measured against a server
+    that ignores query strings, not reasoned. Stopping on *no new VINs* rather
+    than on identical bytes, because a real page differs by a timestamp and is
+    still the same page — and the repeat is recorded as an error rather than
+    swallowed, because a silently truncated crawl is the one that marks the
+    rest of the lot sold.
+  - **`make ingest` is how you run it when it goes wrong.** The web button
+    runs the identical pipeline and gives you a spinner and one line; a crawl
+    can fail at robots.txt, at DNS, at a 403, at "no adapter matched", at "the
+    adapter matched but every card was dropped", or at "it worked and the diff
+    is empty" — six failures needing six different answers. The script imports
+    `crawl_list` and `publish` rather than reimplementing them, so a crawl
+    that works here works in the product. It writes nothing without
+    `--publish`, and refuses to publish a run that would take most of the lot
+    off sale: a car the crawl did not see looks exactly like a car that sold.
   - **Written against a real capture, never a guess.** The `Adapter` docstring
     has said since the beginning that this needs a real site; the trimmed
     fixture in `ingest/fixtures/dealercarsearch_list.html` is that site, and
