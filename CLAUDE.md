@@ -309,6 +309,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     the call while the appointment hangs off the chat — the rail told a rep
     "nothing booked yet" about a booked buyer. Anything that can span threads
     is asked across all of them.
+- **A chip never puts words in the buyer's mouth.** `message_text` is sent as
+  the buyer's own message and `save_captured_fields` records what it contains
+  as `typed` — the provenance that means *the buyer said this*. One chip's
+  text was a fixture buyer's name and address, so a real person tapping "Send
+  it to my email" told Liner they were Jordan Reyes, and a rep then rang
+  Jordan Reyes. Nothing pre-writable belongs at `contact_capture`: the
+  assistant has just asked for a name and an email and a chip cannot know
+  either, so there is no chip there and the composer is the answer.
 - **A chip whose meaning is fixed answers itself, with no model turn.**
   "What's under $20k?" is a button the dealership put on screen and it can
   only mean `search_inventory(max_price=20000)`. Sending that to a model asks
@@ -1152,6 +1160,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     still the same page — and the repeat is recorded as an error rather than
     swallowed, because a silently truncated crawl is the one that marks the
     rest of the lot sold.
+  - **A permissive default is not an answer, and must not be reported as
+    one.** `robots.txt` returns "allowed" on a timeout, a 404 and a 500 alike
+    — a site that never answered has not refused. Correct as a *default*, and
+    a lie to print as "robots.txt allows this path": a crawl whose very first
+    request had already timed out showed a clean permission check and then
+    failed one step later looking like a different problem. `robots_verdict`
+    returns the reason with the verdict.
+  - **A connection failure is taken apart before it is reported.** DNS, TCP
+    and TLS are three different problems with three different answers, and
+    `ConnectTimeout` is one word for all of them — plus a proxy on the machine,
+    which looks exactly like the site refusing. `make ingest` resolves the
+    name, opens the socket and completes the handshake separately, prints what
+    each did, and offers only the fix for the layer that actually failed.
+    Timed out is not refused: refused is a machine saying no, timed out is
+    nobody answering.
   - **`make ingest` is how you run it when it goes wrong.** The web button
     runs the identical pipeline and gives you a spinner and one line; a crawl
     can fail at robots.txt, at DNS, at a 403, at "no adapter matched", at "the

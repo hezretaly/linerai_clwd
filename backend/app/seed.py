@@ -218,8 +218,16 @@ RAILS = [
     ("followup", "slot_offered", "Anything later in the day?",
      "Do you have anything later in the day?", "slot_offered", 2, False, None),
 
-    ("followup", "contact_capture", "Send it to my email",
-     "I'm Jordan Reyes, and my email is jordan.reyes@example.com.", "booked", 1, False, None),
+    # No chip at contact_capture, deliberately. There was one -- "Send it to my
+    # email" -- and its message_text was a fixture buyer's name and address:
+    # "I'm Jordan Reyes, and my email is jordan.reyes@example.com." A real
+    # buyer tapping it told Liner they were somebody else, and
+    # `save_captured_fields` recorded that as `typed`, which is the provenance
+    # meaning *the buyer said this*. A rep then rings Jordan Reyes.
+    #
+    # Nothing pre-writable belongs here: the assistant has just asked for a
+    # name and an email, and a chip cannot know either. The composer is the
+    # answer, and the booking card asks for the same fields properly.
 
     ("followup", "booked", "What should I bring?",
      "What should I bring with me?", "booked", 1, False, None),

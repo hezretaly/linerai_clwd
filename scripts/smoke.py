@@ -22,6 +22,8 @@ import time
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
+
+import httpx
 from urllib.parse import quote
 from hashlib import sha256
 from http.cookiejar import CookieJar
@@ -2772,6 +2774,27 @@ def main() -> int:
     else:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
+    # A chip's message_text is sent as the buyer's own words, and
+    # `save_captured_fields` records what it contains as `typed` -- the
+    # provenance that means *the buyer said this*. One chip carried a fixture
+    # buyer's name and address, so a real person tapping it told Liner they
+    # were Jordan Reyes, and a rep then rang Jordan Reyes.
+    from app.db import SessionLocal as _RailSession
+    from app.models import Rail as _Rail
+
+    _rdb = _RailSession()
+    try:
+        texts = [(r.label, r.message_text) for r in _rdb.query(_Rail).all()]
+    finally:
+        _rdb.close()
+    invented = [
+        (label, text) for label, text in texts
+        if re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text)
+        or re.search(r"\bI'm [A-Z][a-z]+ [A-Z][a-z]+", text)
+    ]
+    check("no chip puts a name or an address in the buyer's mouth", not invented,
+          str(invented))
+
     print("\n== chips that answer themselves ==")
     # A rail is a button the dealership put on screen and its meaning is
     # fixed: "What's under $20k?" can only mean one search. Sending that to a
@@ -3186,6 +3209,33 @@ def main() -> int:
           len(found) == len({car.vin for car in found}), f"{len(found)} rows")
     check("and the repeat is reported, not swallowed",
           any("not advancing" in p["error"] for p in problems), str(problems)[:80])
+
+    # robots.txt returns "allowed" on a timeout, a 404 and a 500 alike -- a
+    # site that never answered has not refused, which is the right default and
+    # a lie to *report* as "robots.txt allows this path". It made a crawl whose
+    # very first request had already timed out print a clean permission check,
+    # then fail one step later looking like a different problem.
+    from app.ingest.pipeline import robots_verdict as _verdict
+
+    class _Dead:
+        def get(self, url, timeout=0):
+            raise httpx.ConnectTimeout("timed out")
+
+    class _Open:
+        def get(self, url, timeout=0):
+            return SimpleNamespace(status_code=200, text="User-agent: *\nAllow: /")
+
+    class _Shut:
+        def get(self, url, timeout=0):
+            return SimpleNamespace(status_code=200, text="User-agent: *\nDisallow: /")
+
+    allowed, why = _verdict(_Dead(), "https://x.invalid", "/n")
+    check("an unreachable robots.txt is reported as unreachable, not as permission",
+          allowed and "could not be read" in why, why)
+    allowed, why = _verdict(_Open(), "https://x.invalid", "/n")
+    check("and a real allow still reads as one", allowed and "allows" in why, why)
+    allowed, why = _verdict(_Shut(), "https://x.invalid", "/n")
+    check("and a refusal is still obeyed", not allowed, why)
 
     print("\n== what a crawl found, kept on disk ==")
     # The database is the product's answer to "what is on the lot"; this is

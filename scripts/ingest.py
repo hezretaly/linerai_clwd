@@ -45,7 +45,7 @@ from app.db import SessionLocal  # noqa: E402
 from app.ingest import snapshot  # noqa: E402
 from app.ingest.extract import Listing  # noqa: E402
 from app.ingest.pipeline import (  # noqa: E402
-    _robots_allows,
+    robots_verdict,
     build_diff,
     crawl_list,
     discover,
@@ -67,6 +67,84 @@ FIELDS = ("vin", "year", "make", "model", "trim", "price", "mileage",
 def rule(title: str) -> None:
     print(f"\n\033[1m{title}\033[0m")
     print("-" * max(len(title), 40))
+
+
+def diagnose(host: str, port: int = 443) -> tuple[list[str], str]:
+    """Take one unreachable host apart, layer by layer.
+
+    `ConnectTimeout` is one word for several completely different problems, and
+    they have completely different answers. Resolving the name, opening the
+    socket and completing the handshake are three separate things, so they are
+    reported as three separate lines:
+
+    * **DNS fails** -- the host is wrong, or this machine has no resolver.
+    * **DNS works, TCP times out** -- packets are going nowhere. A firewall or
+      a WAF is dropping them silently, which is what a datacentre IP usually
+      gets. Note "timed out", not "refused": refused is a machine saying no,
+      timed out is nobody answering at all.
+    * **TCP works, TLS fails** -- interception, or a certificate this machine
+      does not trust.
+    * **All three work** -- the network is fine and the site refused *us*,
+      which is a different conversation.
+
+    Returns the lines to print and which layer failed, so the caller offers
+    the one fix that applies rather than five and a guess.
+    """
+    import socket
+    import ssl
+
+    lines = []
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        addresses = sorted({info[4][0] for info in infos})
+        lines.append(f"DNS         resolves to {', '.join(addresses[:4])}")
+    except OSError as exc:
+        lines.append(f"DNS         FAILED -- {exc}")
+        return lines, "dns"
+
+    address = addresses[0]
+    try:
+        sock = socket.create_connection((address, port), timeout=8)
+        lines.append(f"TCP :{port}    connected to {address}")
+    except OSError as exc:
+        lines.append(f"TCP :{port}    FAILED -- {exc}")
+        return lines, "tcp"
+
+    verdict = "reachable"
+    try:
+        context = ssl.create_default_context()
+        with context.wrap_socket(sock, server_hostname=host) as tls:
+            cert = tls.getpeercert() or {}
+            issuer = dict(x[0] for x in cert.get("issuer", ())).get("organizationName", "?")
+            lines.append(f"TLS         handshake ok, certificate issued by {issuer}")
+    except OSError as exc:
+        lines.append(f"TLS         FAILED -- {exc}")
+        verdict = "tls"
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    return lines, verdict
+
+
+def proxy_note() -> list[str]:
+    """Whether something in the environment is intercepting outbound HTTP.
+
+    A proxy that refuses a host produces a timeout or a 403 that looks exactly
+    like the site blocking us, and the variable that causes it is invisible
+    unless somebody thinks to look.
+    """
+    import os
+
+    seen = {
+        name: os.environ[name]
+        for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY")
+        if os.environ.get(name)
+    }
+    if not seen:
+        return []
+    return ["proxy       " + ", ".join(f"{k}={v}" for k, v in seen.items())]
 
 
 def fail(message: str, *fixes: str) -> int:
@@ -163,12 +241,8 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
           f"({1.0 / max(settings.scraper_rate_limit, 0.1):.1f}s between requests)")
 
     with httpx.Client(headers=headers, follow_redirects=True, timeout=25) as client:
-        try:
-            allowed = _robots_allows(client, root, parsed.path or "/")
-        except Exception as exc:  # noqa: BLE001 -- reported, not raised
-            return fail(f"Could not even read robots.txt: {exc!r}",
-                        "Check the host resolves and is reachable from this machine.")
-        print(f"  robots.txt   {'allows this path' if allowed else 'DISALLOWS this path'}")
+        allowed, why = robots_verdict(client, root, parsed.path or "/")
+        print(f"  robots.txt   {why}")
         if not allowed:
             return fail(
                 f"robots.txt at {root} disallows this path for our agent.",
@@ -182,10 +256,52 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
         try:
             first = client.get(url, timeout=25)
         except httpx.HTTPError as exc:
+            print(f"\n  {type(exc).__name__}: {exc}")
+            print("\n  Taking the connection apart:")
+            proxies = proxy_note()
+            lines, verdict = diagnose(parsed.hostname or "", parsed.port or 443)
+            for line in proxies + lines:
+                print(f"    {line}")
+
+            # One fix, chosen by what actually failed. Printing all of them is
+            # the same as printing none: whoever is reading has to guess which
+            # applies, which is what they were doing before this script.
+            fixes = {
+                "dns": [
+                    "The name does not resolve from this machine. Check the URL for a typo, "
+                    "and that this box has a working resolver.",
+                ],
+                "tcp": [
+                    "Packets are going nowhere -- note *timed out*, not *refused*. Refused is "
+                    "a machine saying no; timed out is nobody answering.",
+                    "That is a firewall on this network, or the site's WAF blackholing this "
+                    "IP, which is what a datacentre address usually gets.",
+                    "Try it from a laptop on an ordinary connection. If it works there, run "
+                    "the import there.",
+                ],
+                "tls": [
+                    "The socket opens but the handshake does not finish -- interception, or "
+                    "a certificate this machine does not trust.",
+                ],
+                "reachable": [
+                    "The network is fine: DNS, TCP and TLS all worked. The site refused *us*.",
+                    f"Ask the dealership to allow {settings.scraper_user_agent!r}, or get a "
+                    "CSV export -- /app/inventory/import takes one and needs no "
+                    "configuration.",
+                ],
+            }[verdict]
+            if proxies:
+                fixes = [
+                    "A proxy is set on this machine (above). That intercepts every outbound "
+                    "request and is the most likely cause -- the layers below it can all "
+                    "look healthy while the proxy is the thing saying no.",
+                    "Run the import somewhere without one, or allow this host through it.",
+                ] + fixes
             return fail(
-                f"{type(exc).__name__}: {exc}",
-                "DNS, TLS or a firewall -- none of which this script can fix.",
-                f"Try `curl -sS -o /dev/null -w '%{{http_code}}' {url}` from this machine.",
+                f"Could not fetch the listing page ({type(exc).__name__}).",
+                *fixes,
+                f"By hand: curl -sS -o /dev/null -w '%{{http_code}}\\n' "
+                f"-A '{settings.scraper_user_agent}' '{url}'",
             )
         took = time.monotonic() - began
         print(f"  HTTP {first.status_code}   {len(first.text):,} bytes   {took:.1f}s")

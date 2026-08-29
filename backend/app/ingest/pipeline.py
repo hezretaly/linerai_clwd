@@ -38,16 +38,32 @@ class IngestError(RuntimeError):
     pass
 
 
-def _robots_allows(client: httpx.Client, base: str, path: str) -> bool:
+def robots_verdict(client: httpx.Client, base: str, path: str) -> tuple[bool, str]:
+    """(may we crawl, why we think so).
+
+    The reason matters as much as the answer. Every branch here except one
+    returns True, including the two where robots.txt was never read at all --
+    a site with no robots.txt has not refused, and neither has one that timed
+    out. That is the right *default*, and reporting it as "robots.txt allows
+    this path" is a lie: it made a crawl whose very first request had already
+    timed out print a clean permission check, and then fail one step later
+    looking like a different problem.
+    """
     try:
         response = client.get(urljoin(base, "/robots.txt"), timeout=10)
-        if response.status_code != 200:
-            return True
-        parser = RobotFileParser()
-        parser.parse(response.text.splitlines())
-        return parser.can_fetch(settings.scraper_user_agent, path)
-    except httpx.HTTPError:
-        return True
+    except httpx.HTTPError as exc:
+        return True, f"could not be read ({type(exc).__name__}) -- proceeding, which is the default"
+    if response.status_code != 200:
+        return True, f"HTTP {response.status_code}, so there are no rules to follow"
+    parser = RobotFileParser()
+    parser.parse(response.text.splitlines())
+    if parser.can_fetch(settings.scraper_user_agent, path):
+        return True, "allows this path for our agent"
+    return False, "DISALLOWS this path for our agent"
+
+
+def _robots_allows(client: httpx.Client, base: str, path: str) -> bool:
+    return robots_verdict(client, base, path)[0]
 
 
 def discover(client: httpx.Client, base: str) -> list[str]:
