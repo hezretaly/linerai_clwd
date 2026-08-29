@@ -5,6 +5,12 @@
 # so the app holds exactly one dealership at a time. See plan §4.
 
 name: Riverside Auto
+
+# The made-up showroom -- vehicles, a populated yesterday, written policy
+# answers -- belongs to this fixture and is seeded only where a profile says
+# so. See backend/app/seed.py:_has_fixture.
+showroom_fixture: true
+
 timezone: America/Chicago
 address: 4820 Riverside Parkway, Cedar Falls, IA 50613
 phone: (319) 555-0142

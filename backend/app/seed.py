@@ -226,6 +226,28 @@ def _clear(db: Session) -> None:
 REQUIRED_PROFILE_FIELDS = ("name", "timezone", "address", "phone")
 
 
+def _has_fixture(raw: dict) -> bool:
+    """Whether this profile carries the made-up showroom, or only itself.
+
+    Everything below the dealership row -- fourteen curated vehicles, the
+    sample CSV lot, a populated yesterday of leads and conversations, and a
+    dozen written policy answers -- is **Riverside Auto's**, invented so that
+    no dashboard screen is ever empty on first run and so the smoke test has a
+    "third row" to search for.
+
+    Seeded into a prospect's instance it is not a head start, it is wrong
+    data: their buyer searches the lot and Liner offers a Toyota Sienna from a
+    showroom in Iowa, and asks about the doc fee and gets $189 because a
+    fixture said so. Their cars come from a crawl of their own site and their
+    policies come from them.
+
+    Opt in rather than out, and stated in the profile rather than derived from
+    its filename: a prospect file copied from riverside.yaml would otherwise
+    inherit the fixture through a name check nobody thought about.
+    """
+    return bool(raw.get("showroom_fixture"))
+
+
 def _check_profile(raw: dict, path) -> None:
     """Refuse a profile that is still a template.
 
@@ -251,7 +273,8 @@ def _check_profile(raw: dict, path) -> None:
         )
 
 
-def _seed_dealership(db: Session) -> Dealership:
+def load_profile() -> dict:
+    """The YAML this instance is running as, or a message naming the choices."""
     path = settings.dealership_config
     if not path.is_file():
         available = sorted(p.stem for p in settings.dealership_dir.glob("*.yaml"))
@@ -260,8 +283,12 @@ def _seed_dealership(db: Session) -> Dealership:
             + ("  Available: " + ", ".join(available) + "\n" if available else "")
             + "  Pick one with DEALERSHIP=<name>, or leave it unset for the default.\n"
         )
-    raw = yaml.safe_load(path.read_text())
+    raw = yaml.safe_load(path.read_text()) or {}
     _check_profile(raw, path)
+    return raw
+
+
+def _seed_dealership(db: Session, raw: dict) -> Dealership:
     dealership = Dealership(
         name=raw["name"],
         timezone=raw.get("timezone", "America/Chicago"),
@@ -393,31 +420,76 @@ def _seed_csv_inventory(db: Session) -> None:
     print(f"  loaded {applied['created']} vehicles from {settings.inventory_csv.name}")
 
 
-def _seed_settings(db: Session, manager: User) -> None:
+def _possessive(name: str) -> str:
+    """`Riverside Auto` -> `Riverside Auto's`; `Craig and Landreth Cars` -> `... Cars'`.
+
+    A detail, and the first line the buyer reads. "Craig and Landreth Cars's
+    assistant" is the sort of thing that makes a demo look assembled rather
+    than built, and it is the sentence the whole conversation opens on.
+    """
+    name = (name or "").strip()
+    return f"{name}'" if name.endswith(("s", "S")) else f"{name}'s"
+
+
+def _seed_settings(db: Session, manager: User, raw: dict) -> None:
+    """The published instructions, greeting included.
+
+    The greeting names the dealership because the buyer reads it, and it is
+    also quoted back to the model -- `prompts.py` tells it the greeting has
+    already been sent, so a hardcoded one would have the assistant believe it
+    had introduced itself as somebody else's showroom.
+
+    `credit_application_url` is the fixture's alone. A real prospect has not
+    given us their finance portal, and inventing one puts a link in front of a
+    buyer that goes nowhere: with it empty the draft refuses with a typed
+    `not_configured` and the overview card says why, which is the behaviour
+    that exists for exactly this.
+    """
+    greeting = f"Hi! I'm Liner, {_possessive(raw['name'])} assistant. What are you looking for?"
+    # .example is reserved by RFC 2606, the same reason the seeded addresses
+    # use .invalid: this is visibly a fixture and cannot resolve to a real
+    # finance portal.
+    finance = "https://riversideauto.example/finance" if _has_fixture(raw) else ""
     live = AssistantSettings(
         version=7, status="live", tone="warm", push_level="balanced",
         price_mode="listed_only", financing_mode="refer_to_rep",
         after_hours_mode="full_service", booking_slot_length=30,
-        # .example is reserved by RFC 2606, the same reason the seeded addresses
-        # use .invalid: this is visibly a fixture and cannot resolve to a real
-        # finance portal. A live install leaves it empty until the dealer sets
-        # their own, and the overview card says so until they do.
-        credit_application_url="https://riversideauto.example/finance",
-        greeting="Hi! I'm Liner, Riverside Auto's assistant. What are you looking for?",
+        credit_application_url=finance, greeting=greeting,
         published_by=manager.id, published_at=utcnow() - timedelta(days=9),
     )
     draft = AssistantSettings(
         version=8, status="draft", tone="warm", push_level="assertive",
         price_mode="listed_only", financing_mode="refer_to_rep",
         after_hours_mode="full_service", booking_slot_length=30,
-        credit_application_url="https://riversideauto.example/finance",
-        greeting="Hi! I'm Liner, Riverside Auto's assistant. What are you looking for?",
+        credit_application_url=finance, greeting=greeting,
     )
     db.add_all([live, draft])
     db.commit()
 
 
-def _seed_rules_and_knowledge(db: Session) -> None:
+def _knowledge_for(raw: dict) -> list[tuple[str, str]]:
+    """What this dealership has actually told us, and nothing else.
+
+    Policy answers are returned verbatim to a buyer and never composed --
+    that is the whole reason `answer_from_knowledge` returns `found: false`
+    rather than a near miss. Riverside's doc fee, deposit and return policy
+    are invented for a fixture, so handing them to a prospect's instance would
+    have Liner quote a real buyer a $189 doc fee and a 3-day exchange that
+    nobody at that dealership has ever agreed to. A wrong policy is worse than
+    no policy, so a profile gets its own list or gets none.
+    """
+    if _has_fixture(raw):
+        return list(KNOWLEDGE)
+    entries = []
+    for item in raw.get("knowledge") or []:
+        topic = str((item or {}).get("topic") or "").strip()
+        answer = str((item or {}).get("answer") or "").strip()
+        if topic and answer:
+            entries.append((topic, answer))
+    return entries
+
+
+def _seed_rules_and_knowledge(db: Session, raw: dict) -> None:
     fired = {"out_the_door_price": 12, "financing_trouble": 5, "asks_for_manager": 3,
              "urgency": 8, "ready_to_sign": 4}
     for key, label, description, threshold, unit, route in HANDOFF_RULES:
@@ -426,16 +498,28 @@ def _seed_rules_and_knowledge(db: Session) -> None:
             threshold_value=threshold, threshold_unit=unit, route_target=route,
             notify="email_dashboard", fired_count=fired.get(key, 0),
         ))
-    for topic, answer in KNOWLEDGE:
+    for topic, answer in _knowledge_for(raw):
         db.add(KnowledgeEntry(topic=topic, answer=answer, use_count=0))
     db.commit()
 
 
 def _seed_rails(db: Session) -> None:
+    """The buyer's chips. A knowledge chip is dropped when nothing answers it.
+
+    "What's your doc fee?" is a promise that pressing it produces the doc fee.
+    With no entry behind it the buyer taps and Liner says it will have to
+    check -- which is honest, and is still a chip the dealership put on screen
+    asking a question it cannot answer. Offering it only where there is an
+    answer is the same rule as the channel strip: never advertise a capability
+    that is not there.
+    """
     knowledge = {k.topic: k for k in db.query(KnowledgeEntry).all()}
     topic_for = {"What's your doc fee?": "Doc fee", "Do you take trade-ins?": "Trade-ins"}
     for kind, stage, label, text, advances, order, needs_vehicle in RAILS:
-        entry = knowledge.get(topic_for.get(label, ""))
+        topic = topic_for.get(label, "")
+        entry = knowledge.get(topic)
+        if topic and entry is None:
+            continue
         db.add(Rail(
             kind=kind, stage=stage, label=label, message_text=text,
             advances_to=advances, sort_order=order, requires_vehicle=needs_vehicle,
@@ -686,15 +770,18 @@ def seed(db: Session | None = None) -> None:
     owns_session = db is None
     db = db or SessionLocal()
     try:
+        raw = load_profile()
         _clear(db)
-        _seed_dealership(db)
+        _seed_dealership(db, raw)
         users = _seed_users(db)
-        vehicles = _seed_vehicles(db)
-        _seed_csv_inventory(db)
-        _seed_settings(db, users[0])
-        _seed_rules_and_knowledge(db)
+        if _has_fixture(raw):
+            vehicles = _seed_vehicles(db)
+            _seed_csv_inventory(db)
+        _seed_settings(db, users[0], raw)
+        _seed_rules_and_knowledge(db, raw)
         _seed_rails(db)
-        _seed_history(db, users, vehicles)
+        if _has_fixture(raw):
+            _seed_history(db, users, vehicles)
         _seed_owners(db)
         print(
             f"Seeded {db.query(Vehicle).count()} vehicles, {db.query(Lead).count()} leads, "
@@ -702,6 +789,20 @@ def seed(db: Session | None = None) -> None:
             f"{db.query(Appointment).count()} appointments, "
             f"{db.query(Rail).count()} rails."
         )
+        if not _has_fixture(raw):
+            # Not an error and not a half-seed: this profile is a real
+            # dealership, so the only rows here are the ones it actually
+            # states. Said out loud because an empty lot on first run
+            # otherwise reads as a seed that failed.
+            print(
+                f"\n{raw['name']} carries no showroom fixture, so the lot is empty and\n"
+                "there is no demo history. Their cars come from their own site:\n"
+                "  SCRAPER_BASE_URL=<their inventory page>, then Import on /app/inventory.\n"
+                + ("Policy answers: none are seeded. Add a `knowledge:` list to\n"
+                   f"{settings.dealership_config} with answers they have actually given,\n"
+                   "or Liner says it will check rather than inventing one.\n"
+                   if not _knowledge_for(raw) else "")
+            )
         print(
             f"Manager: dana.mercer@example.invalid / {settings.manager_password}\n"
             f"Rep:     marcus.vale@example.invalid / {settings.rep_password}"

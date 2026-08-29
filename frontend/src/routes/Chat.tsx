@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 
-import { applyBrand, type Brand } from '../lib/brand'
+import { applyBrand } from '../lib/brand'
 import { api, streamMessages } from '../lib/api'
+import { useDealership } from '../lib/dealership'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
 import { money } from '../lib/format'
@@ -55,6 +56,19 @@ function vehiclesFrom(result: Record<string, unknown>): VehicleCardData[] {
 }
 
 export function Chat() {
+  // Who this instance is, and their colour. Read here rather than off the
+  // session payload because the resume path returns before that payload
+  // exists -- so a refresh used to drop a prospect's accent back to the
+  // product's blue, on the buyer's screen, mid-demo.
+  const dealership = useDealership()
+  /* Embedded in the showroom's widget, which has a title bar of its own.
+   *
+   * Two things have to go, and both are wrong rather than merely redundant:
+   * the header repeats the dealership's name directly under the widget bar
+   * already carrying it, and "Back" is a link to `/` that, followed inside an
+   * iframe, replaces the chat with the landing page in a 24rem box. The
+   * transcript, the rails and the composer are the same in both. */
+  const embedded = new URLSearchParams(window.location.search).get('embed') === '1'
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
   const [rails, setRails] = useState<Rail[]>([])
@@ -78,11 +92,7 @@ export function Chat() {
         conversation_id: string
         greeting: string
         rails: Rail[]
-        dealership?: { name: string; brand?: Brand }
       }>('/api/chat/sessions')
-      // Their colour, before the first paint the buyer notices. Late, failed
-      // or absent leaves the surface the blue it has always been.
-      applyBrand(session.dealership?.brand)
       localStorage.setItem(STORAGE_KEY, session.conversation_id)
       setConversationId(session.conversation_id)
       setRails(session.rails)
@@ -90,6 +100,10 @@ export function Chat() {
       void loadIntegrations(setStubbed)
     })()
   }, [])
+
+  useEffect(() => {
+    applyBrand(dealership?.brand)
+  }, [dealership])
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
@@ -201,17 +215,19 @@ export function Chat() {
 
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col bg-background">
-      <header className="flex items-center justify-between border-b border-border px-5 py-3">
-        <div>
-          <p className="text-sm font-semibold">Riverside Auto</p>
-          <p className="text-xs text-muted-foreground">
-            {typing ? 'Typing...' : 'Usually replies instantly'}
-          </p>
-        </div>
-        <a href="/" className="text-sm text-primary hover:underline">
-          Back
-        </a>
-      </header>
+      {!embedded && (
+        <header className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div>
+            <p className="text-sm font-semibold">{dealership?.name || ' '}</p>
+            <p className="text-xs text-muted-foreground">
+              {typing ? 'Typing...' : 'Usually replies instantly'}
+            </p>
+          </div>
+          <a href="/" className="text-sm text-primary hover:underline">
+            Back
+          </a>
+        </header>
+      )}
 
       {stubbed && (
         <p className="border-b border-warning/30 bg-warning-muted px-5 py-2 text-xs text-warning-foreground">

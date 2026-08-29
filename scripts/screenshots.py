@@ -33,7 +33,11 @@ def chromium_path() -> str | None:
             return found[-1]
     return None
 
-PUBLIC = ["/", "/chat", "/call", "/login"]
+# `/showroom` is the demo page: the dealership's own front page with the
+# assistant on it. It is here rather than only in the desktop pass because a
+# fixed widget in a corner and a grid of car cards are the two things most
+# likely to push a 390px viewport sideways.
+PUBLIC = ["/", "/chat", "/call", "/login", "/showroom"]
 
 # Assets the design references but that have not been supplied yet. Their 404s
 # are reported rather than failing the run; remove each one as it arrives.
@@ -359,7 +363,7 @@ async def main() -> int:
         phone = True
         await page.set_viewport_size(PHONE)
         print(f"\nmobile ({PHONE['width']}px):")
-        for route in ["/chat", *routes]:
+        for route in ["/chat", "/showroom", *routes]:
             await shot(route)
 
         # Ours. A second sign-in because `owner` is a third role and a

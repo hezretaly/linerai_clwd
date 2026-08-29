@@ -2770,6 +2770,67 @@ def main() -> int:
     else:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
+    print("\n== the dealership is served, never written into a page ==")
+    # Five surfaces printed the literal string "Riverside Auto" -- the chat
+    # header, the call header, the login subtitle and two lines on the buyer
+    # page. On a rebranded instance every one of them told a prospect's buyer
+    # they were talking to somebody else's showroom, and the very first screen
+    # of a demo is the one that has to be right.
+    for page in ("Chat.tsx", "Call.tsx", "Login.tsx", "LeadPage.tsx"):
+        source = (pathlib.Path("frontend/src/routes") / page).read_text()
+        # Comments may name it -- that is where the story of the bug lives.
+        rendered = "\n".join(
+            line for line in source.splitlines()
+            if not line.strip().startswith(("*", "//", "/*"))
+        )
+        check(f"{page} reads the dealership's name rather than printing one",
+              "Riverside Auto" not in rendered)
+
+    shop = call("GET", "/api/showroom/dealership")
+    check("and the server answers with it, without a session",
+          bool(shop["name"]) and "brand" in shop, shop["name"])
+
+    front = call("GET", "/api/showroom?limit=3")
+    check("the showroom page has the lot, the greeting and the channels",
+          front["total"] > 0 and front["greeting"] and "voice" in front["channels"],
+          f"{front['total']} cars")
+    # A public page, so it must not carry what the dealer's own view carries:
+    # `rule_note` is an internal line reading "Consignment, owner has not
+    # signed the agreement yet", and `mention_count` is how many buyers have
+    # been quoted the car.
+    leaked = [k for k in ("rules", "mention_count", "internal_note", "source")
+              if front["vehicles"] and k in front["vehicles"][0]]
+    check("and none of the dealer's own columns with it", not leaked, str(leaked))
+
+    # One predicate, not two. A car Liner refuses to discuss sitting on the
+    # page next to the chat window refusing to discuss it is the whole failure.
+    check("the page and the tool narrow the lot with the same rule",
+          "offerable" in pathlib.Path("backend/app/api/showroom.py").read_text()
+          and "offerable" in pathlib.Path("backend/app/agent/tools.py").read_text())
+
+    # The made-up showroom is Riverside's. Seeded into a prospect's instance
+    # it is not a head start, it is wrong data: their buyer searches the lot
+    # and is offered a Toyota Sienna from Cedar Falls, Iowa, then asks the doc
+    # fee and is told $189 because a fixture said so.
+    import yaml as _yaml
+    from app.seed import _has_fixture, _knowledge_for, _possessive
+
+    profiles = sorted(pathlib.Path("backend/config/dealerships").glob("*.yaml"))
+    check("there is a profile per prospect", len(profiles) >= 2,
+          str([p.stem for p in profiles]))
+    for path in profiles:
+        raw = _yaml.safe_load(path.read_text()) or {}
+        if path.stem == "riverside":
+            check("riverside owns the showroom fixture", _has_fixture(raw))
+            continue
+        check(f"{path.stem} does not inherit it", not _has_fixture(raw))
+        check(f"and {path.stem} does not inherit its written policies either",
+              not _knowledge_for(raw))
+    check("the greeting is built from whichever name that is",
+          _possessive("Riverside Auto") == "Riverside Auto's"
+          and _possessive("Craig and Landreth Cars") == "Craig and Landreth Cars'",
+          _possessive("Craig and Landreth Cars"))
+
     print("\n== every address we publish is one the intake accepts ==")
     # The Worker filters recipients before it posts anything, because a
     # catch-all sweeps up spam. `founder@` was not on that list while

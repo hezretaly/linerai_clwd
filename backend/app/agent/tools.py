@@ -365,12 +365,27 @@ def _record_mentions(db: Session, conversation_id: str, vehicles: list[Vehicle])
     db.commit()
 
 
-def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
-    query = db.query(Vehicle).filter(
+def offerable(query):
+    """Narrow a Vehicle query to the cars a buyer may be shown, anywhere.
+
+    Two conditions and one rule: a car that is sold or off the lot cannot be
+    offered, and a do-not-discuss car never reaches the buyer at all -- it is
+    filtered in the executor rather than requested in a prompt, because a
+    prompt is a request and an executor is a guarantee.
+
+    Shared rather than repeated because the buyer now has a second surface.
+    The showroom page renders cars from the same table, and two copies of this
+    predicate is exactly how the consignment vehicle Liner refuses to discuss
+    ends up on the page beside the chat window that will not discuss it.
+    """
+    return query.filter(
         Vehicle.status == "available",
-        # A do-not-discuss vehicle never reaches the model.
         Vehicle.rule_discuss.is_(True),
     )
+
+
+def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
+    query = offerable(db.query(Vehicle))
     if args.get("max_price"):
         query = query.filter(Vehicle.price <= int(args["max_price"]))
     if args.get("min_price"):

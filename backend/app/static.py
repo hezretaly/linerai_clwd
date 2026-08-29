@@ -34,7 +34,7 @@ DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 # from here: the whole dashboard answered `{"detail":"Not found"}` on a real
 # host while every gate was green. `make smoke` now reads main.tsx and fails
 # on a route that is not listed.
-SPA_PREFIXES = ("/chat", "/call", "/login", "/app", "/ops")
+SPA_PREFIXES = ("/chat", "/call", "/login", "/app", "/ops", "/showroom")
 
 # Never let a request walk out of dist/ via the catch-all.
 # /r is the outreach click hop -- a real route, not an SPA path.

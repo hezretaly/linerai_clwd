@@ -10,6 +10,7 @@ import { BuyerTheme } from './components/BuyerTheme'
 import { RequireAuth } from './routes/RequireAuth'
 import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
+import { Showroom } from './routes/Showroom'
 import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
 import { ConversationListPage } from './routes/ConversationList'
@@ -49,6 +50,11 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           {/* Buyer surfaces keep the brand blue. /login is a dealer screen and
               deliberately stays on classic. */}
+          {/* The dealership's own front page, for a demo: their brand, their
+              real lot, and the chat widget where it would really sit. It
+              scopes .theme-buyer itself, since the whole page is a buyer
+              surface rather than a route wrapped in one. */}
+          <Route path="/showroom" element={<Showroom />} />
           <Route path="/chat" element={<BuyerTheme><Chat /></BuyerTheme>} />
           <Route path="/call" element={<BuyerTheme><Call /></BuyerTheme>} />
           <Route path="/login" element={<Login />} />

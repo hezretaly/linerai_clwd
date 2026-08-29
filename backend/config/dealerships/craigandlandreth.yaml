@@ -41,3 +41,30 @@ brand:
   accent: ""
   accent_ink: "#ffffff"
   logo_url: "https://imagescdn.dealercarsearch.com/DealerImages/1123/20820/logow2.png"
+
+# No `showroom_fixture` here, deliberately. Riverside's fourteen vehicles, its
+# sample CSV lot and its populated yesterday are invented for a demo of a
+# dealership that does not exist -- seeded here they would put a Toyota Sienna
+# from Cedar Falls, Iowa in front of a Louisville buyer. Their lot comes from
+# their own site:
+#
+#   SCRAPER_BASE_URL=https://www.craigsbestcars.com/newandusedcars
+#   SCRAPER_DEALER_ID=1123
+#
+# then Import on /app/inventory, review the run, publish.
+
+# Their own answers, quoted verbatim to a buyer and never composed -- which is
+# why this list is empty rather than borrowed. Riverside's doc fee is $189 and
+# its deposit $500 refundable; both are invented, and Liner repeating them here
+# would quote a real customer a policy nobody at this dealership has agreed to.
+# With no entry `answer_from_knowledge` returns found: false and a rep picks it
+# up, which is the honest answer to a question we do not know.
+#
+# Fill these in from them -- their site, or the questions they ask in the demo:
+#
+# knowledge:
+#   - topic: Doc fee
+#     answer: "..."
+#   - topic: Trade-ins
+#     answer: "..."
+knowledge: []

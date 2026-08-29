@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
+import { useDealership } from '../lib/dealership'
 import type { User } from '../lib/types'
 import { Button, Card, Field, Input } from '../components/ui'
 import { usePublicDemo } from './RequireAuth'
@@ -12,6 +13,9 @@ export function Login() {
   const queryClient = useQueryClient()
   const [params] = useSearchParams()
   const { data: demo } = usePublicDemo()
+  // Whose dashboard this is. Printed as a literal, a rebranded instance asked
+  // a prospect's manager to sign in to Riverside Auto.
+  const dealership = useDealership()
   // Arriving from the rep view, which is the only reason to be on this page
   // at all when the door is open.
   const wantsManager = params.get('as') === 'manager'
@@ -59,7 +63,7 @@ export function Login() {
             ? 'Our own dashboard -- the demos people book with us, and the mail they send. Nothing about a dealership’s buyers is on it.'
             : wantsManager
               ? 'The team page, the assistant settings and publishing are managers only.'
-              : 'Riverside Auto'}
+              : dealership?.name || ' '}
         </p>
 
         {bouncedFromOps && (

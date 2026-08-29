@@ -4,6 +4,7 @@ import clsx from 'clsx'
 
 import { applyBrand, type Brand } from '../lib/brand'
 import { api, ApiError } from '../lib/api'
+import { useDealership } from '../lib/dealership'
 import { Button, Card } from '../components/ui'
 
 /**
@@ -167,6 +168,10 @@ function clock(seconds: number): string {
 }
 
 export function Call() {
+  // Their name and their colour, on load rather than on connect. Applied from
+  // the voice session it only arrived once the buyer had already pressed Call,
+  // so the page they decide on was the one still wearing our livery.
+  const dealership = useDealership()
   const [error, setError] = useState<ApiError | null>(null)
   const [failed, setFailed] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
@@ -272,6 +277,10 @@ export function Call() {
   // the microphone live and the meter lit in the browser chrome, which is the
   // single most alarming thing a website can do.
   useEffect(() => () => teardown(), [])
+
+  useEffect(() => {
+    applyBrand(dealership?.brand)
+  }, [dealership])
 
   useEffect(() => {
     // Labels are blank until permission has been granted once, so this fills
@@ -733,9 +742,6 @@ export function Call() {
       // Ours, and the only request that carries the real key. What comes back
       // is good for about a minute and for one call.
       const session = await api.post<Session>('/api/voice/sessions')
-      // /call is a buyer surface too, and the two arriving in different
-      // liveries reads as two products rather than one.
-      applyBrand(session.brand)
       convo.current = session.conversation_id
 
       // Constraints, not `audio: true`. Echo cancellation is the load-bearing
@@ -890,7 +896,7 @@ export function Call() {
     <div className="flex h-full items-center justify-center bg-muted/40 px-4 py-6">
       <Card className="flex max-h-[calc(100dvh-3rem)] w-full max-w-md flex-col p-6">
         <div className="text-center">
-          <h1 className="text-lg font-semibold">Call Riverside Auto</h1>
+          <h1 className="text-lg font-semibold">Call {dealership?.name || 'the dealership'}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {phase === 'live'
               ? 'Connected. Just talk -- you can interrupt at any time.'

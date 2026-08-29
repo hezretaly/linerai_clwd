@@ -99,6 +99,7 @@ def create_app() -> FastAPI:
         overview,
         redirect,
         settings as settings_api,
+        showroom,
         team,
         voice,
         ws,
@@ -123,6 +124,7 @@ def create_app() -> FastAPI:
         settings_api.router,
         demo.router,
         ops.router,
+        showroom.router,
     ):
         app.include_router(router, prefix="/api")
 

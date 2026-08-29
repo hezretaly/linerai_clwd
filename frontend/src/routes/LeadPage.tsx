@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
 import { api, ApiError } from '../lib/api'
+import { useDealership } from '../lib/dealership'
 import { PROVENANCE_LABEL, initials, money, relative } from '../lib/format'
 import type { BookingCardData } from '../components/BookingCard'
 import { BookingCard } from '../components/BookingCard'
@@ -49,6 +50,10 @@ interface Duplicate {
 
 export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
   const { id } = useParams()
+  // Whose name goes on the message. A rep typing into a buyer's thread is
+  // writing as the dealership, and telling them it is Riverside Auto on a
+  // rebranded instance is telling them the wrong thing about what they send.
+  const dealership = useDealership()
   const queryClient = useQueryClient()
   const [reply, setReply] = useState('')
   const [booking, setBooking] = useState(false)
@@ -177,7 +182,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
         {targetConvo?.agent_paused && (
           <Banner
             tone="primary"
-            title="You are replying as Riverside Auto"
+            title={`You are replying as ${dealership?.name || 'the dealership'}`}
             sub="Liner is paused on this thread and will not send anything."
             action={{ label: 'Hand back to Liner', onClick: () => handback.mutate() }}
           />
@@ -615,6 +620,7 @@ function Composer({
   onSend: () => void
   sending: boolean
 }) {
+  const dealership = useDealership()
   return (
     <div className="mx-auto max-w-3xl overflow-hidden rounded-lg border border-input focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
       <textarea
@@ -626,7 +632,9 @@ function Composer({
       />
       <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-3 py-2">
         <span className="text-xs text-muted-foreground">
-          Sending as <b className="font-medium text-foreground">Riverside Auto</b> · {source}
+          Sending as{' '}
+          <b className="font-medium text-foreground">{dealership?.name || 'the dealership'}</b> ·{' '}
+          {source}
         </span>
         <Unavailable
           label="Save as note"

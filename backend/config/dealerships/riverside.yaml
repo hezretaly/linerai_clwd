@@ -10,6 +10,17 @@
 # real business.
 
 name: Riverside Auto
+
+# This profile owns the made-up showroom: fourteen curated vehicles, the sample
+# CSV lot, a populated yesterday, and a dozen written policy answers. Every
+# test and screenshot in the repository is written against them.
+#
+# It is opt-in because that data is *Riverside's*, not a head start. Seeded
+# into a prospect's instance it becomes wrong data -- their buyer searches the
+# lot and gets a Toyota Sienna from a showroom in Iowa, then asks the doc fee
+# and is told $189 by an assistant that has never spoken to that dealership.
+showroom_fixture: true
+
 timezone: America/Chicago
 address: 4820 Riverside Parkway, Cedar Falls, IA 50613
 phone: (319) 555-0142
