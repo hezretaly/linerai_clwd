@@ -1169,12 +1169,25 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     returns the reason with the verdict.
   - **A connection failure is taken apart before it is reported.** DNS, TCP
     and TLS are three different problems with three different answers, and
-    `ConnectTimeout` is one word for all of them — plus a proxy on the machine,
-    which looks exactly like the site refusing. `make ingest` resolves the
+    `ConnectTimeout` is one word for all of them. `make ingest` resolves the
     name, opens the socket and completes the handshake separately, prints what
     each did, and offers only the fix for the layer that actually failed.
     Timed out is not refused: refused is a machine saying no, timed out is
     nobody answering.
+    - **A TCP failure rules out everything above it, and saying so is the
+      most useful line it prints.** A CAPTCHA, a Cloudflare challenge, a
+      user-agent filter, a rate limit and `robots.txt` are all *responses* —
+      they need the socket, the handshake and the request to succeed first. If
+      nothing connected, none of them can be the cause and there is no point
+      hunting for one.
+    - **A control host separates "them" from "us".** Outbound 443 failing to
+      everything is this machine's network; failing to one host is that host
+      or the route to it. Without the control the two print identically.
+    - **An unexpected certificate issuer is named as interception.** A
+      corporate proxy or a sandbox terminating TLS makes DNS, TCP and the
+      handshake all look healthy while the interceptor is the thing saying no
+      — measured here, where the certificate for a dealer's site comes back
+      issued by Anthropic.
   - **`make ingest` is how you run it when it goes wrong.** The web button
     runs the identical pipeline and gives you a spinner and one line; a crawl
     can fail at robots.txt, at DNS, at a 403, at "no adapter matched", at "the

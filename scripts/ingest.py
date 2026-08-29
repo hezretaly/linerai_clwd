@@ -69,62 +69,92 @@ def rule(title: str) -> None:
     print("-" * max(len(title), 40))
 
 
+#: A host used only to prove that outbound 443 works from this machine at all.
+#: Without it, "the site timed out" and "this network cannot reach anything"
+#: are the same output, and they are completely different problems.
+CONTROL_HOST = "example.com"
+
+
+def _connect(host: str, port: int, timeout: float = 8.0) -> tuple[str, str]:
+    """(resolved address, error). Empty error means the socket opened."""
+    import socket
+
+    try:
+        address = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)[0][4][0]
+    except OSError as exc:
+        return "", f"DNS: {exc}"
+    try:
+        socket.create_connection((address, port), timeout=timeout).close()
+        return address, ""
+    except OSError as exc:
+        return address, str(exc)
+
+
 def diagnose(host: str, port: int = 443) -> tuple[list[str], str]:
     """Take one unreachable host apart, layer by layer.
 
-    `ConnectTimeout` is one word for several completely different problems, and
-    they have completely different answers. Resolving the name, opening the
-    socket and completing the handshake are three separate things, so they are
-    reported as three separate lines:
+    `ConnectTimeout` is one word for several completely different problems with
+    completely different answers, so each layer is probed and reported on its
+    own line.
 
-    * **DNS fails** -- the host is wrong, or this machine has no resolver.
-    * **DNS works, TCP times out** -- packets are going nowhere. A firewall or
-      a WAF is dropping them silently, which is what a datacentre IP usually
-      gets. Note "timed out", not "refused": refused is a machine saying no,
-      timed out is nobody answering at all.
-    * **TCP works, TLS fails** -- interception, or a certificate this machine
-      does not trust.
-    * **All three work** -- the network is fine and the site refused *us*,
-      which is a different conversation.
+    **Everything at the HTTP layer is ruled out by a TCP failure**, and that is
+    the most useful thing this prints. A CAPTCHA, a Cloudflare challenge, a
+    user-agent filter, a rate limit and robots.txt are all *responses* -- they
+    need the connection, the handshake and the request to succeed first. If
+    the socket never opened, none of them can be the cause and there is no
+    point looking for one.
 
-    Returns the lines to print and which layer failed, so the caller offers
-    the one fix that applies rather than five and a guess.
+    **A control host separates "them" from "us".** Outbound 443 failing to
+    everything is this machine's network; failing to one host is that host, or
+    the route to it. Without the control both look identical.
+
+    Returns the lines to print and which layer failed, so the caller offers the
+    one fix that applies rather than five and a guess.
     """
-    import socket
     import ssl
 
-    lines = []
-    try:
-        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-        addresses = sorted({info[4][0] for info in infos})
-        lines.append(f"DNS         resolves to {', '.join(addresses[:4])}")
-    except OSError as exc:
-        lines.append(f"DNS         FAILED -- {exc}")
+    lines: list[str] = []
+    address, error = _connect(host, port)
+    if error.startswith("DNS:"):
+        lines.append(f"DNS         FAILED -- {error[5:]}")
         return lines, "dns"
+    lines.append(f"DNS         resolves to {address}")
 
-    address = addresses[0]
-    try:
-        sock = socket.create_connection((address, port), timeout=8)
-        lines.append(f"TCP :{port}    connected to {address}")
-    except OSError as exc:
-        lines.append(f"TCP :{port}    FAILED -- {exc}")
-        return lines, "tcp"
+    if error:
+        lines.append(f"TCP :{port}    FAILED -- {error}")
+        # Port 80 as well: a host answering there but not on 443 is a
+        # different fault from one answering on neither.
+        _plain_addr, plain_error = _connect(host, 80, timeout=6)
+        lines.append(f"TCP :80     {plain_error or 'connected -- 443 is the one being blocked'}")
+        # And a control, to say whether this machine can reach anything.
+        _ctrl_addr, ctrl_error = _connect(CONTROL_HOST, 443, timeout=6)
+        lines.append(
+            f"control     {CONTROL_HOST}:443 " + (f"FAILED -- {ctrl_error}" if ctrl_error
+                                                  else "connected")
+        )
+        return lines, "egress" if ctrl_error else "tcp"
+
+    lines.append(f"TCP :{port}    connected to {address}")
 
     verdict = "reachable"
     try:
+        import socket
+
+        sock = socket.create_connection((address, port), timeout=8)
         context = ssl.create_default_context()
         with context.wrap_socket(sock, server_hostname=host) as tls:
             cert = tls.getpeercert() or {}
             issuer = dict(x[0] for x in cert.get("issuer", ())).get("organizationName", "?")
             lines.append(f"TLS         handshake ok, certificate issued by {issuer}")
+            # An issuer that is not a public CA means something is terminating
+            # TLS in the middle. Worth saying out loud: it makes every layer
+            # below look healthy while the interceptor is the thing saying no.
+            if issuer.lower() in ("anthropic", "zscaler", "netskope", "bluecoat", "mitmproxy"):
+                lines.append(f"            ^ that is an interceptor, not {host}'s own CA")
+                verdict = "intercepted"
     except OSError as exc:
         lines.append(f"TLS         FAILED -- {exc}")
         verdict = "tls"
-    finally:
-        try:
-            sock.close()
-        except OSError:
-            pass
     return lines, verdict
 
 
@@ -267,17 +297,35 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
             # the same as printing none: whoever is reading has to guess which
             # applies, which is what they were doing before this script.
             fixes = {
+                "egress": [
+                    f"Outbound 443 failed to {CONTROL_HOST} as well, so this is not about "
+                    "the dealer's site: this machine cannot reach the internet on 443.",
+                    "A corporate firewall, a VPN, or a container with no egress. Fix that "
+                    "first, then re-run.",
+                ],
+                "intercepted": [
+                    "The TLS certificate was issued by an interceptor rather than by a "
+                    "public CA, so something on this network is terminating the connection "
+                    "and answering for the site.",
+                    "Run the import from a machine without one.",
+                ],
                 "dns": [
                     "The name does not resolve from this machine. Check the URL for a typo, "
                     "and that this box has a working resolver.",
                 ],
                 "tcp": [
-                    "Packets are going nowhere -- note *timed out*, not *refused*. Refused is "
-                    "a machine saying no; timed out is nobody answering.",
-                    "That is a firewall on this network, or the site's WAF blackholing this "
-                    "IP, which is what a datacentre address usually gets.",
-                    "Try it from a laptop on an ordinary connection. If it works there, run "
-                    "the import there.",
+                    f"Outbound 443 works ({CONTROL_HOST} connected), so this is specific to "
+                    "that host: your packets to it are being dropped.",
+                    "Note *timed out*, not *refused*. Refused is a machine saying no; timed "
+                    "out is nobody answering -- a firewall DROP rule, or no route.",
+                    "Nothing at the HTTP layer can be the cause. A CAPTCHA, a Cloudflare "
+                    "challenge, a user-agent filter and a rate limit are all *responses*, "
+                    "and no connection was ever made to respond on.",
+                    "Most likely this IP is blocked, which is what a datacentre address "
+                    "often gets. Try from a laptop on an ordinary connection; if it works "
+                    "there, run the import there.",
+                    "If it fails everywhere, ask the dealership to allow this address -- or "
+                    "get a CSV export, which /app/inventory/import takes with no setup.",
                 ],
                 "tls": [
                     "The socket opens but the handshake does not finish -- interception, or "

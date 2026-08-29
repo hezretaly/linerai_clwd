@@ -3237,6 +3237,19 @@ def main() -> int:
     allowed, why = _verdict(_Shut(), "https://x.invalid", "/n")
     check("and a refusal is still obeyed", not allowed, why)
 
+    # `make ingest` chooses one fix from the layer that failed. A verdict with
+    # no entry in that table would KeyError at exactly the worst moment -- in
+    # front of somebody whose crawl has just died -- so the two lists have to
+    # agree.
+    ingest_src = pathlib.Path("scripts/ingest.py").read_text()
+    verdicts = set(re.findall(r'return lines, "(\w+)"', ingest_src))
+    verdicts |= set(re.findall(r'verdict = "(\w+)"', ingest_src))
+    handled = set(re.findall(r'^\s{16}"(\w+)": \[', ingest_src, re.MULTILINE))
+    check("every connection verdict has a fix to offer", verdicts <= handled,
+          f"unhandled: {sorted(verdicts - handled)}")
+    check("and the diagnosis says what a TCP failure rules out",
+          "CAPTCHA" in ingest_src and "responses" in ingest_src)
+
     print("\n== what a crawl found, kept on disk ==")
     # The database is the product's answer to "what is on the lot"; this is
     # the crawl's answer to "what did the site say, when". An IngestRun keeps
