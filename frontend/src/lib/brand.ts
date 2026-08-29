@@ -15,6 +15,11 @@ export interface Brand {
   accent: string
   accent_ink: string
   logo_url: string
+  /** `light` or `dark`, validated server-side to those two words because it
+   *  picks a stylesheet class. Read only by /showroom: the storefront is the
+   *  dealership's, and a rep's dashboard is a working tool that should not
+   *  change colour because a prospect's marketing site is dark. */
+  surface: 'light' | 'dark'
 }
 
 /** The server validates these to a hex colour and drops anything else. This

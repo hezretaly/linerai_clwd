@@ -39,16 +39,21 @@ heading, welcome copy, hero image, nav and social links, all copied from their
 own home page. `/showroom` renders from it. A profile with no `site:` block
 gets a plain storefront, which is what Riverside gets and is perfectly honest.
 
-**One thing is still blank:**
+**Their livery is in** — orange on near-black:
 
 ```yaml
 brand:
-  accent: ""          # ← their colour, picked off their real site
+  accent: "#f26a21"
+  surface: dark       # /showroom only
 ```
 
-Empty falls back to the product blue, so the page works either way — it just
-is not their blue. Nothing here can reach `craigandlandrethcars.com` or their
-image CDN, so this has to be read off their site by a person.
+The accent was read off a screenshot of their home page **by eye, not
+sampled** — the egress proxy refuses their site and their image CDN, so
+nothing could fetch either. If it is off, that one line is the fix.
+
+`surface: dark` is read **only by `/showroom`**. Their storefront should look
+like their site; their reps' dashboard is a working tool and does not change
+colour because a prospect's marketing site is dark.
 
 Where the seed **refuses to run** is a missing `hours`. That is deliberate:
 opening times cannot be looked up from here, and an invented hour is an
@@ -183,12 +188,14 @@ CTO_PASSWORD=...
 With `ENV=production` startup refuses to boot until each is real and no two
 match. On a laptop, skip all of this — the dev defaults are fine.
 
-### Never
+### Never, on a real prospect's instance
 
 `PUBLIC_DEMO=true` hands anybody with the URL a dealership's buyer list —
 names, phone numbers, transcripts, and call recordings, which are somebody's
-actual voice. Only ever point it at `make seed-demo` data, never at a real
-prospect's instance.
+actual voice. Only ever point it at `make seed-demo` data.
+
+**Delete the line (or set it `false`) to put the login back.** It is off by
+default, so an absent line is a closed door.
 
 ---
 
@@ -212,6 +219,25 @@ there is no demo history. Their cars come from their own site: ...
 curated vehicles, its sample CSV lot and its populated yesterday are a fixture
 invented for a dealership that does not exist; seeded here they would put a
 Toyota Sienna from Cedar Falls, Iowa in front of a Louisville buyer.
+
+---
+
+## Step 3b — Give their people accounts
+
+The seeded staff (`dana.mercer@`, `marcus.vale@`) are fixture names. A real
+person at the dealership gets a real account **without a reseed**:
+
+```bash
+make add-user EMAIL=austin@theirdomain.com NAME="Austin ..." ROLE=manager
+```
+
+`manager` sees every lead, the team page, the assistant settings and can
+publish; `rep` works the floor. It prints a generated password **once** —
+only the bcrypt hash is stored — and running it again for the same address
+changes nothing, because they may have set their own since.
+
+Change one later with `make set-password EMAIL=...`. Both are safe on a box
+with real bookings on it; `make reset-db` is not.
 
 ---
 

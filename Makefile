@@ -55,6 +55,10 @@ set-password: ## Change one account's password in place: make set-password EMAIL
 add-owners: ## Move/create Liner's own rows in the ops_ tables -- safe on a live box
 	cd backend && ../$(PY) -m app.add_owners
 
+add-user: ## Add one person to the dealership's staff on a live box: EMAIL=... NAME="..." ROLE=rep
+	@test -n "$(EMAIL)" || (echo 'Usage: make add-user EMAIL=someone@example.com NAME="Their Name" ROLE=manager' && exit 1)
+	cd backend && ../$(PY) -m app.add_user $(EMAIL) --name "$(NAME)" --role "$(or $(ROLE),rep)"
+
 reset-dealership: ## Rebuild the dealership fixture, KEEPING our ops tables
 	cd backend && ../$(PY) -m app.seed
 

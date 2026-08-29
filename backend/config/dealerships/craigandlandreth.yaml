@@ -36,13 +36,20 @@ hours:
   saturday:  { open: "09:00", close: "19:00" }
   sunday:    null   # closed
 
-# STILL NEEDED: `accent`, picked off their real site. The logo is theirs, from
-# the page. Only the accent family moves -- every structural token still comes
-# from the one theme layer, so their colour cannot restyle the product into
-# something that no longer reads.
+# Their livery. Only the accent family moves -- every structural token still
+# comes from the one theme layer, so their colour cannot restyle the product
+# into something that no longer reads.
 brand:
-  accent: ""
+  # Read off the screenshot of their own home page by eye, not sampled -- the
+  # egress proxy refuses their site and their image CDN, so nothing here could
+  # fetch either. If it is off, this one line is the fix.
+  accent: "#f26a21"
   accent_ink: "#ffffff"
+  # Their site is orange on near-black, and an orange accent on a white page
+  # looks nothing like it. Read ONLY by /showroom -- the storefront is theirs,
+  # and their reps' dashboard is a working tool that should not change colour
+  # because a prospect's marketing site is dark.
+  surface: dark
   logo_url: "https://imagescdn.dealercarsearch.com/DealerImages/1123/20820/logow2.png"
 
 # Their front page, as `/showroom` renders it. Every string below is theirs,

@@ -2903,6 +2903,34 @@ def main() -> int:
           "_unplace_inbound" in source and "InboundEmail" not in
           source.split("def _clear")[1].split("db.commit()")[0])
 
+    # Their livery. `surface` picks a stylesheet class rather than carrying a
+    # value into one, so an unknown word must never reach the DOM -- and it is
+    # read only by /showroom: a rep's dashboard is a working tool and should
+    # not change colour because a prospect's marketing site is dark.
+    from app.brand import brand as _brand_fn
+
+    check("a brand surface is one of two words, never whatever was typed",
+          shop["brand"]["surface"] in ("light", "dark"), shop["brand"]["surface"])
+    craig_brand = craig.get("brand") or {}
+    check("and the prospect's accent is a hex the stylesheet will accept",
+          bool(re.match(r"^#[0-9a-fA-F]{3,8}$", craig_brand.get("accent") or "")),
+          craig_brand.get("accent", ""))
+    css = pathlib.Path("frontend/src/styles/liner-theme.css").read_text()
+    check("the dark palette lives in the one token layer, not in the page",
+          ".dark {" in css and "dark" in page and "oklch" not in page)
+
+    # Staff arrive through `_seed_users`, which only runs on a fresh seed, so
+    # giving a real person an account used to mean `make reset-db` -- which
+    # deletes every lead on the box.
+    from app.add_user import ROLES as _ROLES, initials as _initials
+
+    check("a person can be added to the team without a reseed",
+          pathlib.Path("backend/app/add_user.py").is_file()
+          and "add-user" in pathlib.Path("Makefile").read_text())
+    check("and only ever as dealership staff, never as one of ours",
+          set(_ROLES) == {"manager", "rep"}, str(sorted(_ROLES)))
+    check("their avatar comes from their name", _initials("Austin Reed") == "AR")
+
     check("the greeting is built from whichever name that is",
           _possessive("Riverside Auto") == "Riverside Auto's"
           and _possessive("Craig and Landreth Cars") == "Craig and Landreth Cars'",

@@ -107,8 +107,16 @@
   --ramp-4: oklch(0.865 0.006 286.3);
 }
 
-/* Written so enabling dark is a class plus a toggle, not a rewrite. Nothing
- * sets `.dark` today and no route has been verified in it. */
+/* Classic dark. `/showroom` sets this when a dealership's profile says
+ * `brand.surface: dark`, because a storefront for a dealer whose own site is
+ * orange-on-black looks nothing like theirs in white -- see app/brand.py.
+ *
+ * Scoped to that one page on purpose. It is the only surface that belongs to
+ * the dealership rather than to us; a rep's dashboard is a working tool and
+ * does not change colour because a prospect's marketing site is dark.
+ *
+ * `.theme-buyer` sits after this in the file, so on an element carrying both
+ * the brand accent still wins for --primary. That ordering is load-bearing. */
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

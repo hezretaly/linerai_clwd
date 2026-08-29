@@ -217,9 +217,28 @@ export function Showroom() {
   }
 
   return (
-    <div className="theme-buyer min-h-full bg-background">
+    /* `.dark` is the classic dark palette that has been in the token layer
+       since the beginning, unused; `.theme-buyer` sits after it in the file
+       and so still wins for --primary, which is where their accent lands.
+       Scoped to this page: the dealership's storefront follows their site,
+       and their reps' dashboard does not. */
+    <div
+      className={clsx(
+        /* `text-foreground` is not decoration. Without it every heading on
+           the page inherits whatever colour the document body has, which in
+           light mode happens to be right and in dark mode is black on black:
+           the dealership's own name, the card titles and the footer all
+           vanished. A surface that sets a background must set a foreground. */
+        'theme-buyer min-h-full bg-background text-foreground',
+        shop?.brand?.surface === 'dark' && 'dark',
+      )}
+    >
       {/* ---- top bar: address, phone, social ------------------------- */}
-      <div className="bg-foreground text-background">
+      {/* Deliberately not `bg-foreground text-background`: that is an
+          inversion, and on a dark surface it inverts the wrong way -- a white
+          strip with white text on it. `bg-muted` is a step away from the page
+          in either mode, which is what the bar is for. */}
+      <div className="border-b border-border bg-muted">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-5 py-2 text-xs">
           <p className="min-w-0 truncate">
             {shop?.address}

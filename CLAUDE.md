@@ -916,6 +916,17 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     ellipsis never appeared. `grid-cols-N` is `minmax(0, 1fr)`, and the
     `minmax(0, …)` is the part that lets it clip. `make shots` covers `/ops`
     at 390px, signing in a second time because the role is different.
+- **A real person gets an account without a reseed.** Staff arrive through
+  `_seed_users`, which only runs on a fresh seed, so putting a dealership's own
+  manager on the system used to mean `make reset-db` — which deletes every lead
+  on the box. `make add-user` is that, in the shape `make add-owners` already
+  established: it writes to `users` and never `ops_users`, because a tool that
+  could write to either is a fourth way to make the mistake the split exists to
+  prevent. The password is generated and printed once rather than read from
+  `.env` — an environment variable per person is one somebody has to add to the
+  deployment, and the seed only reads them on a fresh database anyway. Running
+  it twice reports the account and stops: they may have changed their password,
+  and re-hashing silently locks them out with nothing saying why.
 - **The login form is rate limited per account, never per IP.** It is the one
   unauthenticated endpoint where guessing repeatedly gets you something, and
   the password is all that stands in front of a dealership's buyer list and of
@@ -1030,6 +1041,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       in Craig and Landreth's words. Every URL is validated to `https://` or
       `/` before it reaches an `href`, for the reason the accent is validated
       to a hex: it comes from a file an operator edits and lands in a browser.
+    - **`brand.surface: dark` is read only here.** A dealership whose own
+      site is orange on near-black gets a storefront that looks like it; their
+      reps' dashboard does not change colour, because that is a working tool
+      and `destructive` still has to mean *this one broke*. It picks the
+      `.dark` class already in the token layer rather than carrying a value
+      into a stylesheet, so it is validated to those two words and nothing
+      else. Turning it on found a real bug in the page it was applied to: the
+      root set `bg-background` and never `text-foreground`, which is invisible
+      in light mode and black-on-black in dark — the dealership's own name,
+      every card title and the whole footer disappeared.
     - **The browse filters are counted, and every image has a fallback.**
       "Chevrolet (74)" and the four price bands come from rows, because a
       filter promising 74 cars and showing 9 is worse than no filter. By Type

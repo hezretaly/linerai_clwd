@@ -113,4 +113,10 @@ def brand() -> dict:
         # A URL, not a colour, so it is offered only when it is one we would
         # actually load. Anything else is dropped and the name is used.
         "logo_url": _link(raw.get("logo_url")),
+        # `light` or `dark`, and nothing else -- it selects a stylesheet class
+        # rather than carrying a value into one, so an unknown word must not
+        # reach the DOM. Read only by /showroom: a dealership whose own site
+        # is dark should have a dark storefront, and their reps' dashboard
+        # should not change colour because of it.
+        "surface": "dark" if str(raw.get("surface") or "").strip().lower() == "dark" else "light",
     }
