@@ -51,6 +51,9 @@ to something real and they all differ. `founder@linerai.us`
 dealership endpoint just as a rep's is refused by `/api/ops`. One key per
 person — a shared password cannot be traced or revoked per person.
 
+Setting this up for a real dealership — every `.env` line, in order, and what
+each one buys: **[`docs/DEMO.md`](./docs/DEMO.md)**.
+
 Deploying to a real host: **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**. One process
 serves the API, the WebSocket, the landing page and the SPA, so nginx needs a
 single `proxy_pass`.
@@ -965,6 +968,47 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     the one theme layer and a prospect's colour cannot restyle the product
     into something unreadable. Validated to a hex and dropped otherwise: the
     value lands in a stylesheet.
+  - **The made-up showroom is Riverside's, and does not travel.** Fourteen
+    curated vehicles, the sample CSV lot, a populated yesterday and thirteen
+    written policy answers are a fixture invented so no screen is ever empty
+    on first run. Seeded into a prospect's instance that is not a head start,
+    it is wrong data: their buyer searches the lot and is offered a Toyota
+    Sienna from Cedar Falls, Iowa, then asks the doc fee and is told $189 —
+    quoted verbatim, because that is exactly what `knowledge_entries` are for.
+    `showroom_fixture` is opt-in and read from the profile rather than from
+    its filename, so a file copied from `riverside.yaml` cannot inherit it by
+    accident. A profile with no `knowledge:` of its own gets none, and the two
+    rail chips that promise an answer are dropped with it: "What's your doc
+    fee?" is a chip the dealership put on screen, and one that produces "I'll
+    have to check" is a question it is asking on their behalf and cannot
+    answer.
+  - **The dealership's name is served, never written into a page.** Five
+    surfaces printed the literal string — the chat header, the call header,
+    the login subtitle and two lines on the buyer page — so a rebranded
+    instance greeted a prospect's buyer as somebody else's showroom on the
+    first screen of the demo. `/api/showroom/dealership` is public because two
+    of the five are surfaces nobody has signed in to, and the greeting is
+    built from the same name. Doing it through one hook fixed two more: the
+    chat applied its brand from the session payload, which the *resume* path
+    returns before, so a refresh dropped the accent back to the product blue;
+    and the call applied its own on connect, so the page a buyer decides on
+    was still wearing ours.
+  - **`/showroom` is the link you send a prospect.** `/chat` is a chat window
+    floating on nothing and cannot answer the question a dealer actually has,
+    which is what this looks like on their site. Their logo, colour, address,
+    phone, hours and real lot, with the assistant in the corner. Three rules:
+    the cars come through `tools.offerable` — extracted rather than copied,
+    because a car Liner refuses to discuss sitting on the page beside the chat
+    window refusing to discuss it is the whole failure; the payload is
+    composed rather than filtered from `vehicle_out`, which carries
+    `rule_note` and `mention_count`, and a serializer that has to remember to
+    drop a field will eventually forget; and the widget is an iframe of the
+    real `/chat` (`?embed=1`), never a second chat client. It is not a copy of
+    their marketing site and does not pretend to be one — a near-miss of
+    somebody's own homepage looks worse than a clean page that is honestly
+    ours.
+  - The whole setup, `.env` line by `.env` line, is
+    **[`docs/DEMO.md`](./docs/DEMO.md)**.
 - **A listing page that already carries every field is crawled as one.**
   `ListAdapter` is a second rung beside the JSON-LD one: `extract` assumes a
   page is a vehicle, and Dealer Car Search puts VIN, price, mileage and a
@@ -1164,7 +1208,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 
 | Thing | State |
 |---|---|
-| Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same six tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
+| Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same eight tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
 | Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
 | Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
 | Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |
