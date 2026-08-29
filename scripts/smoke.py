@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from hashlib import sha256
 from http.cookiejar import CookieJar
 
@@ -2771,6 +2772,8 @@ def main() -> int:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
     print("\n== the dealership is served, never written into a page ==")
+    import yaml as _yaml
+
     # Five surfaces printed the literal string "Riverside Auto" -- the chat
     # header, the call header, the login subtitle and two lines on the buyer
     # page. On a rebranded instance every one of them told a prospect's buyer
@@ -2794,6 +2797,45 @@ def main() -> int:
     check("the showroom page has the lot, the greeting and the channels",
           front["total"] > 0 and front["greeting"] and "voice" in front["channels"],
           f"{front['total']} cars")
+
+    # Their own front page prints "Chevrolet (74)" beside each make and offers
+    # four price bands. Both are honest only if they come from rows: a browse
+    # filter promising 74 cars and showing 9 is worse than no filter, and it
+    # is the easiest thing on a demo page to get wrong.
+    facets = front["facets"]
+    bands = sum(b["count"] for b in facets["price_bands"])
+    priced = call("GET", "/api/showroom?limit=1&min_price=0")["total"]
+    check("the price bands partition the lot rather than overlapping it",
+          bands == priced, f"{bands} across bands vs {priced} priced cars")
+
+    top = facets["makes"][0]
+    narrowed = call("GET", f"/api/showroom?limit=100&make={quote(top['name'])}")
+    check("a make count is the number of cars that make actually returns",
+          narrowed["total"] == top["count"], f"{top['name']}: {top['count']} vs {narrowed['total']}")
+
+    # Tokenised on whitespace, "BMW X5?" gives `x5?` and matches nothing --
+    # the exact bug that made the most natural phrasing the one that failed in
+    # the chat, while "BMW X5" worked and kept it invisible. Here the box is a
+    # keyword box rather than the chat, so every word has to hit; what it must
+    # not do is let a question mark decide the answer.
+    ask = lambda text: call("GET", f"/api/showroom?limit=5&q={quote(text)}")["total"]
+    plain = ask("BMW X5")
+    check("the search box narrows to the car that was named", plain == 1, str(plain))
+    check("and a question mark does not change the answer", ask("BMW X5?") == plain)
+    check("nor does the case somebody happens to type",
+          ask("bmw   x5") == plain)
+
+    # Their copy, served rather than written into the component. Hardcoding a
+    # prospect's own sentences is the "Riverside Auto" bug one level up.
+    craig = _yaml.safe_load(
+        pathlib.Path("backend/config/dealerships/craigandlandreth.yaml").read_text())
+    page = pathlib.Path("frontend/src/routes/Showroom.tsx").read_text()
+    check("the prospect's profile carries their front page, not the component",
+          bool((craig.get("site") or {}).get("heading"))
+          and (craig["site"]["heading"] not in page),
+          craig.get("site", {}).get("heading", ""))
+    check("and their opening hours are filled in, so the seed will run",
+          any((craig.get("hours") or {}).values()))
     # A public page, so it must not carry what the dealer's own view carries:
     # `rule_note` is an internal line reading "Consignment, owner has not
     # signed the agreement yet", and `mention_count` is how many buyers have
@@ -2812,7 +2854,6 @@ def main() -> int:
     # it is not a head start, it is wrong data: their buyer searches the lot
     # and is offered a Toyota Sienna from Cedar Falls, Iowa, then asks the doc
     # fee and is told $189 because a fixture said so.
-    import yaml as _yaml
     from app.seed import _has_fixture, _knowledge_for, _possessive
 
     profiles = sorted(pathlib.Path("backend/config/dealerships").glob("*.yaml"))
@@ -2826,6 +2867,42 @@ def main() -> int:
         check(f"{path.stem} does not inherit it", not _has_fixture(raw))
         check(f"and {path.stem} does not inherit its written policies either",
               not _knowledge_for(raw))
+    # A reseed has to survive a database that has been used. Four call tables
+    # and inbound_emails were added after `_clear` was written and none was
+    # added to it, so on any box that had taken a call or received a reply --
+    # every box a demo has been rehearsed on -- reseeding died on `DELETE FROM
+    # outreach` with a bare FOREIGN KEY error naming no table. Invisible
+    # because `make reset-db` deletes the file first and never reaches it.
+    import app.models  # noqa: F401 -- registers every table on the metadata
+    from app.db import Base as _Base
+    from app.seed import _clear as _clear_fn
+
+    source = pathlib.Path("backend/app/seed.py").read_text()
+    # Read the models `_clear` names out of the function itself, so this
+    # notices a table dropped from the list as well as one never added.
+    body = source.split("def _clear")[1].split("db.commit()")[0]
+    emptied = {
+        table.name for cls, table in
+        ((c, c.__table__) for c in _Base.__subclasses__())
+        if cls.__name__ in set(re.findall(r"\b[A-Z][A-Za-z]+\b", body))
+    }
+    dangling = sorted(
+        name for name, table in _Base.metadata.tables.items()
+        if name not in emptied
+        and not name.startswith("ops_")
+        and name != "inbound_emails"
+        and {fk.column.table.name for fk in table.foreign_keys} & emptied
+    )
+    check("nothing points at a table the reseed empties without being emptied too",
+          not dangling, str(dangling))
+    # inbound_emails is the exception, and it is detached rather than deleted:
+    # a delivery nobody could place is listed in OUR mailbox at /ops, so
+    # dropping it on a dealership reseed is mail thrown away on somebody's
+    # behalf -- the same failure `_clear` avoids for the ops_ tables.
+    check("and a delivery receipt is detached on a reseed, never destroyed",
+          "_unplace_inbound" in source and "InboundEmail" not in
+          source.split("def _clear")[1].split("db.commit()")[0])
+
     check("the greeting is built from whichever name that is",
           _possessive("Riverside Auto") == "Riverside Auto's"
           and _possessive("Craig and Landreth Cars") == "Craig and Landreth Cars'",

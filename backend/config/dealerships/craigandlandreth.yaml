@@ -22,16 +22,19 @@ address: 4156 Shelbyville Rd., Louisville, KY 40207
 phone: 502-447-3450
 website_url: "https://www.craigandlandrethcars.com/"
 
-# STILL NEEDED. From their site: the St. Matthews store's opening times.
-# `null` for any day they are closed.
+# From the "Our Hours" table on their own home page. Note Friday and Saturday
+# close an hour earlier than Mon-Thu -- worth keeping exact rather than
+# rounding to one range, because `check_availability` builds the slots it
+# offers a buyer straight out of these values, and a 7:30 PM slot on a Friday
+# is an appointment nobody is there for.
 hours:
-  monday:    null
-  tuesday:   null
-  wednesday: null
-  thursday:  null
-  friday:    null
-  saturday:  null
-  sunday:    null
+  monday:    { open: "09:00", close: "20:00" }
+  tuesday:   { open: "09:00", close: "20:00" }
+  wednesday: { open: "09:00", close: "20:00" }
+  thursday:  { open: "09:00", close: "20:00" }
+  friday:    { open: "09:00", close: "19:00" }
+  saturday:  { open: "09:00", close: "19:00" }
+  sunday:    null   # closed
 
 # STILL NEEDED: `accent`, picked off their real site. The logo is theirs, from
 # the page. Only the accent family moves -- every structural token still comes
@@ -41,6 +44,39 @@ brand:
   accent: ""
   accent_ink: "#ffffff"
   logo_url: "https://imagescdn.dealercarsearch.com/DealerImages/1123/20820/logow2.png"
+
+# Their front page, as `/showroom` renders it. Every string below is theirs,
+# copied from their own home page -- their headings, their sentences, their
+# links. It lives here rather than in Showroom.tsx for the same reason their
+# name does: a prospect's copy written into a component is the next instance
+# greeting somebody as Craig and Landreth.
+#
+# The links point at their real site on purpose. A nav that 404s inside our
+# app during a demo is worse than one that leaves it, and these are pages we
+# are not pretending to have rebuilt.
+site:
+  tagline: Your Premier Car Dealership In Louisville, KY
+  heading: Welcome To Craig and Landreth Cars
+  hero_image: "https://imagescdn.dealercarsearch.com/DealerImages/1123/20820/50yrslide4.jpg"
+  welcome:
+    - >-
+      Let Craig and Landreth Cars show you how easy it is to buy a quality used
+      car in Louisville. We believe fair prices, superior service, and treating
+      customers right leads to satisfied repeat buyers.
+    - >-
+      Our friendly and knowledgeable sales staff is here to help you find the
+      car you deserve, priced to fit your budget. Shop our virtual showroom
+      online then stop by for a test drive.
+  links:
+    - { label: Inventory,     href: "https://www.craigandlandrethcars.com/inventory" }
+    - { label: We Buy Cars,   href: "https://www.craigandlandrethcars.com/webuycars" }
+    - { label: Financing,     href: "https://www.craigandlandrethcars.com/financing" }
+    - { label: Services,      href: "https://www.craigandlandrethcars.com/services" }
+    - { label: Our Store,     href: "https://www.craigandlandrethcars.com/ourstore" }
+  social:
+    - { label: Facebook, href: "https://www.facebook.com/Craigandlandrethcars" }
+    - { label: X,        href: "https://x.com/CnLcars" }
+    - { label: YouTube,  href: "https://www.youtube.com/@CandLUsedCarsKY" }
 
 # No `showroom_fixture` here, deliberately. Riverside's fourteen vehicles, its
 # sample CSV lot and its populated yesterday are invented for a demo of a

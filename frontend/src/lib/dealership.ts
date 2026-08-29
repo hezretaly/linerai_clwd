@@ -17,6 +17,19 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from './api'
 import type { Brand } from './brand'
 
+/** Their front page as they wrote it, from the profile's `site:` block.
+ *  Every field is optional -- a profile without one renders a plain
+ *  storefront carrying the name, address, phone and lot, which is what
+ *  Riverside gets and is a perfectly honest page. */
+export interface Site {
+  tagline: string
+  heading: string
+  hero_image: string
+  welcome: string[]
+  links: { label: string; href: string }[]
+  social: { label: string; href: string }[]
+}
+
 export interface Dealership {
   id: string
   name: string
@@ -26,6 +39,7 @@ export interface Dealership {
   phone: string
   website_url: string
   brand: Brand
+  site: Site
 }
 
 /** `Riverside Auto` -> `Riverside Auto's`; `... Cars` -> `... Cars'`.

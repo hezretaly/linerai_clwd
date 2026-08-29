@@ -21,12 +21,17 @@ from app.db import SessionLocal, create_all, utcnow
 from app.models import (
     Appointment,
     AssistantSettings,
+    CallBuyerTrack,
+    CallRecording,
+    CallSegment,
+    CallUsage,
     CapturedField,
     Conversation,
     Dealership,
     Escalation,
     Event,
     HandoffRule,
+    InboundEmail,
     IngestRun,
     KnowledgeEntry,
     Lead,
@@ -206,18 +211,65 @@ RAILS = [
 
 
 def _clear(db: Session) -> None:
-    # The dealership's tables and no others. `ops_users` and
-    # `ops_demo_requests` are ours and are deliberately absent: rebuilding a
-    # showroom fixture must not throw away demos that real people booked with
-    # us. `make reset-db` deletes the whole file and does lose them, which is
-    # why `make reset-dealership` exists for a box with anything real on it.
+    """Empty the dealership's tables, in an order the foreign keys allow.
+
+    `ops_users` and `ops_demo_requests` are ours and are deliberately absent:
+    rebuilding a showroom fixture must not throw away demos real people booked
+    with us. `make reset-db` deletes the whole file and does lose them, which
+    is why `make reset-dealership` exists for a box with anything real on it.
+
+    **The list has to be complete or the reseed fails outright.** Four call
+    tables and `inbound_emails` were added after this was written and none of
+    them was added here, so on any database that had taken a call or received
+    a reply -- which is every box a demo has been rehearsed on -- reseeding
+    died on `DELETE FROM outreach` with a bare `FOREIGN KEY constraint
+    failed` and no clue which table. It stayed invisible because a fresh
+    `make reset-db` deletes the file first and never reaches this.
+    """
+    # A call's recording, its cost rows and its speech marks belong to the
+    # conversation and go with it. The audio files under backend/var/ are not
+    # touched here -- they are named by row id, so a stale one is orphaned
+    # rather than served to the wrong buyer.
     for model in (
+        CallSegment, CallUsage, CallBuyerTrack, CallRecording,
         VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
         Conversation, Lead, IngestRun, Vehicle, Rail, KnowledgeEntry, HandoffRule,
         AssistantSettings, User, Dealership, Event,
     ):
         db.query(model).delete()
     db.commit()
+
+
+def _unplace_inbound(db: Session) -> None:
+    """Detach delivery receipts from the dealership, without destroying them.
+
+    `inbound_emails` is the one table caught between the two halves of the
+    split. It points at `leads` and `outreach`, so it has to be dealt with
+    before those are emptied -- but it is a record that somebody really wrote
+    in, and an unresolved delivery is listed in *our* mailbox at `/ops`,
+    because a stranger who mails `support@` has no buyer page anywhere else.
+    Deleting it on a reseed is the same failure `_clear` avoids for the `ops_`
+    tables: mail thrown away on somebody's behalf.
+
+    So the row survives and only the pointers go. The envelope, the body and
+    `outcome` are what actually happened and are left exactly as they were --
+    rewriting a receipt to say something other than what occurred is the one
+    thing a receipt must never do.
+
+    Run before `_clear`, which is the only ordering that works: afterwards the
+    rows it would have detached are already the reason the delete failed.
+    """
+    stale = (
+        db.query(InboundEmail)
+        .filter(InboundEmail.lead_id.isnot(None) | InboundEmail.outreach_id.isnot(None))
+        .all()
+    )
+    for row in stale:
+        row.lead_id = None
+        row.outreach_id = None
+    if stale:
+        db.commit()
+        print(f"  kept {len(stale)} inbound email receipt(s), detached from the old data")
 
 
 #: What a profile has to say before anything is built from it. Hours are
@@ -771,6 +823,7 @@ def seed(db: Session | None = None) -> None:
     db = db or SessionLocal()
     try:
         raw = load_profile()
+        _unplace_inbound(db)
         _clear(db)
         _seed_dealership(db, raw)
         users = _seed_users(db)

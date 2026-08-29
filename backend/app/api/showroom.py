@@ -27,12 +27,15 @@ that already owns them.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.agent.tools import offerable
 from app.api.settings import live_settings
-from app.brand import brand
+from app.brand import brand, site
 from app.config import settings
 from app.db import get_db
 from app.models import Dealership, Vehicle
@@ -44,6 +47,25 @@ router = APIRouter(prefix="/showroom", tags=["showroom"])
 #: Enough of a lot to look like a lot, and few enough to send over a phone
 #: connection in a demo. The page asks for more as the buyer scrolls.
 PAGE_SIZE = 24
+
+#: The four bands their own front page offers, half-open so a car at exactly
+#: $15,000 lands in one band rather than in two.
+PRICE_BANDS = [
+    ("Under $15K", None, 15_000),
+    ("$15K - $30K", 15_000, 30_000),
+    ("$30K - $50K", 30_000, 50_000),
+    ("$50K and over", 50_000, None),
+]
+
+#: Splitting a search box on non-alphanumerics rather than on whitespace.
+#: `"Do you have a BMW X5?"` tokenised on spaces gives `x5?`, which matches
+#: nothing -- and `"BMW X5"` works, which is exactly what kept that bug
+#: invisible in the chat for so long.
+WORD = re.compile(r"[a-z0-9]+")
+
+
+def _words(text: str) -> list[str]:
+    return WORD.findall((text or "").lower())[:6]
 
 
 def _car(v: Vehicle) -> dict:
@@ -82,13 +104,63 @@ def identity(db: Session) -> dict:
         "id": "", "name": "", "timezone": "", "hours": {},
         "address": "", "phone": "", "website_url": "",
     }
-    return {**out, "brand": brand()}
+    return {**out, "brand": brand(), "site": site()}
+
+
+def _facets(db: Session) -> dict:
+    """What the lot actually contains, counted.
+
+    Their own site prints "Chevrolet (74)" beside each make and offers four
+    price bands. Both are honest here only if the numbers come from rows --
+    a browse filter that promises 74 cars and shows 9 is worse than no filter,
+    and it is the single easiest thing on a demo page to get wrong.
+
+    Counted over the *offerable* lot, so a make represented only by a sold or
+    do-not-discuss car does not appear at all rather than appearing and
+    leading to an empty page.
+    """
+    makes = (
+        offerable(db.query(Vehicle.make, func.count(Vehicle.id)))
+        .filter(Vehicle.make != "")
+        .group_by(Vehicle.make)
+        .order_by(func.count(Vehicle.id).desc())
+        .all()
+    )
+    styles = (
+        offerable(db.query(Vehicle.body_style, func.count(Vehicle.id)))
+        .filter(Vehicle.body_style != "")
+        .group_by(Vehicle.body_style)
+        .order_by(func.count(Vehicle.id).desc())
+        .all()
+    )
+    bands = []
+    for label, low, high in PRICE_BANDS:
+        query = offerable(db.query(Vehicle)).filter(Vehicle.price.isnot(None))
+        if low is not None:
+            query = query.filter(Vehicle.price >= low)
+        if high is not None:
+            query = query.filter(Vehicle.price < high)
+        bands.append({"label": label, "min": low, "max": high, "count": query.count()})
+    return {
+        "makes": [{"name": name, "count": count} for name, count in makes],
+        # Empty for a Dealer Car Search lot, and that is a real answer rather
+        # than a gap: body style lives only in their sidebar filters, so the
+        # adapter leaves it empty rather than deriving it. The page draws no
+        # By Type row at all instead of ten links that all return nothing.
+        "body_styles": [{"name": name, "count": count} for name, count in styles],
+        "price_bands": bands,
+    }
 
 
 @router.get("")
 def showroom(
     offset: int = Query(0, ge=0),
     limit: int = Query(PAGE_SIZE, ge=1, le=100),
+    q: str = Query(""),
+    make: str = Query(""),
+    body_style: str = Query(""),
+    min_price: int | None = Query(None, ge=0),
+    max_price: int | None = Query(None, ge=0),
     db: Session = Depends(get_db),
 ) -> dict:
     """The page's whole payload: who they are, what is on the lot, what works.
@@ -98,16 +170,52 @@ def showroom(
     turned it on, and a Call button that opens a page saying voice is
     unavailable is worse than no button -- so the page is told, and does not
     draw one.
+
+    The filters are the ones their own front page offers -- a keyword box, a
+    make list with counts, four price bands. They run against the same rows
+    the assistant searches, so a buyer who narrows to "Chevrolet under $15k"
+    and then asks the same question in the chat gets the same cars.
     """
-    query = offerable(db.query(Vehicle)).order_by(Vehicle.price.desc())
+    query = offerable(db.query(Vehicle))
+    if make.strip():
+        query = query.filter(func.lower(Vehicle.make) == make.strip().lower())
+    if body_style.strip():
+        query = query.filter(Vehicle.body_style.ilike(f"%{body_style.strip()}%"))
+    if min_price is not None:
+        query = query.filter(Vehicle.price >= min_price)
+    if max_price is not None:
+        query = query.filter(Vehicle.price < max_price)
+    # Every word must hit. This is a keyword box, not the chat: somebody types
+    # "silverado 4wd" and expects the trucks that are both, and ORing gives
+    # them the whole lot because one car is always a Chevrolet and another is
+    # always 4WD.
+    #
+    # It is deliberately *not* the scoring `search_inventory` does with the
+    # same words. That tool is answering a sentence and keeps its best guesses;
+    # this one is narrowing a grid, and a grid that answers "Do you have a BMW
+    # X5?" with all 112 vehicles ranked is worse than one that answers with
+    # nothing and leaves the question to the assistant in the corner, which is
+    # what the sentence was for.
+    #
+    # What both share is the tokenising: split on non-alphanumerics, never on
+    # spaces. `"BMW X5?"` on whitespace gives `x5?`, which matches nothing --
+    # and `"BMW X5"` works, which is what kept that bug invisible in the chat.
+    hay = func.lower(
+        Vehicle.keywords + " " + Vehicle.make + " " + Vehicle.model
+        + " " + Vehicle.trim + " " + Vehicle.body_style
+    )
+    for word in _words(q):
+        query = query.filter(hay.like(f"%{word}%"))
+
     total = query.count()
-    cars = query.offset(offset).limit(limit).all()
+    cars = query.order_by(Vehicle.price.desc()).offset(offset).limit(limit).all()
     return {
         "dealership": identity(db),
         "greeting": live_settings(db).greeting,
         "vehicles": [_car(v) for v in cars],
         "total": total,
         "offset": offset,
+        "facets": _facets(db),
         "channels": {
             "chat": True,
             # A key alone does not answer the phone: taking calls is a

@@ -801,7 +801,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       `make ops-ui` asserts all three, and that `/api/auth/me` still answers
       200 afterwards each time.
     - **`_clear` never touches an `ops_` table**, so rebuilding the showroom
-      fixture cannot throw away demos real people booked with us.
+      fixture cannot throw away demos real people booked with us. Its list
+      also has to stay **complete**: four call tables and `inbound_emails`
+      were added long after it was written and none was added to it, so on any
+      database that had taken a call or received a reply — every box a demo
+      has been rehearsed on — a reseed died on `DELETE FROM outreach` with a
+      bare `FOREIGN KEY constraint failed` naming no table. `make reset-db`
+      deletes the file first and never reaches it, which is why it stayed
+      invisible; `make smoke` now reads the list out of the function and fails
+      on any table pointing into it from outside.
+    - **A delivery receipt is detached on a reseed, never deleted.**
+      `inbound_emails` is the one table caught between the two halves: it
+      points at `leads` and `outreach`, but an unplaced delivery is listed in
+      *our* mailbox at `/ops`, because a stranger who mails `support@` has no
+      buyer page anywhere else. So `_unplace_inbound` nulls the two foreign
+      keys and leaves the envelope, the body and `outcome` exactly as they
+      were — rewriting a receipt to say something other than what happened is
+      the one thing a receipt must never do.
       `make reset-dealership` is that; `make reset-db` deletes the file and
       does lose them, which is why it is not the one to reach for on a box
       with anything real on it.
@@ -1007,6 +1023,29 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     their marketing site and does not pretend to be one — a near-miss of
     somebody's own homepage looks worse than a clean page that is honestly
     ours.
+    - **Their copy lives in the profile's `site:` block, not in the
+      component.** Headings, welcome text, hero, nav and social links are the
+      dealership's own sentences; hardcoded in `Showroom.tsx` they are the
+      "Riverside Auto" bug one level up, and the next instance greets somebody
+      in Craig and Landreth's words. Every URL is validated to `https://` or
+      `/` before it reaches an `href`, for the reason the accent is validated
+      to a hex: it comes from a file an operator edits and lands in a browser.
+    - **The browse filters are counted, and every image has a fallback.**
+      "Chevrolet (74)" and the four price bands come from rows, because a
+      filter promising 74 cars and showing 9 is worse than no filter. By Type
+      is drawn only when the lot has body styles at all — a Dealer Car Search
+      crawl leaves that field empty, so it would otherwise be ten links that
+      all return nothing. The logo, hero and every car photo fall back on
+      `onError`: they are hotlinked from the dealer's CDN, and a torn-page
+      icon next to their own name mid-demo is the failure to prevent.
+    - **The search box is a keyword box, not the chat.** Every word must hit,
+      because "silverado 4wd" means both; `search_inventory` *scores* the same
+      words instead, because it is answering a sentence and keeps its best
+      guesses. What they share is tokenising on non-alphanumerics — `"BMW X5?"`
+      split on whitespace gives `x5?` and matches nothing.
+    - **There is no contact form, and that is the pitch.** Their real page has
+      one. Reproducing it would be a form that posts nowhere; the assistant
+      stands in its place and captures the same fields, answers, and books.
   - The whole setup, `.env` line by `.env` line, is
     **[`docs/DEMO.md`](./docs/DEMO.md)**.
 - **A listing page that already carries every field is crawled as one.**

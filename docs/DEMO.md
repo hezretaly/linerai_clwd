@@ -30,23 +30,31 @@ in it, read off their own inventory page and cross-checked against the
 schema.org `AutoDealer` block in its footer: **name, address, phone,
 timezone.**
 
-Two are still blank and the seed **refuses to run** until the first is filled:
+**Hours are filled in** from their own page — note Fri/Sat close an hour
+earlier than Mon–Thu, which matters because `check_availability` builds the
+slots it offers a buyer straight out of these values.
+
+**Their front page is in the profile too** — the `site:` block carries their
+heading, welcome copy, hero image, nav and social links, all copied from their
+own home page. `/showroom` renders from it. A profile with no `site:` block
+gets a plain storefront, which is what Riverside gets and is perfectly honest.
+
+**One thing is still blank:**
 
 ```yaml
-hours:
-  monday:    { open: "09:00", close: "19:00" }   # ← from their site
-  ...
-  sunday:    null                                # null means closed
-
 brand:
-  accent: "#0a3d7a"     # ← picked off their real site
+  accent: ""          # ← their colour, picked off their real site
 ```
 
-That refusal is deliberate. Their opening times cannot be looked up from here,
-the calendar builds appointment slots straight out of `hours`, and an invented
-hour is an appointment nobody is there for. Filling a gap with something
-plausible is worse than leaving it: an invented address survives a demo and
-gets repeated back to a customer.
+Empty falls back to the product blue, so the page works either way — it just
+is not their blue. Nothing here can reach `craigandlandrethcars.com` or their
+image CDN, so this has to be read off their site by a person.
+
+Where the seed **refuses to run** is a missing `hours`. That is deliberate:
+opening times cannot be looked up from here, and an invented hour is an
+appointment nobody is there for. Filling a gap with something plausible is
+worse than leaving it — an invented address survives a demo and gets repeated
+back to a customer.
 
 **Optional but worth asking them for:** `knowledge:` — their doc fee, whether
 they take trade-ins, their deposit. Policy answers are returned to a buyer
