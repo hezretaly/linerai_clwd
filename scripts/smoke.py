@@ -2969,6 +2969,16 @@ def main() -> int:
     check("and only ever as manager or rep",
           all((p.get("role") or "rep") in ("manager", "rep") for p in (craig.get("staff") or [])))
 
+    # The seed prints logins, and it printed a hardcoded pair -- so a profile
+    # that seeds its own staff ended by naming two accounts it had not
+    # created. Somebody reads that line, types it, and gets a 401 that
+    # correctly refuses to say whether the address exists. The report has to
+    # come from the rows.
+    seed_src = pathlib.Path("backend/app/seed.py").read_text()
+    tail = seed_src.split("def seed(")[1]
+    check("the seed reports the accounts it actually created, not a fixed pair",
+          "dana.mercer" not in tail and "logins" in tail)
+
     check("the greeting is built from whichever name that is",
           _possessive("Riverside Auto") == "Riverside Auto's"
           and _possessive("Craig and Landreth Cars") == "Craig and Landreth Cars'",

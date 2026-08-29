@@ -42,7 +42,12 @@ feature reports itself as unavailable rather than simulating a result.
 
 Ports: backend **8000**, frontend **5173**, fixture site **8100**.
 Logins: `dana.mercer@example.invalid` (manager) and `marcus.vale@example.invalid`
-(rep), both `liner-dev` in development. They come from `MANAGER_PASSWORD` and
+(rep), both `liner-dev` in development — those are the **fixture's** accounts.
+A profile with its own `staff:` gets those people instead, with a password
+generated and printed once; the seed reports whichever it actually created,
+because printing a fixed pair meant naming two logins that did not exist.
+
+The fixture pair come from `MANAGER_PASSWORD` and
 `REP_PASSWORD`; with `ENV=production` startup refuses to run until each is set
 to something real and they all differ. `founder@linerai.us`
 (`FOUNDER_PASSWORD`) and `cto@linerai.us` (`CTO_PASSWORD`) are **ours**, in

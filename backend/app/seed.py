@@ -397,48 +397,49 @@ def build_owner(name: str, email: str, password_env: str, initials: str) -> OpsU
     )
 
 
-def _seed_users(db: Session, raw: dict) -> list[User]:
-    """The dealership's staff: the fixture's four, or the profile's own people.
+def _seed_users(db: Session, raw: dict) -> tuple[list[User], list[tuple[User, str]]]:
+    """The dealership's staff, and the password each one can sign in with.
 
-    A prospect's instance should not ship with Dana Mercer and Marcus Vale on
-    the roster -- they are invented, they appear in every assignment picker,
-    and a real manager looking at their own team page reading four names they
-    have never heard of is the same failure as being greeted as Riverside
+    Two lists come back because the caller prints them: the users, and
+    `(user, password)` for every account created. **The seed must report the
+    accounts it actually made** -- it used to print Dana Mercer and Marcus Vale
+    unconditionally, so a profile seeded with its own staff ended with two
+    logins that did not exist. Somebody reads that line, types it, and gets a
+    401 that -- correctly, since the login form must never confirm whether an
+    address exists -- tells them nothing.
+
+    A prospect's instance should not ship with Dana Mercer on the roster
+    anyway: invented names in every assignment picker, on the team page their
+    real manager is reading, is the same failure as being greeted as Riverside
     Auto. So a profile with a `staff:` list gets exactly that list.
 
-    Their passwords are generated here and printed once, for the reason
-    `add_user` generates rather than reading `.env`: an environment variable
-    per person is one somebody has to add to the deployment. A reseed rebuilds
-    the database, so it rotates them -- which is honest, and is why the seed
-    prints them where it prints the fixture logins.
-
     The fixture's four keep their `.env`-driven passwords, because every test,
-    screenshot and smoke run signs in as one of them.
+    screenshot and smoke run signs in as one of them. A profile's own people
+    get a generated one, for the reason `add_user` generates rather than
+    reading `.env`: an environment variable per person is one somebody has to
+    add to the deployment. A reseed rebuilds the database, so it rotates them.
     """
     people = profile.staff() if not _has_fixture(raw) else []
     if not people:
         users = [build_user(*person) for person in STAFF]
         db.add_all(users)
         db.commit()
-        return users
+        return users, [(u, _password_for(u.role)) for u in users]
 
     users, minted = [], []
     for person in people:
         password = secrets.token_urlsafe(12)
-        users.append(User(
+        user = User(
             name=person["name"], email=person["email"], role=person["role"],
             password_hash=_hash(password),
             avatar_initials=initials(person["name"]),
             active=True, daily_cap=6 if person["role"] == "manager" else 8,
-        ))
-        minted.append((person, password))
+        )
+        users.append(user)
+        minted.append((user, password))
     db.add_all(users)
     db.commit()
-    print(f"  {len(users)} staff account(s) from {settings.dealership_config.name}:")
-    for person, password in minted:
-        print(f"    {person['role']:8} {person['email']}  /  {password}")
-    print("  Shown once -- only the hash is stored. Change one with `make set-password`.")
-    return users
+    return users, minted
 
 
 def _seed_owners(db: Session) -> int:
@@ -866,7 +867,7 @@ def seed(db: Session | None = None) -> None:
         _unplace_inbound(db)
         _clear(db)
         _seed_dealership(db, raw)
-        users = _seed_users(db, raw)
+        users, logins = _seed_users(db, raw)
         if _has_fixture(raw):
             vehicles = _seed_vehicles(db)
             _seed_csv_inventory(db)
@@ -890,16 +891,29 @@ def seed(db: Session | None = None) -> None:
             print(
                 f"\n{raw['name']} carries no showroom fixture, so the lot is empty and\n"
                 "there is no demo history. Their cars come from their own site:\n"
-                "  SCRAPER_BASE_URL=<their inventory page>, then Import on /app/inventory.\n"
+                + (f"  {profile.inventory()['source_url']}\n"
+                   "  Press Import on /app/inventory, review the run, then publish.\n"
+                   if profile.inventory()["source_url"]
+                   else "  Add an `inventory.source_url` to their profile, or import a CSV.\n")
                 + ("Policy answers: none are seeded. Add a `knowledge:` list to\n"
                    f"{settings.dealership_config} with answers they have actually given,\n"
                    "or Liner says it will check rather than inventing one.\n"
                    if not _knowledge_for(raw) else "")
             )
-        print(
-            f"Manager: dana.mercer@example.invalid / {settings.manager_password}\n"
-            f"Rep:     marcus.vale@example.invalid / {settings.rep_password}"
-        )
+        # The accounts that were actually created, never a hardcoded pair.
+        # A generated password is shown once and only the hash is kept, so the
+        # line saying how to set a new one has to be right here beside it.
+        print("\nSign in with:")
+        for user, password in logins:
+            print(f"  {user.role:8} {user.email:38} {password}")
+        # A fixture account's password comes from `.env` and survives; a
+        # profile's own person gets a fresh one on every reseed, so only that
+        # kind needs the line about writing it down.
+        generated = [u for u, _p in logins if u.email not in {row[1] for row in STAFF}]
+        if generated:
+            print("\nThose passwords were generated and are shown once -- only the hash is\n"
+                  "stored. A reseed makes new ones. To set one yourself:\n"
+                  f"  make set-password EMAIL={generated[0].email}")
         # Ours, in ops_users, and named with the key each password comes from
         # -- otherwise the only way to know which `.env` line to change is to
         # read the seed.
