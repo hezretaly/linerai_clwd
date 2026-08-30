@@ -1006,6 +1006,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the 401s. A correct password clears the count, so four mistypes and a
   success do not leave somebody four attempts from a lockout. In process like
   `events.py`, for the same reason: one worker is already required.
+- **A timestamp on the wire says which of two kinds it is.** ECMAScript parses
+  a bare date-time as *browser-local*, and `utcnow()` is naive UTC, so
+  `isoformat()` alone put an unmarked instant on the wire: every relative time
+  on every page was computed against a clock shifted by the viewer's own
+  offset, and a reply that had just arrived read `5h ago` to somebody sitting
+  at UTC+5. It read correctly on a machine set to UTC, which is every box this
+  has been developed on. `serialize.stamp()` marks an instant; `serialize.iso()`
+  stays bare for the wall-clock half — an appointment at 10:00 means ten at the
+  showroom, and a zone on it would be a claim nobody can honour. The split is
+  enforced on the wire rather than in the browser, because a frontend that has
+  to remember which kind it is holding will eventually forget, and `make smoke`
+  fetches seven endpoints and fails on any `*_at` with no zone.
+- **Somebody who has not said who they are is named for the channel they
+  used.** Every anonymous row read *Unknown caller*, which is two wrong words
+  on a chat: nobody called. `book_appointment` is what mints a lead, so most
+  live chats have none at all — and the row describing an anonymous 9pm
+  question as a phone call was the one a rep most needed to read. The contact
+  line under it went the same way: *No email — call back* was printed whenever
+  the address was blank, telling a rep to do the one thing they could not do
+  when there was no number either.
 - **The clock in the header is the showroom's, and it ticks in the browser.**
   Two faults in one line. `const now = new Date()` during render froze at
   whatever minute the page loaded, because nothing on a quiet dashboard

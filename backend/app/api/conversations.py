@@ -15,7 +15,9 @@ from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.events import emit
 from app.models import Conversation, Escalation, Lead, Message, User, Vehicle
-from app.schemas.serialize import booking_card, conversation_out, message_out, vehicle_out
+from app.schemas.serialize import (
+    booking_card, conversation_out, message_out, stamp, vehicle_out,
+)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -79,7 +81,7 @@ def list_conversations(
         "conversations": [
             {
                 **conversation_out(c, db),
-                "last_activity_at": activity_of(c).isoformat(),
+                "last_activity_at": stamp(activity_of(c)),
                 "focus_vehicle": focus.get(c.focus_vehicle_id or ""),
             }
             for c in rows

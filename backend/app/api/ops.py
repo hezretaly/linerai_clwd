@@ -35,7 +35,7 @@ from app.models import (
     OpsMessage,
     OpsUser,
 )
-from app.schemas.serialize import iso
+from app.schemas.serialize import iso, stamp
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -56,13 +56,13 @@ def _entry(row: DemoRequest) -> dict:
         "dealership_url": row.dealership_url,
         "message": row.message,
         "slot_at": iso(row.slot_at),
-        "consented_at": iso(row.consent_at),
+        "consented_at": stamp(row.consent_at),
         # The words they agreed to, not just that they agreed. Shown on the
         # entry because that is the only place anyone would ever go looking.
         "consent_text": row.consent_text,
         "status": row.status,
         "unread": row.status == "new",
-        "created_at": iso(row.created_at),
+        "created_at": stamp(row.created_at),
     }
 
 
@@ -251,7 +251,7 @@ def _inbound(db: Session) -> list[dict]:
                 else f"Support -- {request.name}"
             ),
             "body": request.message or _demo_body(request),
-            "at": iso(request.created_at),
+            "at": stamp(request.created_at),
             # `status` is already this fact and the notification bell reads
             # it. A second copy in ops_mail_state is how the bell and the
             # mailbox start disagreeing about the same message.
@@ -282,7 +282,7 @@ def _inbound(db: Session) -> list[dict]:
             "to_address": mail.to_address or "",
             "subject": mail.subject or "(no subject)",
             "body": mail.body or "",
-            "at": iso(mail.created_at),
+            "at": stamp(mail.created_at),
             # Unread until somebody opens it. This was hardcoded False,
             # because `inbound_emails` has no column for it and there is no
             # Alembic here -- so every delivery arrived looking already read,
@@ -328,7 +328,7 @@ def _outbound(db: Session, user: OpsUser) -> list[dict]:
             "to_address": msg.to_address,
             "subject": msg.subject or "(no subject)",
             "body": msg.body or "",
-            "at": iso(msg.sent_at or msg.updated_at or msg.created_at),
+            "at": stamp(msg.sent_at or msg.updated_at or msg.created_at),
             # Nothing we wrote is ever unread -- we wrote it. A Sent box that
             # accrues an unread count is a mailbox arguing with itself.
             "unread": False,
@@ -507,7 +507,7 @@ def save_draft(
     draft.updated_at = utcnow()
     db.commit()
     db.refresh(draft)
-    return {"id": draft.id, "state": draft.state, "updated_at": iso(draft.updated_at)}
+    return {"id": draft.id, "state": draft.state, "updated_at": stamp(draft.updated_at)}
 
 
 class ReplyBody(BaseModel):

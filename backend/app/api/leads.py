@@ -21,7 +21,7 @@ from app.models import (
     User,
     Vehicle,
 )
-from app.schemas.serialize import conversation_out, iso, lead_out, vehicle_out
+from app.schemas.serialize import conversation_out, iso, lead_out, stamp, vehicle_out
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -127,7 +127,7 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
             "vehicle_of_interest": vehicle_out(vehicle) if vehicle else None,
             "appointment_count": len(live),
             "unconfirmed_count": len([a for a in live if a.status == "booked"]),
-            "last_touch_at": iso(max(touches)) if touches else iso(lead.created_at),
+            "last_touch_at": stamp(max(touches)) if touches else stamp(lead.created_at),
             "conversation_id": mine[0].id if mine else None,
             # What the conversations list needs to draw a lead row without a
             # query per row: how many threads, which channels, and whether any

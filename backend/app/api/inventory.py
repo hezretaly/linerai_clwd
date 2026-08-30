@@ -18,7 +18,7 @@ from app.models import (
     Vehicle,
     VehicleMention,
 )
-from app.schemas.serialize import vehicle_out
+from app.schemas.serialize import stamp, vehicle_out
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
@@ -93,7 +93,7 @@ def get_vehicle(
             "lead_id": lead.id if lead else None,
             "lead_name": (lead.name if lead else None) or "Unknown caller",
             "quoted_price": mention.quoted_price,
-            "created_at": mention.created_at.isoformat(),
+            "created_at": stamp(mention.created_at),
         }
         for mention, convo, lead in mentions
     ]

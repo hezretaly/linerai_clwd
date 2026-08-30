@@ -23,7 +23,7 @@ from app.db import get_db, utcnow
 from app.events import emit
 from app.models import DemoRequest, OpsUser
 from app.api.deps import require_owner
-from app.schemas.serialize import iso
+from app.schemas.serialize import iso, stamp
 
 router = APIRouter(prefix="/demo", tags=["demo"])
 
@@ -212,8 +212,8 @@ def list_requests(
                 "id": r.id, "kind": r.kind, "name": r.name, "dealership": r.dealership,
                 "email": r.email, "phone": r.phone, "dealership_url": r.dealership_url,
                 "message": r.message, "slot_at": iso(r.slot_at),
-                "consented_at": iso(r.consent_at), "status": r.status,
-                "created_at": iso(r.created_at),
+                "consented_at": stamp(r.consent_at), "status": r.status,
+                "created_at": stamp(r.created_at),
             }
             for r in rows
         ]

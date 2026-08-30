@@ -36,6 +36,21 @@ import { PageIntro } from '../components/dashboard/AppShell'
  */
 
 const CHANNEL_LABEL: Record<string, string> = { chat: 'Website chat', voice: 'Voice call' }
+
+/**
+ * What to call somebody who has not said who they are.
+ *
+ * It was "Unknown caller" for every row, which is two wrong words on a chat:
+ * nobody called. `book_appointment` is what mints a lead, so most live chats
+ * have none at all -- an anonymous buyer asking a question at 9pm is exactly
+ * who a rep needs to see, and the row was describing them as a phone call
+ * that never happened.
+ */
+const ANONYMOUS: Record<string, string> = {
+  chat: 'Website visitor',
+  voice: 'Unknown caller',
+}
+const anonymous = (channel: string) => ANONYMOUS[channel] ?? 'Not identified yet'
 const SOURCE_LABEL: Record<string, string> = {
   chat: 'Website chat',
   phone: 'Phone',
@@ -53,6 +68,8 @@ interface RowView {
   row: Row
   name: string
   email: string
+  /** Only for the contact line: with neither, there is no way to reach them. */
+  phone: string
   origin: string
   state: [string, string]
   vehicle: { title: string; price: number | null } | null
@@ -71,8 +88,9 @@ function view(row: Row): RowView {
     const c = row.c
     return {
       row,
-      name: c.lead?.name || 'Unknown caller',
+      name: c.lead?.name || anonymous(c.channel),
       email: c.lead?.email ?? '',
+      phone: c.lead?.phone ?? '',
       origin: CHANNEL_LABEL[c.channel] ?? c.channel,
       state: stateOf(c),
       vehicle: c.focus_vehicle
@@ -91,6 +109,7 @@ function view(row: Row): RowView {
     row,
     name: l.name || 'Unnamed lead',
     email: l.email ?? '',
+    phone: l.phone ?? '',
     // What they actually used, when they used anything. An imported lead has
     // used nothing, so the document it arrived in is all there is to say.
     origin: (l.channels ?? []).length
@@ -406,8 +425,20 @@ function Flag() {
   )
 }
 
-function NoEmail() {
-  return <span className="text-primary">No email -- call back</span>
+/**
+ * What is actually known about reaching this person.
+ *
+ * "No email -- call back" was printed whenever the email was blank, including
+ * on an anonymous website chat where there is no phone number either. It told
+ * a rep to do the one thing they could not do. A phone number is a call back;
+ * nothing at all is the open chat window and nothing else.
+ */
+function NoEmail({ phone, channel }: { phone: string; channel: string }) {
+  if (phone) return <span className="text-primary">No email -- call back</span>
+  if (channel === 'chat') {
+    return <span className="text-muted-foreground">No contact details -- reply in the chat</span>
+  }
+  return <span className="text-muted-foreground">No contact details</span>
 }
 
 function TableRow({
@@ -435,7 +466,7 @@ function TableRow({
               {r.flagged && <Flag />}
             </div>
             <div className="truncate text-xs text-muted-foreground">
-              {r.email || <NoEmail />}
+              {r.email || <NoEmail phone={r.phone} channel={r.channels[0] ?? ''} />}
             </div>
           </div>
         </div>
@@ -502,7 +533,7 @@ function PhoneRow({
               </span>
             </div>
             <div className="truncate text-xs text-muted-foreground">
-              {r.email || <NoEmail />}
+              {r.email || <NoEmail phone={r.phone} channel={r.channels[0] ?? ''} />}
             </div>
             {r.vehicle && (
               <div className="mt-1 truncate text-xs">

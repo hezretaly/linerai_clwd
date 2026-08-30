@@ -45,7 +45,7 @@ from app.models import (
     User,
     Vehicle,
 )
-from app.schemas.serialize import iso, loads, outreach_out, user_out, vehicle_out
+from app.schemas.serialize import iso, loads, outreach_out, stamp, user_out, vehicle_out
 
 # Within the same second, what a rep expects to read first. A booking is the
 # consequence of the message above it, not the other way round.
@@ -63,7 +63,7 @@ def _mirrored_outreach_id(message: Message) -> str | None:
 
 
 def _entry(kind: str, at: datetime | None, **payload) -> dict:
-    return {"kind": kind, "at": iso(at), **payload}
+    return {"kind": kind, "at": stamp(at), **payload}
 
 
 def compose(
@@ -210,7 +210,7 @@ def compose(
             channel="",
             conversation_id=e.conversation_id,
             reason=e.reason,
-            claimed_at=iso(e.claimed_at),
+            claimed_at=stamp(e.claimed_at),
             claimed_by=user_out(claimed) if claimed else None,
         ))
 

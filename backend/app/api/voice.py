@@ -56,7 +56,7 @@ from app.models import (
     User,
     Vehicle,
 )
-from app.schemas.serialize import iso, message_out
+from app.schemas.serialize import iso, message_out, stamp
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
@@ -411,7 +411,7 @@ def call_cost(
     )
     turns = [
         {
-            "at": iso(r.created_at),
+            "at": stamp(r.created_at),
             "input_tokens": r.input_tokens,
             "cached_tokens": r.cached_tokens,
             "fresh_input_tokens": r.input_audio_tokens + r.input_text_tokens,
@@ -666,7 +666,7 @@ def read_transcript(
     return {
         "conversation_id": conversation_id,
         "lines": voice_transcript.merged(db, convo),
-        "transcribed_at": iso(track.transcribed_at) if track else None,
+        "transcribed_at": stamp(track.transcribed_at) if track else None,
         "buyer_track_bytes": track.size_bytes if track else 0,
     }
 

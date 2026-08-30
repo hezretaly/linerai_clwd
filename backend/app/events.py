@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import Event
+from app.schemas.serialize import stamp
 
 log = logging.getLogger("liner.events")
 
@@ -132,7 +133,7 @@ def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
         "id": event.id,
         "type": event.type,
         "payload": payload or {},
-        "created_at": event.created_at.isoformat(),
+        "created_at": stamp(event.created_at),
     }
     _schedule(message)
     return event
@@ -151,7 +152,7 @@ def replay(db: Session, since: int = 0, limit: int = 200) -> list[dict]:
             "id": r.id,
             "type": r.type,
             "payload": json.loads(r.payload_json or "{}"),
-            "created_at": r.created_at.isoformat(),
+            "created_at": stamp(r.created_at),
         }
         for r in rows
     ]

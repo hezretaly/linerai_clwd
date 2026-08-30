@@ -24,7 +24,7 @@ from app.config import settings
 from app.db import get_db, utcnow
 from app.events import emit
 from app.integrations.registry import get_email_sender
-from app.schemas.serialize import iso, outreach_out
+from app.schemas.serialize import iso, outreach_out, stamp
 from app.models import InboundEmail, Lead, Outreach, User
 
 router = APIRouter(tags=["email"])
@@ -69,7 +69,7 @@ def receipts(
                 "matched_by": r.matched_by,
                 "lead_id": r.lead_id,
                 "detail": r.detail,
-                "created_at": iso(r.created_at),
+                "created_at": stamp(r.created_at),
             }
             for r in rows
         ],
@@ -136,7 +136,7 @@ def messages(
             "delivered_externally": r.provider not in {"", "outbox", "console"},
             "lead_id": r.lead_id,
             "lead_name": (lead.name if lead else "") or "",
-            "at": iso(r.sent_at or r.created_at),
+            "at": stamp(r.sent_at or r.created_at),
         })
 
     # Mail that arrived and could not be placed. It has no lead by definition,
@@ -161,7 +161,7 @@ def messages(
             "delivered_externally": True,
             "lead_id": None,
             "lead_name": "",
-            "at": iso(r.created_at),
+            "at": stamp(r.created_at),
         })
 
     out.sort(key=lambda m: m["at"] or "", reverse=True)
@@ -246,7 +246,7 @@ def replyable(
             "to_address": row.to_address,
             "lead_id": row.lead_id,
             "lead_name": (lead.name if lead else None) or "Unknown",
-            "created_at": iso(row.created_at),
+            "created_at": stamp(row.created_at),
         })
     return {"sends": out}
 

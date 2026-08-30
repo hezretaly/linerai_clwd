@@ -2432,6 +2432,16 @@ def main() -> int:
         check("including when a person's own address could not be honoured",
               outsider.from_address == "Liner <support@linerai.us>",
               outsider.from_address)
+        # And when it *can* be honoured. The address and the Reply-To are the
+        # person's, so an answer still reaches whoever wrote -- but the name is
+        # the desk's. It was `user.name`, so a support reply arrived from
+        # "Liner Founder", which is a job title on an envelope.
+        signed = identity_for(outbox, founder, fallback_name=OPS_SENDER_NAME)
+        check("support mail is signed Liner even when it is personally sent",
+              signed.personal and signed.from_address == "Liner <founder@linerai.us>",
+              signed.from_address)
+        check("and the reply still reaches the person who wrote it",
+              signed.reply_to == "founder@linerai.us", signed.reply_to)
     finally:
         app_settings.sending_domain, app_settings.sending_from = was_domain, was_from
 
@@ -3326,6 +3336,48 @@ def main() -> int:
           f"unhandled: {sorted(verdicts - handled)}")
     check("and the diagnosis says what a TCP failure rules out",
           "CAPTCHA" in ingest_src and "responses" in ingest_src)
+
+    print("\n== a timestamp on the wire says which kind it is ==")
+    # ECMAScript parses a bare date-time as *browser-local*. `utcnow()` is naive
+    # UTC, so `isoformat()` alone put an unmarked UTC instant on the wire and
+    # every "5m ago" on the dashboard was computed against a clock shifted by
+    # the viewer's own offset -- a reply that had just arrived read `5h ago` to
+    # somebody at UTC+5. It read correctly on a machine set to UTC, which is
+    # every box this has ever been developed on, which is why it survived.
+    #
+    # Two kinds, and only one is an instant. Appointment times are
+    # dealership-local wall clock (`check_availability` builds them straight
+    # out of `hours_json`), so 10:00 means ten at the showroom and a zone on it
+    # would be a claim nobody can honour. They stay bare, deliberately.
+    WALL_CLOCK = {"starts_at", "ends_at", "slot_at", "from", "to", "next_free_at"}
+    TIMESTAMP = re.compile(r'"([a-z_]+)":\s*"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[^"]*)"')
+
+    def unmarked(payload) -> list[str]:
+        """Every `*_at`-shaped value carrying no zone, ignoring the wall clocks."""
+        raw = json.dumps(payload)
+        return sorted({
+            f"{key}={value}"
+            for key, value in TIMESTAMP.findall(raw)
+            if key not in WALL_CLOCK and not value.endswith("Z") and "+" not in value[10:]
+        })
+
+    for path in ("/api/overview", "/api/conversations?limit=5", "/api/leads?limit=5",
+                 "/api/appointments", "/api/inventory?limit=3", "/api/email/messages",
+                 "/api/email/receipts"):
+        payload = call("GET", path)
+        bare = unmarked(payload)
+        check(f"{path} marks every instant as UTC", not bare, str(bare[:3]))
+
+    # And the wall-clock half is still bare, or the calendar shifts by the
+    # viewer's offset the moment somebody opens it from another state.
+    from datetime import datetime as _dt
+    from app.schemas.serialize import iso as _iso, stamp as _stamp
+
+    when = _dt(2026, 8, 30, 10, 0)
+    check("an appointment time stays a wall clock, with no zone claimed",
+          _iso(when) == "2026-08-30T10:00:00", _iso(when))
+    check("and an instant is marked", _stamp(when) == "2026-08-30T10:00:00Z", _stamp(when))
+    check("both answer None with None", _iso(None) is None and _stamp(None) is None)
 
     print("\n== a real dealer's own export, and the cars they will not price ==")
     # Craig and Landreth's whole group, exported by hand because their site

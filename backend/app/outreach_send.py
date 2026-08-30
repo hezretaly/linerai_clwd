@@ -125,7 +125,14 @@ def identity_for(
         return Identity(fallback, reply_to, False, "That account has no email address.")
 
     if sender.can_send_as(address):
-        return Identity(with_name(user.name, address), reply_to, True)
+        # The *name* is the desk's, the *address* and the Reply-To are theirs.
+        # It was `user.name`, so a support reply arrived from "Liner Founder"
+        # -- which is a job title on an envelope, and reads as a bigger
+        # organisation than answers the mail. One name for everything from
+        # `/ops`, and the routing argument is untouched: a reply still comes
+        # back to whoever wrote, which is what stopped half the answers going
+        # to the founder in the first place.
+        return Identity(with_name(fallback_name or user.name, address), reply_to, True)
 
     domain = settings.sending_domain or "(unset)"
     return Identity(

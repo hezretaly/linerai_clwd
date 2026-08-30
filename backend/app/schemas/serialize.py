@@ -33,7 +33,37 @@ from app.models import (
 
 
 def iso(value: datetime | None) -> str | None:
+    """A **wall-clock** time, sent without a zone because it does not have one.
+
+    Appointment times are dealership-local by convention -- `check_availability`
+    builds them straight out of `hours_json` in that frame -- so 10:00 means ten
+    in the morning at the showroom and the digits are the answer. A browser
+    parses a bare date-time as its own local time, which renders those digits
+    back unchanged, which is what is wanted.
+
+    Everything else on the wire is a real instant. Use `stamp` for those.
+    """
     return value.isoformat() if value else None
+
+
+def stamp(value: datetime | None) -> str | None:
+    """A real **instant**, sent as UTC and marked as one.
+
+    `utcnow()` is naive UTC, and `isoformat()` on it produces
+    `2026-08-30T18:17:00` -- a string with no zone. ECMAScript parses a bare
+    date-time as *browser-local*, so every "5m ago" on the dashboard was
+    computed against a clock shifted by the viewer's own offset: a reply that
+    had just arrived read `5h ago` to somebody sitting at UTC+5, and read
+    correctly on a machine set to UTC, which is why it survived so long. It hit
+    every relative time on every page at once -- `relative`, `waited`, `time`,
+    `dateTime` -- and nothing about it looks like a bug, because a plausible
+    wrong number is exactly what it produces.
+
+    One `Z` is the whole fix, and it belongs here rather than in the browser:
+    the ambiguity is in the wire format, and a frontend that has to remember
+    which of two kinds of timestamp it is holding will eventually forget.
+    """
+    return f"{value.isoformat()}Z" if value else None
 
 
 def loads(raw: str, fallback):
@@ -105,8 +135,8 @@ def vehicle_out(v: Vehicle, *, mentions: int = 0) -> dict:
         },
         "manual_fields": loads(v.manual_fields_json, []),
         "mention_count": mentions,
-        "first_seen_at": iso(v.first_seen_at),
-        "last_seen_at": iso(v.last_seen_at),
+        "first_seen_at": stamp(v.first_seen_at),
+        "last_seen_at": stamp(v.last_seen_at),
     }
 
 
@@ -122,7 +152,7 @@ def captured_out(c: CapturedField) -> dict:
         # 'adf' counts as verified: the buyer did state it, just on a
         # marketplace form rather than to us. Only 'inferred' is a guess.
         "verified": c.provenance != "inferred",
-        "updated_at": iso(c.updated_at),
+        "updated_at": stamp(c.updated_at),
     }
 
 
@@ -136,8 +166,8 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
         "assigned_user_id": lead.assigned_user_id,
         # No email means the product has no way to reach them (§18.5).
         "contact_risk": lead.contact_risk,
-        "email_consent_at": iso(lead.email_consent_at),
-        "created_at": iso(lead.created_at),
+        "email_consent_at": stamp(lead.email_consent_at),
+        "created_at": stamp(lead.created_at),
     }
     if db is not None:
         out["assigned_to"] = user_out(
@@ -173,7 +203,7 @@ def message_out(m: Message) -> dict:
         "content": m.content,
         "tool_calls": loads(m.tool_calls_json, []),
         "via_rail_id": m.via_rail_id,
-        "created_at": iso(m.created_at),
+        "created_at": stamp(m.created_at),
     }
 
 
@@ -186,8 +216,8 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
         "agent_paused": c.agent_paused,
         "stage": c.stage,
         "focus_vehicle_id": c.focus_vehicle_id,
-        "started_at": iso(c.started_at),
-        "ended_at": iso(c.ended_at),
+        "started_at": stamp(c.started_at),
+        "ended_at": stamp(c.ended_at),
         "summary": c.summary,
         "outcome": c.outcome,
     }
@@ -235,7 +265,7 @@ def appointment_out(a: Appointment, db: Session | None = None) -> dict:
         "status": a.status,
         "booked_by": a.booked_by,
         "conversation_id": a.conversation_id,
-        "created_at": iso(a.created_at),
+        "created_at": stamp(a.created_at),
     }
     if db is not None:
         lead = db.query(Lead).filter_by(id=a.lead_id).one_or_none()
@@ -278,15 +308,15 @@ def outreach_out(o: Outreach) -> dict:
         "status": o.status,
         "delivered_externally": o.provider not in {"", "outbox", "console"},
         "error": o.error,
-        "sent_at": iso(o.sent_at),
+        "sent_at": stamp(o.sent_at),
         # Clicks on the link we sent, not applications completed -- what
         # happens on the dealer's own form never comes back to us.
         "kind": o.kind,
         "trackable": o.click_token is not None,
         "opened": o.click_count > 0,
         "click_count": o.click_count,
-        "first_clicked_at": iso(o.first_clicked_at),
-        "created_at": iso(o.created_at),
+        "first_clicked_at": stamp(o.first_clicked_at),
+        "created_at": stamp(o.created_at),
     }
 
 
@@ -297,8 +327,8 @@ def escalation_out(e: Escalation, db: Session | None = None) -> dict:
         "handoff_rule_id": e.handoff_rule_id,
         "reason": e.reason,
         "claimed_by_user_id": e.claimed_by_user_id,
-        "claimed_at": iso(e.claimed_at),
-        "created_at": iso(e.created_at),
+        "claimed_at": stamp(e.claimed_at),
+        "created_at": stamp(e.created_at),
     }
     if db is not None and e.handoff_rule_id:
         rule = db.query(HandoffRule).filter_by(id=e.handoff_rule_id).one_or_none()
@@ -338,7 +368,7 @@ def handoff_rule_out(r: HandoffRule) -> dict:
         "route_target": r.route_target,
         "notify": r.notify,
         "fired_count": r.fired_count,
-        "updated_at": iso(r.updated_at),
+        "updated_at": stamp(r.updated_at),
     }
 
 
@@ -348,7 +378,7 @@ def knowledge_out(k: KnowledgeEntry) -> dict:
         "topic": k.topic,
         "answer": k.answer,
         "use_count": k.use_count,
-        "updated_at": iso(k.updated_at),
+        "updated_at": stamp(k.updated_at),
     }
 
 
@@ -382,8 +412,8 @@ def settings_out(s: AssistantSettings) -> dict:
         "booking_slot_length": s.booking_slot_length,
         "credit_application_url": s.credit_application_url,
         "published_by": s.published_by,
-        "published_at": iso(s.published_at),
-        "updated_at": iso(s.updated_at),
+        "published_at": stamp(s.published_at),
+        "updated_at": stamp(s.updated_at),
     }
 
 
@@ -399,8 +429,8 @@ def ingest_run_out(r: IngestRun) -> dict:
         "removed_count": r.removed_count,
         "diff": loads(r.diff_json, {}),
         "errors": loads(r.errors_json, []),
-        "started_at": iso(r.started_at),
-        "finished_at": iso(r.finished_at),
+        "started_at": stamp(r.started_at),
+        "finished_at": stamp(r.finished_at),
     }
 
 

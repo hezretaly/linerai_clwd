@@ -37,6 +37,7 @@ from app.schemas.serialize import (
     dealership_out,
     escalation_out,
     lead_out,
+    stamp,
     vehicle_out,
 )
 
@@ -173,7 +174,7 @@ def overview(
 
     today.sort(key=activity_of, reverse=True)
     day_payload = [
-        {**conversation_out(c, db), "last_activity_at": activity_of(c).isoformat()}
+        {**conversation_out(c, db), "last_activity_at": stamp(activity_of(c))}
         for c in today
     ]
     # Nobody owns these yet. There is no round-robin in this system, so the
@@ -210,7 +211,7 @@ def overview(
 
     return {
         "dealership": dealership_out(dealership),
-        "generated_at": now.isoformat(),
+        "generated_at": stamp(now),
         "kpis": [
             {"key": "chat", "label": "Chats",
              "value": chats, "window": "last 24 hours"},
@@ -271,7 +272,7 @@ def overview(
             ],
             "inventory_issues": inventory_issues,
         },
-        "happening_now_since": (now - timedelta(hours=2)).isoformat(),
+        "happening_now_since": stamp(now - timedelta(hours=2)),
         "mix": _channel_mix(db, since),
         "source_mix": _source_mix(db, since),
         "by_hour": _by_hour(db, dealership, start_of_day, now),
