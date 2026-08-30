@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.integrations.email.base import EmailSender, SendResult, bare_address
+from app.integrations.email.base import EmailSender, SendResult
 
 
 class OutboxSender(EmailSender):
@@ -24,11 +24,7 @@ class OutboxSender(EmailSender):
         # same `can_send_as` rule a real provider would apply. An outbox that
         # accepted any From would let a deployment look configured for
         # per-person sending right up until the first real send is rejected.
-        sender = (
-            from_address
-            if from_address and self.can_send_as(bare_address(from_address))
-            else self.default_from()
-        )
+        sender = self.from_header(from_address)
         return SendResult(
             provider="outbox",
             message_id=f"outbox-{uuid.uuid4()}",

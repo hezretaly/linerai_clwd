@@ -63,7 +63,35 @@ class Identity:
     note: str = ""
 
 
-def identity_for(sender: EmailSender, user: User | OpsUser | None) -> Identity:
+#: What our own mail is signed. Not a dealership -- `/ops` is Liner's desk, and
+#: a support reply wearing a customer's own name is worse than one wearing a
+#: stranger's.
+OPS_SENDER_NAME = "Liner"
+
+
+def dealership_from(db: Session, sender: EmailSender) -> str:
+    """The From header for mail from the dealership to one of its buyers.
+
+    The address is the deployment's verified one and the name is the
+    dealership's own, read from the row -- `Craig and Landreth Cars
+    <support@linerai.us>`, the shape every product's transactional mail uses.
+
+    **Served, never written.** It was `SENDING_FROM` in `.env`, which is a
+    second copy of a fact that already lives in the database and in the
+    profile, and it went stale the moment `DEALERSHIP=` changed: a prospect's
+    buyer got their booking confirmation from "Riverside Auto". That is the
+    same trap `SCRAPER_BASE_URL` was moved out of `.env` for, and the same rule
+    as the five surfaces that used to print the name into a page.
+    """
+    from app.models import Dealership
+
+    row = db.query(Dealership).first()
+    return sender.default_from(row.name if row else "")
+
+
+def identity_for(
+    sender: EmailSender, user: User | OpsUser | None, *, fallback_name: str = "",
+) -> Identity:
     """Who this message is from, decided once for the send and the screen.
 
     A person writing from the ops inbox should reach the recipient under their
@@ -83,12 +111,16 @@ def identity_for(sender: EmailSender, user: User | OpsUser | None) -> Identity:
     and quietly swapping it leaves somebody believing they wrote from an
     address they did not.
     """
-    fallback = sender.default_from()
+    # The From carries `fallback_name`; the Reply-To is the bare address. They
+    # were one value, so a fallback send put a rendered `Name <addr>` header in
+    # Reply-To -- legal, and inconsistent with every other branch here.
+    fallback = sender.default_from(fallback_name)
+    bare = sender.default_address()
     if user is None:
-        return Identity(from_address=fallback, reply_to=fallback, personal=False)
+        return Identity(from_address=fallback, reply_to=bare, personal=False)
 
     address = (user.email or "").strip()
-    reply_to = address or fallback
+    reply_to = address or bare
     if not address:
         return Identity(fallback, reply_to, False, "That account has no email address.")
 

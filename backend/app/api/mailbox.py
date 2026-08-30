@@ -291,6 +291,7 @@ def test_send(
         result = sender.send(
             body.to, record.subject, record.body,
             reply_to=outreach_send.reply_to_address(token),
+            from_address=outreach_send.dealership_from(db, sender),
         )
     except Exception as exc:  # NotConfigured, or anything the provider raised
         record.status = "failed"
@@ -487,6 +488,7 @@ def compose(
             to, record.subject, record.body,
             reply_to=outreach_send.reply_to_address(record.reply_token),
             in_reply_to=record.in_reply_to or "",
+            from_address=outreach_send.dealership_from(db, sender),
         )
     except Exception as exc:  # NotConfigured, or anything the provider raised
         record.status = "failed"

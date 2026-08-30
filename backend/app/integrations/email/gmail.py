@@ -89,11 +89,7 @@ class GmailSender(EmailSender):
         # not own, so the header and the impersonated mailbox have to be the
         # same person -- setting one without the other is silently rewritten
         # at best and rejected at worst.
-        sender = (
-            from_address
-            if from_address and self.can_send_as(bare_address(from_address))
-            else self.default_from()
-        )
+        sender = self.from_header(from_address)
         message = EmailMessage()
         message["To"] = to
         message["From"] = sender

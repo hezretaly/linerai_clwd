@@ -61,11 +61,19 @@ appointment nobody is there for. Filling a gap with something plausible is
 worse than leaving it — an invented address survives a demo and gets repeated
 back to a customer.
 
-**Optional but worth asking them for:** `knowledge:` — their doc fee, whether
-they take trade-ins, their deposit. Policy answers are returned to a buyer
-verbatim and never composed, so with the list empty Liner says a person will
-check rather than inventing a number. Riverside's `$189` doc fee is a fixture
-and is deliberately *not* inherited.
+**`knowledge:` has their doc fee and nothing else yet** — $690 at Louisville
+and Bullitt County, $260 at Clarksville, confirmed by Austin. Policy answers
+are returned to a buyer verbatim and never composed, so every topic that is
+still blank makes Liner say a person will check rather than inventing a
+number. Riverside's `$189` is a fixture and is deliberately *not* inherited.
+
+The profile carries eight more topics as commented templates with the question
+to ask beside each — trade-ins, deposits, financing, warranty, test drives,
+vehicle history, out-of-state buyers, payment methods. Two chips on the buyer's
+screen are driven by this list and are only drawn when there is an answer
+behind them, so filling in Trade-ins puts a second one there. Out-of-state is
+the one to push for: they are ten minutes from Indiana and already selling
+into it from Clarksville.
 
 ---
 
@@ -182,7 +190,7 @@ than no button.
 EMAIL_SENDER=resend
 RESEND_API_KEY=re_...
 SENDING_DOMAIN=linerai.us
-SENDING_FROM=Craig and Landreth Cars <sales@linerai.us>
+SENDING_FROM=sales@linerai.us
 WEBHOOK_SECRET=<openssl rand -hex 32>
 OUTBOUND_ONLY_TO=everyone
 ```
@@ -194,6 +202,12 @@ Five things, and each breaks differently:
 - **`SENDING_DOMAIN`** — the domain must be verified in Resend. It also builds
   the `Reply-To: reply+<token>@` that routes a buyer's answer back into their
   timeline.
+- **`SENDING_FROM` is an address, not a header.** Do not put a name in it. The
+  display name is served: their outreach goes out as `Craig and Landreth Cars
+  <sales@linerai.us>`, read from the dealership row, and mail from `/ops` goes
+  out as `Liner`. A name written here is dropped — it used to be sent, and
+  `.env.example` illustrated the line with "Riverside Auto", so anyone who
+  copied that file mailed their prospect's buyers as a fixture dealership.
 - **`WEBHOOK_SECRET`** — shared with the Cloudflare Worker, and the only thing
   in front of an endpoint that writes into a buyer's history. Set the identical
   value on the Worker with `wrangler secret put WEBHOOK_SECRET`.

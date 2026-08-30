@@ -2391,8 +2391,74 @@ def main() -> int:
               fell_back == "support@linerai.us", fell_back)
         check("a send with nobody named is still from the deployment",
               resend.payload("b@e.com", "s", "b")["from"] == "support@linerai.us")
+
+        # ---- whose name is on the envelope when nobody is personally named --
+        #
+        # `SENDING_FROM` used to be a whole header and `.env.example`
+        # illustrated it with `Riverside Auto <support@linerai.us>` -- the one
+        # line in the file people copy verbatim. So every deployment started
+        # from it mailed as a fixture car dealership: a prospect's buyers, and
+        # our own support replies, which are not from a dealership at all.
+        # The address is configured; the name is served.
+        from app.outreach_send import OPS_SENDER_NAME, dealership_from
+
+        app_settings.sending_from = "Riverside Auto <support@linerai.us>"
+        check("a display name left in SENDING_FROM is dropped, not sent",
+              outbox.default_address() == "support@linerai.us",
+              outbox.default_address())
+
+        from app.db import SessionLocal as _EnvelopeSession
+
+        with _EnvelopeSession() as _db:
+            named = dealership_from(_db, outbox)
+        dealership_name = (call("GET", "/api/showroom/dealership") or {}).get("name", "")
+        check("the dealership signs its own outreach, from the row",
+              named == f"{dealership_name} <support@linerai.us>", named)
+        check("and the sender puts that on the wire rather than dropping it",
+              resend.payload("b@e.com", "s", "b", from_address=named)["from"] == named)
+
+        ours = identity_for(outbox, None, fallback_name=OPS_SENDER_NAME)
+        check("our own support mail is signed Liner, never a dealership",
+              ours.from_address == "Liner <support@linerai.us>", ours.from_address)
+        check("and its Reply-To is an address, not a rendered header",
+              ours.reply_to == "support@linerai.us", ours.reply_to)
+        # The fallback is where the wrong name did the damage: it is taken
+        # whenever the person's address is not on the verified domain, which is
+        # every deployment before the domain is set up.
+        outsider = identity_for(
+            outbox, _Person("Somebody", "someone@gmail.com"),
+            fallback_name=OPS_SENDER_NAME,
+        )
+        check("including when a person's own address could not be honoured",
+              outsider.from_address == "Liner <support@linerai.us>",
+              outsider.from_address)
     finally:
         app_settings.sending_domain, app_settings.sending_from = was_domain, was_from
+
+    # A display name on our *own* address is always legal -- it is our verified
+    # mailbox wearing somebody's name, which is what every product's
+    # transactional mail looks like. Gated on `can_send_as` it was dropped on
+    # any deployment with no SENDING_DOMAIN, which is exactly when a person is
+    # looking at the result.
+    app_settings.sending_from = "support@linerai.us"
+    try:
+        bare_deploy = OutboxSender()
+        check("a name on our own address survives with no domain configured",
+              bare_deploy.from_header("Craig and Landreth Cars <support@linerai.us>")
+              == "Craig and Landreth Cars <support@linerai.us>",
+              bare_deploy.from_header("Craig and Landreth Cars <support@linerai.us>"))
+        check("but somebody else's address still falls back there",
+              bare_deploy.from_header("Someone <s@gmail.com>") == "support@linerai.us",
+              bare_deploy.from_header("Someone <s@gmail.com>"))
+    finally:
+        app_settings.sending_from = was_from
+
+    # The line people copy must not carry a fixture's name, which is where
+    # this came from in the first place.
+    env_example = pathlib.Path(".env.example").read_text()
+    check("and .env.example no longer ships a dealership name to copy",
+          not re.search(r"^\s*#?\s*SENDING_FROM=.*<", env_example, re.MULTILINE),
+          [l for l in env_example.splitlines() if "SENDING_FROM=" in l])
     check("with no sending domain configured, nobody can send as anybody",
           not identity_for(OutboxSender(), founder).personal)
 

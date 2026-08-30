@@ -17,7 +17,7 @@ import httpx
 
 from app.config import settings
 from app.integrations.base import NotConfigured
-from app.integrations.email.base import EmailSender, SendResult, bare_address
+from app.integrations.email.base import EmailSender, SendResult
 
 API = "https://api.resend.com/emails"
 TIMEOUT = 20.0
@@ -89,7 +89,7 @@ class ResendSender(EmailSender):
         # last place before the wire, and a From the provider refuses fails the
         # whole send rather than degrading.
         out = {
-            "from": from_address if self.can_send_as(bare_address(from_address)) else self.default_from(),
+            "from": self.from_header(from_address),
             "to": [to],
             "subject": subject,
             "text": body,

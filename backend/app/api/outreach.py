@@ -346,6 +346,11 @@ def send_outreach(
         result = sender.send(
             lead.email, body.subject, body.body,
             reply_to=outreach_send.reply_to_address(record.reply_token),
+            # Signed with the dealership's own name, read from the row. It came
+            # from SENDING_FROM, which is one copy too many of a fact the
+            # database already holds -- and every deployment that started from
+            # `.env.example` mailed its buyers as "Riverside Auto".
+            from_address=outreach_send.dealership_from(db, sender),
         )
         record.provider_message_id = result.message_id
         record.provider_thread_id = result.thread_id

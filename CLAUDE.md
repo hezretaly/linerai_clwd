@@ -954,6 +954,29 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       than from a person, and its `Reply-To` is the `reply+<token>@` address
       that routes an answer back into the buyer's timeline — not a header a
       rep's own address may take over.
+  - **`SENDING_FROM` is an address; the display name is served.** It used to
+    be a whole header, and `.env.example` illustrated it with `Riverside Auto
+    <support@linerai.us>` — the one line in that file people copy verbatim. So
+    every deployment started from it mailed as a fixture car dealership: a
+    prospect's buyers, and our own support replies, which are not from a
+    dealership at all. It is the same failure as the five surfaces that
+    printed the name into a page, in the one place nobody looked, and the same
+    trap `SCRAPER_BASE_URL` was moved out of `.env` for — a second copy of a
+    fact that goes stale the moment `DEALERSHIP=` changes. A name left in the
+    setting is now dropped rather than sent.
+    - **Two realms, two names, decided by the caller.** Mail from the
+      dealership is signed with the dealership's own name out of the row
+      (`outreach_send.dealership_from`); mail from `/ops` is signed `Liner`
+      (`OPS_SENDER_NAME`). A support reply wearing the reader's *own*
+      dealership name is worse than one wearing a stranger's, and one
+      `SENDING_FROM` cannot be right for both.
+    - **A display name on our own address is always legal**, and asking
+      `can_send_as` about it is asking the wrong question — there is no
+      authority to check when the mailbox is ours. Gated on it, the name was
+      dropped on any deployment with no `SENDING_DOMAIN` set, which is every
+      one before the domain is verified and exactly when somebody is looking
+      at the result. `EmailSender.from_header` separates the two cases, and it
+      is one method rather than the three identical copies it replaced.
   - **A Tailwind grid needs `grid-cols-1` at the base breakpoint.** Without a
     declared track the implicit one is `auto`, which sizes to its widest
     child's *min-content* — and the min-content of a `truncate` line is the

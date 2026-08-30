@@ -563,6 +563,7 @@ def send_lead_outreach(
         result = sender.send(
             lead.email, payload.subject, record.body,
             reply_to=outreach_send.reply_to_address(record.reply_token),
+            from_address=outreach_send.dealership_from(db, sender),
         )
         record.provider_message_id = result.message_id
         record.provider_thread_id = result.thread_id

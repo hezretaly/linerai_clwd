@@ -78,8 +78,16 @@ def _identity(user: OpsUser):
     rather than from a person -- and its Reply-To is the `reply+<token>@`
     address that routes an answer back into the buyer's timeline, which is not
     a header a rep's own address may take over.
+
+    Where it falls back, it falls back to **Liner** and never to a dealership.
+    `SENDING_FROM` used to carry a display name and `.env.example` illustrated
+    it with "Riverside Auto", so our own support replies went out signed as a
+    fixture car dealership -- and would have gone out signed as the reader's
+    own dealership the moment somebody put a real name there, which is worse.
     """
-    return outreach_send.identity_for(get_email_sender(), user)
+    return outreach_send.identity_for(
+        get_email_sender(), user, fallback_name=outreach_send.OPS_SENDER_NAME,
+    )
 
 
 @router.get("/summary")

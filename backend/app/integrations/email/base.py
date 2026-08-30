@@ -74,16 +74,62 @@ class EmailSender:
         """
         raise NotImplementedError
 
-    def default_from(self) -> str:
-        """What this deployment sends as when nobody is named.
+    def default_address(self) -> str:
+        """The bare address this deployment sends from.
 
         `support@` rather than `liner@`: it is the address the domain is set up
         around, and the one somebody replying by hand rather than by hitting
         Reply will send to -- which the catch-all routes back either way.
+
+        Parsed with `bare_address` rather than returned as written, because
+        `SENDING_FROM` is a line a person copies and they copy the whole thing.
+        `.env.example` carried `Riverside Auto <support@linerai.us>` as its
+        illustration, so every deployment that started from that file put a
+        fixture dealership's name on every envelope it ever sent -- including
+        our own support replies, which are not from a dealership at all. The
+        display name is served per realm now (see `outreach_send`), so a name
+        left in this setting is dropped rather than sent.
         """
-        if settings.sending_from:
-            return settings.sending_from
-        return f"support@{settings.sending_domain}" if settings.sending_domain else ""
+        configured = settings.sending_from or (
+            f"support@{settings.sending_domain}" if settings.sending_domain else ""
+        )
+        return bare_address(configured) or configured
+
+    def default_from(self, name: str = "") -> str:
+        """The From header for a send nobody is personally named on.
+
+        The address is this deployment's; the *name* belongs to whoever the
+        mail is actually from, and the caller is the only one who knows which
+        that is -- the dealership for a booking confirmation, Liner for a
+        support reply. Called with no name it is the bare address, which is
+        honest rather than wrong.
+        """
+        return with_name(name, self.default_address())
+
+    def from_header(self, from_address: str) -> str:
+        """The From this send may actually use, decided in one place.
+
+        Was three identical copies, one per sender, which is how one of them
+        stops applying the rule. Two cases, and separating them is the point:
+
+        - **A display name on our own address is always legal.** `Craig and
+          Landreth Cars <support@linerai.us>` is our verified mailbox wearing
+          the dealership's name, the shape every product's transactional mail
+          uses. There is no authority question to ask, so `can_send_as` must
+          not be asked -- gated on it, the name was dropped on any deployment
+          with no `SENDING_DOMAIN` set, which is every one before the domain is
+          verified. That is exactly when somebody is looking at the result.
+        - **Somebody else's address needs proving.** That is `can_send_as`, and
+          a From the provider has not verified fails the whole send rather than
+          degrading, so an address we cannot prove falls back rather than being
+          guessed at.
+        """
+        bare = bare_address(from_address)
+        if bare and bare.lower() == (self.default_address() or "").lower():
+            return from_address
+        if bare and self.can_send_as(bare):
+            return from_address
+        return self.default_from()
 
     def can_send_as(self, address: str) -> bool:
         """May this deployment put `address` in a From header?
