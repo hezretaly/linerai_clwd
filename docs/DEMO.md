@@ -114,6 +114,26 @@ one thing a dealer is actually judging.
 
 ### Their inventory — nothing to set
 
+**Their real lot is committed and `make reset-db` rebuilds it with no network
+at all.** All 486 cars across the three stores — Louisville 240, Clarksville IN
+176, Bullitt County 70 — live in
+`backend/fixtures/craigandlandreth/inventory.csv`, exported by hand because
+their site refuses this crawler below the HTTP layer (the TCP connection never
+opens, so no user agent and no header changes it — see `make ingest`). The
+profile's `inventory.fixture_csv` points at it and the seed puts it through the
+same CSV importer a dealer's own upload uses. Re-run `make ingest ARGS=--publish`
+from a machine that *can* reach them and the crawl takes over; the VINs are the
+same, so it is a diff rather than a second lot.
+
+Two things about that lot are worth knowing before the demo:
+
+- **119 of the 486 carry no price.** Liner will not quote or estimate one — it
+  points at the dealership's own enquiry form (their listing URL with
+  `?mode=inquiry`, which the card renders as a link) and offers a visit first.
+  Ask it about a call-for-price car on purpose; that answer is a good one.
+- **A car at Clarksville or Bullitt County says so before Liner offers a
+  time**, because the appointment is at the one address in the profile.
+
 Their listing URL and their store id are **in the profile**, not here. They are
 facts about the dealership, and as environment variables they were a trap:
 switch `DEALERSHIP=` to a second prospect, forget to change `SCRAPER_BASE_URL`,

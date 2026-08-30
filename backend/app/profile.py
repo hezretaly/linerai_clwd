@@ -151,11 +151,18 @@ def inventory() -> dict:
     raw = _section("inventory")
     url = str(raw.get("source_url") or "").strip()
     dealer_id = str(raw.get("dealer_id") or "").strip()
+    # A file in the repository, imported by the seed. It is the answer when a
+    # crawl cannot run -- a dealer whose site refuses us, or a network that
+    # cannot reach it -- and it goes through the same CSV importer a dealer
+    # would upload to, so nothing here is a private path.
+    fixture = str(raw.get("fixture_csv") or "").strip()
     if url:
-        return {"source_url": url, "dealer_id": dealer_id, "origin": "profile"}
+        return {"source_url": url, "dealer_id": dealer_id,
+                "fixture_csv": fixture, "origin": "profile"}
     return {
         "source_url": settings.scraper_base_url.strip(),
         "dealer_id": settings.scraper_dealer_id.strip(),
+        "fixture_csv": fixture,
         "origin": "env" if settings.scraper_base_url.strip() else "none",
     }
 

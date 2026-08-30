@@ -330,7 +330,34 @@ TOOL_DEFS: list[dict[str, Any]] = [
 # --------------------------------------------------------------------------
 
 
-def _vehicle_payload(v: Vehicle) -> dict:
+#: A car with no published price is not an error and not a gap -- it is a
+#: listing state the dealership chose, usually for something rare or very old.
+#: Their site answers it with an inquiry form at the same URL, so the link is
+#: derived rather than stored: `?mode=inquiry` on the listing, and only where
+#: there is no price to quote.
+INQUIRY_QUERY = "mode=inquiry"
+
+
+def inquiry_url(v: Vehicle) -> str:
+    """The dealer's own enquiry form for a car they will not price online."""
+    if v.price or not v.listing_url:
+        return ""
+    joiner = "&" if "?" in v.listing_url else "?"
+    return f"{v.listing_url}{joiner}{INQUIRY_QUERY}"
+
+
+def home_location(db: Session) -> str:
+    """The dealership's own address, lowercased, for comparing a car's lot to it.
+
+    Read once per tool call rather than per vehicle: a search returns five rows
+    and the address does not change between them.
+    """
+    row = db.query(Dealership).first()
+    return (row.address or "").lower() if row else ""
+
+
+def _vehicle_payload(v: Vehicle, home: str = "") -> dict:
+    raw = json.loads(v.raw_json or "{}") if v.raw_json else {}
     payload = {
         "vin": v.vin,
         "year": v.year,
@@ -344,8 +371,40 @@ def _vehicle_payload(v: Vehicle) -> dict:
         "origin": origin_of(v.make),
         "features": json.loads(v.features_json or "[]"),
         "photo_url": v.photo_url,
+        "listing_url": v.listing_url,
         "status": v.status,
     }
+    # Which of the group's lots it is standing on. A dealership with more than
+    # one address lists them all in one feed, and the appointment Liner books
+    # is at the address in `dealerships` -- so a car at another store has to
+    # say so, or the buyer drives to the wrong forecourt.
+    #
+    # The *note* is only raised for a car that is somewhere else. Craig and
+    # Landreth's lot is 240 cars in Louisville and 246 between Clarksville and
+    # Bullitt County, so a note on every row would have the assistant announce
+    # the store it is standing in on every reply -- which is noise, and noise
+    # is how the one row that mattered stops being read.
+    if raw.get("location"):
+        payload["location"] = raw["location"]
+        if home and raw["location"].lower() not in home:
+            payload["location_note"] = (
+                f"This one is at the {raw['location']} store, not the address above. "
+                "Say so before offering a time, and check with a person that it can "
+                "be seen there."
+            )
+    link = inquiry_url(v)
+    if link:
+        payload["inquiry_url"] = link
+        # Its own key rather than `price_note`, which `rule_hold_price` below
+        # already owns. Two notes writing to one field means whichever runs
+        # last silently wins, and the one that loses is a rule somebody set.
+        payload["no_price_note"] = (
+            "No price is published for this one, so do not quote or estimate a figure, "
+            "and do not read one off another car. The buyer can ask the dealership "
+            "through the form on its listing -- point at that link rather than reading "
+            "a URL out, and never say a URL on a call. Booking a visit comes first: "
+            "the price is a person's answer."
+        )
     if v.rule_hold_price:
         payload["price_note"] = "This price is firm. Do not suggest it is negotiable."
     if v.rule_mention_warranty:
@@ -384,6 +443,65 @@ def offerable(query):
     )
 
 
+def _words(text: str) -> list[str]:
+    """Split on anything that is not a letter or a digit, never on spaces.
+
+    Splitting on spaces glues the punctuation to the word: "Do you have a BMW
+    X5?" produced the token `x5?`, which matches nothing, so the most natural
+    phrasing a buyer could possibly use returned the three cheapest cars on the
+    lot instead of the car they named. "BMW X5" and "tell me about the BMW X5"
+    both worked, which is what made it invisible for so long.
+
+    A lone *letter* is dropped and a lone *digit* is kept, which is not a
+    stylistic distinction. "Do you have a chevy Trax?" contains the word "a",
+    which is a whole-word match against every A-Class and A-Spec on the lot, so
+    two cars nobody asked about outranked the one that was named. No car is
+    called "a". Several are called 3 and 5.
+    """
+    return [
+        w for w in re.split(r"[^a-z0-9]+", (text or "").lower())
+        if w and (len(w) > 1 or w.isdigit())
+    ]
+
+
+# What buyers call a make, mapped onto what a listing calls it. Curated for the
+# same reason ORIGIN_BY_MAKE is: there is no column for it and guessing gets it
+# wrong. "Chevy" is the one that earns this table on its own -- Craig and
+# Landreth carry 74 Chevrolets and nobody in Louisville types "Chevrolet".
+MAKE_NICKNAMES = {
+    "chevy": "chevrolet", "chev": "chevrolet",
+    "vw": "volkswagen", "merc": "mercedes", "benz": "mercedes",
+    "bimmer": "bmw", "beemer": "bmw", "vette": "corvette",
+    "caddy": "cadillac", "landrover": "rover", "range": "rover",
+}
+
+
+def _hits(word: str, haystack: list[str]) -> bool:
+    """Does one search word match this car? Whole words, plus a plural.
+
+    **Whole words, because a substring match scores the sentence rather than
+    the car.** The haystack used to be one string and the test was `word in
+    haystack`, which is fine on fourteen hand-written rows and wrong on a real
+    lot: "do" is inside "Dodge", and "you" is inside "Bayou", so "do you have
+    any corvettes?" ranked a Dodge Hornet in Blu Bayou first and never reached
+    a Corvette. The buyer's own filler words were doing the sorting.
+
+    **And a plural, because "corvettes" is what a buyer types.** Nothing on a
+    listing is plural, so `corvettes` scored zero against every row on the lot
+    and the search fell through to the cheapest five -- the same shape of
+    failure as `x5?` above, and the same reason: the natural phrasing is the
+    one that has to work. Only a trailing `s`, and only on a word long enough
+    that dropping it still leaves something (`gts` stays `gts`).
+
+    **And a nickname, because nobody says Chevrolet.** See MAKE_NICKNAMES.
+    """
+    if word in haystack:
+        return True
+    if MAKE_NICKNAMES.get(word) in haystack:
+        return True
+    return len(word) > 4 and word.endswith("s") and word[:-1] in haystack
+
+
 def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
     query = offerable(db.query(Vehicle))
     if args.get("max_price"):
@@ -401,24 +519,26 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
     if args.get("min_mileage"):
         query = query.filter(Vehicle.mileage >= int(args["min_mileage"]))
 
-    rows = query.order_by(Vehicle.price.asc()).all()
+    # Cheapest first, but an unpriced car is not the cheapest car. SQLite sorts
+    # NULL before every number, so on a lot with 119 call-for-price listings a
+    # plain `price.asc()` put all five results of "what have you got?" on cars
+    # with no price on them -- every one of which the assistant then has to
+    # refuse to quote. `is_(None)` sorts False before True, so they fall to the
+    # end and are reached only when nothing priced fits.
+    rows = query.order_by(Vehicle.price.is_(None), Vehicle.price.asc()).all()
 
     # Origin is not a column, so it filters in Python after the SQL narrows.
     wanted_origin = ORIGIN_ALIASES.get((args.get("origin") or "").strip().lower(), "")
     if wanted_origin:
         rows = [v for v in rows if _origin_matches(v.make, wanted_origin)]
 
-    # Split on anything that is not a letter or a digit, rather than on spaces.
-    # Splitting on spaces glues the punctuation to the word: "Do you have a BMW
-    # X5?" produced the token `x5?`, which matches nothing, so the most natural
-    # phrasing a buyer could possibly use returned the three cheapest cars on
-    # the lot instead of the car they named. "BMW X5" and "tell me about the
-    # BMW X5" both worked, which is what made it invisible.
-    keywords = [k for k in re.split(r"[^a-z0-9]+", (args.get("keywords") or "").lower()) if k]
+    # Both sides are tokenised the same way, and neither is tokenised on
+    # spaces -- see `_words` and `_hits` for the two bugs that costs.
+    keywords = _words(args.get("keywords") or "")
     if keywords:
         def score(v: Vehicle) -> int:
-            haystack = f"{v.keywords} {v.make} {v.model} {v.trim} {v.body_style}".lower()
-            return sum(1 for k in keywords if k in haystack)
+            haystack = _words(f"{v.keywords} {v.make} {v.model} {v.trim} {v.body_style}")
+            return sum(1 for k in keywords if _hits(k, haystack))
 
         scored = [(score(v), v) for v in rows]
         if any(s for s, _ in scored):
@@ -441,7 +561,8 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
                 "again, or ask what matters most to them."
             ),
         }
-    return {"count": len(rows), "vehicles": [_vehicle_payload(v) for v in rows]}
+    home = home_location(db)
+    return {"count": len(rows), "vehicles": [_vehicle_payload(v, home) for v in rows]}
 
 
 def get_vehicle(db: Session, convo: Conversation, args: dict) -> dict:
@@ -456,7 +577,7 @@ def get_vehicle(db: Session, convo: Conversation, args: dict) -> dict:
     _record_mentions(db, convo.id, [vehicle])
     convo.focus_vehicle_id = vehicle.id
     db.commit()
-    return _vehicle_payload(vehicle)
+    return _vehicle_payload(vehicle, home_location(db))
 
 
 def _dealership_hours(db: Session) -> dict:

@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.agent.tools import offerable
+from app.agent.tools import inquiry_url, offerable
 from app.api.settings import live_settings
 from app.profile import brand, site
 from app.config import settings
@@ -70,6 +70,7 @@ def _words(text: str) -> list[str]:
 
 def _car(v: Vehicle) -> dict:
     """One card. Every field here is on the dealer's own public listing."""
+    raw = loads(v.raw_json or "{}", {})
     return {
         "vin": v.vin,
         "title": f"{v.year} {v.make} {v.model}".strip(),
@@ -83,6 +84,13 @@ def _car(v: Vehicle) -> dict:
         "features": loads(v.features_json, [])[:4],
         "photo_url": v.photo_url,
         "listing_url": v.listing_url or "",
+        # Which of the group's lots it is on. A dealership with three addresses
+        # lists them in one feed, and "Call for price" on a car 90 minutes away
+        # should say where the buyer would be driving.
+        "location": raw.get("location") or "",
+        # Derived, never stored: their own enquiry form is the listing URL with
+        # `?mode=inquiry`, and it only exists where there is no price to show.
+        "inquiry_url": inquiry_url(v),
     }
 
 

@@ -1366,7 +1366,43 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   X5?"` tokenised to `x5?`, matched nothing, and returned the three cheapest
   cars on the lot — while `"BMW X5"` and `"tell me about the BMW X5"` both
   worked, which is exactly what kept it invisible. The most natural phrasing a
-  buyer can use is the one that has to work.
+  buyer can use is the one that has to work — which is the rule the rest of
+  `_words`/`_hits` follows too. Three more of the same shape, each invisible on
+  fourteen hand-written cars and obvious on a real 486-car lot:
+  - **Whole words, because a substring match scores the sentence rather than
+    the car.** "do" is inside "Dodge" and "you" is inside "Bayou", so *"do you
+    have any corvettes?"* ranked a Dodge Hornet in Blu Bayou first and never
+    reached a Corvette. The buyer's own filler was doing the sorting.
+  - **A lone letter is dropped and a lone digit is kept.** "a" is a whole-word
+    match against every A-Class and A-Spec on the lot. No car is called "a";
+    several are called 3 and 5.
+  - **A plural and a nickname both resolve.** Nothing on a listing is plural,
+    so "corvettes" scored zero against every row; and nobody in Louisville
+    types "Chevrolet", which is 74 of the cars there. `MAKE_NICKNAMES` is
+    curated for the reason `ORIGIN_BY_MAKE` is — there is no column for it and
+    guessing gets it wrong.
+- **A car with no published price is a listing state, not a gap.** 119 of
+  Craig and Landreth's 486 cars are call-for-price, and their own site answers
+  it with an enquiry form at the same URL. So `inquiry_url` is **derived, never
+  stored** — `?mode=inquiry` on the listing, and only where there is no price —
+  and it reaches the buyer as a link on the card rather than a URL in a
+  sentence. Three consequences:
+  - **`no_price_note`, not `price_note`.** `rule_hold_price` already owns that
+    key, and two notes writing to one field means whichever runs last silently
+    wins — the one that loses being a rule the dealer set.
+  - **An unpriced car is not the cheapest car.** SQLite sorts NULL before every
+    number, so `price.asc()` put all five results of "what have you got?" on
+    cars the assistant then had to refuse to quote. They sort last and are
+    reached only when nothing priced fits.
+  - **The stub says the same thing the prompt asks for.** `phrasing.money`
+    is the one formatter — a second copy in `stub.py` said "priced on request"
+    where it said "price on request", harmless while every car had a price.
+- **A car at another of the group's lots says so before a time is offered.**
+  Craig and Landreth list three stores in one feed and the appointment is at
+  the one address in `dealerships`. The *note* is raised only for a car that is
+  somewhere else, compared against that address: on every row it would have the
+  assistant announce the store it is standing in on every reply, and noise is
+  how the one row that mattered stops being read.
 - **An appointment can be moved without being destroyed.** There was no
   reschedule, so a rep shifting somebody by an hour had to cancel and rebook —
   which mints a new row, losing the id, the assigned salesperson and the

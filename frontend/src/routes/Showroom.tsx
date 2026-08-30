@@ -59,6 +59,12 @@ interface Car {
   features: string[]
   photo_url: string
   listing_url: string
+  /** Which of the group's lots it is standing on. Empty for a single-site
+   *  dealership, which is most of them. */
+  location: string
+  /** The dealer's own enquiry form, and only for a car they do not price
+   *  online. Derived server-side from the listing URL. */
+  inquiry_url: string
 }
 
 interface Facets {
@@ -152,13 +158,27 @@ function CarCard({ car }: { car: Car }) {
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-4">
         <h3 className="truncate text-sm font-semibold">{car.title}</h3>
         {car.trim && <p className="truncate text-xs text-muted-foreground">{car.trim}</p>}
-        <p className="mt-1 text-lg font-semibold text-primary">
-          {/* A car with no published price is a real listing state, not a
-              failure -- it belongs on the lot, Liner simply cannot quote it. */}
-          {car.price ? money(car.price) : 'Call for price'}
-        </p>
+        {/* A car with no published price is a real listing state, not a
+            failure -- it belongs on the lot, Liner simply cannot quote it.
+            Their own site answers it with an enquiry form at the same URL, so
+            the words become the link rather than sitting dead next to one. */}
+        {car.price ? (
+          <p className="mt-1 text-lg font-semibold text-primary">{money(car.price)}</p>
+        ) : car.inquiry_url ? (
+          <a
+            href={car.inquiry_url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-block text-lg font-semibold text-primary underline-offset-4 hover:underline"
+          >
+            Call for price
+          </a>
+        ) : (
+          <p className="mt-1 text-lg font-semibold text-primary">Call for price</p>
+        )}
         <p className="text-xs text-muted-foreground">
           {car.mileage != null ? `${car.mileage.toLocaleString()} miles` : 'Mileage not listed'}
+          {car.location ? ` · ${car.location}` : ''}
         </p>
       </div>
     </article>

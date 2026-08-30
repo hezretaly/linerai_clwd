@@ -47,6 +47,27 @@ def valid_vin(vin: str) -> bool:
     return bool(VIN_RE.match((vin or "").upper().strip()))
 
 
+#: A VIN from before the 17-character standard. Vehicles built up to model year
+#: 1980 carry shorter ones -- 11 to 16 characters, no fixed length -- and they
+#: are real cars a dealer really sells: a 1978 Corvette and a 1979 SL-Class
+#: turned up in the first real export this repository was given.
+OLD_VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{11,16}$")
+
+
+def usable_vin(vin: str) -> bool:
+    """A VIN we are willing to key a vehicle on.
+
+    Looser than `valid_vin`, and deliberately used only for a file somebody
+    exported rather than for a page somebody scraped. In an export a short VIN
+    is a classic car; on a scraped listing card it is far more likely a
+    selector reading the wrong element, and accepting it would fill the lot
+    with rows keyed on a stock number or a phone extension. So the crawl stays
+    strict and the importer does not.
+    """
+    text = (vin or "").upper().strip()
+    return valid_vin(text) or bool(OLD_VIN_RE.match(text))
+
+
 def to_int(value) -> int | None:
     """'$18,900' -> 18900. 'Call for price' -> None, which is not an error."""
     if value is None:

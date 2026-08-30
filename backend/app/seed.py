@@ -548,6 +548,42 @@ def _possessive(name: str) -> str:
     return f"{name}'" if name.endswith(("s", "S")) else f"{name}'s"
 
 
+def _seed_profile_inventory(db: Session) -> None:
+    """A real dealership's own lot, from a file in the repository.
+
+    The crawl is the intended source and this is what to do when it cannot
+    run: a dealer whose site refuses our agent, or a network that cannot reach
+    it. Somebody exports the lot once and it is committed, so `make reset-db`
+    rebuilds a real 486-car showroom with no network at all.
+
+    It goes through `import_csv` and `publish` -- the same two functions a
+    dealer's own upload goes through -- rather than inserting rows directly.
+    A second insert path is how one of them stops dropping the cost columns.
+    """
+    from app.profile import inventory
+
+    name = (inventory().get("fixture_csv") or "").strip()
+    if not name:
+        return
+    path = settings.fixtures_dir / name
+    if not path.is_file():
+        print(f"  inventory fixture not found: {path}")
+        return
+
+    from app.ingest.csv_import import import_csv
+    from app.ingest.pipeline import publish
+
+    run = import_csv(db, path.read_text(encoding="utf-8-sig"))
+    if run.status != "ready":
+        print(f"  inventory fixture not loaded: {run.status}")
+        return
+    applied = publish(db, run)
+    errors = json.loads(run.errors_json or "[]")
+    print(f"  loaded {applied['created']} vehicles from {name}")
+    for entry in errors[:3]:
+        print(f"    note: {entry.get('error')}")
+
+
 def _seed_settings(db: Session, manager: User, raw: dict) -> None:
     """The published instructions, greeting included.
 
@@ -896,6 +932,8 @@ def seed(db: Session | None = None) -> None:
         if _has_fixture(raw):
             vehicles = _seed_vehicles(db)
             _seed_csv_inventory(db)
+        else:
+            _seed_profile_inventory(db)
         _seed_settings(db, users[0], raw)
         _seed_rules_and_knowledge(db, raw)
         _seed_rails(db)

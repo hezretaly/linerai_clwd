@@ -19,6 +19,12 @@ interface VehicleCardData {
   mileage: number | null
   photo_url: string
   features?: string[]
+  /** Which of the group's lots it is on. Empty for a single-site dealership. */
+  location?: string
+  /** The dealer's own enquiry form, only for a car they do not price online.
+   *  Derived server-side, so the card can only ever offer a link the tool
+   *  result carried -- the same rule the booking card follows. */
+  inquiry_url?: string
 }
 
 /** The transcript is one ordered list, and a card is an entry in it.
@@ -285,8 +291,28 @@ export function Chat() {
                         {vehicle.year} {vehicle.make} {vehicle.model}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {money(vehicle.price)}
+                        {/* No published price is a listing state the dealer
+                            chose, and their own site answers it with an
+                            enquiry form at the same URL. The words become the
+                            link, so the buyer can ask -- while Liner still
+                            offers a visit, which is the better outcome and
+                            what the method says to do. */}
+                        {vehicle.price ? (
+                          money(vehicle.price)
+                        ) : vehicle.inquiry_url ? (
+                          <a
+                            href={vehicle.inquiry_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-medium text-primary underline-offset-4 hover:underline"
+                          >
+                            Ask for a price
+                          </a>
+                        ) : (
+                          money(vehicle.price)
+                        )}
                         {vehicle.mileage ? ` -- ${vehicle.mileage.toLocaleString()} mi` : ''}
+                        {vehicle.location ? ` -- ${vehicle.location}` : ''}
                       </p>
                       {vehicle.features?.length ? (
                         <p className="mt-0.5 truncate text-xs text-muted-foreground">

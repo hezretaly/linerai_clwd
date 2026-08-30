@@ -357,6 +357,10 @@ class Settings(BaseSettings):
     # A sample lot, loaded on top of the curated fixtures by `make seed`. One
     # copy, read from where it lives, rather than duplicated into the backend.
     inventory_csv: Path = REPO_DIR / "dash" / "cars.csv"
+    #: Where a profile's own `inventory.fixture_csv` is looked up. A real
+    #: dealership's exported lot, committed so `make reset-db` rebuilds it with
+    #: no network -- which is the answer when their site refuses the crawler.
+    fixtures_dir: Path = BACKEND_DIR / "fixtures"
     #: Where a crawl's own record lives: one folder per dealership, holding
     #: `snapshot.json` and the photos. Under `var/` with the call recordings,
     #: for the same reason -- these are files a deployment accumulates, not

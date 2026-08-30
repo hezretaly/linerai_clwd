@@ -96,6 +96,22 @@ site:
 #
 # Press Import on /app/inventory, review the run, then publish.
 inventory:
+  # Their whole group, exported by hand and committed, because their site
+  # refuses this crawler from every machine tried so far -- the TCP connection
+  # never opens, so it is below the HTTP layer and no user agent changes it.
+  # `make reset-db` rebuilds the real 486-car lot with no network at all.
+  #
+  # It goes through the same CSV importer a dealer's own upload does. Re-run
+  # `make ingest ARGS=--publish` from a machine that can reach them and the
+  # crawl takes over; the VINs are the same, so it is a diff rather than a
+  # second lot.
+  #
+  # NOTE this is all three of their stores -- Louisville (240), Clarksville IN
+  # (176) and Bullitt County (70) -- which is what their own site lists. Each
+  # car carries its `location`, and a car at another store says so before
+  # Liner offers a time, because the appointment is at the address in
+  # `dealerships` and that is only one of the three.
+  fixture_csv: "craigandlandreth/inventory.csv"
   source_url: "https://www.craigsbestcars.com/newandusedcars"
   # Their listing page mixes three stores -- Louisville (1123), Clarksville IN
   # (1129) and Bullitt County (3833) -- each card carrying its own id. This app

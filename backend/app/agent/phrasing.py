@@ -16,17 +16,53 @@ from __future__ import annotations
 
 
 def money(value: int | None) -> str:
+    """`$21,400`, or what the listing itself says when it carries no price.
+
+    A missing price is a listing state the dealership chose, not a gap: 119 of
+    Craig and Landreth's 486 cars are call-for-price. Saying so is the honest
+    answer, and it is the only one the guards will pass -- there is no figure
+    here to source.
+    """
     return f"${value:,}" if value else "price on request"
+
+
+def priced(value: int | None) -> str:
+    """The same fact in a sentence: `is $21,400` / `is priced on request`.
+
+    Two forms because the two read in different places, and both derive from
+    the value rather than one wrapping the other -- there is no arrangement of
+    "price on request" that reads as English after "The 2018 Challenger is".
+    """
+    return f"is ${value:,}" if value else "is priced on request"
+
+
+def title(vehicle: dict) -> str:
+    """`2020 Honda Accord Sport`, with no double spaces where a trim is blank."""
+    parts = (vehicle.get("year"), vehicle.get("make"), vehicle.get("model"), vehicle.get("trim"))
+    return " ".join(str(p) for p in parts if p).strip()
 
 
 def one_line(vehicle: dict) -> str:
     """`2020 Honda Accord Sport -- $21,400, 38,120 miles`."""
-    title = f"{vehicle['year']} {vehicle['make']} {vehicle['model']} {vehicle.get('trim') or ''}"
-    line = f"{title.strip()} -- {money(vehicle.get('price'))}"
+    line = f"{title(vehicle)} -- {money(vehicle.get('price'))}"
     mileage = vehicle.get("mileage")
     if mileage:
         line += f", {mileage:,} miles"
     return line
+
+
+def detail_line(vehicle: dict) -> str:
+    """`The 2020 Honda Accord Sport is $21,400 with 38,120 miles.`
+
+    Mileage is stated only where there is one. A dealer's own export is missing
+    it on a couple of rows, and `f"{None:,}"` is a TypeError rather than a
+    blank -- the stub crashed on the first such car rather than describing it.
+    """
+    line = f"The {title(vehicle)} {priced(vehicle.get('price'))}"
+    mileage = vehicle.get("mileage")
+    if mileage:
+        line += f" with {mileage:,} miles"
+    return line + "."
 
 
 def pick_one(shown: list[dict]) -> tuple[dict, str]:

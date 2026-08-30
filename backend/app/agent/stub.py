@@ -46,8 +46,10 @@ STAGE_ORDER = [
 ]
 
 
-def _money(value: int | None) -> str:
-    return f"${value:,}" if value else "priced on request"
+# There is no `_money` here any more. It was a second copy of `phrasing.money`
+# that said "priced on request" where `phrasing` said "price on request" --
+# harmless while every car on the lot had a price, and exactly the drift that
+# ends with one channel rounding a number the other quotes.
 
 
 def _match_rail(db: Session, convo: Conversation, text: str) -> Rail | None:
@@ -300,15 +302,27 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         if convo.stage != "booked":
             convo.stage = "vehicle_focus"
         db.commit()
-        parts = [
-            f"The {v['year']} {v['make']} {v['model']} {v['trim']}".strip()
-            + f" is {_money(v['price'])} with {v['mileage']:,} miles."
-        ]
+        parts = [phrasing.detail_line(v)]
         if v.get("features"):
             parts.append(f"It has {', '.join(v['features'][:3])}.")
         if v.get("warranty_note"):
             parts.append(
                 "It also comes with our 90-day, 4,000-mile limited powertrain warranty."
+            )
+        # A car at another one of the group's lots says so before a time is
+        # offered -- the appointment is at the one address in `dealerships`.
+        # The note is only on the payload when the store really is a different
+        # one, so this cannot announce the lot the buyer is already talking to.
+        if v.get("location_note"):
+            parts.append(f"It's on the {v['location']} lot rather than this one.")
+        # No price on the listing is the dealership's decision, and their own
+        # site answers it with an enquiry form at the same URL. The card beside
+        # this reply carries that link, so this points at it rather than
+        # pasting it -- and the visit is still the better offer.
+        if v.get("inquiry_url"):
+            parts.append(
+                "There's no price posted on this one, so I can't quote you a figure -- "
+                "you can ask them for it on the listing, or a rep will have it."
             )
         parts.append("Want to come see it?")
         return " ".join(parts), calls
@@ -323,11 +337,16 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         )
         convo.stage = "objection"
         db.commit()
-        if focus is not None and focus.rule_hold_price:
+        # `rule_hold_price` on a car with no published price would otherwise
+        # read "priced firm at price on request". A dealer can set that flag on
+        # any row, so the two states are answered separately rather than
+        # assuming the flag implies a figure.
+        if focus is not None and focus.rule_hold_price and focus.price:
             v = call("get_vehicle", {"vin": focus.vin})
             return (
-                f"That one's priced firm at {_money(v['price'])} -- it's already at market. "
-                "The best way to talk numbers is in person with a rep. Shall I get you a time?",
+                f"That one's priced firm at {phrasing.money(v['price'])} -- it's already at "
+                "market. The best way to talk numbers is in person with a rep. "
+                "Shall I get you a time?",
                 calls,
             )
         return (

@@ -13,7 +13,7 @@ import json
 from sqlalchemy.orm import Session
 
 from app.db import utcnow
-from app.ingest.extract import to_int, valid_vin
+from app.ingest.extract import to_int, usable_vin
 from app.models import IngestRun, Vehicle
 
 COLUMNS = "vin,year,make,model,trim,price,mileage,body_style,seats"
@@ -23,6 +23,15 @@ COLUMNS = "vin,year,make,model,trim,price,mileage,body_style,seats"
 # them instead of reshaping it by hand first.
 ALIASES = {
     "year": ("year", "model_year"),
+    "photo_url": ("photo_url", "image_url", "image", "photo", "primary_image"),
+    "listing_url": ("listing_url", "url", "vdp_url", "detail_url", "link"),
+    # Which of the dealership's lots the car is standing on. A group with more
+    # than one address lists them all in one export, and a buyer told to come
+    # and see a car that is two hours away has been told the wrong thing.
+    "location": ("location", "store", "lot", "branch", "site"),
+    "dealer_phone": ("dealer_phone", "phone", "store_phone"),
+    "doc_fee": ("doc_fee", "documentation_fee", "docfee"),
+    "stock_number": ("stock_number", "stock", "stock_no", "stock #"),
     "price": ("price", "list_price", "asking_price", "selling_price"),
     "mileage": ("mileage", "odometer", "miles"),
     "body_style": ("body_style", "bodystyle", "body", "vehicle_type"),
@@ -113,8 +122,8 @@ def import_csv(db: Session, raw: str) -> IngestRun:
         row = {k: v for k, v in row.items() if (k or "").strip().lower() not in NEVER_IMPORT}
 
         vin = (row.get("vin") or "").upper().strip()
-        if not valid_vin(vin):
-            errors.append({"row": index, "error": f"VIN {vin!r} is not 17 valid characters"})
+        if not usable_vin(vin):
+            errors.append({"row": index, "error": f"VIN {vin!r} is not a usable VIN"})
             continue
 
         raw_status = pick(row, "status").lower()
@@ -140,6 +149,20 @@ def import_csv(db: Session, raw: str) -> IngestRun:
             # is what makes "heated seats" a findable phrase rather than free
             # text nobody searches.
             "features": [],
+            # Where the buyer would actually go to see it. A DMS export has
+            # neither; a scrape of the dealer's own site has both, and losing
+            # them here would mean re-deriving a photo and a link this file
+            # already states.
+            "photo_url": pick(row, "photo_url"),
+            "listing_url": pick(row, "listing_url"),
+            # Kept in `raw_json` rather than a column, because `create_all`
+            # adds a table to an existing database and never a column. It is
+            # also exactly what that field is for: what the source said.
+            "raw": {
+                key: pick(row, key)
+                for key in ("location", "dealer_phone", "doc_fee", "stock_number")
+                if pick(row, key)
+            },
         }
         features, dropped = plausible_features(
             [f.strip() for f in pick(row, "features").replace("|", ";").split(";") if f.strip()],

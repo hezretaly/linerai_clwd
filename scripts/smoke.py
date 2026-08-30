@@ -10,7 +10,9 @@ clean seed with an empty .env.
 
 from __future__ import annotations
 
+import csv
 import hmac
+import io
 import json
 import pathlib
 import shutil
@@ -3249,6 +3251,128 @@ def main() -> int:
           f"unhandled: {sorted(verdicts - handled)}")
     check("and the diagnosis says what a TCP failure rules out",
           "CAPTCHA" in ingest_src and "responses" in ingest_src)
+
+    print("\n== a real dealer's own export, and the cars they will not price ==")
+    # Craig and Landreth's whole group, exported by hand because their site
+    # refuses this crawler below the HTTP layer, and committed so `make
+    # reset-db` rebuilds the real lot with no network at all. It goes in
+    # through the importer a dealer's own upload uses -- so what is checked
+    # here is that importer against a real file, not a fixture written to suit
+    # it.
+    #
+    # Everything below is offline and reads no rows: the Riverside fixture is
+    # what is seeded when smoke runs, and a check that only passes on somebody
+    # else's database is a check that does not run.
+    from app.agent.tools import _hits, _vehicle_payload, _words, inquiry_url
+    # Aliased: `pick` is already the rail chooser in this file.
+    from app.ingest.csv_import import ALIASES, NEVER_IMPORT, pick as column
+    from app.ingest.extract import usable_vin, valid_vin
+
+    export = pathlib.Path("backend/fixtures/craigandlandreth/inventory.csv")
+    rows = list(csv.DictReader(io.StringIO(export.read_text())))
+    check("the committed export is the whole group, not one lot",
+          len(rows) == 486, f"{len(rows)} rows")
+    check("and every row carries the fields a card is drawn from",
+          all(r["vin"] and r["year"] and r["make"] and r["photo_url"] and r["listing_url"]
+              for r in rows))
+
+    # Two of their cars are older than the 17-character VIN standard -- a 1978
+    # Corvette and a 1979 Bronco. `valid_vin` is right for a page somebody
+    # scraped and would have thrown away two real cars out of a file the
+    # dealership exported itself.
+    old = [r for r in rows if not valid_vin(r["vin"])]
+    check("a pre-1981 VIN survives a file the dealer exported themselves",
+          old and all(usable_vin(r["vin"]) for r in old),
+          f"{len(old)}: {[r['vin'] for r in old]}")
+
+    # What the dealership paid is on no row here, and the importer would drop
+    # it if it were. Cost reaching a column is cost reaching search_inventory,
+    # and from there the model.
+    check("no cost column is anywhere near it",
+          not (NEVER_IMPORT & {(k or '').lower() for k in rows[0]}),
+          str(sorted(NEVER_IMPORT & {(k or '').lower() for k in rows[0]})))
+
+    # The columns their export has that a DMS export does not. Without an alias
+    # each the importer silently reads nothing and every card loses its photo.
+    for column_name in ("photo_url", "listing_url", "location", "stock_number"):
+        check(f"the importer reads their {column_name} column",
+              column(rows[0], column_name) != "", f"aliases: {ALIASES.get(column_name)}")
+
+    # 119 of 486 carry no price. That is a listing state the dealership chose,
+    # and their own site answers it with an enquiry form at the same URL --
+    # so the link is derived, never stored, and exists only where there is no
+    # price to show.
+    priced = SimpleNamespace(price=24995, listing_url="https://x.invalid/vdp/1/car",
+                             raw_json=None, features_json="[]")
+    unpriced = SimpleNamespace(price=None, listing_url="https://x.invalid/vdp/1/car",
+                               raw_json=None, features_json="[]")
+    check("a car with a price gets no enquiry link", inquiry_url(priced) == "")
+    check("and a car without one gets the dealer's own form",
+          inquiry_url(unpriced) == "https://x.invalid/vdp/1/car?mode=inquiry",
+          inquiry_url(unpriced))
+    check("appended to a listing that already has a query, not replacing it",
+          inquiry_url(SimpleNamespace(price=None, listing_url="https://x.invalid/v?a=1"))
+          == "https://x.invalid/v?a=1&mode=inquiry")
+    check("and nothing invented for a car with no listing at all",
+          inquiry_url(SimpleNamespace(price=None, listing_url="")) == "")
+
+    def _payload(price, location, home):
+        return _vehicle_payload(SimpleNamespace(
+            vin="X", year=2020, make="BMW", model="X5", trim="", price=price,
+            mileage=1000, body_style="suv", seats=5, features_json="[]",
+            photo_url="", listing_url="https://x.invalid/vdp/1/car", status="available",
+            raw_json=json.dumps({"location": location}) if location else None,
+            rule_hold_price=False, rule_mention_warranty=False, rule_note="",
+        ), home)
+
+    # Its own key. `rule_hold_price` already owns `price_note`, and two notes
+    # writing to one field means whichever runs last silently wins -- the one
+    # that loses being a rule the dealer set.
+    note = _payload(None, "", "")
+    check("the model is told not to quote a price that does not exist",
+          "do not quote or estimate" in note["no_price_note"]
+          and "price_note" not in note)
+    check("and told to point at the link rather than read a URL out",
+          "never say a URL on a call" in note["no_price_note"])
+    check("a priced car carries neither", "no_price_note" not in _payload(1, "", "")
+          and "inquiry_url" not in _payload(1, "", ""))
+
+    # Their lot is 240 cars in Louisville and 246 between two other stores, and
+    # the appointment Liner books is at the one address in `dealerships`. A note
+    # on every row would have it announce the store it is standing in on every
+    # reply, which is noise -- and noise is how the one row that mattered stops
+    # being read.
+    home = "4156 shelbyville rd., louisville, ky 40207"
+    here = _payload(9000, "Louisville", home)
+    there = _payload(9000, "Clarksville", home)
+    check("a car on this lot says where it is without making a point of it",
+          here["location"] == "Louisville" and "location_note" not in here)
+    check("and a car at another store is flagged before a time is offered",
+          "Clarksville store" in there.get("location_note", ""),
+          there.get("location_note", "(none)"))
+
+    # Both bugs below were invisible on fourteen hand-written cars and obvious
+    # on 486 real ones.
+    check("a search word matches a whole word, not a fragment of one",
+          not _hits("do", _words("Dodge Challenger Blu Bayou"))
+          and not _hits("you", _words("Dodge Challenger Blu Bayou")),
+          "'do' in 'Dodge' ranked a Hornet above every Corvette")
+    check("and a plural finds the singular a listing is written in",
+          _hits("corvettes", ["chevrolet", "corvette"])
+          and _hits("trucks", ["truck"]))
+    check("but not by chopping a letter off a short word",
+          not _hits("gts", ["gt"]) and _hits("gt", ["gt"]))
+    check("nobody types Chevrolet, and the lot is 74 of them",
+          _hits("chevy", ["chevrolet", "trax"]) and _hits("vw", ["volkswagen", "jetta"]))
+    # "a" is a whole word and it matches every A-Class and A-Spec on the lot,
+    # so "do you have a chevy Trax?" ranked two cars nobody asked about above
+    # the one that was named. No car is called "a"; several are called 3 and 5.
+    check("a lone letter is filler and drops out of the search",
+          _words("do you have a chevy trax?") == ["do", "you", "have", "chevy", "trax"],
+          str(_words("do you have a chevy trax?")))
+    check("but a lone digit is a model name and stays",
+          _words("bmw 3 series") == ["bmw", "3", "series"],
+          str(_words("bmw 3 series")))
 
     print("\n== what a crawl found, kept on disk ==")
     # The database is the product's answer to "what is on the lot"; this is

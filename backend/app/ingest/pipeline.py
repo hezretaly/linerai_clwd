@@ -367,11 +367,18 @@ def publish(db: Session, run: IngestRun) -> dict:
             listing_url=payload.get("listing_url") or "",
             status="available", source="scrape", ingest_run_id=run.id,
             features_json=json.dumps(payload.get("features") or []),
+            # Whatever the source said and this schema has no column for --
+            # which store the car is on, the stock number, that store's doc
+            # fee. `create_all` adds a table to an existing database and never
+            # a column, so this is where a field like that lives.
+            raw_json=json.dumps(payload.get("raw") or {}),
             # Features join the keyword haystack: a buyer types "heated seats",
-            # not a body style.
+            # not a body style. The store name goes in too, so "the one in
+            # Clarksville" is findable.
             keywords=" ".join(
                 [str(payload.get(k) or "") for k in ("make", "model", "trim", "body_style")]
                 + list(payload.get("features") or [])
+                + [str((payload.get("raw") or {}).get("location") or "")]
             ).lower(),
         )
         db.add(vehicle)
