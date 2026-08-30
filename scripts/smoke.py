@@ -1159,9 +1159,16 @@ def main() -> int:
     # of `make ops-ui` reads one, and a check that only holds on a database
     # nobody has touched is a check that fails for the wrong reason later.
     fresh_id = f"<ops-unread-{stamp}>"
+    # The subject carries the run stamp, and that is the whole point of it.
+    # It used to be a fixed string, so the poll below matched a row an *earlier*
+    # run had left in Unmatched -- and the check passed while this run's
+    # delivery had gone somewhere else entirely. Which is exactly what it did:
+    # a stranger writing to support@ was being minted as a car buyer on the
+    # dealership's list, and this assertion sailed straight over it.
+    fresh_subject = f"Is this thing on? {stamp}"
     inbound({
         "messageId": fresh_id, "from": f"stranger.{stamp}@nowhere.invalid",
-        "to": "support@example.invalid", "subject": "Is this thing on?",
+        "to": "support@example.invalid", "subject": fresh_subject,
         "text": "Writing in cold.",
     })
     # Polled on the ops mailbox rather than with settled(), which reads
@@ -1171,7 +1178,7 @@ def main() -> int:
     for _ in range(40):
         stranger = [
             m for m in call("GET", "/api/ops/mail?box=unmatched")["messages"]
-            if m["subject"] == "Is this thing on?"
+            if m["subject"] == fresh_subject
         ]
         if stranger:
             break
@@ -1405,8 +1412,6 @@ def main() -> int:
           manual["lead"]["source"] == "phone", manual["lead"]["source"])
 
     print("\n== the dashboard saw it happen (websocket) ==")
-    import time
-
     time.sleep(1.5)
     check("socket connected", not listener.error, listener.error or "ok")
     for event in ("appointment.booked", "appointment.confirmed", "appointment.assigned",
@@ -1828,8 +1833,9 @@ def main() -> int:
         "to": "sales@example.invalid", "subject": "Is the Sienna still there?",
         "text": "Saw it on your site.",
     })
-    check("mail from a buyer we do not know yet waits, unresolved",
-          settled(f"<smoke-{run}-early>").get("outcome") == "unresolved")
+    check("mail from a buyer we do not know yet mints one, then and there",
+          settled(f"<smoke-{run}-early>").get("matched_by") == "new_lead",
+          str(settled(f"<smoke-{run}-early>").get("matched_by")))
     later = call("POST", "/api/chat/sessions", {})["conversation_id"]
     when = call("POST", "/api/voice/tools", {
         "conversation_id": later, "name": "check_availability", "input": {},
@@ -1839,7 +1845,7 @@ def main() -> int:
         "input": {"name": "Early Writer", "email": early, "starts_at": when[0]},
         "tool_call_id": f"ebk-{run}"})["result"]
     joined = settled(f"<smoke-{run}-early>")
-    check("and is placed the moment that buyer comes into existence",
+    check("and booking later is that same buyer, never a second one",
           joined.get("outcome") == "accepted" and joined.get("lead_id") == minted["lead_id"],
           f"{joined.get('outcome')} -> {joined.get('lead_id')}")
     check("landing on their timeline, not on the unmatched pile",
@@ -1848,7 +1854,27 @@ def main() -> int:
     # Through the same resolution as the live path, not a second copy of it --
     # two ladders is how they start disagreeing about who a reply belongs to.
     check("by the same rule the live path uses, which is what it records",
-          joined.get("matched_by") == "from_address", str(joined.get("matched_by")))
+          joined.get("matched_by") == "new_lead", str(joined.get("matched_by")))
+
+    # The retroactive half still has to run, and now it is reached by the
+    # deliveries a lead is deliberately *not* minted from. A robot's message
+    # sits unresolved; if that same mailbox later turns out to be a buyer, the
+    # ladder is re-run rather than the message being lost.
+    quiet = f"quiet.{run}@example.invalid"
+    inbound({
+        "messageId": f"<smoke-{run}-quiet>", "from": quiet,
+        "to": "sales@example.invalid", "subject": "(nothing)", "text": "   ",
+    })
+    check("a delivery no lead was minted from stays a receipt",
+          settled(f"<smoke-{run}-quiet>").get("outcome") == "unresolved")
+    made_later = call("POST", "/api/leads", {
+        "name": "Quiet Writer", "email": quiet, "phone": "", "source": "manual",
+    })
+    picked = settled(f"<smoke-{run}-quiet>")
+    check("and is placed the moment that buyer comes into existence",
+          picked.get("outcome") == "accepted"
+          and picked.get("lead_id") == made_later["lead"]["id"],
+          f"{picked.get('outcome')} -> {picked.get('lead_id')}")
     # Given back, like every other appointment this script books. The fixture's
     # week holds about twenty slots and book_appointment refuses a clash, so a
     # run that kept one leaves fewer for the next -- and after enough runs the
@@ -3336,6 +3362,116 @@ def main() -> int:
           f"unhandled: {sorted(verdicts - handled)}")
     check("and the diagnosis says what a TCP failure rules out",
           "CAPTCHA" in ingest_src and "responses" in ingest_src)
+
+    print("\n== somebody writing in becomes somebody ==")
+    # A person writing to sales@ used the door the dealership publishes. Left
+    # as a receipt they are visible only on a diagnostics tab, so the one
+    # contact nobody expected is also the one nobody works.
+    #
+    # A machine writing to it is not a buyer. The buyer list is the one list
+    # here that has to mean exactly one thing, and a lead invented from a
+    # newsletter is a name in every assignment picker and a row in every queue.
+    from app.email_intake import (
+        automated_reason, display_name, just_the_reply, sender_address, signature_name,
+    )
+
+    who = f"buyer.{stamp}@example.invalid"
+    inbound({
+        "messageId": f"<first-{stamp}@mail.example>",
+        "from": f'"Robin Vance" <{who}>', "to": "sales@example.invalid",
+        "subject": "2019 Silverado",
+        "text": "Is the Silverado still there?\n\nThanks,\nRobin",
+    })
+    settled(f"<first-{stamp}@mail.example>")
+    made = call("GET", f"/api/leads?q={quote(who)}")
+    rows = [r for r in (made.get("leads") or made) if r.get("email") == who]
+    check("a person writing to a published address becomes a buyer",
+          len(rows) == 1, f"{len(rows)} lead(s)")
+    if rows:
+        check("named from the envelope, which is a fact rather than a guess",
+              rows[0]["name"] == "Robin Vance", rows[0]["name"])
+        check("and email counts as a channel they have used",
+              rows[0].get("channels") == ["email"], str(rows[0].get("channels")))
+
+    # Twice is one buyer. `_resolve` matched the whole `Name <addr>` header
+    # against `leads.email` and so never hit for a sender with a display name,
+    # which is most real mail -- invisible while the outcome was "unresolved",
+    # and a duplicate buyer the moment an unmatched delivery started minting
+    # one. Both sites parse the address now, and this is what checks it.
+    inbound({
+        "messageId": f"<second-{stamp}@mail.example>",
+        "from": f'"Robin Vance" <{who}>', "to": "sales@example.invalid",
+        "subject": "Re: 2019 Silverado", "text": "Any movement on the price?",
+    })
+    receipt = settled(f"<second-{stamp}@mail.example>")
+    again = call("GET", f"/api/leads?q={quote(who)}")
+    check("and writing again is the same buyer, not a second one",
+          len([r for r in (again.get("leads") or again) if r.get("email") == who]) == 1)
+    check("filed by the address, and the receipt says which rule did it",
+          receipt.get("matched_by") == "from_address", str(receipt.get("matched_by")))
+
+    for label, sender, headers, body in [
+        ("a mailing list", "News <news@vendor.example>",
+         {"List-Unsubscribe": "<https://vendor.example/u>"}, "Top ten SUVs!"),
+        ("an out-of-office", "Someone <someone@example.invalid>",
+         {"Auto-Submitted": "auto-replied"}, "I am away until Monday."),
+        ("a no-reply robot that declares nothing", "no-reply@billing.example",
+         {}, "Invoice 4021."),
+    ]:
+        mid = f"<bot-{label.split()[-1]}-{stamp}@mail.example>"
+        inbound({
+            "messageId": mid, "from": sender, "to": "sales@example.invalid",
+            "subject": "x", "text": body, "headers": headers,
+        })
+        got = settled(mid)
+        check(f"{label} is kept as a receipt and makes no buyer",
+              got.get("outcome") == "unresolved" and not got.get("lead_id"),
+              f"{got.get('outcome')} / lead={bool(got.get('lead_id'))}")
+        check(f"and the receipt says why -- {label}",
+              "no lead was created because" in (got.get("detail") or ""),
+              (got.get("detail") or "")[:70])
+
+    # Headers first, then the address, then shape. A header is the sender
+    # declaring itself a machine, and honouring it stops a vacation responder
+    # on turn one -- where a cooldown only slows it to forty-eight real emails
+    # a day, forever.
+    check("a header outranks an address that looks fine",
+          automated_reason("Real Person <a@b.example>",
+                           {"Precedence": "bulk"}, "hello") != "")
+    check("and a plain person with no headers at all is let through",
+          automated_reason("Real Person <a@b.example>", {}, "hello") == "")
+    check("a suffixed robot mailbox is still a robot mailbox",
+          automated_reason("no-reply+alerts@b.example", {}, "hi") != "")
+    check("an empty message is nobody to reply to",
+          automated_reason("a@b.example", {}, "   ") != "")
+
+    check("the address is read out of the envelope, never compared whole",
+          sender_address('"Robin Vance" <Robin@Example.Invalid>') == "robin@example.invalid",
+          sender_address('"Robin Vance" <Robin@Example.Invalid>'))
+    check("and a display name that is only the address says nothing",
+          display_name("<a@b.example>") == "" and display_name('"A B" <a@b.example>') == "A B")
+
+    # The signature is a guess, so it is a captured field with provenance
+    # `inferred` and never the lead's own name. Prose cannot carry provenance,
+    # and a guessed name asserted as fact is one a rep repeats on the phone.
+    check("a name signed under a sign-off is found",
+          signature_name("Is it there?\n\nThanks,\nDana Public") == "Dana Public",
+          signature_name("Is it there?\n\nThanks,\nDana Public"))
+    check("a phone footer is not a name",
+          signature_name("Is it there?\n\nSent from my iPhone") == "",
+          signature_name("Is it there?\n\nSent from my iPhone"))
+    check("and a one-line message is the message, not a signature",
+          signature_name("Robin") == "")
+
+    # Some people answer inside the quote. Trimming to nothing would delete the
+    # only thing they said, so it keeps the whole body instead -- the same rule
+    # `_is_noise` follows on a call, for the same reason.
+    quoted = "On Mon 1 Sep 2026 Liner wrote:\n> Are you still interested?\n> Let me know."
+    check("a reply that is nothing but quote keeps its body rather than vanishing",
+          just_the_reply(quoted).strip() != "")
+    check("and an ordinary reply loses the thread it quoted back",
+          just_the_reply("Yes please.\n\nOn Mon 1 Sep 2026 Liner wrote:\n> hello\n")
+          == "Yes please.")
 
     print("\n== a timestamp on the wire says which kind it is ==")
     # ECMAScript parses a bare date-time as *browser-local*. `utcnow()` is naive

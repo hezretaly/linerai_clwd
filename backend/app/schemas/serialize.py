@@ -159,7 +159,15 @@ def captured_out(c: CapturedField) -> dict:
 def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> dict:
     out = {
         "id": lead.id,
-        "name": lead.name or "Unknown caller",
+        # A lead with no name is unnamed, and that is all it is. It said
+        # "Unknown caller", which was already two wrong words on a website chat
+        # and became routine the moment an email could mint a buyer -- most
+        # senders have no display name, so most email leads arrive nameless and
+        # every one of them was described as a phone call that never happened.
+        # Anonymous *threads* are labelled by the channel they used, in
+        # `ConversationList`; a lead has no single channel, so it is named for
+        # what it is.
+        "name": lead.name or "Unnamed buyer",
         "email": lead.email,
         "phone": lead.phone,
         "source": lead.source,

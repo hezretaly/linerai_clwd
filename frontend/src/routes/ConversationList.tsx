@@ -35,7 +35,11 @@ import { PageIntro } from '../components/dashboard/AppShell'
  * who a rep needs to see.
  */
 
-const CHANNEL_LABEL: Record<string, string> = { chat: 'Website chat', voice: 'Voice call' }
+const CHANNEL_LABEL: Record<string, string> = {
+  chat: 'Website chat',
+  voice: 'Voice call',
+  email: 'Email',
+}
 
 /**
  * What to call somebody who has not said who they are.
@@ -286,14 +290,14 @@ export function ConversationListPage() {
             ))}
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             {/* Built from what is actually in the list. A hardcoded list of
                 marketplaces would offer filters that match nothing, and miss
                 a channel the moment one is added. */}
             <select
               value={origin}
               onChange={(e) => setOrigin(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+              className="h-9 min-w-0 max-w-[9rem] rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             >
               <option value="">Everywhere</option>
               {origins.map((o) => (

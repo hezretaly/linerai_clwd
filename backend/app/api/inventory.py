@@ -91,7 +91,7 @@ def get_vehicle(
         {
             "conversation_id": convo.id,
             "lead_id": lead.id if lead else None,
-            "lead_name": (lead.name if lead else None) or "Unknown caller",
+            "lead_name": (lead.name if lead else None) or "Unnamed buyer",
             "quoted_price": mention.quoted_price,
             "created_at": stamp(mention.created_at),
         }
@@ -124,7 +124,7 @@ def _visits(db: Session, vehicle: Vehicle) -> list[dict]:
         {
             "id": appt.id,
             "lead_id": appt.lead_id,
-            "lead_name": (lead.name if lead else None) or "Unknown caller",
+            "lead_name": (lead.name if lead else None) or "Unnamed buyer",
             "starts_at": appt.starts_at.isoformat(),
             "status": appt.status,
         }

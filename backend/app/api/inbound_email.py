@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hmac
 import re
+from email.utils import parseaddr
 from hashlib import sha256
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -31,9 +32,18 @@ from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.escalations import owner_of
 from app.events import emit
+from app.email_intake import (
+    as_text,
+    automated_reason,
+    display_name,
+    just_the_reply,
+    sender_address,
+    signature_name,
+)
 from app.schemas.serialize import iso
 from app.models import (
     Appointment,
+    CapturedField,
     Conversation,
     Escalation,
     InboundEmail,
@@ -57,53 +67,6 @@ REPLY_RE = re.compile(r"reply\+([A-Za-z0-9_-]{6,64})@", re.IGNORECASE)
 # else, and must never be echoed back out as an In-Reply-To header naming
 # a message that does not exist.
 SYNTHETIC = "sha256:"
-
-# Where a reply stops being what the buyer wrote and starts being a copy of
-# what we sent them. Outlook draws a rule of underscores; Gmail writes "On
-# <date> X wrote:"; older clients use the Original Message banner. Trimming is
-# conservative on purpose -- the untouched body is kept on the receipt, so a
-# marker that fires wrongly costs presentation, never the message.
-QUOTE_MARKERS = [
-    re.compile(r"\n_{8,}\s*\n"),
-    re.compile(r"\n-{2,}\s*Original Message\s*-{2,}", re.IGNORECASE),
-    re.compile(r"\nOn .{5,80}\bwrote:\s*\n", re.IGNORECASE),
-    re.compile(r"\nFrom:\s.+\nSent:\s", re.IGNORECASE),
-]
-
-TAG_RE = re.compile(r"<[^>]+>")
-
-
-def just_the_reply(text: str) -> str:
-    """What the buyer actually typed, without the thread they quoted back.
-
-    Their whole previous message comes back attached to every reply. Storing
-    it means a rep opening a timeline reads "what" followed by four paragraphs
-    of our own words, and the next reply carries two copies.
-    """
-    trimmed = text or ""
-    for marker in QUOTE_MARKERS:
-        found = marker.search(trimmed)
-        if found:
-            trimmed = trimmed[: found.start()]
-    # Every line quoted, or nothing left: keep what we were given rather than
-    # storing an empty message.
-    return trimmed.strip() or (text or "").strip()
-
-
-def as_text(html: str) -> str:
-    """A last resort for a message that arrived with no plain-text part.
-
-    Not a renderer -- it strips tags so a rep sees words instead of markup.
-    Storing raw HTML in a field the timeline prints as text is how a reply
-    shows up as a page of Outlook style attributes.
-    """
-    from html import unescape
-
-    without_head = re.sub(
-        r"<(script|style|head)\b.*?</\1>", " ", html or "", flags=re.S | re.IGNORECASE
-    )
-    spaced = re.sub(r"<br\s*/?>|</p>|</div>|</tr>", "\n", without_head, flags=re.IGNORECASE)
-    return re.sub(r"\n{3,}", "\n\n", unescape(TAG_RE.sub("", spaced))).strip()
 
 
 class InboundBody(BaseModel):
@@ -297,15 +260,30 @@ async def receive(
     # the background pass fills in what it resolved to.
     claim = _receipt(db, outcome="received", detail=f"Authenticated by {proved_by}.",
                      **envelope)
-    background.add_task(_place, claim.id)
+    # Decided here, not in the background pass, because this is where the
+    # headers still exist -- `extra="allow"` keeps whatever the Worker sent,
+    # and a header is a sender declaring itself a machine, which is the only
+    # loop-breaker that stops a vacation responder on its first turn. It is
+    # handed over as an argument rather than stored: `create_all` adds a table
+    # to a database that already exists and never a column.
+    background.add_task(
+        _place, claim.id, automated_reason(sender, data.get("headers"), body)
+    )
     return {"ok": True, "outcome": "received", "receipt_id": claim.id}
 
 
-def _place(receipt_id: str) -> None:
+def _place(receipt_id: str, refused: str = "") -> None:
     """Resolve one claimed delivery and store it. Runs after the response.
 
     Its own session: the request's is closed by the time this runs, and
     reusing it is the classic background-task crash.
+
+    `refused` is `automated_reason`'s verdict, decided back in the request
+    where the headers still exist and handed over as an argument. It is not a
+    column because it cannot be one: `create_all` adds a table to a database
+    that already exists and never a column, and there is no Alembic here by
+    design. It is empty when a lead already exists, since the question only
+    arises for a delivery that matched nobody.
     """
     from app.db import SessionLocal
 
@@ -319,10 +297,21 @@ def _place(receipt_id: str) -> None:
             db, claim.to_address, claim.in_reply_to, claim.from_address
         )
         if lead is None:
+            # Nobody here yet. Somebody writing to sales@ before they are a
+            # lead is a buyer arriving through the door this dealership
+            # publishes, so they become one -- but only if a person sent it.
+            lead, why_not = _lead_from(db, claim, refused)
+            # Which rule filed it. Blank would say "the From address matched an
+            # existing lead", which is the opposite of what happened -- and
+            # `matched_by` exists precisely so a rep looking at a misfiled
+            # reply can see what put it there.
+            matched_by = "new_lead" if lead is not None else matched_by
+        if lead is None:
             claim.outcome = "unresolved"
             claim.detail = (
-                "No reply token, no matching message id, and the From address is not "
-                "on any lead. Kept rather than dropped -- someone really wrote in."
+                f"Not filed against anyone: {why_not} Kept rather than dropped -- "
+                "something really arrived, and a delivery nobody can place is the "
+                "only way to tell a filtered sender from a broken mail route."
             )
             db.commit()
             # Emitted as well as the accepted case, so the mailbox updates
@@ -393,6 +382,112 @@ def _place(receipt_id: str) -> None:
         db.close()
 
 
+def _is_ours(recipient: str) -> str:
+    """Was this addressed to Liner rather than to the dealership?
+
+    Read from the settings that already name our two published addresses, plus
+    `cto@` on the same domain, rather than a second hardcoded list -- the
+    landing page and the ops mailbox both read the same values, and a third
+    copy is how one of them starts disagreeing about who owns an inbox.
+
+    `reply+<token>@` is never ours whatever the domain: it is minted by a send
+    to a buyer and routes back into their timeline.
+    """
+    address = sender_address(recipient) or (recipient or "").strip().lower()
+    if not address or REPLY_RE.search(recipient or ""):
+        return ""
+    # Compared on the **local part**, not the whole address. The Worker's own
+    # recipient filter does the same, and for the same reason: mail reaches
+    # these boxes through whatever domain Cloudflare is routing, and a dealer
+    # forwarding from a second one is normal. Matching the full address meant
+    # `support@` on any other domain read as the dealership's.
+    ours = {
+        (settings.support_email or "").partition("@")[0].strip().lower(),
+        (settings.founder_email or "").partition("@")[0].strip().lower(),
+        "cto",
+    }
+    local = address.partition("@")[0]
+    return address if local in {a for a in ours if a} else ""
+
+
+def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | None, str]:
+    """Mint a buyer from a delivery that matched nobody, or say why not.
+
+    **A person writing to a published address is a buyer arriving.** They used
+    the door the dealership advertises, and leaving them as a receipt on a
+    diagnostics tab means the one contact nobody expected is also the one
+    nobody works. So the address becomes a lead and `claim_unresolved` joins
+    everything else they sent.
+
+    **A machine writing to it is not.** The buyer list is the one list here
+    that has to mean exactly one thing, and a lead invented from a newsletter
+    is worse than a receipt somebody glances at -- it is a name in every
+    assignment picker and a row in every queue. `automated_reason` is the test,
+    and it is a header check before it is a guess.
+
+    The name is the envelope's display name, which is a fact the sender's own
+    client asserts, never the signature -- that is a guess, and it is recorded
+    as one below. Neither is ever used to *match*: `app/matching.py` stays
+    email exact and phone by its last ten digits, because a name is not
+    identity and two Dave Joneses are two people.
+    """
+    address = sender_address(claim.from_address)
+    # **Who they wrote to decides whose they are.** `support@`, `founder@` and
+    # `cto@` are Liner's own addresses -- a stranger mailing our support desk
+    # is our correspondent, and turning them into a car buyer on somebody
+    # else's showroom list is the ops/dealership split failing from the inside.
+    # That is not a hypothetical: it is what happened the first time this ran,
+    # and the gate caught it because the ops mailbox stopped showing the
+    # stranger it is there to show. Everything else -- `sales@`, `reply+` --
+    # is the dealership's door.
+    if _is_ours(claim.to_address):
+        return None, (
+            f"it was addressed to {claim.to_address or 'one of our own addresses'}, "
+            "which is Liner's rather than the dealership's, so it belongs in the "
+            "ops mailbox and not on a buyer list."
+        )
+    if refused:
+        return None, f"no lead was created because {refused}."
+    if not address:
+        return None, "there was no address to create one from."
+
+    # `_resolve` should already have found them, and did not -- so this is the
+    # second lock rather than the first. It is here because the cost of the two
+    # disagreeing is a duplicate buyer, which is the exact failure
+    # `app/matching.py` exists to prevent, arriving through a new door.
+    existing = matching.match_lead(db, address, "")
+    if existing is not None:
+        return existing, ""
+
+    lead = Lead(
+        name=display_name(claim.from_address),
+        email=address,
+        phone="",
+        source="email",
+    )
+    db.add(lead)
+    db.flush()
+
+    # People sign their mail, and it is the only name an envelope with no
+    # display name offers. Recorded as a captured field with provenance
+    # `inferred` rather than written onto the lead: prose cannot carry
+    # provenance, and a guessed name asserted as fact is one a rep repeats on
+    # the phone to somebody it does not belong to. A rep confirms it or
+    # replaces it, and until they do the row reads as unnamed, which is true.
+    signed = signature_name(just_the_reply(claim.body))
+    if signed and signed != lead.name:
+        db.add(CapturedField(
+            lead_id=lead.id, key="signed_name", value=signed, provenance="inferred",
+        ))
+    db.commit()
+
+    # The other half of the ladder, and the reason it is called here rather
+    # than left for later: they may have written three times before this one.
+    matching.claim_unresolved(db, lead)
+    emit(db, "lead.created", {"lead_id": lead.id, "source": "email"})
+    return lead, ""
+
+
 def _resolve(
     db: Session, to: str, in_reply_to: str, sender: str
 ) -> tuple[Lead | None, Outreach | None, str]:
@@ -435,7 +530,7 @@ def _resolve(
 
     # The same matcher the importer, manual entry and book_appointment use. A
     # name is never part of it, so a stranger stays a stranger.
-    lead = matching.match_lead(db, sender, "")
+    lead = matching.match_lead(db, sender_address(sender), "")
     if lead is not None:
         return lead, None, "from_address"
 

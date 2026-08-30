@@ -93,6 +93,13 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
 
     Email exact, and only email. Phone is not on an email envelope, and a name
     is not identity here or anywhere else in this module.
+
+    **Mail addressed to Liner's own desk is never claimed onto a dealership's
+    buyer.** `support@` and `founder@` are ours; a stranger who wrote to us and
+    later chats with a dealership has two relationships, not one, and the
+    resolution ladder must not merge them. The live path checks this in
+    `_lead_from`, and this one went round it -- once a lead exists, `_place`
+    never reaches `_lead_from` and the From-address rung files it regardless.
     """
     from app.api.inbound_email import _place
     from app.models import InboundEmail
@@ -101,9 +108,17 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
     if not address:
         return 0
 
+    from app.api.inbound_email import _is_ours
+    from app.email_intake import sender_address
+
+    # `from_address` is the whole envelope -- `Austin Miller <a@b>` -- so the
+    # address has to come out of it before it is compared. Comparing the header
+    # matched only a sender with no display name, which is a minority of real
+    # mail, and the failure was invisible: everything else simply stayed
+    # unresolved, which is what it looked like anyway.
     waiting = [
         row for row in db.query(InboundEmail).filter(InboundEmail.outcome == "unresolved").all()
-        if (row.from_address or "").strip().lower() == address
+        if sender_address(row.from_address) == address and not _is_ours(row.to_address)
     ]
     for row in waiting:
         row.outcome = "received"

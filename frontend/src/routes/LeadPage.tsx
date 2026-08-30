@@ -137,7 +137,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
   }
 
   const lead = data.lead
-  const name = lead?.name || 'Unknown caller'
+  const name = lead?.name || 'Unnamed buyer'
   const entries = channel
     ? // Appointments and escalations carry no channel: they happened, rather
       // than being said on one, so filtering them out would hide the booking a
@@ -435,7 +435,7 @@ function LeadRail({
     <aside className="scroll-thin hidden w-[300px] shrink-0 overflow-y-auto border-r border-border bg-background xl:block">
       <div className="border-b border-border p-5">
         <div className="text-base font-semibold leading-tight">
-          {lead?.name ?? 'Unknown caller'}
+          {lead?.name ?? 'Unnamed buyer'}
         </div>
         <div className="mb-3" />
         {contact.map((row) => (

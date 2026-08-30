@@ -49,6 +49,16 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
 
     convos = db.query(Conversation).filter(Conversation.lead_id.in_(ids)).all()
     appts = db.query(Appointment).filter(Appointment.lead_id.in_(ids)).all()
+    # Email is contact. `channels` and `last_touch_at` counted conversations
+    # only, so a buyer you had exchanged four emails with showed no channel at
+    # all and a `last_touch_at` from whenever they last chatted -- which put
+    # them at the bottom of a list ordered by activity, on the day they wrote.
+    # The buyer page's own channel strip already counted mail; the list did
+    # not, and two answers to "when did we last hear from them" is exactly the
+    # disagreement this file exists to prevent.
+    mail = db.query(Outreach).filter(
+        Outreach.lead_id.in_(ids), Outreach.channel == "email"
+    ).all()
     convo_ids = [c.id for c in convos]
     last_message = dict(
         db.query(Message.conversation_id, func.max(Message.created_at))
@@ -117,8 +127,10 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
         # The last thing that actually happened, not when the thread opened. The
         # conversations list is ordered by this, and a chat someone started this
         # morning and abandoned should not outrank one being typed in now.
+        my_mail = [o for o in mail if o.lead_id == lead.id]
         touches = [last_message.get(c.id) or c.started_at for c in mine]
         touches += [a.created_at for a in my_appts]
+        touches += [o.sent_at or o.created_at for o in my_mail]
 
         still_open = [c for c in mine if c.status != "closed"]
         out[lead.id] = {
@@ -133,7 +145,12 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
             # query per row: how many threads, which channels, and whether any
             # of it is still running.
             "conversation_count": len(mine),
-            "channels": sorted({c.channel for c in mine}),
+            # Counted, never declared -- the same rule the buyer page's channel
+            # strip follows. A lead who has only ever been emailed reads
+            # "Email" rather than nothing at all.
+            "channels": sorted(
+                {c.channel for c in mine} | ({"email"} if my_mail else set())
+            ),
             "open": bool(still_open),
             # Declined only while it stays declined. A buyer who said no in
             # March and is chatting again today is not a closed lead.

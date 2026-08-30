@@ -469,7 +469,7 @@ export function OverviewPage() {
                     >
                       <td className="px-6 py-3">
                         <div className="font-medium group-hover:underline">
-                          {c.lead?.name || 'Unknown caller'}
+                          {c.lead?.name || 'Unnamed buyer'}
                         </div>
                         <div className="mt-0.5 max-w-md truncate text-xs text-muted-foreground">
                           {c.summary || `${c.message_count ?? 0} messages -- ${c.stage}`}
@@ -577,7 +577,7 @@ function EscalationRow({ escalation }: { escalation: Escalation }) {
     >
       <td className="px-6 py-3">
         <div className="font-medium group-hover:underline">
-          {lead?.name || 'Unknown caller'}
+          {lead?.name || 'Unnamed buyer'}
         </div>
         <div className="tnum text-xs text-muted-foreground">
           {lead?.phone || lead?.email || 'No contact captured'}
@@ -634,7 +634,7 @@ function UnconfirmedRow({ appointments }: { appointments: Appointment[] }) {
     >
       <td className="px-6 py-3">
         <div className="font-medium group-hover:underline">
-          {first.lead?.name || 'Unknown caller'}
+          {first.lead?.name || 'Unnamed buyer'}
           {rest.length > 0 && <span className="text-muted-foreground"> +{rest.length}</span>}
         </div>
         <div className="text-xs text-muted-foreground">Unconfirmed appointments</div>
@@ -686,7 +686,7 @@ function UnclaimedRow({ lead }: { lead: Lead }) {
     >
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium group-hover:underline">
-          {lead.name || 'Unknown caller'}
+          {lead.name || 'Unnamed buyer'}
         </div>
         <div className="truncate text-xs text-muted-foreground">
           {SOURCE_LABELS[lead.source] ?? lead.source}
