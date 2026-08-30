@@ -2954,8 +2954,17 @@ def main() -> int:
             check("riverside owns the showroom fixture", _has_fixture(raw))
             continue
         check(f"{path.stem} does not inherit it", not _has_fixture(raw))
-        check(f"and {path.stem} does not inherit its written policies either",
-              not _knowledge_for(raw))
+        # A prospect may write policies of their own -- Craig and Landreth's
+        # doc fee is theirs, confirmed by their manager. What must never happen
+        # is inheriting Riverside's, which is where "$189" came from. The
+        # *topic* is legitimately shared, because it is the words a buyer types
+        # ("Doc fee" is matched by "what's your doc fee?"); the answer is the
+        # part that would be a policy nobody at that dealership agreed to.
+        from app.seed import KNOWLEDGE as _riverside_knowledge
+
+        borrowed = {a for _t, a in _knowledge_for(raw)} & {a for _t, a in _riverside_knowledge}
+        check(f"and {path.stem} states its own policies or none, never Riverside's",
+              not borrowed, str(sorted(borrowed))[:120])
     # A reseed has to survive a database that has been used. Four call tables
     # and inbound_emails were added after `_clear` was written and none was
     # added to it, so on any box that had taken a call or received a reply --

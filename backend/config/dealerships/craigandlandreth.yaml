@@ -128,18 +128,75 @@ inventory:
 staff:
   - { name: Austin, email: austin@craigandlandrethcars.com, role: manager }
 
-# Their own answers, quoted verbatim to a buyer and never composed -- which is
-# why this list is empty rather than borrowed. Riverside's doc fee is $189 and
-# its deposit $500 refundable; both are invented, and Liner repeating them here
-# would quote a real customer a policy nobody at this dealership has agreed to.
-# With no entry `answer_from_knowledge` returns found: false and a rep picks it
-# up, which is the honest answer to a question we do not know.
+# ---------------------------------------------------------------------------
+# What Liner knows beyond the listings.
 #
-# Fill these in from them -- their site, or the questions they ask in the demo:
+# `answer_from_knowledge` returns the `answer` below **word for word**. It is
+# never summarised, never rephrased and never composed -- a policy answer is
+# one a buyer repeats back to a rep, so a plausible near-miss is worse than
+# nothing. An unanswered question returns `found: false`, Liner says a
+# colleague will confirm, and the buyer lands in Needs a person.
 #
-# knowledge:
-#   - topic: Doc fee
-#     answer: "..."
-#   - topic: Trade-ins
-#     answer: "..."
-knowledge: []
+# So only what they have actually told us goes here. Riverside's $189 doc fee
+# and $500 deposit are invented for a fixture, and seeding them would have
+# Liner quote a real customer a policy nobody at this dealership has agreed to.
+#
+# HOW A QUESTION FINDS AN ENTRY (`lookup_knowledge`)
+#   A word shared with the *topic* scores 3, a word shared with the *answer*
+#   scores 1, and nothing under 3 matches at all. So the topic has to carry
+#   the words a buyer would actually type -- "Doc fee" is matched by "what's
+#   your doc fee?" on one word, where a topic called "Fees and charges" is
+#   not. Common words ("do", "you", "have", "car") are stripped first, and a
+#   trailing plural is trimmed, so "deposits" finds "Deposit".
+#
+# WRITING ONE
+#   - Topic: two or three words, the ones a buyer says. Not a heading.
+#   - Answer: one or two sentences, first person, no markdown -- it is spoken
+#     on a call as well as printed in chat.
+#   - State what is true and stop. An answer that hedges ("typically", "may
+#     vary") is one the buyer has to ask a person about anyway.
+#   - Where a number differs by store, say so in the one answer. Liner cannot
+#     pick a branch-specific answer: the text is returned verbatim, and every
+#     car already tells the buyer which lot it is on.
+#
+# TWO CHIPS DEPEND ON THIS LIST. "What's your doc fee?" and "Do you take
+# trade-ins?" are only put on the buyer's screen when the matching topic
+# exists -- a button promising an answer nobody wrote is a question the
+# dealership is asking on its own behalf and cannot answer.
+knowledge:
+  # Confirmed by Austin. Their own export carries a per-car doc_fee that agrees
+  # -- 690 on all 310 Louisville and Bullitt cars, 260 on Clarksville -- except
+  # two Clarksville rows that say 245 (a 2022 VW Taos, MU20691, and a 2013
+  # Toyota Tacoma, MU20862A). This entry is the authority and the per-car field
+  # is not read by anything: one number a person stands behind beats 486 that
+  # disagree twice. Worth asking them which is right.
+  - topic: Doc fee
+    answer: >-
+      Our documentation fee is $690 at the Louisville and Bullitt County
+      stores, and $260 at Clarksville. It's on the buyer's order before
+      anything is signed.
+
+# STILL TO ASK AUSTIN. Each of these is a question a buyer asks in the first
+# five minutes, and today each one costs a rep a phone call. Uncomment and fill
+# in -- do not guess, and leave out anything they have not answered.
+#
+# - topic: Trade-ins
+#   answer: "..."        # Do you appraise on the spot? What should they bring?
+# - topic: Deposits
+#   answer: "..."        # Does a deposit hold a car? How much, refundable?
+# - topic: Financing
+#   answer: "..."        # Who do you finance through? Bad credit?
+# - topic: Warranty
+#   answer: "..."        # What comes with a car as standard?
+# - topic: Test drives
+#   answer: "..."        # Walk-in or booked? Licence and insurance needed?
+# - topic: Vehicle history
+#   answer: "..."        # CarFax free? Printed before signing?
+# - topic: Out-of-state buyers
+#   answer: "..."        # You are ten minutes from Indiana -- this one comes up.
+# - topic: Payment methods
+#   answer: "..."        # Cash limit? Personal cheques?
+#
+# Hours and the address are deliberately NOT here. They are on the dealership
+# row and reach the prompt from `hours_json`; a second copy in this table is a
+# second thing to change when they open later on a Saturday.
