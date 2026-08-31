@@ -2448,13 +2448,43 @@ def main() -> int:
 
         with _EnvelopeSession() as _db:
             named = dealership_from(_db, outbox)
+        # **The two realms send from two mailboxes, and that is a routing
+        # fact.** They shared `support@`, which `is_ours` sends to /ops -- so a
+        # buyer who composed a *fresh* message to the address printed on their
+        # booking confirmation reached Liner rather than the dealership, and
+        # nothing anywhere said so. Pressing Reply worked, because that goes to
+        # `reply+<token>@`, which is exactly why it stayed invisible.
+        from app.email_intake import is_ours as _is_ours
+
+        # Derived, so `SENDING_FROM` is cleared for this: the block above
+        # deliberately sets it to prove a display name is dropped, and testing
+        # the override here would say nothing about the default every
+        # deployment actually gets.
+        was_override, app_settings.sending_from = app_settings.sending_from, ""
+        try:
+            dealer_box = outbox.default_address("dealership")
+            ops_box = outbox.default_address("ops")
+        finally:
+            app_settings.sending_from = was_override
+        check("a dealership sends from sales@, not from our support desk",
+              dealer_box == "sales@linerai.us", dealer_box)
+        check("so a buyer writing to the address they can see reaches them",
+              not _is_ours(dealer_box), dealer_box)
+        check("while Liner's own support mail still comes from support@",
+              _is_ours(ops_box) and ops_box.startswith("support@"), ops_box)
+        check("and a display name on either of our mailboxes is still legal",
+              outbox.from_header(named) == named
+              and outbox.from_header("Liner <support@linerai.us>")
+              == "Liner <support@linerai.us>")
+        check("an explicit SENDING_FROM still wins for the dealership",
+              named.endswith("<support@linerai.us>"), named)
         dealership_name = (call("GET", "/api/showroom/dealership") or {}).get("name", "")
         check("the dealership signs its own outreach, from the row",
               named == f"{dealership_name} <support@linerai.us>", named)
         check("and the sender puts that on the wire rather than dropping it",
               resend.payload("b@e.com", "s", "b", from_address=named)["from"] == named)
 
-        ours = identity_for(outbox, None, fallback_name=OPS_SENDER_NAME)
+        ours = identity_for(outbox, None, fallback_name=OPS_SENDER_NAME, realm="ops")
         check("our own support mail is signed Liner, never a dealership",
               ours.from_address == "Liner <support@linerai.us>", ours.from_address)
         check("and its Reply-To is an address, not a rendered header",
@@ -2464,7 +2494,7 @@ def main() -> int:
         # every deployment before the domain is set up.
         outsider = identity_for(
             outbox, _Person("Somebody", "someone@gmail.com"),
-            fallback_name=OPS_SENDER_NAME,
+            fallback_name=OPS_SENDER_NAME, realm="ops",
         )
         check("including when a person's own address could not be honoured",
               outsider.from_address == "Liner <support@linerai.us>",
@@ -2473,7 +2503,7 @@ def main() -> int:
         # person's, so an answer still reaches whoever wrote -- but the name is
         # the desk's. It was `user.name`, so a support reply arrived from
         # "Liner Founder", which is a job title on an envelope.
-        signed = identity_for(outbox, founder, fallback_name=OPS_SENDER_NAME)
+        signed = identity_for(outbox, founder, fallback_name=OPS_SENDER_NAME, realm="ops")
         check("support mail is signed Liner even when it is personally sent",
               signed.personal and signed.from_address == "Liner <founder@linerai.us>",
               signed.from_address)

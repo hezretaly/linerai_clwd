@@ -987,7 +987,20 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     trap `SCRAPER_BASE_URL` was moved out of `.env` for — a second copy of a
     fact that goes stale the moment `DEALERSHIP=` changes. A name left in the
     setting is now dropped rather than sent.
-    - **Two realms, two names, decided by the caller.** Mail from the
+    - **Two realms, two mailboxes, and that one is a routing fact.** A
+    dealership's buyer mail goes from `sales@`; Liner's own from `support@`.
+    They shared `support@`, and `is_ours` routes anything addressed there into
+    `/ops` — so a buyer who composed a *fresh* message to the address printed
+    on their booking confirmation reached Liner rather than the dealership,
+    silently. Pressing Reply worked, because that goes to `reply+<token>@`,
+    which is exactly why it stayed invisible. `SENDING_FROM` is the
+    dealership's address and overrides the derived `sales@<SENDING_DOMAIN>`;
+    ops reads `SUPPORT_EMAIL`, the setting `is_ours` already reads, rather
+    than a third copy. There is deliberately **no address picker** in the
+    dashboard: which mailbox a send leaves from follows from whose mail it is,
+    and a chooser is one more way to send from something the provider has not
+    verified.
+  - **Two realms, two names, decided by the caller.** Mail from the
       dealership is signed with the dealership's own name out of the row
       (`outreach_send.dealership_from`); mail from `/ops` is signed `Liner`
       (`OPS_SENDER_NAME`). A support reply wearing the reader's *own*

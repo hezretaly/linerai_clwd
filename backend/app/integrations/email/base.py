@@ -74,28 +74,41 @@ class EmailSender:
         """
         raise NotImplementedError
 
-    def default_address(self) -> str:
-        """The bare address this deployment sends from.
+    def default_address(self, realm: str = "dealership") -> str:
+        """The bare address this deployment sends from, for one realm.
 
-        `support@` rather than `liner@`: it is the address the domain is set up
-        around, and the one somebody replying by hand rather than by hitting
-        Reply will send to -- which the catch-all routes back either way.
+        **Two realms, two mailboxes, and the split is not cosmetic.** A
+        dealership's buyer mail goes out from `sales@`; Liner's own support
+        replies go out from `support@`. It was `support@` for both, and the
+        cost was a real misroute rather than an odd-looking header: `is_ours`
+        sends anything addressed to `support@` to `/ops`, so a buyer who
+        composed a *fresh* message to the address on the mail they were
+        looking at landed in Liner's mailbox, invisible to the dealership.
+        Pressing Reply worked, because that goes to `reply+<token>@`; typing a
+        new one did not, and nothing anywhere said so.
+
+        `sales@` is also simply what a car dealership's mail comes from.
+        Support is where you write when something is broken.
 
         Parsed with `bare_address` rather than returned as written, because
         `SENDING_FROM` is a line a person copies and they copy the whole thing.
         `.env.example` carried `Riverside Auto <support@linerai.us>` as its
         illustration, so every deployment that started from that file put a
-        fixture dealership's name on every envelope it ever sent -- including
-        our own support replies, which are not from a dealership at all. The
-        display name is served per realm now (see `outreach_send`), so a name
-        left in this setting is dropped rather than sent.
+        fixture dealership's name on every envelope it ever sent. The display
+        name is served per realm now (see `outreach_send`), so a name left in
+        this setting is dropped rather than sent.
         """
+        if realm == "ops":
+            # Already a setting, already what `is_ours` reads, and already
+            # what the landing page publishes. A third copy of our own support
+            # address is how one of them starts disagreeing.
+            return bare_address(settings.support_email) or settings.support_email
         configured = settings.sending_from or (
-            f"support@{settings.sending_domain}" if settings.sending_domain else ""
+            f"sales@{settings.sending_domain}" if settings.sending_domain else ""
         )
         return bare_address(configured) or configured
 
-    def default_from(self, name: str = "") -> str:
+    def default_from(self, name: str = "", realm: str = "dealership") -> str:
         """The From header for a send nobody is personally named on.
 
         The address is this deployment's; the *name* belongs to whoever the
@@ -104,7 +117,7 @@ class EmailSender:
         support reply. Called with no name it is the bare address, which is
         honest rather than wrong.
         """
-        return with_name(name, self.default_address())
+        return with_name(name, self.default_address(realm))
 
     def from_header(self, from_address: str) -> str:
         """The From this send may actually use, decided in one place.
@@ -125,7 +138,14 @@ class EmailSender:
           guessed at.
         """
         bare = bare_address(from_address)
-        if bare and bare.lower() == (self.default_address() or "").lower():
+        # Either realm's mailbox is ours. Comparing against one of them made a
+        # display name on the *other* need `can_send_as`, which is the wrong
+        # question about an address we own.
+        mine = {
+            (self.default_address("dealership") or "").lower(),
+            (self.default_address("ops") or "").lower(),
+        }
+        if bare and bare.lower() in {a for a in mine if a}:
             return from_address
         if bare and self.can_send_as(bare):
             return from_address

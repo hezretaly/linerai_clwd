@@ -74,7 +74,13 @@ def dealership_from(db: Session, sender: EmailSender) -> str:
 
     The address is the deployment's verified one and the name is the
     dealership's own, read from the row -- `Craig and Landreth Cars
-    <support@linerai.us>`, the shape every product's transactional mail uses.
+    <sales@linerai.us>`, the shape every product's transactional mail uses.
+
+    **`sales@`, not `support@`.** They shared one mailbox, and `is_ours` routes
+    anything addressed to `support@` into `/ops` -- so a buyer who composed a
+    fresh message to the address printed on the mail in front of them reached
+    Liner rather than the dealership. Pressing Reply worked, because that is
+    `reply+<token>@`; typing a new one silently did not.
 
     **Served, never written.** It was `SENDING_FROM` in `.env`, which is a
     second copy of a fact that already lives in the database and in the
@@ -86,11 +92,15 @@ def dealership_from(db: Session, sender: EmailSender) -> str:
     from app.models import Dealership
 
     row = db.query(Dealership).first()
-    return sender.default_from(row.name if row else "")
+    return sender.default_from(row.name if row else "", realm="dealership")
 
 
 def identity_for(
-    sender: EmailSender, user: User | OpsUser | None, *, fallback_name: str = "",
+    sender: EmailSender,
+    user: User | OpsUser | None,
+    *,
+    fallback_name: str = "",
+    realm: str = "ops",
 ) -> Identity:
     """Who this message is from, decided once for the send and the screen.
 
@@ -114,8 +124,8 @@ def identity_for(
     # The From carries `fallback_name`; the Reply-To is the bare address. They
     # were one value, so a fallback send put a rendered `Name <addr>` header in
     # Reply-To -- legal, and inconsistent with every other branch here.
-    fallback = sender.default_from(fallback_name)
-    bare = sender.default_address()
+    fallback = sender.default_from(fallback_name, realm=realm)
+    bare = sender.default_address(realm)
     if user is None:
         return Identity(from_address=fallback, reply_to=bare, personal=False)
 
