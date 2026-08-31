@@ -29,7 +29,7 @@ from app.email_threads import threads as email_threads_for
 from app.events import emit
 from app.integrations.registry import get_email_sender
 from app.schemas.serialize import iso, outreach_out, stamp
-from app.models import InboundEmail, Lead, Outreach, User
+from app.models import EmailReplyDue, InboundEmail, Lead, Outreach, User
 
 router = APIRouter(tags=["email"])
 
@@ -278,6 +278,41 @@ def agent_state(
         ],
         "cooldown_minutes": settings.email_reply_cooldown_minutes,
         "hourly_ceiling": settings.email_replies_per_hour,
+        # A model has to exist to write with, and that is a third thing that
+        # can be off. Reported separately because it is fixed in a different
+        # place from either switch.
+        "live_model": settings.llm_mode == "live",
+        # What is queued and when it fires. Every reply waits, so "nothing has
+        # happened yet" is the normal state for a few minutes -- and without
+        # this the wait is indistinguishable from the agent being off.
+        "waiting": [
+            {
+                "id": r.id,
+                "lead_id": r.lead_id,
+                "due_at": stamp(r.due_at),
+                "created_at": stamp(r.created_at),
+            }
+            for r in (
+                db.query(EmailReplyDue)
+                .filter(EmailReplyDue.state == "waiting")
+                .order_by(EmailReplyDue.due_at.asc())
+                .limit(20)
+                .all()
+            )
+        ],
+        "recent": [
+            {
+                "id": r.id, "lead_id": r.lead_id, "state": r.state,
+                "detail": r.detail, "at": stamp(r.resolved_at or r.created_at),
+            }
+            for r in (
+                db.query(EmailReplyDue)
+                .filter(EmailReplyDue.state != "waiting")
+                .order_by(EmailReplyDue.created_at.desc())
+                .limit(10)
+                .all()
+            )
+        ],
     }
 
 

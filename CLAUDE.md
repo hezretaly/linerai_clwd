@@ -521,6 +521,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     deployment saying this dealership has turned it on and needs a restart;
     the `email_agent` runtime flag is the one somebody throws at three in the
     morning. Both default off, so neither alone opens the door.
+    - **A switch with no way to throw it is worse than no switch.** The
+      endpoint shipped a phase ahead of any control for it, and the flag
+      defaults off — so a deployment that set `EMAIL_AGENT=true` and
+      `LLM_MODE=live`, did everything the runbook asked and waited out the
+      cooldown was never going to get a reply, with nothing on any screen
+      saying why. The setting said the feature was on and the product silently
+      disagreed, which is the failure mode a default-off switch is *most*
+      prone to: nothing errors, nothing is logged, and the symptom is
+      indistinguishable from a buyer who did not write. The card is at the top
+      of `/app/email` rather than behind the setup disclosure, and `make smoke`
+      reads the page for the control — the same reason `SPA_PREFIXES` is read
+      out of `main.tsx`, because nothing else here can tell a control that
+      exists from one that was only ever described in a plan.
+    - **All three facts are named separately, never collapsed into "off".**
+      `.env` needs a restart, the switch takes effect on the next delivery and
+      the model is a fourth variable; one boolean over the three sends whoever
+      is reading to edit the wrong file, which is exactly how the hour above
+      was spent. Nothing queued while the switch was off is answered when it
+      is thrown, either — `schedule` refuses at intake and records the refusal
+      on the receipt, so the next message is the one that gets answered.
   - **A kill switch cannot live in `.env` or in `AssistantSettings`.** It is
     reached for while something is going wrong, so it has to take effect on
     the next request — and `create_all` adds a table to an existing database

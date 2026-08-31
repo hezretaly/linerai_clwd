@@ -3860,6 +3860,23 @@ def main() -> int:
           not thrown["on"] and thrown["reason"] == "off_in_env", thrown["reason"])
     call("POST", "/api/email/agent", {"value": "off", "reason": "smoke reset"})
 
+    # **A switch with no way to throw it is worse than no switch.** This
+    # endpoint shipped a phase before any control for it, and the runtime flag
+    # defaults off -- so a deployment that set `EMAIL_AGENT=true` and
+    # `LLM_MODE=live` correctly, and did everything the runbook asked, was
+    # never going to get a reply, with nothing on any screen saying why. The
+    # setting said the feature was on and the product silently disagreed.
+    # Read out of the page for the same reason `SPA_PREFIXES` is: nothing else
+    # here can tell a control that exists from one that was only ever
+    # described in a plan.
+    _email_page = pathlib.Path("frontend/src/routes/EmailSetup.tsx").read_text()
+    check("the dashboard has the switch, not just the endpoint behind it",
+          "'/api/email/agent'" in _email_page and "Switch on" in _email_page,
+          "EmailSetup.tsx does not post to /api/email/agent")
+    check("and it names all three things that have to be true separately",
+          all(k in _email_page for k in ("allowed_by_env", "live_model", "state.flag")),
+          "the card collapses them into one 'off'")
+
     with _BrakeSession() as _db:
         was_env = cfg_settings.email_agent
         was_cool = cfg_settings.email_reply_cooldown_minutes
