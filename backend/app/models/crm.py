@@ -117,7 +117,7 @@ class Conversation(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), nullable=True, index=True)
-    channel: Mapped[str] = mapped_column(String(10), default="chat")  # chat | voice
+    channel: Mapped[str] = mapped_column(String(10), default="chat")  # chat | voice | email
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|handoff|closed
     # Separate from status: a rep can hold a thread that is still 'active'.
     agent_paused: Mapped[bool] = mapped_column(Boolean, default=False)

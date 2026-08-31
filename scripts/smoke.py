@@ -3534,6 +3534,143 @@ def main() -> int:
           just_the_reply("Yes please.\n\nOn Mon 1 Sep 2026 Liner wrote:\n> hello\n")
           == "Yes please.")
 
+    print("\n== Liner answers an email, with the brakes in front of it ==")
+    # The same loop, the same eight tools and the same guards as chat, given an
+    # addendum about being in an inbox. A second copy of the loop is how one
+    # channel quietly stops running the guards.
+    from app import email_reply as replier
+    from app import flags as _flags
+    # Aliased: `say` is already the chat sender in this file.
+    from app.agent.fake_provider import FakeProvider
+    from app.agent.fake_provider import say as scripted
+    from app.agent.prompts import EMAIL_ADDENDUM, build_system_prompt
+    from app.api.settings import live_settings as _live
+    from app.config import settings as _cfg
+    from app.db import SessionLocal as _ReplySession
+    from app.models import (
+        Conversation as _Convo, Dealership as _Dealer, InboundEmail as _Receipt,
+        Lead as _L, Message as _Msg, Outreach as _Out,
+    )
+
+    with _ReplySession() as _db:
+        dealer = _db.query(_Dealer).first()
+        row = _live(_db)
+        prompts = {
+            ch: build_system_prompt(_db, dealer, row, channel=ch)
+            for ch in ("chat", "voice", "email")
+        }
+        check("email gets its own addendum, appended like voice's",
+              "BY EMAIL" in prompts["email"] and "BY EMAIL" not in prompts["chat"])
+        for ch, text in prompts.items():
+            check(f"and {ch} is given exactly one channel addendum",
+                  sum(m in text for m in
+                      ("BY EMAIL", "ON A PHONE CALL", "ON A SCREEN")) == 1)
+        check("the method is still whole inside the email prompt",
+              "HOW YOU ACTUALLY DO ANY OF THIS HERE" in prompts["email"])
+        check("and the addendum stays short enough to reread every turn",
+              len(EMAIL_ADDENDUM) < 1500, f"{len(EMAIL_ADDENDUM)} chars")
+        check("it says not to quote their message back at them",
+              "Do not quote their message back" in EMAIL_ADDENDUM)
+        check("and to hand over rather than go quiet",
+              "escalate_to_human" in EMAIL_ADDENDUM)
+
+        # Over the cap, Liner does not answer badly -- it hands the message to
+        # a person. Truncating and answering anyway means confidently replying
+        # to the top of something whose question was at the bottom.
+        body, refused = replier.readable("Is the Silverado still there?")
+        check("an ordinary message reaches the model", body and not refused)
+        _, refused = replier.readable("x" * (replier.MAX_BODY_CHARS + 1))
+        check("a very long one is handed to a person instead of half-answered",
+              "a person should read this one" in refused, refused[:60])
+        _, refused = replier.readable("   ")
+        check("and one with nothing in it is not answered at all", bool(refused))
+
+        was_env, was_cool = _cfg.email_agent, _cfg.email_reply_cooldown_minutes
+        try:
+            _cfg.email_agent = True
+            _cfg.email_reply_cooldown_minutes = 0
+            _flags.set(_db, "email_agent", "on", reason="smoke")
+
+            buyer = _L(name="Pat Quinn", email=f"pat.{stamp}@example.invalid",
+                       phone="", source="email")
+            _db.add(buyer)
+            _db.commit()
+            envelope = _Receipt(
+                outcome="accepted", message_id=f"<answer-{stamp}@mail>",
+                from_address=f'"Pat Quinn" <{buyer.email}>',
+                to_address="sales@example.invalid", subject="2019 Silverado",
+                body="Is the Silverado still there?", lead_id=buyer.id,
+            )
+            theirs = _Out(
+                lead_id=buyer.id, channel="email", direction="in", kind="reply",
+                to_address=buyer.email, subject="2019 Silverado",
+                body="Is the Silverado still there?", provider="inbound",
+                provider_message_id=f"<answer-{stamp}@mail>", status="sent",
+                sent_at=utcnow_local(),
+            )
+            _db.add_all([envelope, theirs])
+            _db.commit()
+
+            spoke = replier.answer(
+                _db, envelope, buyer, theirs,
+                provider=FakeProvider([scripted("Happy to help -- when suits you?")]),
+            )
+            check("Liner answers, and the reply is a real outreach row",
+                  spoke["sent"] and spoke.get("outreach_id"), str(spoke.get("reason")))
+
+            thread = _db.query(_Convo).filter_by(
+                lead_id=buyer.id, channel="email").one()
+            check("a conversation exists from the first reply, not the third",
+                  bool(thread.id))
+            check("so Take over, pause and escalation are there from turn one",
+                  hasattr(thread, "agent_paused"))
+            said = [m.role for m in _db.query(_Msg).filter_by(
+                conversation_id=thread.id).all()]
+            check("and both sides are message rows, like any other channel",
+                  said == ["buyer", "liner"], str(said))
+
+            reply_row = _db.query(_Out).filter_by(
+                lead_id=buyer.id, direction="out").order_by(
+                _Out.created_at.desc()).first()
+            check("the send carries no user id, which is the whole author test",
+                  reply_row.sent_by_user_id is None)
+            check("it threads under the message it answers",
+                  reply_row.in_reply_to == f"<answer-{stamp}@mail>",
+                  str(reply_row.in_reply_to))
+            check("and carries a token so their answer comes back here",
+                  bool(reply_row.reply_token))
+            check("the subject is Re:, not a second thread in their inbox",
+                  reply_row.subject.lower().startswith("re:"), reply_row.subject)
+
+            # A rep holding the thread is holding it on every channel, and it
+            # is re-checked immediately before the wire: a model round trip
+            # takes seconds, and somebody pressing Take over during one must
+            # not be overtaken by a message already in flight.
+            thread.agent_paused = True
+            _db.commit()
+            held = replier.answer(
+                _db, envelope, buyer, theirs,
+                provider=FakeProvider([scripted("second answer")]),
+            )
+            check("a rep who has taken over stops Liner answering again",
+                  not held["sent"] and held["reason"] == "rep_holding", held["reason"])
+            thread.agent_paused = False
+            _db.commit()
+
+            # The guards are the point of reusing the loop. An availability
+            # claim with no lookup this turn is caught on email exactly as it
+            # is on a screen.
+            invented = replier.answer(
+                _db, envelope, buyer, theirs,
+                provider=FakeProvider([scripted("Yes, that one is still available.")]),
+            )
+            body = (invented.get("body") or "")
+            check("and an unsourced claim is caught on email as on a screen",
+                  invented["sent"] and "still available" not in body, body[:60])
+        finally:
+            _cfg.email_agent, _cfg.email_reply_cooldown_minutes = was_env, was_cool
+            _flags.set(_db, "email_agent", "off", reason="smoke reset")
+
     print("\n== the brakes, built before there is anything to stop ==")
     # Nothing answers email yet. These ship first deliberately: there must
     # never be a build where Liner can send mail on its own and cannot be

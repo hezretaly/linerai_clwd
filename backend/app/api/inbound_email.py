@@ -9,9 +9,12 @@ operator sees no reply arriving and has no way to tell a broken signature from
 a broken Cloudflare route from a buyer who never wrote back. The receipts are
 what the setup page reads.
 
-Nothing here wakes the agent. A reply lands as an activity a rep reads; Liner
-answering email on its own needs guards, a rate limit and a loop-breaker for
-auto-responders, and none of that exists.
+A reply lands as an activity a rep reads, and -- **only if every brake in
+`app/email_agent.py` says so** -- Liner may answer it. It says no by default:
+`EMAIL_AGENT` is unset and the runtime flag is off, so on an ordinary
+deployment nothing here wakes the agent at all. The brakes shipped a phase
+before the thing they stop, because there must never be a build where Liner can
+send mail on its own and cannot be stopped.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import matching
+from app import email_reply, matching
 from app.config import settings
 from app.api.deps import current_user
 from app.db import get_db, utcnow
@@ -372,6 +375,26 @@ def _place(receipt_id: str, refused: str = "") -> None:
             "receipt_id": claim.id, "matched_by": matched_by,
             "outcome": "accepted", "reopened": reopened,
         })
+
+        # And, last, Liner may answer -- if every brake in `email_agent` says
+        # so, and by default none of them does. It runs after the receipt is
+        # stamped and after the event, so a reply that fails leaves the
+        # delivery filed and visible rather than taking the whole placement
+        # down with it. Off by default, so this is a no-op on any deployment
+        # that has not deliberately turned it on.
+        try:
+            answered = email_reply.answer(
+                db, claim, lead, record, automated=refused
+            )
+            if answered.get("reason") not in ("", "off_in_env", "switched_off"):
+                # Recorded on the receipt, because "Liner did not reply" is
+                # otherwise indistinguishable from "Liner is off" and from a
+                # provider that refused -- three different problems.
+                claim.detail = f"{claim.detail} Liner did not reply: {answered['detail']}"
+                db.commit()
+        except Exception as exc:  # a failed reply must not lose the delivery
+            claim.detail = f"{claim.detail} Liner's reply failed: {exc}"[:500]
+            db.commit()
     except Exception as exc:  # never let a background failure vanish
         claim = db.query(InboundEmail).filter_by(id=receipt_id).one_or_none()
         if claim is not None:

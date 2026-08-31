@@ -474,10 +474,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     goes token → `In-Reply-To` → the shared lead matcher, and stops there: a
     name is never part of it, so a stranger stays a stranger instead of being
     attached to whoever shares one. Someone really wrote in either way.
-  - **Liner does not answer email.** A reply lands as an activity and reopens
-    an escalation a rep had claimed. An autonomous email sender needs its own
-    guards, a rate limit and a loop-breaker for auto-responders; none of that
-    exists, so neither does the capability.
+  - **Liner answers email only when every brake says so, and by default none
+    does.** `app/email_reply.py` runs the same `run_turn`, the same eight tools
+    and the same reply guards as chat — a second copy of the loop is how one
+    channel quietly stops running them — with `EMAIL_ADDENDUM` appended the way
+    voice's is, and capped the same way.
+    - **The conversation is minted on the first reply, not on the third
+      exchange.** `Conversation` carries Take over, `agent_paused`, escalation
+      and the message rows; without one, for two exchanges a rep could not grab
+      the thread and the kill switch would be the only brake — on the turns
+      where Liner is guessing most. The three-exchange threshold governs
+      *presentation* instead: below it the row is in the inbound list, at it
+      the buyer appears in the conversations list.
+    - **Over the cap it hands over rather than answers half a message.**
+      `MAX_BODY_CHARS` keeps the top when a message is long, because a person's
+      ask is at the top — but the cap is a refusal, not a trim: confidently
+      replying to the first four thousand characters of something whose
+      question was at the bottom is worse than a slow answer.
+    - **The pause is re-checked immediately before the wire.** A model round
+      trip takes seconds, and a rep pressing Take over during one must not be
+      overtaken by a message that was already in flight.
 - **Liner does not answer email yet, and the brakes exist anyway.** Phase 4
   shipped before Phase 5 deliberately: there must never be a build where it
   can send mail on its own and cannot be stopped, and a brake first exercised
@@ -1582,6 +1598,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Post-call transcription | **Written and never executed** — same missing key, same blocked host. The buyer's own track is recorded, the marks are stored, and the merge, cross-talk filter and transcript rewrite all run in `make agent-check` against a transcription handed over rather than fetched. Only the request to `/v1/audio/transcriptions` is unproven. |
 | Inventory source | **The local database, and that is the real answer.** Rows arrive by seed, by CSV import or by hand, and `search_inventory` reads them. The scraper works against the fixture site but has no adapter for any real dealer site — no two are laid out alike, so that needs real URLs. An optional second source nobody has chosen is not a missing dependency, and it is not in the banner. |
 | Lead import | **Real, end to end.** ADF/XML is parsed with `defusedxml`, matched against inventory and existing leads, reviewed, then committed. Nothing is fetched: no lead inbox is polled and no feed is subscribed to — you upload the document. |
+| Email agent | **Written and off.** Liner can answer a buyer's email — same loop, same eight tools, same guards, plus `EMAIL_ADDENDUM`. Every brake in `app/email_agent.py` is exercised by `make smoke` against a fake provider, and the whole turn with it. `EMAIL_AGENT=true` plus the dashboard toggle turns it on; both default off. The vendor HTTP call has never run here. |
 | Reminders | **Manual.** There is no scheduler in this system, so a follow-up or reminder is a server-built draft a rep reviews and sends. Not a drip campaign; the page says so. |
 
 ## Deliberately not built

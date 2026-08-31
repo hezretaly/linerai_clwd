@@ -80,16 +80,28 @@ def _history(db: Session, convo: Conversation) -> list[dict]:
 
 
 def run_turn(
-    db: Session, convo: Conversation, text: str, provider: Provider | None = None
+    db: Session,
+    convo: Conversation,
+    text: str,
+    provider: Provider | None = None,
+    *,
+    channel: str = "",
 ) -> tuple[str, list[dict]]:
     """One buyer turn. Returns (reply, tool_calls).
 
     ``provider`` is injectable so the loop can be driven offline against a fake
     one. That is the only reason this path is testable without a key.
+
+    ``channel`` picks the addendum appended to the prompt -- a screen, a phone
+    call, or an inbox. It defaults to the conversation's own, so a caller
+    cannot forget: an email answered with the chat rules offers a booking card
+    nobody can see.
     """
     provider = provider or get_provider()
     dealership = db.query(Dealership).first()
-    system = build_system_prompt(db, dealership, live_settings(db))
+    system = build_system_prompt(
+        db, dealership, live_settings(db), channel=channel or convo.channel or "chat"
+    )
 
     messages = _history(db, convo)
     # The caller normally persists the buyer's message before getting here, so
