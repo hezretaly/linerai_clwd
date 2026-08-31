@@ -340,6 +340,12 @@ def _place(receipt_id: str, refused: str = "") -> None:
             })
             return
 
+        # Every accepted delivery, not only the one that minted them. A buyer
+        # resolved by token or by address never went through `_lead_from`, so
+        # a lead that arrived nameless stayed nameless for good however many
+        # named messages followed. It fills a blank and never overwrites.
+        name_from_delivery(db, lead, claim)
+
         record = Outreach(
             lead_id=lead.id,
             appointment_id=outreach.appointment_id if outreach else None,
@@ -422,6 +428,78 @@ def _place(receipt_id: str, refused: str = "") -> None:
         db.close()
 
 
+def name_from_delivery(
+    db: Session, lead: Lead, claim: InboundEmail, *, notify: bool = True
+) -> str:
+    """Give a nameless buyer the name their own mail carries. Returns what it set.
+
+    **Fills a blank and never overwrites one.** A name already on the row came
+    from somewhere with more authority than this -- a booking, a rep who typed
+    it, a lead document -- while a display name is a free-text field the
+    sender's client will put anything in. Letting a later email rename a buyer
+    a rep has confirmed is how somebody ends up on the phone to the wrong name,
+    which is the failure the whole provenance idea exists to prevent.
+
+    Two rungs, strongest first, the same ladder `_lead_from` runs when it mints
+    one -- and it is a function rather than a second copy because that is the
+    rule this codebase keeps relearning: two versions of "what is this person
+    called" is how the buyer page and the mailbox start disagreeing.
+
+    1. **The envelope's display name.** `"Hezretaly A." <a.hezret@outlook.com>`
+       -- a fact the sender's own client asserts about them, not something read
+       out of prose. Note it arrives as `fromName` and not inside `from`: a
+       mail server puts no display name in an *envelope*, so the header is
+       rebuilt at intake before anything reads it.
+    2. **A name signed at the bottom.** A guess, so it is also written as a
+       `signed_name` captured field with provenance `inferred`, and the field
+       is what carries that caveat -- the name column cannot.
+
+    Called on **every** accepted delivery, not only the one that mints the
+    buyer. That was the gap: a lead created before any of this existed, or one
+    minted from a message whose sender had set no display name, was stuck
+    unnamed for good, because `_resolve` finds them and `_lead_from` never runs
+    again. Every later email carrying a perfectly good name confirmed nothing.
+    """
+    if lead.name:
+        return ""
+
+    shown = display_name(claim.from_address)
+    if shown:
+        lead.name = shown
+        db.commit()
+        if notify:
+            emit(db, "lead.updated", {"lead_id": lead.id, "field": "name"})
+        return shown
+
+    signed = signature_name(just_the_reply(claim.body))
+    if not signed:
+        return ""
+    # Recorded as inferred whether or not it fills the column, so a rep reading
+    # the buyer page can see the name was read out of a sign-off rather than
+    # asserted by anyone. Not written twice: they may sign every message.
+    already = (
+        db.query(CapturedField)
+        .filter(
+            CapturedField.lead_id == lead.id,
+            CapturedField.key == "signed_name",
+            CapturedField.value == signed,
+        )
+        .first()
+    )
+    if already is None:
+        db.add(CapturedField(
+            lead_id=lead.id, key="signed_name", value=signed, provenance="inferred",
+        ))
+    lead.name = signed
+    db.commit()
+    # `notify` is off while a lead is being minted: `lead.created` follows a
+    # line later and says everything this would, and an update announcing a
+    # buyer nobody has been told about yet arrives in the wrong order.
+    if notify:
+        emit(db, "lead.updated", {"lead_id": lead.id, "field": "name"})
+    return signed
+
+
 def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | None, str]:
     """Mint a buyer from a delivery that matched nobody, or say why not.
 
@@ -437,10 +515,9 @@ def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | N
     assignment picker and a row in every queue. `automated_reason` is the test,
     and it is a header check before it is a guess.
 
-    The name is the envelope's display name, which is a fact the sender's own
-    client asserts, never the signature -- that is a guess, and it is recorded
-    as one below. Neither is ever used to *match*: `app/matching.py` stays
-    email exact and phone by its last ten digits, because a name is not
+    What they are called comes from `name_from_delivery`, which every later
+    delivery runs too. Neither rung is ever used to *match*: `app/matching.py`
+    stays email exact and phone by its last ten digits, because a name is not
     identity and two Dave Joneses are two people.
     """
     address = sender_address(claim.from_address)
@@ -471,34 +548,15 @@ def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | N
     if existing is not None:
         return existing, ""
 
-    lead = Lead(
-        name=display_name(claim.from_address),
-        email=address,
-        phone="",
-        source="email",
-    )
+    lead = Lead(name="", email=address, phone="", source="email")
     db.add(lead)
     db.flush()
-
-    # People sign their mail, and it is the only name an envelope with no
-    # display name offers. Recorded as a captured field with provenance
-    # `inferred` rather than written onto the lead: prose cannot carry
-    # provenance, and a guessed name asserted as fact is one a rep repeats on
-    # the phone to somebody it does not belong to. A rep confirms it or
-    # replaces it, and until they do the row reads as unnamed, which is true.
-    signed = signature_name(just_the_reply(claim.body))
-    if signed and signed != lead.name:
-        db.add(CapturedField(
-            lead_id=lead.id, key="signed_name", value=signed, provenance="inferred",
-        ))
-        # And used as the name when the envelope carried none. "Unnamed buyer"
-        # over a message signed "Pat Quinn" is a rep opening the mail to find
-        # what the row could have told them. It is still a guess and still
-        # recorded as one -- the captured field above keeps the provenance the
-        # name column cannot -- but a guessed name a rep can correct beats no
-        # name at all, which was the complaint.
-        if not lead.name:
-            lead.name = signed
+    # The same ladder every later delivery runs, rather than a copy of it here.
+    # It used to be written out twice and the two drifted immediately: minting
+    # read the envelope and the signature, and nothing else ever read either
+    # again, so a buyer who arrived unnamed stayed unnamed however many named
+    # messages they sent afterwards.
+    name_from_delivery(db, lead, claim, notify=False)
     db.commit()
 
     # The other half of the ladder, and the reason it is called here rather

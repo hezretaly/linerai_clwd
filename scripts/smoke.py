@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -2229,11 +2230,19 @@ def main() -> int:
     check("and every one it offers really has one",
           all("@" in r["email"] for r in known))
 
-    # This run's own buyer, so the assertion is about a lead that certainly has
-    # an address rather than whichever one happens to sort first.
-    target = next((r for r in known if r["lead_id"] == send["lead_id"]), None)
-    check("including the buyer this run just created", target is not None,
-          send["lead_id"])
+    # **Found by searching, which is what a rep does.** The unfiltered list is
+    # the 200 newest buyers -- a picker, not an index -- so asserting an
+    # arbitrary older lead appears in it only passed while this database was
+    # small enough that 200 was everyone. It stopped the day the row count
+    # crossed the cap, naming the composer for what was really an ordering
+    # accident. `q` is the control the composer actually offers, so it is the
+    # one the gate drives.
+    hunted = call(
+        "GET", f"/api/email/recipients?q={urllib.parse.quote(send['to_address'])}"
+    )["recipients"]
+    target = next((r for r in hunted if r["lead_id"] == send["lead_id"]), None)
+    check("and a rep typing an address finds the buyer behind it",
+          target is not None, f"{send['to_address']} -> {len(hunted)} match(es)")
     wrote = call("POST", "/api/email/compose", {
         "to": target["email"], "subject": f"Checking in {run}",
         "body": "Are you still looking?",
@@ -3488,6 +3497,57 @@ def main() -> int:
           any(f["key"] == "signed_name" and not f["verified"]
               for f in signer.get("captured_fields") or []),
           str(signer.get("captured_fields")))
+
+    # **A name arrives late, and the row has to take it.** The ladder ran only
+    # where a lead was *minted*, so a buyer resolved by token or by address --
+    # which is every returning one -- never went near it. Anyone already on
+    # file without a name stayed unnamed for good, however many messages they
+    # sent afterwards carrying a perfectly good one. Their first message here
+    # has no display name and nothing to sign, so the row starts blank exactly
+    # the way a real one did.
+    late = f"late.{stamp}@example.invalid"
+    inbound({
+        "messageId": f"<late-blank-{stamp}@mail>",
+        "from": late, "fromAddress": late, "fromName": "",
+        "to": "sales@example.invalid", "subject": "Hours",
+        "text": "are you open sunday",
+    })
+    settled(f"<late-blank-{stamp}@mail>")
+    blank = next(r for r in call("GET", "/api/leads?limit=300")["leads"]
+                 if r["email"] == late)
+    check("a buyer whose first mail carried no name starts unnamed",
+          not blank["has_name"], blank["name"])
+    inbound({
+        "messageId": f"<late-named-{stamp}@mail>",
+        "from": late, "fromAddress": late, "fromName": "Sam Okonkwo",
+        "to": "sales@example.invalid", "subject": "Re: Hours",
+        "text": "thanks",
+    })
+    settled(f"<late-named-{stamp}@mail>")
+    filled = next(r for r in call("GET", "/api/leads?limit=300")["leads"]
+                  if r["email"] == late)
+    check("and a later message carrying one fills the blank",
+          filled["name"] == "Sam Okonkwo", filled["name"])
+    check("without minting a second buyer to hang it on",
+          len([r for r in call("GET", "/api/leads?limit=300")["leads"]
+               if r["email"] == late]) == 1)
+
+    # **And never the other way.** A name already on the row came from
+    # somewhere with more authority -- a booking, a rep who typed it, a lead
+    # document -- while a display name is free text the sender's own client
+    # will put anything in. Renaming a buyer a rep has confirmed is how
+    # somebody ends up on the phone to the wrong name.
+    inbound({
+        "messageId": f"<late-rename-{stamp}@mail>",
+        "from": late, "fromAddress": late, "fromName": "sam's work laptop",
+        "to": "sales@example.invalid", "subject": "Re: Hours",
+        "text": "one more thing",
+    })
+    settled(f"<late-rename-{stamp}@mail>")
+    kept = next(r for r in call("GET", "/api/leads?limit=300")["leads"]
+                if r["email"] == late)
+    check("but a name already on the row is never overwritten by a later one",
+          kept["name"] == "Sam Okonkwo", kept["name"])
     if rows:
         check("named from the envelope, which is a fact rather than a guess",
               rows[0]["name"] == "Robin Vance", rows[0]["name"])

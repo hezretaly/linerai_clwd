@@ -497,6 +497,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       instead: still a guess, still recorded as `inferred` on a captured
       field, and better than a rep opening the message to find what the row
       could have told them.
+    - **The name ladder runs on every delivery, not only the one that mints
+      the buyer.** It lived inside `_lead_from`, which a returning buyer never
+      reaches — `_resolve` finds them by token or by address first — so anyone
+      already on file without a name stayed unnamed for good, however many
+      later messages carried a perfectly good one. `name_from_delivery` is
+      that ladder, called from both paths, and a function rather than a second
+      copy for the reason this codebase keeps relearning: two versions of what
+      a person is called is how the buyer page and the mailbox start
+      disagreeing. It needs no backfill — the next message a buyer sends
+      names them.
+    - **It fills a blank and never overwrites one.** A name already on the row
+      came from somewhere with more authority — a booking, a rep who typed it,
+      a lead document — while a display name is free text the sender's own
+      client will put anything in (`sam's work laptop` is a real one). Letting
+      a later email rename a buyer a rep has confirmed is how somebody ends up
+      on the phone to the wrong name, which is the failure provenance exists
+      to prevent.
     - **The conversation is minted on the first reply, not on the third
       exchange.** `Conversation` carries Take over, `agent_paused`, escalation
       and the message rows; without one, for two exchanges a rep could not grab
