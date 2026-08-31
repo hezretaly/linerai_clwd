@@ -3484,6 +3484,92 @@ def main() -> int:
           just_the_reply("Yes please.\n\nOn Mon 1 Sep 2026 Liner wrote:\n> hello\n")
           == "Yes please.")
 
+    print("\n== a rep answers, and a buyer's two addresses become one buyer ==")
+    # The loop this whole feature is for: they write, a rep replies from the
+    # buyer's own page, and the reply threads under what they sent rather than
+    # opening a second conversation in their inbox.
+    work = f"casey.{stamp}@work.invalid"
+    home = f"casey.{stamp}@home.invalid"
+    inbound({
+        "messageId": f"<casey-a-{stamp}@mail>", "from": f'"Casey Lane" <{work}>',
+        "to": "sales@example.invalid", "subject": "2019 Silverado",
+        "text": "Is the Silverado still available?",
+    })
+    settled(f"<casey-a-{stamp}@mail>")
+    casey = next(
+        row for row in call("GET", "/api/leads?limit=300")["leads"]
+        if row["email"] == work
+    )
+    their_mail = next(
+        e for e in call("GET", f"/api/leads/{casey['id']}/timeline")["entries"]
+        if e["kind"] == "outreach" and e["direction"] == "in"
+    )
+    answer = call("POST", "/api/email/compose", {
+        "to": work, "subject": "Re: 2019 Silverado",
+        "body": "Yes, it is. Want to come and see it this week?",
+        "lead_id": casey["id"], "in_reply_to_outreach_id": their_mail["id"],
+    })
+    check("a rep can answer from the buyer's own page",
+          answer["status"] == "sent" and answer["lead_id"] == casey["id"],
+          f"{answer['status']} -> {answer['lead_id']}")
+    counted = next(
+        row for row in call("GET", "/api/email/threads?box=all")["threads"]
+        if row["lead_id"] == casey["id"]
+    )
+    check("and answering is what clears the waiting badge and moves the counter",
+          counted["exchanges"] == 1 and not counted["waiting"],
+          f"{counted['exchanges']} exchange(s), waiting={counted['waiting']}")
+
+    # `leads.email` is one column and a buyer is not. The join is a human act:
+    # matching is email exact and phone by its last ten digits, and no rule
+    # here can see that two addresses are one person.
+    inbound({
+        "messageId": f"<casey-b-{stamp}@mail>", "from": home,
+        "to": "sales@example.invalid", "subject": "(nothing)", "text": "   ",
+    })
+    settled(f"<casey-b-{stamp}@mail>")
+    linked = call("POST", f"/api/leads/{casey['id']}/addresses", {"address": home})
+    check("linking a second address claims what they sent from it",
+          linked["claimed"] == 1, f"claimed {linked['claimed']}")
+    check("and the buyer page says which addresses are theirs",
+          [a["address"] for a in linked["addresses"]] == [home],
+          str([a["address"] for a in linked["addresses"]]))
+
+    inbound({
+        "messageId": f"<casey-c-{stamp}@mail>", "from": f'"Casey Lane" <{home}>',
+        "to": "sales@example.invalid", "subject": "Re: Silverado",
+        "text": "Thursday works for me.",
+    })
+    placed = settled(f"<casey-c-{stamp}@mail>")
+    check("so their next message finds them with no further help",
+          placed["lead_id"] == casey["id"], str(placed.get("matched_by")))
+    check("and it did not mint a second buyer",
+          len([r for r in call("GET", "/api/leads?limit=300")["leads"]
+               if r["email"] in (work, home)]) == 1)
+    thread = [
+        e for e in call("GET", f"/api/leads/{casey['id']}/timeline")["entries"]
+        if e["kind"] == "outreach"
+    ]
+    check("their whole exchange is on one timeline, in order",
+          [e["direction"] for e in thread] == ["in", "out", "in", "in"],
+          str([e["direction"] for e in thread]))
+
+    # Taking an address that belongs to somebody would silently merge two
+    # buyers, which is the one failure `app/matching.py` exists to prevent.
+    taken = status_of("POST", f"/api/leads/{casey['id']}/addresses",
+                      {"address": who})
+    check("an address that belongs to somebody else is refused, not moved",
+          taken[0] == 409, f"{taken[0]}: {taken[1][:60]}")
+    check("and the refusal names who has it, so a rep can go and look",
+          "already belongs to" in taken[1], taken[1][:70])
+
+    # "Arrived as a lead document" was the only answer a buyer with no
+    # conversation could get. True while ADF was the only way in, and a plain
+    # untruth once an email could mint one.
+    recap = call("GET", f"/api/leads/{casey['id']}/timeline")["recap"]
+    check("and the recap says how they actually arrived",
+          "by email" in recap and "lead document" not in recap, recap[:70])
+
     print("\n== one row per person, and one definition of a back and forth ==")
     # `/app/email` lists messages, which is what you want hunting one send.
     # This lists people, which is what you want deciding who to answer next --

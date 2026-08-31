@@ -16,12 +16,15 @@ from app.models import (
     Conversation,
     Escalation,
     Lead,
+    LeadAddress,
     Message,
     Outreach,
     User,
     Vehicle,
 )
-from app.schemas.serialize import conversation_out, iso, lead_out, stamp, vehicle_out
+from app.schemas.serialize import (
+    conversation_out, iso, lead_out, stamp, user_out, vehicle_out,
+)
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -331,6 +334,109 @@ def _reply_target(convos: list[Conversation]) -> str | None:
     if not live:
         return None
     return max(live, key=lambda c: c.started_at).id
+
+
+class AddressBody(BaseModel):
+    address: str
+
+
+@router.post("/{lead_id}/addresses")
+def link_address(
+    lead_id: str,
+    body: AddressBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Say that this buyer also writes from that address.
+
+    `leads.email` is one column and a buyer is not. Somebody who chatted from
+    a work address and later mails from a personal one is one person that no
+    rule here can see -- matching is email exact and phone by its last ten
+    digits, deliberately, because a name is not identity. So the join is a
+    human act: a rep who knows says so, and this records that they did.
+
+    Their earlier mail is claimed straight away, through the same ladder the
+    live path uses. A link that does not move anything on the timeline is a
+    button whose effect nobody can see.
+
+    **An address that already belongs to somebody is refused, never moved.**
+    Taking it would silently merge two buyers, which is the one failure
+    `app/matching.py` exists to prevent -- and the refusal names who has it, so
+    the rep can look rather than being told no.
+    """
+    lead = _get(db, lead_id)
+    address = (body.address or "").strip().lower()
+    if "@" not in address or len(address) < 3:
+        raise HTTPException(400, "That is not an email address.")
+    if address == (lead.email or "").strip().lower():
+        raise HTTPException(400, "That is already their address.")
+
+    owner = matching.match_lead(db, address, "", exclude_id=lead.id)
+    if owner is not None:
+        raise HTTPException(
+            409,
+            f"{address} already belongs to {owner.name or 'another buyer'}. "
+            "Merging two buyers is not something this can do on its own -- "
+            "open them side by side and decide.",
+        )
+    if db.query(LeadAddress).filter_by(lead_id=lead.id, address=address).first():
+        raise HTTPException(409, "That address is already linked to them.")
+
+    db.add(LeadAddress(lead_id=lead.id, address=address, added_by_user_id=user.id))
+    db.commit()
+    claimed = matching.claim_unresolved(db, lead)
+    emit(db, "lead.updated", {"lead_id": lead.id, "linked_address": address})
+    return {
+        "addresses": _addresses_of(db, lead.id),
+        # How much of their history moved. Reported because it is the visible
+        # consequence, and a rep who links an address and sees nothing change
+        # has no way to tell it worked from a mistyped address.
+        "claimed": claimed,
+    }
+
+
+@router.delete("/{lead_id}/addresses/{address_id}")
+def unlink_address(
+    lead_id: str,
+    address_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Undo the link. The mail it claimed stays where it was filed.
+
+    Deliberately: a receipt records what happened, and rewriting one to say
+    something other than what happened is the one thing a receipt must never
+    do. Unlinking stops *future* mail matching, which is what a rep who linked
+    the wrong address needs.
+    """
+    _get(db, lead_id)
+    row = db.query(LeadAddress).filter_by(id=address_id, lead_id=lead_id).one_or_none()
+    if row is None:
+        raise HTTPException(404, "No such linked address.")
+    db.delete(row)
+    db.commit()
+    return {"addresses": _addresses_of(db, lead_id)}
+
+
+def _addresses_of(db: Session, lead_id: str) -> list[dict]:
+    rows = (
+        db.query(LeadAddress)
+        .filter_by(lead_id=lead_id)
+        .order_by(LeadAddress.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "address": r.address,
+            "added_by": user_out(
+                db.query(User).filter_by(id=r.added_by_user_id).one_or_none()
+                if r.added_by_user_id else None
+            ),
+            "created_at": stamp(r.created_at),
+        }
+        for r in rows
+    ]
 
 
 @router.get("/{lead_id}/duplicates")

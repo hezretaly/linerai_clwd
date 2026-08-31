@@ -24,6 +24,7 @@ from app.models import (
     IngestRun,
     KnowledgeEntry,
     Lead,
+    LeadAddress,
     Message,
     Outreach,
     Rail,
@@ -201,6 +202,17 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
             .all()
         )
         out["outreach"] = [outreach_out(o) for o in reach]
+        # Other addresses a rep has said are theirs. On the detail payload
+        # only: a link is a fact about one buyer, and the list has no room to
+        # say it. Without it the button that makes one has no visible effect,
+        # which is how a rep ends up pressing it twice.
+        out["linked_addresses"] = [
+            {"id": row.id, "address": row.address, "created_at": stamp(row.created_at)}
+            for row in db.query(LeadAddress)
+            .filter_by(lead_id=lead.id)
+            .order_by(LeadAddress.created_at.asc())
+            .all()
+        ]
     return out
 
 

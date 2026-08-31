@@ -48,6 +48,35 @@ class Lead(Base):
         return not self.email
 
 
+class LeadAddress(Base):
+    """A second address the same buyer writes from, attached by a person.
+
+    `leads.email` is one column and a buyer is not. Somebody who chatted from
+    `dana@work.example` and later mails from `dana@home.example` is one person
+    that no rule here can see: matching is email exact and phone by its last
+    ten digits, deliberately, because a name is not identity and two Dave
+    Joneses are two people. So the join is a **human act** rather than a
+    guess -- a rep who knows says so, and this is where they say it.
+
+    A table rather than a column, and not only because `create_all` adds one
+    and never the other: a buyer can have several, and the rep who attached it
+    is worth keeping. It is the answer to "why is this mail on this timeline"
+    when somebody asks in six months.
+    """
+
+    __tablename__ = "lead_addresses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    lead_id: Mapped[str] = mapped_column(ForeignKey("leads.id"), index=True)
+    #: Stored lowercase. `leads.email` is compared the same way, and a mail
+    #: server is entitled to rewrite the case of a local part.
+    address: Mapped[str] = mapped_column(String(255), index=True)
+    added_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = created()
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 

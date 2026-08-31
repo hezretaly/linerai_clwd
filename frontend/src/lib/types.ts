@@ -107,6 +107,9 @@ export interface Lead {
   email_consent_at: string | null
   created_at: string
   captured_fields?: CapturedField[]
+  /* Other addresses a rep has said are theirs. Detail payload only -- a link
+     is a fact about one buyer and the list has no room to say it. */
+  linked_addresses?: { id: string; address: string; created_at: string }[]
   /* Folded on by the list endpoint. A lead has no stage column -- these are
      derived from its conversations and appointments (api/leads.py). */
   stage?: 'new' | 'qualifying' | 'qualified' | 'appointment'

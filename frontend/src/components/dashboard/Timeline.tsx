@@ -142,13 +142,18 @@ function Outreach({ e }: { e: TimelineEntry }) {
   // and a rep skimming a timeline has to be able to tell at a glance who wrote
   // which -- so it leans to the buyer's side and says who it is from.
   const inbound = e.direction === 'in'
+  // Buyer left, us right -- the sides a chat uses, because an exchange of four
+  // emails is a conversation and reads as one. It used to centre our sends,
+  // which is right for a one-off follow-up into silence and wrong the moment
+  // there is a back and forth to follow: a column of centred cards gives a rep
+  // no way to see who wrote which without reading every one.
   return (
     <div
       className={clsx(
         'my-2 w-full max-w-[90%] rounded-lg border p-3',
         inbound
           ? 'self-start border-primary/30 bg-primary/5'
-          : 'self-center border-border bg-muted/40',
+          : 'self-end border-border bg-muted/40',
       )}
     >
       <div className="flex items-start justify-between gap-2">

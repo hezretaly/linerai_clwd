@@ -1485,6 +1485,31 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `confirmed` carried only an appointment id, so a buyer's page had no way to
   tell the event concerned them and no reason to refresh — the two panels
   showing the same visit drifted apart until somebody reloaded.
+- **One matcher decides who a buyer is, and a second address is a person's
+  word, not a rule.** `leads.email` is one column and a buyer is not: somebody
+  who chatted from a work address and later mails from a personal one is one
+  person no rule here can see. So `lead_addresses` is written from the buyer
+  page by a rep who knows, and `candidates_for` reads it as a rung between the
+  primary email and the phone — exact like an email, and additive, so nothing
+  about who an existing address matches changes. Nothing ever adds one on its
+  own, and a shared domain or a shared name never will. An address that
+  already belongs to somebody is **refused and named**, never moved: taking it
+  would silently merge two buyers, which is the one failure this module exists
+  to prevent. `claim_unresolved` runs over every address the buyer is known by,
+  so linking one moves their earlier mail onto the timeline — a link with no
+  visible effect is one a rep presses twice.
+- **An email exchange reads as a conversation, in the timeline it already
+  has.** Buyer left, us right, the sides a chat uses. Our sends used to be
+  centred, which is right for a one-off follow-up into silence and wrong the
+  moment there is a back and forth: a column of centred cards gives a rep no
+  way to see who wrote which without reading every one. There is deliberately
+  no second messaging screen — `/app/conversations/:id` redirects to the buyer
+  for the same reason, and a thread is never readable in two places.
+- **How a buyer arrived is read off `source`, not assumed.** A lead with no
+  conversation got "arrived as a lead document", which was true while ADF was
+  the only way in and a plain untruth once an email could mint one — somebody
+  who wrote to `sales@` and has been answered twice was being described as a
+  marketplace form.
 - **One matcher decides who a buyer is.** `app/matching.py`, used by the ADF
   importer, manual entry and `book_appointment`. Booking used to match on
   email alone while the importer matched on email *then* phone, so someone who

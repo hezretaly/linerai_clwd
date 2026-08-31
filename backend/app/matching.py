@@ -7,10 +7,15 @@ email alone. So a buyer who booked from chat and later called back leaving a
 second address arrived as a second lead, even though the number on file was
 identical. A dealership then has two rows for one person and no way to know.
 
-Matching is deliberately narrow. Email exact, phone by its last ten digits, and
-nothing else: a name is not identity. Two Dave Joneses are two people, and
-merging them silently is a worse failure than leaving a duplicate for someone
-to look at.
+Matching is deliberately narrow. Email exact, then an address a *person* linked
+to the buyer, then phone by its last ten digits, and nothing else: a name is
+not identity. Two Dave Joneses are two people, and merging them silently is a
+worse failure than leaving a duplicate for someone to look at.
+
+The linked-address rung is not an inference. `lead_addresses` is written from
+the buyer page by a rep who knows that the buyer who chatted from one address
+is the one now writing from another; nothing in this system ever adds one on
+its own, and a shared domain or a shared name never will.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from app.models import Lead
+from app.models import Lead, LeadAddress
 
 
 def digits(value: str) -> str:
@@ -62,6 +67,24 @@ def candidates_for(
                 seen.add(lead.id)
                 found.append((lead, "same email"))
 
+    # A second address a *person* attached to this buyer. It sits between the
+    # primary email and the phone deliberately: it is exact, like an email, and
+    # somebody deliberately said so -- but the column is still the first
+    # answer, so nothing about who an existing address matches changes. This
+    # rung can only ever *add* a candidate.
+    #
+    # It is a human act and never a guess. `lead_addresses` is written from the
+    # buyer page by a rep who knows the two are one person; nothing infers one,
+    # because a name is not identity and neither is a shared domain.
+    if clean_email:
+        for link in db.query(LeadAddress).filter(LeadAddress.address == clean_email).all():
+            if link.lead_id == exclude_id or link.lead_id in seen:
+                continue
+            lead = db.query(Lead).filter_by(id=link.lead_id).one_or_none()
+            if lead is not None:
+                seen.add(lead.id)
+                found.append((lead, "address a rep linked to them"))
+
     tail = digits(phone)
     # Under ten digits is an extension or a fragment, not a number that
     # identifies anyone.
@@ -91,7 +114,8 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
     `_place` re-runs -- rather than a second copy of it, which is how the two
     would start disagreeing about who a reply belongs to.
 
-    Email exact, and only email. Phone is not on an email envelope, and a name
+    Every address the buyer is known by -- the column and anything a rep has
+    linked -- and only addresses. Phone is not on an email envelope, and a name
     is not identity here or anywhere else in this module.
 
     **Mail addressed to Liner's own desk is never claimed onto a dealership's
@@ -104,11 +128,20 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
     from app.api.inbound_email import _place
     from app.models import InboundEmail
 
-    address = (lead.email or "").strip().lower()
-    if not address:
-        return 0
-
     from app.email_intake import is_ours, sender_address
+    from app.models import LeadAddress as _LeadAddress
+
+    # Every address this buyer is known by, not only the column. A rep who has
+    # just linked a second one is saying "their earlier mail is theirs", and
+    # leaving it unresolved would make the link do nothing visible -- which is
+    # the whole reason they pressed the button.
+    addresses = {(lead.email or "").strip().lower()} | {
+        (row.address or "").strip().lower()
+        for row in db.query(_LeadAddress).filter_by(lead_id=lead.id).all()
+    }
+    addresses.discard("")
+    if not addresses:
+        return 0
 
     # `from_address` is the whole envelope -- `Austin Miller <a@b>` -- so the
     # address has to come out of it before it is compared. Comparing the header
@@ -117,7 +150,7 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
     # unresolved, which is what it looked like anyway.
     waiting = [
         row for row in db.query(InboundEmail).filter(InboundEmail.outcome == "unresolved").all()
-        if sender_address(row.from_address) == address and not is_ours(row.to_address)
+        if sender_address(row.from_address) in addresses and not is_ours(row.to_address)
     ]
     for row in waiting:
         row.outcome = "received"

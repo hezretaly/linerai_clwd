@@ -162,7 +162,26 @@ def lead_recap(db: Session, lead: Lead) -> str:
     )
     name = (lead.name or "").strip() or "An unnamed buyer"
     if not convos:
-        # An imported lead has never said anything. Saying so is the recap.
+        # A buyer with no conversation has never said anything *here*, and how
+        # they arrived is the whole recap. "A lead document" was the only
+        # answer, which was true while ADF was the only way in and became a
+        # plain untruth once an email could mint a buyer: somebody who wrote to
+        # sales@ and has been answered twice was described as a marketplace
+        # form. Read off `source`, and the count of what they have actually
+        # sent, because a recap composed from rows is one that can be checked.
+        from app.models import Outreach
+
+        letters = (
+            db.query(Outreach)
+            .filter(Outreach.lead_id == lead.id, Outreach.channel == "email")
+            .count()
+        )
+        if lead.source == "email" or letters:
+            traffic = (
+                f" {letters} message{'' if letters == 1 else 's'} either way so far."
+                if letters else ""
+            )
+            return f"{name} wrote in by email.{traffic}"
         return f"{name} arrived as a lead document. No conversation yet."
 
     channels = {c.channel for c in convos}

@@ -9,7 +9,7 @@ import { PROVENANCE_LABEL, initials, money, relative } from '../lib/format'
 import type { BookingCardData } from '../components/BookingCard'
 import { BookingCard } from '../components/BookingCard'
 import type { Conversation, Lead, TeamMember } from '../lib/types'
-import { Spinner, Unavailable } from '../components/ui'
+import { Button, Input, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
@@ -138,6 +138,13 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
 
   const lead = data.lead
   const name = lead?.name || 'Unnamed buyer'
+  // Their last inbound email, which is what a reply answers. Read off the same
+  // timeline the page is rendering rather than fetched again -- two answers to
+  // "what are we replying to" is how a reply threads under the wrong message.
+  const lastInbound = [...(data?.entries ?? [])]
+    .reverse()
+    .find((e) => e.kind === 'outreach' && e.direction === 'in' && e.channel === 'email')
+
   const entries = channel
     ? // Appointments and escalations carry no channel: they happened, rather
       // than being said on one, so filtering them out would hide the booking a
@@ -199,6 +206,16 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           <div className="shrink-0 border-b border-border bg-muted/40 p-4">
             <LeadComposers
               lead={lead}
+              onDone={() => { setEmailing(false); invalidate() }}
+            />
+            {/* Answering what they actually wrote, rather than sending one of
+                the two drafts above. A buyer mid-exchange has asked a
+                question; a templated follow-up is not an answer to it, and a
+                rep who has to leave for their own mail client takes the reply
+                out of this system for good. */}
+            <EmailReply
+              lead={lead}
+              answering={lastInbound}
               onDone={() => { setEmailing(false); invalidate() }}
             />
           </div>
@@ -451,6 +468,7 @@ function LeadRail({
             )}
           </div>
         ))}
+        {lead && <LinkedAddresses lead={lead} />}
       </div>
 
       {/* Detection only -- nothing here merges anything. The reason is shown
@@ -712,4 +730,186 @@ export function LeadRedirect() {
   if (isLoading) return <Spinner />
   if (data?.lead_id) return <Navigate to={`/app/leads/${data.lead_id}`} replace />
   return <LeadPage of="conversation" />
+}
+
+
+/**
+ * Answer the email a buyer actually sent.
+ *
+ * Separate from `LeadComposers` above, which sends a *draft the server built*
+ * from the lead's state -- a follow-up, a credit application. Those are right
+ * for opening a conversation and wrong for continuing one: a buyer who asked
+ * whether the Silverado is still there has not been answered by a templated
+ * first touch.
+ *
+ * It goes through `/api/email/compose`, the same endpoint the mailbox uses, so
+ * it obeys `blocked_reason` like every other send and files against the buyer.
+ * `in_reply_to_outreach_id` is what makes their client keep one thread instead
+ * of opening a second conversation about the same car.
+ */
+function EmailReply({
+  lead,
+  answering,
+  onDone,
+}: {
+  lead: Lead
+  answering: TimelineEntry | undefined
+  onDone: () => void
+}) {
+  const parent = answering?.subject ?? ''
+  // Not "Re: Re: Re:". A buyer who replies four times should not end up with a
+  // subject line that is mostly prefix.
+  const [subject, setSubject] = useState(
+    parent ? (/^re:/i.test(parent) ? parent : `Re: ${parent}`) : '',
+  )
+  const [body, setBody] = useState('')
+  const [problem, setProblem] = useState('')
+
+  const send = useMutation({
+    mutationFn: () =>
+      api.post<{ status: string; error?: string; blocked?: boolean }>(
+        '/api/email/compose',
+        {
+          to: lead.email,
+          subject,
+          body,
+          lead_id: lead.id,
+          in_reply_to_outreach_id: answering?.id,
+        },
+      ),
+    onSuccess: (result) => {
+      // A refusal comes back as a stored failed row rather than an error, and
+      // the sentence names the setting that would lift it. Showing it beats a
+      // green tick over mail that never left the building.
+      if (result.status !== 'sent') {
+        setProblem(result.error || 'The provider did not accept it.')
+        return
+      }
+      setBody('')
+      setProblem('')
+      onDone()
+    },
+    onError: (err: unknown) => setProblem(String((err as Error)?.message ?? err)),
+  })
+
+  if (!lead.email) return null
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <div className="mb-2 text-xs text-muted-foreground">
+        Reply to <span className="font-medium text-foreground">{lead.email}</span>
+        {answering
+          ? ` · under "${parent || '(no subject)'}"`
+          : ' · this starts a new thread in their inbox'}
+      </div>
+      <Input
+        value={subject}
+        onChange={(e) => setSubject(e.target.value)}
+        placeholder="Subject"
+        className="mb-2"
+      />
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={4}
+        placeholder="Write the reply..."
+        className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+      />
+      {problem && <p className="mt-1.5 text-xs text-destructive">{problem}</p>}
+      <div className="mt-2 flex justify-end">
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={!body.trim() || send.isPending}
+          onClick={() => send.mutate()}
+        >
+          {send.isPending ? 'Sending...' : 'Send email'}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+
+/**
+ * Other addresses this buyer writes from, and the control that adds one.
+ *
+ * `leads.email` is one column and a buyer is not. Somebody who chatted from a
+ * work address and later mails from a personal one is one person that no rule
+ * here can see -- matching is email exact and phone by its last ten digits,
+ * deliberately, because a name is not identity and two Dave Joneses are two
+ * people. So this is a rep saying "these are the same person", which is the
+ * only thing that can honestly make that join.
+ *
+ * The count of what it claimed is shown afterwards. A link that appears to do
+ * nothing is one somebody presses again.
+ */
+function LinkedAddresses({ lead }: { lead: Lead }) {
+  const queryClient = useQueryClient()
+  const [adding, setAdding] = useState(false)
+  const [value, setValue] = useState('')
+  const [note, setNote] = useState('')
+  const linked = lead.linked_addresses ?? []
+
+  const link = useMutation({
+    mutationFn: () =>
+      api.post<{ claimed: number }>(`/api/leads/${lead.id}/addresses`, { address: value }),
+    onSuccess: (result) => {
+      setNote(
+        result.claimed
+          ? `Linked. ${result.claimed} earlier message${result.claimed === 1 ? '' : 's'} moved onto their timeline.`
+          : 'Linked. Nothing earlier was waiting under that address.',
+      )
+      setValue('')
+      setAdding(false)
+      queryClient.invalidateQueries({ queryKey: ['lead', lead.id] })
+    },
+    // The 409 names who already owns the address, which is the useful half:
+    // merging two buyers is not something this can do on its own.
+    onError: (err: unknown) => setNote(String((err as ApiError)?.message ?? err)),
+  })
+
+  return (
+    <div className="mt-1">
+      {linked.map((row) => (
+        <div key={row.id} className="flex items-center gap-2 py-1 text-sm">
+          <Icon name="mail" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate text-muted-foreground">{row.address}</span>
+          <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            linked
+          </span>
+        </div>
+      ))}
+      {adding ? (
+        <div className="mt-1.5">
+          <Input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="their other address"
+            className="mb-1.5"
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={!value.includes('@') || link.isPending}
+              onClick={() => link.mutate()}
+            >
+              {link.isPending ? 'Linking...' : 'Link'}
+            </Button>
+            <Button size="sm" onClick={() => { setAdding(false); setValue('') }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => { setAdding(true); setNote('') }}
+          className="mt-1 text-xs font-medium text-primary hover:underline"
+        >
+          Link another address
+        </button>
+      )}
+      {note && <p className="mt-1.5 text-xs text-muted-foreground">{note}</p>}
+    </div>
+  )
 }
