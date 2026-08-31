@@ -265,6 +265,26 @@ def sse(raw: str) -> list[tuple[str, dict]]:
     return events
 
 
+def utcnow_local():
+    """The same naive UTC the app stamps rows with."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _raises_keyerror(module) -> bool:
+    """A flag vocabulary that silently accepted anything would be a place to
+    hide configuration nobody can find again."""
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        try:
+            module.set(db, "not-a-real-flag", "on")
+        except KeyError:
+            return True
+    return False
+
+
 def check(label: str, condition: bool, detail: str = "") -> None:
     mark = "PASS" if condition else "FAIL"
     print(f"  [{mark}] {label}" + (f" -- {detail}" if detail else ""))
@@ -3513,6 +3533,136 @@ def main() -> int:
     check("and an ordinary reply loses the thread it quoted back",
           just_the_reply("Yes please.\n\nOn Mon 1 Sep 2026 Liner wrote:\n> hello\n")
           == "Yes please.")
+
+    print("\n== the brakes, built before there is anything to stop ==")
+    # Nothing answers email yet. These ship first deliberately: there must
+    # never be a build where Liner can send mail on its own and cannot be
+    # stopped, and a brake first exercised on the day it is needed is one
+    # nobody has ever seen work.
+    from app import email_agent as agent
+    from app import flags as runtime_flags
+    from app.config import settings as cfg_settings
+    from app.db import SessionLocal as _BrakeSession
+    from app.models import Lead as _Lead, Outreach as _Outreach
+
+    state = call("GET", "/api/email/agent")
+    check("email replies are off unless a deployment turned them on",
+          not state["on"] and not state["allowed_by_env"],
+          f"on={state['on']} env={state['allowed_by_env']}")
+    check("and the refusal names which of the two switches is shut",
+          state["reason"] == "off_in_env" and "EMAIL_AGENT" in state["detail"],
+          state["reason"])
+    check("the flag defaults off as well, so neither alone opens the door",
+          state["flag"] == "off", state["flag"])
+
+    # The dashboard switch takes effect on the next request, not the next
+    # deploy. That is the whole reason it is a table and not a `.env` line: it
+    # is reached for at three in the morning, from a phone.
+    thrown = call("POST", "/api/email/agent", {"value": "on", "reason": "smoke"})
+    check("a rep can throw the switch without a restart",
+          thrown["flag"] == "on", thrown["flag"])
+    check("but `.env` still has the final word, and says so",
+          not thrown["on"] and thrown["reason"] == "off_in_env", thrown["reason"])
+    call("POST", "/api/email/agent", {"value": "off", "reason": "smoke reset"})
+
+    with _BrakeSession() as _db:
+        was_env = cfg_settings.email_agent
+        was_cool = cfg_settings.email_reply_cooldown_minutes
+        was_ceiling = cfg_settings.email_replies_per_hour
+        try:
+            cfg_settings.email_agent = True
+            runtime_flags.set(_db, "email_agent", "on", reason="smoke")
+            fresh = _Lead(name="Brake Test", email=f"brake.{stamp}@example.invalid",
+                          phone="", source="email")
+            _db.add(fresh)
+            _db.commit()
+
+            check("with both switches on, a first message may be answered",
+                  agent.may_reply(_db, fresh).allowed)
+
+            # A header is the sender declaring itself a machine, and it is
+            # checked before any timer -- a cooldown does not *stop* a loop.
+            robot = agent.may_reply(_db, fresh, automated="list-id header says so")
+            check("a machine is never answered, whatever the clock says",
+                  not robot.allowed and robot.reason == "automated", robot.reason)
+
+            # A rep's reply is the answer. Liner adding a second one minutes
+            # later gives the buyer two emails from one dealership.
+            _db.add(_Outreach(
+                lead_id=fresh.id, channel="email", direction="out", kind="reply",
+                to_address=fresh.email, subject="Re:", body="A person wrote this.",
+                status="sent", sent_at=utcnow_local(), sent_by_user_id=me_id,
+            ))
+            _db.commit()
+            person = agent.may_reply(_db, fresh)
+            check("a person having answered stops Liner answering again",
+                  not person.allowed and person.reason == "person_answered",
+                  person.reason)
+
+            # One clock, whoever wrote. A rep's send satisfies the buyer's
+            # message exactly as Liner's does, so releasing a thread must not
+            # fire an immediate second answer to something already handled.
+            cfg_settings.email_reply_cooldown_minutes = 0
+            check("and with the cooldown elapsed it may answer again",
+                  agent.may_reply(_db, fresh).allowed)
+            cfg_settings.email_reply_cooldown_minutes = 60
+
+            liner = _Outreach(
+                lead_id=fresh.id, channel="email", direction="out", kind="reply",
+                to_address=fresh.email, subject="Re:", body="Liner wrote this.",
+                status="sent", sent_at=utcnow_local(), sent_by_user_id=None,
+            )
+            _db.add(liner)
+            _db.commit()
+            soon = agent.may_reply(_db, fresh)
+            check("its own last reply holds the same clock",
+                  not soon.allowed and soon.reason == "cooldown", soon.reason)
+            check("and the refusal names the setting that moves it",
+                  "EMAIL_REPLY_COOLDOWN_MINUTES" in soon.detail, soon.detail[:60])
+
+            # Per correspondent stops one loop. A spam run across five hundred
+            # addresses walks past it, because every one is a first contact --
+            # so there is a ceiling across all of them, and breaching it throws
+            # the switch rather than waiting for somebody to wake up.
+            cfg_settings.email_reply_cooldown_minutes = 0
+            cfg_settings.email_replies_per_hour = 1
+            tripped = agent.may_reply(_db, fresh)
+            check("an hourly ceiling across every correspondent stops a spam run",
+                  not tripped.allowed and tripped.reason == "hourly_ceiling",
+                  tripped.reason)
+            check("and it throws the kill switch rather than refusing one message",
+                  runtime_flags.get(_db, "email_agent") == "off",
+                  runtime_flags.get(_db, "email_agent"))
+            check("recording that a machine did it, not a person",
+                  "automatically" in next(
+                      f["reason"] for f in runtime_flags.all_flags(_db)
+                      if f["key"] == "email_agent"
+                  ))
+        finally:
+            cfg_settings.email_agent = was_env
+            cfg_settings.email_reply_cooldown_minutes = was_cool
+            cfg_settings.email_replies_per_hour = was_ceiling
+            runtime_flags.set(_db, "email_agent", "off", reason="smoke reset")
+
+    check("an unknown flag is refused rather than quietly stored",
+          _raises_keyerror(runtime_flags))
+
+    # The Worker has to send what the loop-breaker reads, and only that. A full
+    # header dump is somebody's routing metadata travelling through our webhook
+    # for no reason.
+    worker_src = pathlib.Path(
+        "backend/app/integrations/email/worker/src/index.ts"
+    ).read_text()
+    for header in ("auto-submitted", "list-id", "list-unsubscribe", "precedence"):
+        check(f"the worker forwards {header}", f'"{header}"' in worker_src)
+    check("and it already forwards attachment names and sizes, never the bytes",
+          "attachments:" in worker_src and "content?.byteLength" in worker_src)
+    from app.email_intake import AUTOMATED_HEADERS
+
+    forwarded = set(re.findall(r'^\t\t\t"([a-z-]+)",$', worker_src, re.MULTILINE))
+    check("every header the backend checks is one the worker sends",
+          set(AUTOMATED_HEADERS) <= forwarded,
+          f"not sent: {sorted(set(AUTOMATED_HEADERS) - forwarded)}")
 
     print("\n== a rep answers, and a buyer's two addresses become one buyer ==")
     # The loop this whole feature is for: they write, a rep replies from the

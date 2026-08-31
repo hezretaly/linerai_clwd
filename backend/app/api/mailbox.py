@@ -22,6 +22,7 @@ from app.api.deps import current_user
 from app.api.inbound_email import signature_for
 from app.config import settings
 from app.db import get_db, utcnow
+from app import email_agent, flags
 from app.email_intake import is_ours
 from app.email_threads import EXCHANGE_THRESHOLD
 from app.email_threads import threads as email_threads_for
@@ -221,6 +222,62 @@ def _in_box(m: dict, box: str) -> bool:
     if box == "unmatched":
         return m["kind"] == "unmatched"
     return True
+
+
+class FlagBody(BaseModel):
+    value: str
+    reason: str = ""
+
+
+@router.get("/email/agent")
+def agent_state(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Whether Liner is answering email, and every brake behind that answer.
+
+    Both switches are reported rather than one boolean, because they fail
+    differently and a rep looking at an "off" needs to know which one to reach
+    for: `EMAIL_AGENT` in `.env` is the deployment saying this dealership has
+    not turned it on and needs a restart; the runtime flag is the one somebody
+    threw, and can be thrown back here.
+    """
+    verdict = email_agent.enabled(db)
+    return {
+        "on": verdict.allowed,
+        "reason": verdict.reason,
+        "detail": verdict.detail,
+        # Named separately so the page can say *which* is off. One boolean
+        # would send somebody editing `.env` to undo a dashboard switch.
+        "allowed_by_env": settings.email_agent,
+        "flag": flags.get(db, "email_agent"),
+        "flags": [
+            {**row, "updated_at": stamp(row["updated_at"])}
+            for row in flags.all_flags(db)
+        ],
+        "cooldown_minutes": settings.email_reply_cooldown_minutes,
+        "hourly_ceiling": settings.email_replies_per_hour,
+    }
+
+
+@router.post("/email/agent")
+def set_agent(
+    body: FlagBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Throw the switch. Takes effect on the next delivery, not the next deploy.
+
+    Open to any rep, deliberately. This is the control somebody reaches for
+    while the inbox is being hammered, and gating it behind a manager means the
+    person watching it happen cannot stop it.
+    """
+    value = (body.value or "").strip().lower()
+    if value not in ("on", "off"):
+        raise HTTPException(400, "value must be 'on' or 'off'")
+    flags.set(db, "email_agent", value, reason=body.reason, by=user.id)
+    emit(db, "email.agent", {"value": value, "by": user.id})
+    return agent_state(db=db, user=user)
 
 
 @router.get("/email/threads")

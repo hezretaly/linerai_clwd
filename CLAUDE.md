@@ -478,6 +478,42 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     an escalation a rep had claimed. An autonomous email sender needs its own
     guards, a rate limit and a loop-breaker for auto-responders; none of that
     exists, so neither does the capability.
+- **Liner does not answer email yet, and the brakes exist anyway.** Phase 4
+  shipped before Phase 5 deliberately: there must never be a build where it
+  can send mail on its own and cannot be stopped, and a brake first exercised
+  on the day it is needed is one nobody has seen work. `app/email_agent.py`
+  holds the whole decision and `make smoke` trips every one of them.
+  - **Two switches, and the stricter wins.** `EMAIL_AGENT` in `.env` is the
+    deployment saying this dealership has turned it on and needs a restart;
+    the `email_agent` runtime flag is the one somebody throws at three in the
+    morning. Both default off, so neither alone opens the door.
+  - **A kill switch cannot live in `.env` or in `AssistantSettings`.** It is
+    reached for while something is going wrong, so it has to take effect on
+    the next request — and `create_all` adds a table to an existing database
+    and never a column, so a switch in a new column cannot reach the box that
+    needs it. `runtime_flags` is a table with a closed vocabulary in
+    `app/flags.py`; an unknown key is refused, because a free key/value store
+    on a dashboard is where configuration goes to become unfindable.
+  - **Headers before timers.** A cooldown does not *stop* a loop, it slows a
+    vacation responder to forty-eight real emails a day, forever. RFC 3834's
+    `Auto-Submitted` and RFC 2919/2369's `List-*` are the sender declaring
+    itself a machine, and honouring them ends it on turn one. The Worker
+    forwards exactly those seven headers — named rather than dumped, because a
+    full header set is somebody's routing metadata and spam scores travelling
+    through our webhook for no reason — and `make smoke` fails if the backend
+    checks one the Worker does not send.
+  - **One clock, whoever writes.** Any outbound restarts the cooldown: a rep's
+    reply satisfies the buyer's message exactly as Liner's does, and two
+    clocks would let releasing a thread fire an immediate second answer to
+    something a person already handled. A rep having answered *within* the
+    window stops Liner separately and says so, because in an inbox two emails
+    from one dealership minutes apart have no window that makes them legible.
+  - **The hourly ceiling trips the switch rather than refusing one message.**
+    Per-correspondent stops one loop; a spam run across five hundred addresses
+    walks past it, since every one is a first contact. A brake that needs a
+    human to pull it is not a brake overnight, and the flag records that a
+    machine set it — otherwise the morning after reads as somebody having
+    turned it off by hand.
 - **`OUTBOUND_ONLY_TO` gates sending, never receiving.** One setting whose
   name is the rule: empty refuses every send, a list allows those addresses,
   the word `everyone` lifts the limit. One call site,

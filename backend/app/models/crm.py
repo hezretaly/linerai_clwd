@@ -48,6 +48,41 @@ class Lead(Base):
         return not self.email
 
 
+class RuntimeFlag(Base):
+    """A switch somebody can throw without a restart, and a note of who did.
+
+    **`.env` is the wrong home for an emergency control.** A kill switch is
+    reached for at three in the morning, when the inbox is being hammered and
+    the person reaching for it is on a phone. It has to take effect on the next
+    request, not on the next deploy.
+
+    A table rather than columns on `AssistantSettings`, for two reasons.
+    `create_all` adds a table to a database that already exists and never a
+    column, so a switch that lives in a new column cannot be added to the box
+    that needs it. And `AssistantSettings` is draft-then-publish: you do not
+    *publish a version* to stop the bleeding.
+
+    Deliberately narrow. `FLAGS` in `app/flags.py` is the whole vocabulary and
+    an unknown key is refused -- a free key/value store on a dashboard becomes
+    a place to hide configuration nobody can find again.
+    """
+
+    __tablename__ = "runtime_flags"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    value: Mapped[str] = mapped_column(String(200), default="")
+    #: Why it is set, when a machine set it. A ceiling that trips itself has to
+    #: say so, or the morning after looks like somebody switched it off by hand.
+    reason: Mapped[str] = mapped_column(Text, default="")
+    set_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow
+    )
+
+
 class LeadAddress(Base):
     """A second address the same buyer writes from, attached by a person.
 

@@ -157,8 +157,34 @@ export default {
 		// reply+<token>. parsed.to is the header, and a forward rewrites it.
 		const match = message.to.match(/^reply\+([a-z0-9_-]+)@/i);
 
+		// The headers that say "a machine sent this", and only those. RFC 3834
+		// forbids auto-replying to Auto-Submitted values other than `no`, and
+		// RFC 2919/2369 mark list traffic -- honouring them stops a vacation
+		// responder on its first turn, where a cooldown only slows it to
+		// forty-eight real emails a day, forever.
+		//
+		// Named rather than forwarded wholesale. A full header dump is
+		// somebody's routing metadata, their spam scores and their internal
+		// hostnames travelling through our webhook for no reason, and the
+		// backend reads exactly these.
+		const LOOP_HEADERS = [
+			"auto-submitted",
+			"precedence",
+			"list-id",
+			"list-unsubscribe",
+			"x-auto-response-suppress",
+			"x-autoreply",
+			"x-autorespond",
+		];
+		const headers: Record<string, string> = {};
+		for (const { key, value } of parsed.headers ?? []) {
+			const name = (key ?? "").toLowerCase();
+			if (LOOP_HEADERS.includes(name) && value) headers[name] = String(value);
+		}
+
 		const payload = {
 			messageId: parsed.messageId,
+			headers,
 			from: message.from,
 			to: message.to,
 			conversationId: match ? match[1] : null,

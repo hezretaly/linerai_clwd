@@ -9,6 +9,7 @@ replays with ``?since={event_id}`` and needs a monotonic cursor. That maps to
 
 from app.models.crm import (
     LeadAddress,
+    RuntimeFlag,
     PROVENANCE,
     STAGES,
     Appointment,
@@ -69,6 +70,7 @@ __all__ = [
     "KnowledgeEntry",
     "Lead",
     "LeadAddress",
+    "RuntimeFlag",
     "Message",
     "Outreach",
     "Rail",

@@ -107,6 +107,22 @@ class Settings(BaseSettings):
     # Shared with the Cloudflare Worker. The development default makes the
     # inbound path testable; production refuses to boot on it, because an
     # intake anyone can guess the secret for is an intake anyone can write to.
+    # --- Liner answering email --------------------------------------------
+    #: Off, and off by default is the whole point. Taking over a mailbox is a
+    #: decision a dealership makes, the same shape as `voice_provider` -- and
+    #: this is the half that needs a restart, so it is the deployment's answer
+    #: rather than the emergency one. The `email_agent` runtime flag is the
+    #: other half, and the stricter of the two wins.
+    email_agent: bool = False
+    #: One reply per correspondent per this many minutes. A tuning value, so
+    #: `.env` is right for it -- unlike the kill switch, which is reached for
+    #: while something is going wrong and cannot wait for a restart.
+    email_reply_cooldown_minutes: int = 60
+    #: Across every correspondent, per hour. Per-correspondent stops one loop;
+    #: a spam run across five hundred addresses walks past it, because every
+    #: one is a first contact. Breaching this throws the kill switch.
+    email_replies_per_hour: int = 30
+
     webhook_secret: str = DEV_WEBHOOK_SECRET
 
     # --- Voice -------------------------------------------------------------
