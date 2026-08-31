@@ -3448,6 +3448,46 @@ def main() -> int:
     rows = [r for r in (made.get("leads") or made) if r.get("email") == who]
     check("a person writing to a published address becomes a buyer",
           len(rows) == 1, f"{len(rows)} lead(s)")
+
+    # **The shape the deployed Worker actually posts.** `from` is
+    # `message.from`, the *envelope* sender -- a bare address, because a mail
+    # server does not put a display name in an envelope. The parsed header's
+    # name arrives separately as `fromName`, and nothing read it: so every real
+    # buyer arrived "Unnamed buyer" while the tests, which put a display name
+    # in `from`, passed. Driven here in the Worker's shape for that reason.
+    named = f"jamie.{stamp}@example.invalid"
+    inbound({
+        "messageId": f"<worker-shape-{stamp}@mail>",
+        "from": named, "fromAddress": named, "fromName": "Jamie Okafor",
+        "to": "sales@example.invalid", "subject": "Silverado",
+        "text": "Is it still there?",
+    })
+    settled(f"<worker-shape-{stamp}@mail>")
+    got = [r for r in call("GET", "/api/leads?limit=300")["leads"]
+           if r["email"] == named]
+    check("a buyer arrives with the name their mail client sent",
+          got and got[0]["name"] == "Jamie Okafor",
+          got[0]["name"] if got else "(no lead)")
+
+    # And when the envelope carries none, the signature is better than
+    # "Unnamed buyer" -- which is a rep opening the message to find what the
+    # row could have told them. Still a guess, and still recorded as one.
+    signed_addr = f"morgan.{stamp}@example.invalid"
+    inbound({
+        "messageId": f"<signed-{stamp}@mail>",
+        "from": signed_addr, "fromAddress": signed_addr, "fromName": "",
+        "to": "sales@example.invalid", "subject": "Trade-in",
+        "text": "What would you give me for a 2015 Civic?\n\nThanks,\nMorgan Reed",
+    })
+    settled(f"<signed-{stamp}@mail>")
+    signer = next(r for r in call("GET", "/api/leads?limit=300")["leads"]
+                  if r["email"] == signed_addr)
+    check("and one who only signed their message is named from that",
+          signer["name"] == "Morgan Reed", signer["name"])
+    check("with the guess still marked a guess, where provenance can live",
+          any(f["key"] == "signed_name" and not f["verified"]
+              for f in signer.get("captured_fields") or []),
+          str(signer.get("captured_fields")))
     if rows:
         check("named from the envelope, which is a fact rather than a guess",
               rows[0]["name"] == "Robin Vance", rows[0]["name"])
@@ -3692,6 +3732,28 @@ def main() -> int:
     check("the flag defaults off as well, so neither alone opens the door",
           state["flag"] == "off", state["flag"])
 
+    # **There has to be a model, and saying so is the whole point.** Without
+    # this check `run_turn` reached straight for a provider that is not
+    # configured, `NotConfigured` came back up through a background task, and
+    # the result was indistinguishable from a buyer who had not written -- the
+    # exact failure the receipts exist to prevent, arriving through the one
+    # path that had no receipt for it.
+    with _BrakeSession() as _db:
+        was = cfg_settings.email_agent
+        try:
+            cfg_settings.email_agent = True
+            runtime_flags.set(_db, "email_agent", "on", reason="smoke")
+            stub_verdict = agent.enabled(_db)
+            check("with no model there is no reply, and it says which setting",
+                  not stub_verdict.allowed and stub_verdict.reason == "no_model"
+                  and "LLM_MODE" in stub_verdict.detail,
+                  stub_verdict.reason)
+        finally:
+            cfg_settings.email_agent = was
+            runtime_flags.set(_db, "email_agent", "off", reason="smoke reset")
+    check("and every refusal is listed where a person would look for it",
+          "declined" in state, str(sorted(state)))
+
     # The dashboard switch takes effect on the next request, not the next
     # deploy. That is the whole reason it is a table and not a `.env` line: it
     # is reached for at three in the morning, from a phone.
@@ -3715,11 +3777,13 @@ def main() -> int:
             _db.commit()
 
             check("with both switches on, a first message may be answered",
-                  agent.may_reply(_db, fresh).allowed)
+                  agent.may_reply(_db, fresh, has_provider=True).allowed)
 
             # A header is the sender declaring itself a machine, and it is
             # checked before any timer -- a cooldown does not *stop* a loop.
-            robot = agent.may_reply(_db, fresh, automated="list-id header says so")
+            robot = agent.may_reply(
+                _db, fresh, automated="list-id header says so", has_provider=True
+            )
             check("a machine is never answered, whatever the clock says",
                   not robot.allowed and robot.reason == "automated", robot.reason)
 
@@ -3731,7 +3795,7 @@ def main() -> int:
                 status="sent", sent_at=utcnow_local(), sent_by_user_id=me_id,
             ))
             _db.commit()
-            person = agent.may_reply(_db, fresh)
+            person = agent.may_reply(_db, fresh, has_provider=True)
             check("a person having answered stops Liner answering again",
                   not person.allowed and person.reason == "person_answered",
                   person.reason)
@@ -3741,7 +3805,7 @@ def main() -> int:
             # fire an immediate second answer to something already handled.
             cfg_settings.email_reply_cooldown_minutes = 0
             check("and with the cooldown elapsed it may answer again",
-                  agent.may_reply(_db, fresh).allowed)
+                  agent.may_reply(_db, fresh, has_provider=True).allowed)
             cfg_settings.email_reply_cooldown_minutes = 60
 
             liner = _Outreach(
@@ -3751,7 +3815,7 @@ def main() -> int:
             )
             _db.add(liner)
             _db.commit()
-            soon = agent.may_reply(_db, fresh)
+            soon = agent.may_reply(_db, fresh, has_provider=True)
             check("its own last reply holds the same clock",
                   not soon.allowed and soon.reason == "cooldown", soon.reason)
             check("and the refusal names the setting that moves it",
@@ -3763,7 +3827,7 @@ def main() -> int:
             # the switch rather than waiting for somebody to wake up.
             cfg_settings.email_reply_cooldown_minutes = 0
             cfg_settings.email_replies_per_hour = 1
-            tripped = agent.may_reply(_db, fresh)
+            tripped = agent.may_reply(_db, fresh, has_provider=True)
             check("an hourly ceiling across every correspondent stops a spam run",
                   not tripped.allowed and tripped.reason == "hourly_ceiling",
                   tripped.reason)

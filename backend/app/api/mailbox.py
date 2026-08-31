@@ -243,10 +243,31 @@ def agent_state(
     threw, and can be thrown back here.
     """
     verdict = email_agent.enabled(db)
+    # The last few messages Liner declined to answer, and why. This is the
+    # question a person actually has -- "it did not reply, is that on purpose?"
+    # -- and the reason was only on the receipt, which is a diagnostics strip
+    # nobody opens until they already suspect something.
+    declined = [
+        {
+            "id": r.id,
+            "from_address": r.from_address,
+            "subject": r.subject,
+            "detail": r.detail.split("Liner did not reply: ", 1)[-1],
+            "at": stamp(r.created_at),
+        }
+        for r in (
+            db.query(InboundEmail)
+            .filter(InboundEmail.detail.contains("Liner did not reply"))
+            .order_by(InboundEmail.created_at.desc())
+            .limit(5)
+            .all()
+        )
+    ]
     return {
         "on": verdict.allowed,
         "reason": verdict.reason,
         "detail": verdict.detail,
+        "declined": declined,
         # Named separately so the page can say *which* is off. One boolean
         # would send somebody editing `.env` to undo a dashboard switch.
         "allowed_by_env": settings.email_agent,

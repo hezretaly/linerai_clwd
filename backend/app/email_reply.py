@@ -100,7 +100,9 @@ def answer(
     record on the receipt and read later, and half of them are ordinary -- the
     agent being off is not an error.
     """
-    verdict = email_agent.may_reply(db, lead, automated=automated)
+    verdict = email_agent.may_reply(
+        db, lead, automated=automated, has_provider=provider is not None
+    )
     if not verdict.allowed:
         return {"sent": False, "reason": verdict.reason, "detail": verdict.detail}
 
@@ -124,8 +126,17 @@ def answer(
     db.commit()
 
     from app.agent.loop import run_turn
+    from app.integrations.base import NotConfigured
 
-    reply, calls = run_turn(db, convo, text, provider, channel="email")
+    try:
+        reply, calls = run_turn(db, convo, text, provider, channel="email")
+    except NotConfigured as exc:
+        # `enabled()` already refuses when LLM_MODE is not live, so reaching
+        # here means live mode with a key the vendor rejected or a setting
+        # that changed under us. Reported rather than raised: a traceback
+        # coming back up through a background task is indistinguishable from a
+        # buyer who never wrote.
+        return {"sent": False, "reason": "no_model", "detail": str(exc)}
     db.add(Message(
         conversation_id=convo.id, role="liner", content=reply,
         tool_calls_json=_dump(calls),
@@ -136,7 +147,9 @@ def answer(
     # model round trip that takes seconds, and a rep who pressed Take over or
     # threw the kill switch during it must not be overtaken by a message that
     # was already in flight.
-    again = email_agent.may_reply(db, lead, automated=automated)
+    again = email_agent.may_reply(
+        db, lead, automated=automated, has_provider=provider is not None
+    )
     db.refresh(convo)
     if not again.allowed or convo.agent_paused:
         return {

@@ -35,6 +35,7 @@ from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.escalations import owner_of
 from app.events import emit
+from app.integrations.email.base import with_name
 from app.email_intake import (
     as_text,
     automated_reason,
@@ -208,7 +209,16 @@ async def receive(
         message_id = SYNTHETIC + sha256(raw).hexdigest()[:32]
     # The Worker sends `from`, which is a Python keyword; pydantic keeps it in
     # the extras rather than on the field named from_.
+    # `from` is the **envelope** sender, which is a bare address -- the Worker
+    # sends `message.from`, and a mail server does not put a display name in an
+    # envelope. The parsed header's name comes over separately as `fromName`,
+    # and nothing read it: so every buyer who wrote in arrived unnamed, on real
+    # mail, while the tests that put a display name in `from` passed. Rebuilt
+    # here into the one envelope the rest of this file reads.
     sender = (data.get("from") or data.get("from_") or "").strip()
+    shown = (data.get("fromName") or "").strip()
+    if shown and "<" not in sender:
+        sender = with_name(shown, sender_address(sender) or sender)
     to = (data.get("to") or "").strip()
     subject = (data.get("subject") or "").strip()
     # Plain text when there is any; otherwise the HTML part with its tags
@@ -474,6 +484,14 @@ def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | N
         db.add(CapturedField(
             lead_id=lead.id, key="signed_name", value=signed, provenance="inferred",
         ))
+        # And used as the name when the envelope carried none. "Unnamed buyer"
+        # over a message signed "Pat Quinn" is a rep opening the mail to find
+        # what the row could have told them. It is still a guess and still
+        # recorded as one -- the captured field above keeps the provenance the
+        # name column cannot -- but a guessed name a rep can correct beats no
+        # name at all, which was the complaint.
+        if not lead.name:
+            lead.name = signed
     db.commit()
 
     # The other half of the ladder, and the reason it is called here rather

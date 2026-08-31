@@ -479,6 +479,24 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     and the same reply guards as chat — a second copy of the loop is how one
     channel quietly stops running them — with `EMAIL_ADDENDUM` appended the way
     voice's is, and capped the same way.
+    - **Email is live-only, and says so.** The stub is a state machine whose
+      replies point at a booking card and rail chips — correct on a screen,
+      nonsense in an inbox. Without that check `run_turn` reached straight for
+      an unconfigured provider, `NotConfigured` came back up through a
+      background task, and the result was indistinguishable from a buyer who
+      had not written: the exact failure the receipts exist to prevent,
+      arriving through the one path that had no receipt for it. Every refusal
+      is now listed on `/api/email/agent`, because "it did not reply, is that
+      on purpose?" is the question a person actually has.
+    - **The sender's name comes over as `fromName`, not in `from`.** The
+      Worker sends `message.from`, which is the *envelope* sender and
+      therefore a bare address — a mail server does not put a display name in
+      an envelope. Nothing read the parsed header's name, so every real buyer
+      arrived "Unnamed buyer" while the tests, which put a display name in
+      `from`, passed. Where the envelope carries none the signature is used
+      instead: still a guess, still recorded as `inferred` on a captured
+      field, and better than a rep opening the message to find what the row
+      could have told them.
     - **The conversation is minted on the first reply, not on the third
       exchange.** `Conversation` carries Take over, `agent_paused`, escalation
       and the message rows; without one, for two exchanges a rep could not grab

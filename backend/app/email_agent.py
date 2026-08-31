@@ -62,7 +62,7 @@ class Verdict:
     detail: str = ""
 
 
-def enabled(db: Session) -> Verdict:
+def enabled(db: Session, *, has_provider: bool = False) -> Verdict:
     """Is the email agent on at all?
 
     Two switches, and the stricter wins. `.env` is the deployment's answer and
@@ -82,16 +82,41 @@ def enabled(db: Session) -> Verdict:
             False, "switched_off",
             "Liner's email replies are switched off in the dashboard.",
         )
+    # **And there has to be a model.** The stub is a state machine over
+    # `conversations.stage` whose replies point at a booking card and a rail of
+    # chips -- correct on a screen and nonsense in an inbox, where there is
+    # neither. So email is live-only, and says so rather than sending
+    # something written for a different surface.
+    #
+    # This check is why it says so at all. Without it `run_turn` reached
+    # straight for a provider that is not configured, `NotConfigured` came back
+    # up through the background task, and the whole thing looked exactly like a
+    # buyer who had not written -- which is the failure the receipts exist to
+    # prevent, arriving through the one path that had no receipt for it.
+    # `has_provider` is an injected one, which *is* a model -- the same trick
+    # `run_turn` uses to be testable without a key. It is the only way the gate
+    # can drive a whole email turn offline, and it is not a way round the rule:
+    # nothing in the app ever passes one.
+    if not has_provider and settings.llm_mode != "live":
+        return Verdict(
+            False, "no_model",
+            "LLM_MODE is stub, so there is no model to write the reply. The "
+            "scripted agent answers a screen -- it points at a booking card "
+            "and rail chips, neither of which exists in an inbox. Set "
+            "LLM_MODE=live and OPENAI_API_KEY.",
+        )
     return Verdict(True)
 
 
-def may_reply(db: Session, lead: Lead, *, automated: str = "") -> Verdict:
+def may_reply(
+    db: Session, lead: Lead, *, automated: str = "", has_provider: bool = False
+) -> Verdict:
     """The whole decision, for one inbound message from one buyer.
 
     Called with `automated` set to `automated_reason`'s verdict from intake --
     the headers only exist in the request, and this runs afterwards.
     """
-    switch = enabled(db)
+    switch = enabled(db, has_provider=has_provider)
     if not switch.allowed:
         return switch
 
