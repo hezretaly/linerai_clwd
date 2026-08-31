@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 from email.utils import parseaddr
 
+from app.config import settings
+
 # Where a reply stops being what the buyer wrote and starts being a copy of
 # what we sent them. Outlook draws a rule of underscores; Gmail writes "On
 # <date> X wrote:"; older clients use the Original Message banner. Trimming is
@@ -30,6 +32,11 @@ QUOTE_MARKERS = [
 ]
 
 TAG_RE = re.compile(r"<[^>]+>")
+
+# reply+<token>@domain. The local part is what carries the thread; the domain
+# is whatever Cloudflare routed, and matching on it would break the moment a
+# dealer forwards from a second address.
+REPLY_RE = re.compile(r"reply\+([A-Za-z0-9_-]{6,64})@", re.IGNORECASE)
 
 #: A local part that no person reads. Answering one of these is either shouting
 #: into a void or, worse, the first turn of a loop between two robots.
@@ -111,6 +118,34 @@ def as_text(html: str) -> str:
     )
     spaced = re.sub(r"<br\s*/?>|</p>|</div>|</tr>", "\n", without_head, flags=re.IGNORECASE)
     return re.sub(r"\n{3,}", "\n\n", unescape(TAG_RE.sub("", spaced))).strip()
+
+
+def is_ours(recipient: str) -> str:
+    """Was this addressed to Liner rather than to the dealership?
+
+    Read from the settings that already name our two published addresses, plus
+    `cto@` on the same domain, rather than a second hardcoded list -- the
+    landing page and the ops mailbox both read the same values, and a third
+    copy is how one of them starts disagreeing about who owns an inbox.
+
+    `reply+<token>@` is never ours whatever the domain: it is minted by a send
+    to a buyer and routes back into their timeline.
+    """
+    address = sender_address(recipient) or (recipient or "").strip().lower()
+    if not address or REPLY_RE.search(recipient or ""):
+        return ""
+    # Compared on the **local part**, not the whole address. The Worker's own
+    # recipient filter does the same, and for the same reason: mail reaches
+    # these boxes through whatever domain Cloudflare is routing, and a dealer
+    # forwarding from a second one is normal. Matching the full address meant
+    # `support@` on any other domain read as the dealership's.
+    ours = {
+        (settings.support_email or "").partition("@")[0].strip().lower(),
+        (settings.founder_email or "").partition("@")[0].strip().lower(),
+        "cto",
+    }
+    local = address.partition("@")[0]
+    return address if local in {a for a in ours if a} else ""
 
 
 def sender_address(sender: str) -> str:

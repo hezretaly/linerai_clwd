@@ -494,6 +494,29 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - `outbound_recipients` returns `None` for no limit and `[]` for nobody.
     Callers must tell them apart; collapsing the two is how an empty list
     starts meaning unrestricted.
+- **`/app/email` lists messages *and* people, and they answer different
+  questions.** A message list is what you want hunting one send; a list of
+  correspondents is what you want deciding who to answer next, because four
+  messages with one buyer are one relationship. Same split as
+  `/app/conversations`, for the same reason.
+  - **The exchange counter lives in `app/email_threads.py` and nowhere else.**
+    It decides two things read in different places — which tab a row is in, and
+    whether the badge says the buyer is waiting — and two copies of "what
+    counts as a back and forth" is how a header says 3 over a row that reads
+    as 2. An exchange is **an inbound we answered**: a buyer who writes three
+    times and gets one reply has had one, and the two they are still owed are
+    what `waiting` is for rather than something to inflate the count with.
+    `EXCHANGE_THRESHOLD` is one constant, so moving it moves the badge and the
+    tab together.
+  - **A stranger row is never waiting.** Since a person writing to a published
+    address becomes a buyer, what is left unplaced is a newsletter, an
+    out-of-office and a `no-reply@` mailbox — and flagging nine rows nobody
+    will ever answer as owed a reply buries the one somebody has to.
+  - **Unplaced mail addressed to *us* is not a dealership's to read.**
+    `support@`, `founder@` and `cto@` are Liner's boxes and `/ops` already
+    lists them; the dealership's mailbox was listing every unresolved
+    delivery, so a stranger writing to our support desk was readable by every
+    rep. Same realm rule `_lead_from` follows, arriving through the list.
 - **`/app/email` is a union, and that is the point.** It lists `outreach` rows
   both directions *plus* unresolved `inbound_emails`. A reply nobody could
   place has no outreach row and no buyer page, so listing one table would

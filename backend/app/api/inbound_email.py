@@ -37,6 +37,8 @@ from app.email_intake import (
     automated_reason,
     display_name,
     just_the_reply,
+    REPLY_RE,
+    is_ours,
     sender_address,
     signature_name,
 )
@@ -59,8 +61,6 @@ router = APIRouter(tags=["email"])
 # dealer forwards from a second address.
 # Matches the Worker's `express.json({ limit: "10mb" })`.
 MAX_BODY = 10 * 1024 * 1024
-
-REPLY_RE = re.compile(r"reply\+([A-Za-z0-9_-]{6,64})@", re.IGNORECASE)
 
 # Prefix on a message id this app invented because the mail carried none.
 # It has to be recognisable: a synthetic id is a dedupe key and nothing
@@ -382,34 +382,6 @@ def _place(receipt_id: str, refused: str = "") -> None:
         db.close()
 
 
-def _is_ours(recipient: str) -> str:
-    """Was this addressed to Liner rather than to the dealership?
-
-    Read from the settings that already name our two published addresses, plus
-    `cto@` on the same domain, rather than a second hardcoded list -- the
-    landing page and the ops mailbox both read the same values, and a third
-    copy is how one of them starts disagreeing about who owns an inbox.
-
-    `reply+<token>@` is never ours whatever the domain: it is minted by a send
-    to a buyer and routes back into their timeline.
-    """
-    address = sender_address(recipient) or (recipient or "").strip().lower()
-    if not address or REPLY_RE.search(recipient or ""):
-        return ""
-    # Compared on the **local part**, not the whole address. The Worker's own
-    # recipient filter does the same, and for the same reason: mail reaches
-    # these boxes through whatever domain Cloudflare is routing, and a dealer
-    # forwarding from a second one is normal. Matching the full address meant
-    # `support@` on any other domain read as the dealership's.
-    ours = {
-        (settings.support_email or "").partition("@")[0].strip().lower(),
-        (settings.founder_email or "").partition("@")[0].strip().lower(),
-        "cto",
-    }
-    local = address.partition("@")[0]
-    return address if local in {a for a in ours if a} else ""
-
-
 def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | None, str]:
     """Mint a buyer from a delivery that matched nobody, or say why not.
 
@@ -440,7 +412,7 @@ def _lead_from(db: Session, claim: InboundEmail, refused: str) -> tuple[Lead | N
     # and the gate caught it because the ops mailbox stopped showing the
     # stranger it is there to show. Everything else -- `sales@`, `reply+` --
     # is the dealership's door.
-    if _is_ours(claim.to_address):
+    if is_ours(claim.to_address):
         return None, (
             f"it was addressed to {claim.to_address or 'one of our own addresses'}, "
             "which is Liner's rather than the dealership's, so it belongs in the "

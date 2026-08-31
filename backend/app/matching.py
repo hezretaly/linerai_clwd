@@ -108,8 +108,7 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
     if not address:
         return 0
 
-    from app.api.inbound_email import _is_ours
-    from app.email_intake import sender_address
+    from app.email_intake import is_ours, sender_address
 
     # `from_address` is the whole envelope -- `Austin Miller <a@b>` -- so the
     # address has to come out of it before it is compared. Comparing the header
@@ -118,7 +117,7 @@ def claim_unresolved(db: Session, lead: Lead) -> int:
     # unresolved, which is what it looked like anyway.
     waiting = [
         row for row in db.query(InboundEmail).filter(InboundEmail.outcome == "unresolved").all()
-        if sender_address(row.from_address) == address and not _is_ours(row.to_address)
+        if sender_address(row.from_address) == address and not is_ours(row.to_address)
     ]
     for row in waiting:
         row.outcome = "received"

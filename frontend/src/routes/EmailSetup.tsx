@@ -4,9 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
 import { api, ApiError } from '../lib/api'
-import { dateTime } from '../lib/format'
+import { dateTime, relative } from '../lib/format'
 import type { IntegrationsPayload } from '../lib/types'
-import { Badge, Button, Card, Field, Input, Sheet, Spinner } from '../components/ui'
+import { Badge, Button, Card, Empty, Field, Input, Sheet, Spinner } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
 
@@ -99,6 +99,41 @@ interface Mailbox {
   has_more: boolean
 }
 
+/** One correspondent, and how far the exchange with them has got.
+ *
+ *  Everything here is computed server-side in `app/email_threads.py`, which is
+ *  where the counter lives. Recomputing "what counts as a back and forth" in
+ *  the browser is how a header ends up saying 3 over a row that reads as 2. */
+interface Thread {
+  key: string
+  kind: 'buyer' | 'stranger'
+  lead_id: string | null
+  name: string
+  address: string
+  subject?: string
+  last_subject: string
+  last_body: string
+  last_direction: string
+  exchanges: number
+  inbound: number
+  outbound: number
+  waiting: boolean
+  graduated: boolean
+  at: string | null
+}
+
+type ThreadBox = 'open' | 'waiting' | 'graduated' | 'strangers' | 'all'
+
+/** Open first, because it is the working list: everyone this dealership is
+ *  mid-conversation with who has not yet become one. */
+const THREAD_BOXES: [ThreadBox, string][] = [
+  ['open', 'Open'],
+  ['waiting', 'Waiting on us'],
+  ['graduated', 'Conversations'],
+  ['strangers', 'No buyer'],
+  ['all', 'Everyone'],
+]
+
 const BOXES: [Box, string][] = [
   ['all', 'All'],
   ['received', 'Received'],
@@ -157,6 +192,7 @@ export function EmailSetupPage() {
   const [target, setTarget] = useState('')
   const [sendResult, setSendResult] = useState<string | null>(null)
   const [box, setBox] = useState<Box>('all')
+  const [people, setPeople] = useState<ThreadBox>('open')
   const [query, setQuery] = useState('')
   const [openSetup, setOpenSetup] = useState(false)
   const [reading, setReading] = useState<Mail | null>(null)
@@ -181,6 +217,17 @@ export function EmailSetupPage() {
     refetchInterval: POLL_MS,
     // A tab left open all morning is the case this page is for. Coming back to
     // it should not show yesterday's mailbox while the timer runs down.
+    refetchOnWindowFocus: true,
+  })
+
+  const { data: threads } = useQuery({
+    queryKey: ['email-threads', people],
+    queryFn: () => api.get<{
+      threads: Thread[]
+      counts: Record<ThreadBox, number>
+      threshold: number
+    }>(`/api/email/threads?box=${people}`),
+    refetchInterval: POLL_MS,
     refetchOnWindowFocus: true,
   })
 
@@ -242,6 +289,63 @@ export function EmailSetupPage() {
         title="Email"
         subtitle="Everything sent and received. Out through Resend, back through Cloudflare."
       />
+
+      {/* ---- who this dealership is talking to ----
+          The list below is messages, which is what you want when hunting a
+          particular send. This is people, which is what you want when
+          deciding who to answer next -- four messages with one buyer are one
+          relationship, not four things to read. It is the same split the
+          conversations list makes, for the same reason.
+
+          An exchange is an inbound we answered, counted in
+          `app/email_threads.py` and nowhere else. At three it has graduated:
+          that buyer is in /app/conversations too, and this is where you see
+          why. */}
+      <Card className="mb-6 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
+          <div className="flex flex-wrap gap-1.5">
+            {THREAD_BOXES.map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setPeople(key)}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                  people === key
+                    ? 'border-foreground bg-foreground text-background'
+                    : key === 'waiting' && (threads?.counts.waiting ?? 0) > 0
+                      ? 'border-primary/30 bg-primary/10 text-primary hover:bg-accent'
+                      : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                )}
+              >
+                {label}
+                <span className="tnum opacity-70">{threads?.counts[key] ?? 0}</span>
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+            a conversation at {threads?.threshold ?? 3} exchanges
+          </span>
+        </div>
+
+        {!threads?.threads.length ? (
+          <Empty
+            title="Nobody here"
+            hint={
+              people === 'waiting'
+                ? 'Every buyer who has written has been answered.'
+                : 'Mail this dealership exchanges will be listed here, one row per person.'
+            }
+          />
+        ) : (
+          <ul className="divide-y divide-border">
+            {threads.threads.map((row) => (
+              <li key={row.key}>
+                <ThreadRow row={row} threshold={threads.threshold} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
 
       {/* ---- the mailbox ---- */}
       <Card className="mb-6 min-w-0">
@@ -923,5 +1027,50 @@ function StatusCard({
         </div>
       )}
     </Card>
+  )
+}
+
+/** One correspondent. A buyer opens their page; a stranger has none to open,
+ *  which is the whole reason they are listed here rather than nowhere. */
+function ThreadRow({ row, threshold }: { row: Thread; threshold: number }) {
+  const body = (
+    <div className="flex min-w-0 items-start gap-3 px-4 py-3 text-left">
+      <span
+        className={clsx(
+          'mt-0.5 inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium',
+          row.waiting
+            ? 'border-primary/30 bg-primary/10 text-primary'
+            : row.graduated
+              ? 'border-border text-muted-foreground'
+              : 'border-border text-muted-foreground',
+        )}
+      >
+        {row.waiting ? 'waiting on us' : row.graduated ? 'conversation' : 'open'}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium">
+          {row.name || row.address || 'Unnamed buyer'}
+        </div>
+        <div className="truncate text-xs text-muted-foreground">
+          {row.last_subject || '(no subject)'}
+        </div>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+          {/* Counted, never declared. `exchanges` decides the badge above and
+              the tab this row is in, so it is the number that is shown. */}
+          {row.exchanges} of {threshold} exchanges · {row.inbound} in, {row.outbound} out
+          {row.kind === 'stranger' && ' · no buyer on file'}
+        </div>
+      </div>
+      <span className="tnum shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+        {relative(row.at ?? undefined)}
+      </span>
+    </div>
+  )
+  return row.lead_id ? (
+    <Link to={`/app/leads/${row.lead_id}`} className="block hover:bg-accent/50">
+      {body}
+    </Link>
+  ) : (
+    <div className="opacity-90">{body}</div>
   )
 }

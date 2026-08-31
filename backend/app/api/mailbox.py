@@ -22,6 +22,9 @@ from app.api.deps import current_user
 from app.api.inbound_email import signature_for
 from app.config import settings
 from app.db import get_db, utcnow
+from app.email_intake import is_ours
+from app.email_threads import EXCHANGE_THRESHOLD
+from app.email_threads import threads as email_threads_for
 from app.events import emit
 from app.integrations.registry import get_email_sender
 from app.schemas.serialize import iso, outreach_out, stamp
@@ -140,7 +143,14 @@ def messages(
         })
 
     # Mail that arrived and could not be placed. It has no lead by definition,
-    # so nothing on any buyer page will ever show it.
+    # so nothing on any buyer page will ever show it -- which is the whole
+    # reason this list is a union.
+    #
+    # **Except what was addressed to us.** `support@`, `founder@` and `cto@`
+    # are Liner's own boxes and their unplaced mail belongs in `/ops`, which
+    # already lists it. Without this a stranger writing to our support desk was
+    # readable by every rep at every dealership: the same realm leak
+    # `_lead_from` is given a rule for, arriving through the list instead.
     for r in (
         db.query(InboundEmail)
         .filter(InboundEmail.outcome == "unresolved")
@@ -148,6 +158,8 @@ def messages(
         .limit(CEILING)
         .all()
     ):
+        if is_ours(r.to_address):
+            continue
         out.append({
             "id": r.id,
             "kind": "unmatched",
@@ -208,6 +220,51 @@ def _in_box(m: dict, box: str) -> bool:
         return m["direction"] == "out" and m["status"] != "sent"
     if box == "unmatched":
         return m["kind"] == "unmatched"
+    return True
+
+
+@router.get("/email/threads")
+def email_threads(
+    box: str = "open",
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Everyone the dealership is exchanging mail with, one row each.
+
+    The other half of this page. The list below it is messages, which is what
+    you want when hunting a particular send; this is people, which is what you
+    want when deciding who to answer next -- and four messages with one buyer
+    are one relationship, not four things to read.
+
+    `box` slices the same rows the counts are computed from, so a tab cannot
+    say 12 and show 9. **Open** is the default because it is the working list:
+    everything that has not yet become a conversation, which is what this view
+    is for. `graduated` is the rest -- those buyers are in
+    `/app/conversations` too, and this is where you see why.
+    """
+    rows = email_threads_for(db)
+    counts = {key: sum(1 for r in rows if _in_thread_box(r, key))
+              for key in ("all", "open", "graduated", "waiting", "strangers")}
+    return {
+        "threads": [
+            {**r, "at": stamp(r["at"]), "last_body": (r["last_body"] or "")[:280]}
+            for r in rows if _in_thread_box(r, box)
+        ],
+        "counts": counts,
+        "threshold": EXCHANGE_THRESHOLD,
+    }
+
+
+def _in_thread_box(row: dict, box: str) -> bool:
+    """One definition of each tab, for the counts and the filter both."""
+    if box == "open":
+        return not row["graduated"]
+    if box == "graduated":
+        return row["graduated"]
+    if box == "waiting":
+        return row["waiting"]
+    if box == "strangers":
+        return row["kind"] == "stranger"
     return True
 
 

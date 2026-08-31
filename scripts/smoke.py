@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -1412,10 +1413,20 @@ def main() -> int:
           manual["lead"]["source"] == "phone", manual["lead"]["source"])
 
     print("\n== the dashboard saw it happen (websocket) ==")
-    time.sleep(1.5)
+    # Waited for, not slept through. It was a flat 1.5 seconds, which is fine
+    # on a fresh seed and progressively less fine as the events table grows --
+    # the socket replays its backlog on connect, so a database several runs old
+    # takes longer to reach the frames this asserts. It failed twice in a row
+    # on an accumulated database while the code under test was correct, which
+    # is the worst kind of check: it sends you hunting a bug that is not there.
+    wanted = ("appointment.booked", "appointment.confirmed", "appointment.assigned",
+              "outreach.sent", "handoff.triggered", "lead.imported")
+    for _ in range(60):
+        if all(event in listener.seen for event in wanted):
+            break
+        time.sleep(0.25)
     check("socket connected", not listener.error, listener.error or "ok")
-    for event in ("appointment.booked", "appointment.confirmed", "appointment.assigned",
-                  "outreach.sent", "handoff.triggered", "lead.imported"):
+    for event in wanted:
         check(f"{event} reached the dashboard", event in listener.seen)
 
     print("\n== a rep can decline, or book on the buyer's behalf ==")
@@ -3473,6 +3484,86 @@ def main() -> int:
           just_the_reply("Yes please.\n\nOn Mon 1 Sep 2026 Liner wrote:\n> hello\n")
           == "Yes please.")
 
+    print("\n== one row per person, and one definition of a back and forth ==")
+    # `/app/email` lists messages, which is what you want hunting one send.
+    # This lists people, which is what you want deciding who to answer next --
+    # four messages with one buyer are one relationship, not four things.
+    #
+    # The counter lives in `app/email_threads.py` and nowhere else, because it
+    # decides two things read in different places: which tab a row is in, and
+    # whether the badge says the buyer is waiting. Two copies is how a header
+    # says 3 over a row that reads as 2.
+    from app.email_threads import EXCHANGE_THRESHOLD, graduated, tally
+
+    at = datetime(2026, 1, 1)
+    def walk(*directions):
+        return tally([(at + timedelta(minutes=i), d) for i, d in enumerate(directions)])
+
+    check("an exchange is an inbound we answered, not a message",
+          walk("in").exchanges == 0 and walk("in", "out").exchanges == 1,
+          f'{walk("in").exchanges} then {walk("in", "out").exchanges}')
+    check("a buyer who writes three times and gets one answer has had one",
+          walk("in", "in", "in", "out").exchanges == 1,
+          str(walk("in", "in", "in", "out").exchanges))
+    check("and the two they are still owed are what waiting is for, not the count",
+          walk("in", "in").waiting and not walk("in", "out").waiting)
+    check("an outreach nobody replied to is not a conversation",
+          walk("out", "out").exchanges == 0 and not walk("out").waiting)
+    check("but one they answered and we answered back is",
+          walk("out", "in", "out").exchanges == 1)
+    check("three round trips graduates it", graduated(walk(*(["in", "out"] * 3))))
+    check("two does not", not graduated(walk(*(["in", "out"] * 2))))
+    check("and writing again afterwards leaves it graduated and waiting",
+          graduated(walk(*(["in", "out"] * 3), "in"))
+          and walk(*(["in", "out"] * 3), "in").waiting)
+    check("the threshold is one constant, so the badge and the tab move together",
+          EXCHANGE_THRESHOLD == 3, str(EXCHANGE_THRESHOLD))
+
+    listed = call("GET", "/api/email/threads?box=all")
+    check("the endpoint serves the same threshold it counted with",
+          listed["threshold"] == EXCHANGE_THRESHOLD)
+    by_key = {row["key"]: row for row in listed["threads"]}
+    check("a buyer who wrote in is one row, however many messages they sent",
+          len([r for r in listed["threads"] if r.get("address") == who]) == 1,
+          str([r["key"] for r in listed["threads"] if r.get("address") == who]))
+    check("every tab's count matches the rows it would show",
+          all(
+              listed["counts"][name]
+              == len(call("GET", f"/api/email/threads?box={name}")["threads"])
+              for name in ("open", "graduated", "waiting", "strangers")
+          ),
+          str(listed["counts"]))
+    check("and Everyone is the whole set, not a tab beside the others",
+          listed["counts"]["all"] == len(listed["threads"]))
+
+    # A newsletter is not waiting for an answer. Since a person writing to a
+    # published address becomes a buyer, everything left unplaced is a robot --
+    # and flagging nine of those as owed a reply buries the one that is.
+    strangers = call("GET", "/api/email/threads?box=strangers")["threads"]
+    check("a delivery nobody could place never claims to be waiting",
+          strangers and not any(r["waiting"] for r in strangers),
+          f"{len(strangers)} stranger row(s)")
+    check("and it says plainly that there is no buyer behind it",
+          all(r["lead_id"] is None and r["kind"] == "stranger" for r in strangers))
+
+    # Ours is ours. `support@` and `founder@` are Liner's boxes, and their
+    # unplaced mail is listed at /ops -- a stranger writing to our support desk
+    # is not a dealership's to read. The same realm rule `_lead_from` follows,
+    # arriving through the list instead of through lead creation.
+    ours_id = f"<realm-{stamp}@mail.example>"
+    inbound({
+        "messageId": ours_id, "from": f"cold.{stamp}@nowhere.invalid",
+        "to": "support@example.invalid", "subject": f"For Liner {stamp}",
+        "text": "Asking about your product.",
+    })
+    settled(ours_id)
+    every = call("GET", "/api/email/threads?box=all")["threads"]
+    check("mail to our own support desk is not in a dealership's list",
+          not any(f"For Liner {stamp}" == r["last_subject"] for r in every))
+    boxed = call("GET", "/api/email/messages?box=unmatched")["messages"]
+    check("nor in its mailbox, which was listing every unplaced delivery",
+          not any(m["subject"] == f"For Liner {stamp}" for m in boxed))
+
     print("\n== a timestamp on the wire says which kind it is ==")
     # ECMAScript parses a bare date-time as *browser-local*. `utcnow()` is naive
     # UTC, so `isoformat()` alone put an unmarked UTC instant on the wire and
@@ -3506,10 +3597,9 @@ def main() -> int:
 
     # And the wall-clock half is still bare, or the calendar shifts by the
     # viewer's offset the moment somebody opens it from another state.
-    from datetime import datetime as _dt
     from app.schemas.serialize import iso as _iso, stamp as _stamp
 
-    when = _dt(2026, 8, 30, 10, 0)
+    when = datetime(2026, 8, 30, 10, 0)
     check("an appointment time stays a wall clock, with no zone claimed",
           _iso(when) == "2026-08-30T10:00:00", _iso(when))
     check("and an instant is marked", _stamp(when) == "2026-08-30T10:00:00Z", _stamp(when))
