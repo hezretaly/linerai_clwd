@@ -3711,6 +3711,102 @@ def main() -> int:
             _cfg.email_agent, _cfg.email_reply_cooldown_minutes = was_env, was_cool
             _flags.set(_db, "email_agent", "off", reason="smoke reset")
 
+    print("\n== every reply waits, and a person can get there first ==")
+    # **Every reply waits, including the first.** Answering three seconds after
+    # a buyer wrote is the most robotic thing a mailbox can do -- and the wait
+    # buys something besides: a window in which a rep reads the message and
+    # takes the thread over before anything goes out on its own.
+    from datetime import timedelta as _delta
+
+    from app import email_replies as _ticker
+    from app import email_reply as _replier
+    from app import flags as _f
+    from app.config import settings as _s
+    from app.db import SessionLocal as _WaitSession
+    from app.models import (
+        EmailReplyDue as _Due, InboundEmail as _In, Lead as _Buyer,
+        Outreach as _Sent, User as _Staff,
+    )
+
+    with _WaitSession() as _db:
+        keep = (_s.email_agent, _s.email_reply_cooldown_minutes)
+        try:
+            _s.email_agent = True
+            _s.email_reply_cooldown_minutes = 5
+            _f.set(_db, "email_agent", "on", reason="smoke")
+
+            def arrives(tag):
+                who = _Buyer(name="", email=f"{tag}.{stamp}@example.invalid",
+                             phone="", source="email")
+                _db.add(who)
+                _db.commit()
+                envelope = _In(
+                    outcome="accepted", message_id=f"<{tag}-{stamp}@mail>",
+                    from_address=who.email, to_address="sales@example.invalid",
+                    subject="Silverado", body="Is it still there?", lead_id=who.id,
+                )
+                theirs = _Sent(
+                    lead_id=who.id, channel="email", direction="in", kind="reply",
+                    to_address=who.email, subject="Silverado",
+                    body="Is it still there?", provider="inbound",
+                    status="sent", sent_at=utcnow_local(),
+                )
+                _db.add_all([envelope, theirs])
+                _db.commit()
+                return who, envelope, theirs
+
+            buyer, envelope, theirs = arrives("waits")
+            queued = _replier.schedule(_db, envelope, buyer, theirs)
+            check("a message is queued rather than answered on the spot",
+                  queued["queued"], str(queued.get("reason")))
+            check("and nothing has gone out yet",
+                  _db.query(_Sent).filter_by(
+                      lead_id=buyer.id, direction="out").count() == 0)
+            check("draining before it is due sends nothing",
+                  _ticker.drain(provider=FakeProvider([scripted("early")])) == [])
+
+            row = _db.query(_Due).filter_by(lead_id=buyer.id).one()
+            row.due_at = utcnow_local() - _delta(seconds=1)
+            _db.commit()
+            fired = _ticker.drain(
+                provider=FakeProvider([scripted("Happy to help -- when suits you?")]))
+            check("once the clock passes, the reply goes",
+                  fired and fired[0].get("sent"), str(fired))
+            _db.refresh(row)
+            check("and the queue row records that it went", row.state == "sent", row.state)
+
+            # The whole point of waiting. A rep reading the message and
+            # answering it inside the window is the ordinary outcome, not a
+            # failure -- and Liner must not add a second email behind them.
+            other, envelope2, theirs2 = arrives("beaten")
+            _replier.schedule(_db, envelope2, other, theirs2)
+            rep = _db.query(_Staff).first()
+            _db.add(_Sent(
+                lead_id=other.id, channel="email", direction="out", kind="reply",
+                to_address=other.email, subject="Re: Silverado", body="Yes it is.",
+                status="sent", sent_at=utcnow_local(), sent_by_user_id=rep.id,
+            ))
+            _db.commit()
+            waiting = _db.query(_Due).filter_by(lead_id=other.id).one()
+            waiting.due_at = utcnow_local() - _delta(seconds=1)
+            _db.commit()
+            _ticker.drain(provider=FakeProvider([scripted("should never send")]))
+            _db.refresh(waiting)
+            check("a rep answering inside the window cancels the queued reply",
+                  waiting.state == "skipped" and "person answered" in waiting.detail.lower(),
+                  f"{waiting.state}: {waiting.detail}")
+            check("so the buyer gets one email, not two",
+                  _db.query(_Sent).filter_by(
+                      lead_id=other.id, direction="out").count() == 1)
+
+            # The ticker only looks when the agent is on, so an ordinary
+            # deployment pays one indexed query and nothing else.
+            check("the wait is the one setting, not a second number",
+                  _s.email_reply_cooldown_minutes == 5)
+        finally:
+            _s.email_agent, _s.email_reply_cooldown_minutes = keep
+            _f.set(_db, "email_agent", "off", reason="smoke reset")
+
     print("\n== the brakes, built before there is anything to stop ==")
     # Nothing answers email yet. These ship first deliberately: there must
     # never be a build where Liner can send mail on its own and cannot be

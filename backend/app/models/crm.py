@@ -48,6 +48,46 @@ class Lead(Base):
         return not self.email
 
 
+class EmailReplyDue(Base):
+    """A reply Liner will write, once the clock says so.
+
+    **Every reply waits, including the first.** Answering a buyer three seconds
+    after they wrote is the single most robotic thing a mailbox can do, and the
+    wait buys something real besides: a window in which a rep can read the
+    message and take the thread over before anything goes out on its own.
+
+    A row rather than a sleeping task, because a sleeping task is lost on the
+    next restart and this system restarts on every deploy. `create_all` makes
+    the table on a database that already exists, so no reseed.
+
+    Append-only in spirit: a row is *resolved* with an outcome rather than
+    deleted, so "why did nothing go out at 4pm" has an answer.
+    """
+
+    __tablename__ = "email_replies_due"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    inbound_email_id: Mapped[str] = mapped_column(
+        ForeignKey("inbound_emails.id"), index=True
+    )
+    lead_id: Mapped[str] = mapped_column(ForeignKey("leads.id"), index=True)
+    #: The inbound row this answers, so the reply threads under it.
+    outreach_id: Mapped[str | None] = mapped_column(
+        ForeignKey("outreach.id"), nullable=True
+    )
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    # waiting | sent | skipped | failed
+    state: Mapped[str] = mapped_column(String(12), default="waiting", index=True)
+    #: Why it did not go, when it did not. Every refusal `may_reply` can give,
+    #: plus "a person got there first", which is the common and correct one.
+    detail: Mapped[str] = mapped_column(Text, default="")
+    #: `automated_reason`'s verdict from intake, carried because the headers
+    #: exist only in that request and this runs minutes later.
+    automated: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = created()
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class RuntimeFlag(Base):
     """A switch somebody can throw without a restart, and a note of who did.
 

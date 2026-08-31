@@ -27,11 +27,15 @@ from sqlalchemy.orm import Session
 
 from app import email_agent, outreach_send
 from app.config import settings
+from datetime import timedelta
+
 from app.db import utcnow
 from app.email_intake import just_the_reply
 from app.events import emit
 from app.integrations.registry import get_email_sender
-from app.models import Conversation, InboundEmail, Lead, Message, Outreach
+from app.models import (
+    Conversation, EmailReplyDue, InboundEmail, Lead, Message, Outreach,
+)
 
 #: How much of one message reaches the model. Long enough for anything a person
 #: types and short enough that a forwarded forty-page thread cannot quietly
@@ -254,3 +258,114 @@ def enabled_note() -> str:
         "EMAIL_AGENT is not set, so Liner does not answer email on this "
         "deployment." if not settings.email_agent else ""
     )
+
+
+# ---------------------------------------------------------------------------
+# The wait
+# ---------------------------------------------------------------------------
+#
+# **Every reply waits, including the first.** Answering three seconds after a
+# buyer wrote is the most robotic thing a mailbox can do, and the wait buys
+# something besides: a window in which a rep can read the message and take the
+# thread over before anything goes out on its own. It is the same number either
+# way -- `EMAIL_REPLY_COOLDOWN_MINUTES` -- so a gap *between* replies falls out
+# of it rather than being a second rule.
+
+
+def schedule(
+    db: Session, claim: InboundEmail, lead: Lead, received: Outreach, *, automated: str = ""
+) -> dict:
+    """Queue a reply for later, or say why there will not be one.
+
+    The brakes that can be decided *now* are decided now, so a refusal reaches
+    the receipt while somebody is still looking at it. The ones that depend on
+    what happens next -- a rep answering, the switch being thrown, the hourly
+    ceiling -- are re-run when it comes due, because that is the whole point of
+    waiting.
+    """
+    verdict = email_agent.switched_on(db)
+    if not verdict.allowed:
+        return {"queued": False, "reason": verdict.reason, "detail": verdict.detail}
+    if automated:
+        return {
+            "queued": False, "reason": "automated",
+            "detail": f"No reply: {automated}.",
+        }
+    _, refused = readable(claim.body)
+    if refused:
+        _hand_over(db, lead, refused)
+        return {"queued": False, "reason": "handed_over", "detail": refused}
+
+    due = utcnow() + timedelta(minutes=max(settings.email_reply_cooldown_minutes, 0))
+    row = EmailReplyDue(
+        inbound_email_id=claim.id, lead_id=lead.id, outreach_id=received.id,
+        due_at=due, automated=automated,
+    )
+    db.add(row)
+    db.commit()
+    return {"queued": True, "due_at": due, "id": row.id}
+
+
+def due_now(db: Session, *, limit: int = 20) -> list[EmailReplyDue]:
+    return (
+        db.query(EmailReplyDue)
+        .filter(EmailReplyDue.state == "waiting", EmailReplyDue.due_at <= utcnow())
+        .order_by(EmailReplyDue.due_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+
+def send_due(db: Session, row: EmailReplyDue, *, provider=None) -> dict:
+    """Answer one queued reply, re-running every brake at the moment it fires.
+
+    Re-run rather than trusted: the wait exists so that a person can get there
+    first, and a decision taken minutes ago would defeat it. A rep having
+    replied in the meantime is the ordinary outcome and is recorded as
+    `skipped`, not as a failure.
+    """
+    claim = db.query(InboundEmail).filter_by(id=row.inbound_email_id).one_or_none()
+    lead = db.query(Lead).filter_by(id=row.lead_id).one_or_none()
+    received = (
+        db.query(Outreach).filter_by(id=row.outreach_id).one_or_none()
+        if row.outreach_id else None
+    )
+    if claim is None or lead is None or received is None:
+        row.state, row.detail = "skipped", "The message it answered is gone."
+        row.resolved_at = utcnow()
+        db.commit()
+        return {"sent": False, "reason": "gone"}
+
+    # Anything outbound since they wrote means the answer has been given --
+    # by a rep, or by an earlier queued reply. One clock, whoever wrote.
+    answered = (
+        db.query(Outreach)
+        .filter(
+            Outreach.lead_id == lead.id,
+            Outreach.channel == "email",
+            Outreach.direction == "out",
+            Outreach.created_at >= row.created_at,
+        )
+        .first()
+    )
+    if answered is not None:
+        row.state = "skipped"
+        row.detail = (
+            "A person answered first."
+            if answered.sent_by_user_id else
+            "Already answered by an earlier queued reply."
+        )
+        row.resolved_at = utcnow()
+        db.commit()
+        return {"sent": False, "reason": "already_answered", "detail": row.detail}
+
+    out = answer(db, claim, lead, received, automated=row.automated, provider=provider)
+    row.state = "sent" if out.get("sent") else (
+        "skipped" if out.get("reason") in
+        ("rep_holding", "cooldown", "person_answered", "switched_off", "off_in_env")
+        else "failed"
+    )
+    row.detail = out.get("detail", "")
+    row.resolved_at = utcnow()
+    db.commit()
+    return out

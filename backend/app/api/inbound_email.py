@@ -387,16 +387,23 @@ def _place(receipt_id: str, refused: str = "") -> None:
         })
 
         # And, last, Liner may answer -- if every brake in `email_agent` says
-        # so, and by default none of them does. It runs after the receipt is
-        # stamped and after the event, so a reply that fails leaves the
-        # delivery filed and visible rather than taking the whole placement
-        # down with it. Off by default, so this is a no-op on any deployment
-        # that has not deliberately turned it on.
+        # so, and by default none of them does. It is *queued* rather than
+        # sent: every reply waits `EMAIL_REPLY_COOLDOWN_MINUTES`, which stops
+        # a dealership answering three seconds after a buyer wrote and gives a
+        # rep a window to take the thread over first. `app/email_replies.py`
+        # drains it.
+        #
+        # After the receipt is stamped and after the event, so a failure here
+        # leaves the delivery filed and visible rather than taking the whole
+        # placement down with it. Off by default, so this is a no-op on any
+        # deployment that has not deliberately turned it on.
         try:
-            answered = email_reply.answer(
+            answered = email_reply.schedule(
                 db, claim, lead, record, automated=refused
             )
-            if answered.get("reason") not in ("", "off_in_env", "switched_off"):
+            if not answered.get("queued") and answered.get("reason") not in (
+                "", "off_in_env", "switched_off",
+            ):
                 # Recorded on the receipt, because "Liner did not reply" is
                 # otherwise indistinguishable from "Liner is off" and from a
                 # provider that refused -- three different problems.

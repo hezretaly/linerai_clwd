@@ -31,6 +31,7 @@ from app.models import (
     CapturedField,
     Conversation,
     Dealership,
+    EmailReplyDue,
     Escalation,
     Event,
     HandoffRule,
@@ -262,7 +263,7 @@ def _clear(db: Session) -> None:
     for model in (
         CallSegment, CallUsage, CallBuyerTrack, CallRecording,
         VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
-        LeadAddress, RuntimeFlag,
+        EmailReplyDue, LeadAddress, RuntimeFlag,
         Conversation, Lead, IngestRun, Vehicle, Rail, KnowledgeEntry, HandoffRule,
         AssistantSettings, User, Dealership, Event,
     ):

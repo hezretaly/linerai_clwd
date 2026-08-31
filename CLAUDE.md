@@ -536,10 +536,24 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     full header set is somebody's routing metadata and spam scores travelling
     through our webhook for no reason — and `make smoke` fails if the backend
     checks one the Worker does not send.
-  - **One clock, whoever writes.** Any outbound restarts the cooldown: a rep's
-    reply satisfies the buyer's message exactly as Liner's does, and two
-    clocks would let releasing a thread fire an immediate second answer to
-    something a person already handled. A rep having answered *within* the
+  - **Every reply waits, including the first, and one clock does both jobs.**
+    `EMAIL_REPLY_COOLDOWN_MINUTES` is how long Liner waits *before* answering,
+    not only the gap between answers — a dealership replying three seconds
+    after a buyer wrote is obviously a robot, and the wait buys the thing that
+    matters more: a window in which a rep reads the message and takes the
+    thread over first. A rep answering inside it cancels the queued reply, so
+    the buyer gets one email and not two. The gap between replies falls out of
+    the same number rather than being a second rule.
+    - **A row with a due time, not a sleeping task.** `asyncio.sleep(3600)` in
+      a handler is lost on the next deploy, and this redeploys often;
+      `email_replies_due` survives one and `app/email_replies.py` is a single
+      in-process ticker that drains what the clock has passed. In-process like
+      `events.py`, for the same reason — one worker is already required — and
+      the drain claims a row before answering it, because two drainers would
+      send a buyer the same reply twice.
+    - **Every brake is re-run when it fires, never trusted from queue time.**
+      The wait exists so a person can get there first, and a decision taken
+      when the message arrived would defeat it. A rep having answered *within* the
     window stops Liner separately and says so, because in an inbox two emails
     from one dealership minutes apart have no window that makes them legible.
   - **The hourly ceiling trips the switch rather than refusing one message.**

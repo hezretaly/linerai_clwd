@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
-from app import events
+from app import email_replies, events
 from app.config import settings
 from app.db import SessionLocal, create_all
 from app.integrations.base import NotConfigured
@@ -106,7 +106,22 @@ async def lifespan(app: FastAPI):
             "as unavailable rather than simulating a result.",
             len(unconfigured), ", ".join(unconfigured),
         )
-    yield
+
+    # The one background loop in this process, and it exists because every
+    # email reply waits before it goes out. A sleeping task per reply would be
+    # lost on the next deploy; a row with a due time survives one, and this
+    # only has to notice it. It wakes on a fixed tick and does nothing at all
+    # unless `EMAIL_AGENT` is set -- so an ordinary deployment pays one cheap
+    # query a minute and nothing else.
+    #
+    # In-process, like `events.py`, and for the same reason: one worker is
+    # already required. Two would drain the same queue twice, which is why the
+    # drain claims a row before answering it.
+    ticker = asyncio.create_task(email_replies.tick_forever())
+    try:
+        yield
+    finally:
+        ticker.cancel()
 
 
 def create_app() -> FastAPI:

@@ -106,6 +106,9 @@ export interface Lead {
   contact_risk: boolean
   email_consent_at: string | null
   created_at: string
+  /* False when `name` is standing in for them -- their address or their
+     number rather than something they told us. */
+  has_name?: boolean
   captured_fields?: CapturedField[]
   /* Other addresses a rep has said are theirs. Detail payload only -- a link
      is a fact about one buyer and the list has no room to say it. */

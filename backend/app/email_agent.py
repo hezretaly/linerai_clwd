@@ -62,13 +62,13 @@ class Verdict:
     detail: str = ""
 
 
-def enabled(db: Session, *, has_provider: bool = False) -> Verdict:
-    """Is the email agent on at all?
+def switched_on(db: Session) -> Verdict:
+    """Just the two switches, for deciding whether to *queue* a reply.
 
-    Two switches, and the stricter wins. `.env` is the deployment's answer and
-    needs a restart, which is right for "this dealership has not turned it on"
-    and wrong for "make it stop now"; the runtime flag is the second, and takes
-    effect on the next request.
+    Separate from `enabled` because "is there a model" is a send-time question
+    and this is asked minutes earlier: a key that arrives in between should not
+    have cost the buyer their answer, and one that goes away should stop the
+    reply rather than the queueing.
     """
     if not settings.email_agent:
         return Verdict(
@@ -82,6 +82,20 @@ def enabled(db: Session, *, has_provider: bool = False) -> Verdict:
             False, "switched_off",
             "Liner's email replies are switched off in the dashboard.",
         )
+    return Verdict(True)
+
+
+def enabled(db: Session, *, has_provider: bool = False) -> Verdict:
+    """Both switches, and a model to write the reply with.
+
+    The switches are the deployment's answer and the dashboard's, and the
+    stricter wins. `.env` needs a restart, which is right for "this dealership
+    has not turned it on" and wrong for "make it stop now"; the runtime flag is
+    the second, and takes effect on the next request.
+    """
+    switches = switched_on(db)
+    if not switches.allowed:
+        return switches
     # **And there has to be a model.** The stub is a state machine over
     # `conversations.stage` whose replies point at a booking card and a rail of
     # chips -- correct on a screen and nonsense in an inbox, where there is

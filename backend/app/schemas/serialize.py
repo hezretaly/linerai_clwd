@@ -160,15 +160,19 @@ def captured_out(c: CapturedField) -> dict:
 def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> dict:
     out = {
         "id": lead.id,
-        # A lead with no name is unnamed, and that is all it is. It said
-        # "Unknown caller", which was already two wrong words on a website chat
-        # and became routine the moment an email could mint a buyer -- most
-        # senders have no display name, so most email leads arrive nameless and
-        # every one of them was described as a phone call that never happened.
-        # Anonymous *threads* are labelled by the channel they used, in
-        # `ConversationList`; a lead has no single channel, so it is named for
-        # what it is.
-        "name": lead.name or "Unnamed buyer",
+        # Their name, or the next thing that identifies them: the address they
+        # write from, then the number they call from.
+        #
+        # A placeholder was the only fallback, and on a list of email buyers it
+        # produced a column of identical "Unnamed buyer" rows -- every one of
+        # which a rep had to open to find out who it was. An address is not a
+        # name and does not pretend to be one; it is simply the most
+        # identifying thing on file, and one a person can act on. The
+        # placeholder is what is left when there is nothing at all.
+        "name": lead.name or lead.email or lead.phone or "Unnamed buyer",
+        #: The name column itself, unsubstituted -- for anything that has to
+        #: know whether they actually told us who they are.
+        "has_name": bool(lead.name),
         "email": lead.email,
         "phone": lead.phone,
         "source": lead.source,
