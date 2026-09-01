@@ -459,7 +459,13 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
         made["leads"] += 1
         return lead
 
-    rep = reps[0].id if reps else None
+    # **Spread across the floor, because assigning is the thing being shown.**
+    # All five on one rep made the Assigned to control look like a label rather
+    # than a choice, and the team page read as one person carrying everybody.
+    def staff(i):
+        return reps[i % len(reps)].id if reps else None
+
+    rep = staff(0)
     price = f"${car.price:,}"
     miles = f"{car.mileage or 0:,}"
     # From the row, never written by hand. A demo transcript naming a feature
@@ -473,7 +479,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     # was three unrelated screens and a rep could ring somebody who had
     # already booked.
     one = buyer("Marisol Ferrer", "marisol.ferrer@example.invalid",
-                "+15550100201", "instagram", now - timedelta(days=3), rep)
+                "+15550100201", "instagram", now - timedelta(days=3), None)
     thread(one, "instagram", now - timedelta(days=3, hours=2), [
         ("buyer", f"saw the {car.model} on your page - still available?"),
         ("assistant", f"It is. The {name_of(car)} is {price}, {miles} miles. "
@@ -482,7 +488,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
         ("assistant", f"Sending them over. It's the {car.trim or car.model} trim. "
                       "Anything specific you want to know?"),
     ], stage="vehicle_focus")
-    thread(one, "email", now - timedelta(days=2, hours=6), [
+    asked_price = thread(one, "email", now - timedelta(days=2, hours=6), [
         ("buyer", "Following up from Instagram - is the price negotiable at all?"),
         ("assistant", "That's a conversation for one of our team rather than me. "
                       "I've flagged it so someone picks it up with you."),
@@ -500,6 +506,19 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
                       "information and we'll appraise it while you're here -- "
                       "usually about 20 minutes."),
     ], stage="vehicle_focus")
+    # **An unclaimed escalation on an unowned buyer.** That pair *is* Needs a
+    # person, and it is the row a manager assigns from -- which is the whole
+    # point of putting her first. Her email thread already sits at `handoff`;
+    # without a row behind it the status was a badge with nothing in the queue,
+    # which is the disagreement `app/escalations.py` exists to prevent.
+    db.add(Escalation(
+        conversation_id=asked_price.id,
+        reason="Buyer asked whether the price is negotiable.",
+        claimed_by_user_id=None, claimed_at=None,
+        created_at=now - timedelta(days=2, hours=5),
+    ))
+    made["escalations"] += 1
+
     for key, value, prov in (("timeframe", "This week", "typed"),
                              ("trade_in", "2015 Civic", "typed"),
                              ("financing", "Financing", "typed")):
@@ -508,7 +527,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
 
     # ---- 2. booked out of hours ------------------------------------------
     night = buyer("Dev Raman", "dev.raman@example.invalid", "+15550100202",
-                  "chat", _last_evening(now) - timedelta(minutes=5), rep)
+                  "chat", _last_evening(now) - timedelta(minutes=5), staff(1))
     thread(night, "chat", _last_evening(now), [
         ("buyer", "Are you open? I'm looking for something under $20k."),
         ("assistant", f"We're closed now, but I can still help. The "
@@ -524,7 +543,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
 
     # ---- 3. refused to invent, and quoted the dealer verbatim -------------
     honest = buyer("Priya Ganesh", "priya.ganesh@example.invalid", "+15550100203",
-                   "chat", now - timedelta(days=2, hours=8), rep)
+                   "chat", now - timedelta(days=2, hours=8), staff(2))
     thread(honest, "chat", now - timedelta(minutes=2), [
         ("buyer", "Do you have a Porsche Cayenne?"),
         ("assistant", "Nothing from Porsche on the lot right now. The closest I "
@@ -542,7 +561,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
 
     # ---- 4. escalated the right question, kept answering the rest ---------
     handed = buyer("Tom Whelan", "tom.whelan@example.invalid", "+15550100204",
-                   "chat", now - timedelta(days=1, hours=9), rep)
+                   "chat", now - timedelta(days=1, hours=9), staff(3))
     convo = thread(handed, "chat", now - timedelta(minutes=4), [
         ("buyer", "What's the out-the-door price on it?"),
         ("assistant", "A total with tax and fees is one of our team's to give "
@@ -563,8 +582,8 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     db.add(Escalation(
         conversation_id=convo.id,
         reason="Buyer asked for an out-the-door price.",
-        claimed_by_user_id=rep,
-        claimed_at=(now - timedelta(minutes=3)) if rep else None,
+        claimed_by_user_id=staff(3),
+        claimed_at=(now - timedelta(minutes=3)) if reps else None,
         created_at=now - timedelta(minutes=5),
     ))
     made["escalations"] += 1
@@ -574,7 +593,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     # were told at the time, so a car that has come down since puts them in an
     # audience nobody had to remember to write down.
     dropped = buyer("Alina Sokolova", "alina.sokolova@example.invalid",
-                    "+15550100205", "email", now - timedelta(days=6), rep)
+                    "+15550100205", "email", now - timedelta(days=6), staff(4))
     was = (car.price or 0) + 1500
     convo = thread(dropped, "email", now - timedelta(minutes=6), [
         ("buyer", f"Interested in the {car.model} you have listed."),
@@ -600,7 +619,17 @@ def build(db, count: int) -> dict[str, int]:
     if dealership is None:
         raise SystemExit("No dealership. Run `make seed` first.")
     hours = json.loads(dealership.hours_json)
-    reps = db.query(User).filter_by(role="rep", active=True).all()
+    # **Managers too, not only reps.** A manager owns leads here -- they are on
+    # the roster, the assignment picker offers them, and a dealership whose
+    # profile lists one manager and no reps has nobody at all to assign to.
+    # Filtering to `rep` left every lead on such an instance unowned, so every
+    # queue asked somebody to pick them up and no picker offered anyone.
+    reps = (
+        db.query(User)
+        .filter(User.role.in_(["rep", "manager"]), User.active.is_(True))
+        .order_by(User.role.desc(), User.name.asc())
+        .all()
+    )
     # Never a do-not-discuss car: `search_inventory` filters those, so Liner
     # could not have mentioned one, and a demo row saying it did would
     # contradict the rule the executor enforces.
@@ -617,6 +646,10 @@ def build(db, count: int) -> dict[str, int]:
     )
 
     made["demo_requests"] += _demo_requests(db, rng, now)
+
+    #: How many buyers have been given an owner so far, so the round-robin
+    #: below steps once per assignment rather than once per buyer.
+    assigned = 0
 
     # The five at the top. Built first so their ids are stable, but dated in
     # the last few days so they sort above the generated ones -- the list is
@@ -649,7 +682,24 @@ def build(db, count: int) -> dict[str, int]:
         # and `/api/campaigns` names the app and the webhook it would take.
         channels = [CHANNELS[(n + i) % len(CHANNELS)] for i in range(visits)]
 
-        owner = rng.choice(reps).id if reps and n % 3 else None
+        # Round-robin rather than a random draw. With a roster of eight, chance
+        # gives one rep twelve buyers and another two, and the team page's
+        # whole job is showing who is carrying what -- a lopsided floor reads
+        # as a real imbalance somebody should act on rather than as the dice.
+        #
+        # One in three stays unowned on purpose: Needs a person is the queue
+        # this dashboard is built around, and an entirely assigned demo has
+        # nothing in it.
+        # Stepped on *assignment*, not on the loop counter. Indexing by `n`
+        # while only two in three buyers get an owner means the stride and the
+        # roster size share a factor, and whole people are never reached --
+        # with nine staff and a stride of three, two reps ended on zero and
+        # the team page read as though they had done nothing all month.
+        if reps and n % 3:
+            owner = reps[assigned % len(reps)].id
+            assigned += 1
+        else:
+            owner = None
         lead = Lead(
             name=name,
             # Every tenth buyer has no email on file, because that is a real

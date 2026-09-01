@@ -1272,6 +1272,38 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     ellipsis never appeared. `grid-cols-N` is `minmax(0, 1fr)`, and the
     `minmax(0, …)` is the part that lets it clip. `make shots` covers `/ops`
     at 390px, signing in a second time because the role is different.
+- **The fixture ships a floor, not a token pair.** Two managers and seven
+  reps: assignment, reassignment, the per-rep queues, the team page's caps and
+  "somebody left, hand their buyers back" only have a shape with several
+  people on the roster, and one manager cannot demonstrate a call being made
+  differently by two. Dana and Marcus stay first and keep their addresses —
+  every screenshot, smoke run and acceptance script signs in as one of them.
+  It is **Riverside's roster and does not travel**: a profile with its own
+  `staff:` gets exactly that list, because invented names in a prospect's
+  assignment picker are the same failure as greeting their buyer as Riverside.
+  - **Staff are looked up by address, never unpacked positionally.**
+    `_seed_history` took the first four and broke outright on "too many values
+    to unpack" the moment anybody joined — a roster is exactly the list that
+    grows.
+  - **A manager can be assigned a buyer.** They are on the roster and the
+    picker offers them, so the demo seed draws from reps *and* managers;
+    filtering to `rep` left a dealership whose profile lists one manager with
+    nobody to assign to at all, every queue asking for a person and no picker
+    offering one.
+  - **The demo's round-robin steps on assignment, not on the loop counter.**
+    Indexing by `n` while only two in three buyers get an owner means the
+    stride and the roster size share a factor and whole people are never
+    reached — with nine staff and a stride of three, two reps ended on zero and
+    the team page read as though they had done nothing all month.
+- **"You have unpublished changes" means a change was made, not that a draft
+  row exists.** It was `draft is not None`, and a draft exists from the moment
+  the dealership is seeded — so every install opened Liner setup under a banner
+  announcing an edit nobody had made, on an instance nobody had touched. It
+  compares the editable fields now (`unpublished` in `api/settings.py`), and
+  the fixture's draft matches its live version. The draft/live split itself is
+  untouched: an edit must not reach a buyer until it is published. A warning
+  that turns out to be wrong is worse than none — the next one gets ignored
+  too, and this is the banner standing between an edit and a buyer reading it.
 - **A real person gets an account without a reseed.** Staff arrive through
   `_seed_users`, which only runs on a fresh seed, so putting a dealership's own
   manager on the system used to mean `make reset-db` — which deletes every lead

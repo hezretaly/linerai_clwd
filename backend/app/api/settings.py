@@ -52,12 +52,38 @@ def get_assistant_settings(
     return {
         "live": settings_out(live),
         "draft": settings_out(draft) if draft else None,
-        "has_unpublished_changes": draft is not None,
+        "has_unpublished_changes": unpublished(live, draft),
         # Read-only. "Here is literally what it was told" is a strong answer to
         # the control objection, and it costs nothing because we assemble this
         # string anyway (§18.3).
         "compiled_prompt": build_system_prompt(db, dealership, live),
     }
+
+
+#: What a manager can actually change on this page. A draft that matches the
+#: live version on every one of these is not an unpublished change, whatever
+#: else differs about the rows -- `version`, `status` and the timestamps always
+#: do, and comparing whole rows would make the banner permanent.
+EDITABLE = (
+    "tone", "push_level", "price_mode", "discount_pct", "financing_mode",
+    "after_hours_mode", "greeting", "booking_slot_length",
+    "credit_application_url",
+)
+
+
+def unpublished(live, draft) -> bool:
+    """Does the draft actually say something different from what is live?
+
+    **Not `draft is not None`.** That is what it was, and a draft row exists
+    from the moment the dealership is seeded -- so every install opened Liner
+    setup under a banner announcing changes nobody had made, on an instance
+    nobody had touched. A warning that turns out to be wrong is worse than no
+    warning: the next one gets ignored too, and this is the banner that stands
+    between an edit and a buyer reading it.
+    """
+    if draft is None:
+        return False
+    return any(getattr(live, f, None) != getattr(draft, f, None) for f in EDITABLE)
 
 
 class SettingsPatch(BaseModel):

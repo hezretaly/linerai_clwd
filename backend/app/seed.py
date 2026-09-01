@@ -424,11 +424,31 @@ OWNERS = [
     ("Liner CTO", "cto@linerai.us", "CTO_PASSWORD", "LC"),
 ]
 
+#: Riverside's floor. Invented, like the rest of the fixture, and deliberately
+#: a *floor* rather than a token pair: assignment, reassignment, the per-rep
+#: queues, the team page's caps and "somebody left, hand their buyers back" are
+#: all things that only have a shape with several people on the roster. Two
+#: managers because handing a buyer to somebody else is a manager's call, and
+#: one manager cannot demonstrate a call being made differently by two.
+#:
+#: **This list is Riverside's and does not travel.** A prospect's instance
+#: shipping with Dana Mercer in every assignment picker is the same failure as
+#: greeting their buyer as Riverside Auto -- so a profile with its own `staff:`
+#: gets exactly that list instead, and never this one.
+#:
+#: Dana and Marcus stay first and keep their addresses: every screenshot, smoke
+#: run and acceptance script signs in as one of them, and the README documents
+#: that pair by name.
 STAFF = [
     ("Dana Mercer", "dana.mercer@example.invalid", "manager", "DM", 6),
     ("Marcus Vale", "marcus.vale@example.invalid", "rep", "MV", 8),
     ("Priya Raman", "priya.raman@example.invalid", "rep", "PR", 8),
     ("Trevor Osei", "trevor.osei@example.invalid", "rep", "TO", 8),
+    ("Rosa Delgado", "rosa.delgado@example.invalid", "manager", "RD", 6),
+    ("Nina Kowalski", "nina.kowalski@example.invalid", "rep", "NK", 8),
+    ("Andre Bassett", "andre.bassett@example.invalid", "rep", "AB", 8),
+    ("Hana Oyelaran", "hana.oyelaran@example.invalid", "rep", "HO", 6),
+    ("Wes Ferraro", "wes.ferraro@example.invalid", "rep", "WF", 8),
 ]
 
 
@@ -636,10 +656,18 @@ def _seed_settings(db: Session, manager: User, raw: dict) -> None:
         credit_application_url=finance, greeting=greeting,
         published_by=manager.id, published_at=utcnow() - timedelta(days=9),
     )
+    # **The draft matches the live version, so a fresh seed has nothing
+    # pending.** It used to ship with `push_level` already changed, which meant
+    # every install opened Liner setup under a banner saying somebody had
+    # unpublished changes -- a change nobody made, on an instance nobody had
+    # touched. The draft/live split is a real feature and stays; what goes is
+    # the fixture asserting an edit that never happened. An edit made on the
+    # page raises the banner exactly as it should.
     draft = AssistantSettings(
-        version=8, status="draft", tone="warm", push_level="assertive",
-        price_mode="listed_only", financing_mode="refer_to_rep",
-        after_hours_mode="full_service", booking_slot_length=30,
+        version=8, status="draft", tone=live.tone, push_level=live.push_level,
+        price_mode=live.price_mode, financing_mode=live.financing_mode,
+        after_hours_mode=live.after_hours_mode,
+        booking_slot_length=live.booking_slot_length,
         credit_application_url=finance, greeting=greeting,
     )
     db.add_all([live, draft])
@@ -734,7 +762,16 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     # The dealership's own staff. Liner's two `owner` accounts are in the same
     # table and must not be here: this history assigns leads and appointments,
     # and an owner cannot own a buyer at a showroom they do not work for.
-    manager, marcus, priya, trevor = [u for u in users if u.role in ("manager", "rep")]
+    # **By address, not by position.** This unpacked the first four staff
+    # positionally, so adding anybody to `STAFF` broke the seed outright with
+    # "too many values to unpack" -- a roster is exactly the list that grows,
+    # and the four this history actually names are the four it should ask for.
+    # The rest of the floor carries no fixture history and does not need to.
+    floor = {u.email: u for u in users}
+    manager = floor["dana.mercer@example.invalid"]
+    marcus = floor["marcus.vale@example.invalid"]
+    priya = floor["priya.raman@example.invalid"]
+    trevor = floor["trevor.osei@example.invalid"]
     by_vin = {v.vin: v for v in vehicles}
     sienna = by_vin["5TDKZ3DC8JS905311"]
     pacifica = by_vin["2C4RC1BG7KR522104"]  # the sold one

@@ -3085,6 +3085,58 @@ def main() -> int:
           not held["sent"] and "taken this conversation over" in held["reason"],
           str(held))
 
+    print("\n== the roster, and handing a buyer to somebody on it ==")
+    # **A floor, not a token pair.** Assignment, reassignment, the per-rep
+    # queues and "somebody left, hand their buyers back" only have a shape with
+    # several people on the roster.
+    roster = call("GET", "/api/team")["members"]
+    reps_on = [m for m in roster if m["role"] == "rep"]
+    bosses = [m for m in roster if m["role"] == "manager"]
+    check("the fixture ships a floor a manager can actually run",
+          len(reps_on) >= 4 and len(bosses) >= 2,
+          f"{len(reps_on)} reps, {len(bosses)} managers")
+    # Everyone on it can be handed a buyer -- a manager owns leads here too,
+    # and filtering the picker to `rep` would leave a one-manager dealership
+    # with nobody to assign to at all.
+    every = call("GET", "/api/leads?limit=300")["leads"]
+    owners = {l["assigned_user_id"] for l in every if l["assigned_user_id"]}
+    check("and the demo spreads buyers across it rather than onto one person",
+          len(owners) >= max(3, len(roster) - 3), f"{len(owners)} of {len(roster)} carrying")
+    check("with some left unowned, since Needs a person is the point",
+          any(not l["assigned_user_id"] for l in every))
+
+    # **The banner means a change was made, not that a draft row exists.**
+    # It was `draft is not None`, and a draft exists from the moment the
+    # dealership is seeded -- so every install opened Liner setup announcing
+    # unpublished changes nobody had made. A warning that turns out to be
+    # wrong is worse than none: the next one gets ignored too, and this is the
+    # banner standing between an edit and a buyer reading it.
+    # Read from the seed rather than from the running database: by the time
+    # this runs, earlier sections of this very script have edited the draft, so
+    # asserting on live state here would be checking what smoke did rather than
+    # what a fresh install ships.
+    _seed_src = pathlib.Path("backend/app/seed.py").read_text()
+    check("a fresh seed ships a draft that matches what is live",
+          "push_level=live.push_level" in _seed_src
+          and 'push_level="assertive"' not in _seed_src.split("def _seed_settings")[1],
+          "the fixture still ships a pending edit nobody made")
+
+    # No assertion that a draft row exists here: an earlier section of this
+    # script publishes one, so whether there is a draft at this moment is a
+    # fact about smoke rather than about the product. The pair below is the
+    # real test of the predicate, in both directions.
+    settings_now = call("GET", "/api/assistant-settings")
+    was_push = settings_now["live"]["push_level"]
+    other = "assertive" if was_push != "assertive" else "balanced"
+    call("PATCH", "/api/assistant-settings", {"push_level": other})
+    check("but a real edit raises it",
+          call("GET", "/api/assistant-settings")["has_unpublished_changes"])
+    call("PATCH", "/api/assistant-settings", {"push_level": was_push})
+    # The half that was broken: with the draft matching live again the banner
+    # has to go away, which `draft is not None` could never do.
+    check("and putting it back lowers it again",
+          not call("GET", "/api/assistant-settings")["has_unpublished_changes"])
+
     print("\n== campaigns: reaching a group, not answering one ==")
     # **The audiences are real or they are nothing.** A campaign list with
     # plausible numbers painted on it would be the one place this product
