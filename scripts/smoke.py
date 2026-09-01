@@ -3665,8 +3665,14 @@ def main() -> int:
             check(f"and {ch} is given exactly one channel addendum",
                   sum(m in text for m in
                       ("BY EMAIL", "ON A PHONE CALL", "ON A SCREEN")) == 1)
-        check("the method is still whole inside the email prompt",
-              "HOW YOU ACTUALLY DO ANY OF THIS HERE" in prompts["email"])
+        # Email is a third channel on **one** prompt, not a prompt of its own.
+        # Two full prompts is how the price rule ends up stricter on one
+        # channel than another, so the brief and the operating rules have to be
+        # in this one exactly as they are in the other two.
+        check("email carries the same brief and rules as chat and voice",
+              all(mark in prompts["email"] for mark in
+                  ("WHAT YOU ARE DOING", "HOW THIS PLACE ACTUALLY WORKS",
+                   "EVERY CAR FACT COMES FROM A TOOL RESULT")))
         check("and the addendum stays short enough to reread every turn",
               len(EMAIL_ADDENDUM) < 1500, f"{len(EMAIL_ADDENDUM)} chars")
         check("it says not to quote their message back at them",

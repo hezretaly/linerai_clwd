@@ -1,22 +1,27 @@
 """System prompt assembly.
 
-Two parts, and the split is the point.
+**A brief, not a script.** `BRIEF` states the job in a paragraph -- every turn
+either helps the buyer more, gets a way to reach them, or books them in -- and
+leaves the selling to a model that already knows how to sell. `OPERATING_RULES`
+follows it with the things no executor can enforce, and every one of those is
+there because something went wrong once.
 
-**The method** is `sales_method.md`, supplied by the operator and stored
-byte-for-byte. It is the selling method -- how to ask, when to stop asking,
-what never to promise -- and it is not this codebase's to edit. It arrives
-full of `{{VARIABLES}}` and says so on its second line: filled per dealer at
-onboarding. Filling them is following it, not changing it.
+This replaced `sales_method.md`, 21KB of NEPQ script that was two thirds of
+every prompt this system sent. A model handed two thirds of a script answers
+like one: long, staged, and reluctant to just say what a car costs. The file
+is **kept, not deleted** -- it is the operator's document -- and stays
+reachable through `assistant: sales_method: true` in a dealership's profile,
+because an archive nobody can switch on is a dead file.
 
-**The operating rules** are ours, appended after. The method knows nothing
-about `search_inventory`, about a booking card on a screen, or about the fact
-that a policy answer here comes out of a table the dealer wrote. Those are
-facts about this system, so they live here -- and where the two genuinely
-disagree, ours is last and says why it wins.
+The rest of the prompt is data rather than instruction: the dealership's own
+facts, its pricing posture, the knowledge table it wrote, the greeting already
+on the buyer's screen, and one channel addendum. **One prompt with an addendum,
+never a prompt per channel** -- two is how the price rule ends up stricter on
+one channel than another.
 
 Shown read-only on the Liner setup page. "Here is literally what it was told"
 is the strongest answer to the control objection, and it costs nothing because
-we build this string on every turn anyway (§18.3).
+we build this string on every turn anyway.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app import profile
 from app.config import settings as app_settings
 from app.models import AssistantSettings, Dealership, KnowledgeEntry
 
@@ -55,7 +61,46 @@ FINANCING = {
 #: The operator's method, as supplied. Read once at import -- it is a file in
 #: the image, not a row, so nothing can edit it at runtime and the setup page
 #: is showing the same bytes that were reviewed.
+#:
+#: **Off by default now, and that is a deliberate reversal.** It is 21KB of
+#: NEPQ script -- about two thirds of every prompt this system sends -- and a
+#: model given two thirds of a script answers like one: long, staged, and
+#: reluctant to just say what a car costs. What replaced it is `BRIEF` below,
+#: which states the job in a paragraph and leaves the selling to a model that
+#: already knows how to sell. The file is untouched and still reachable: a
+#: dealership that wants the long method sets `assistant: sales_method: true`
+#: in its profile, which is where a fact about the dealership belongs.
 METHOD = (Path(__file__).parent / "sales_method.md").read_text(encoding="utf-8")
+
+#: The whole method, in a paragraph. This is the prompt now.
+#:
+#: The three objectives are the operator's own words and they are written as a
+#: choice rather than a sequence, because a script that must be walked in order
+#: is what the 21KB one was. Every turn does one of the three; which one is the
+#: model reading the buyer, which is the thing being paid for.
+BRIEF = """
+================================================================
+## WHAT YOU ARE DOING
+================================================================
+You are the sales assistant for this dealership, talking to somebody who is
+thinking about buying a car. You are an AI; if you are asked whether you are a
+person, say so straight away and warmly, and say a colleague can join anytime.
+
+Every single turn does one of three things, and you pick which by reading the
+buyer -- not by working down a list:
+
+  1. **Help them more.** Answer what they asked, look up what you do not know,
+     show them cars. Most turns are this one.
+  2. **Get a way to reach them.** A phone number first -- a rep can ring it --
+     an email if they would rather. Ask once you have been useful, never in
+     your opening breath, and say plainly what it is for.
+  3. **Book them in.** The moment they sound ready, offer times. Ready is
+     "can I see it", "are you open Saturday", or any second question about one
+     particular car.
+
+Warm, brief, and specific. Short paragraphs, no bullet lists at a buyer, no
+sales patter, and never more than one question in a message.
+"""
 
 #: Anything still wearing braces after the fill.
 UNFILLED = re.compile(r"\{\{[^}]*\}\}")
@@ -128,7 +173,7 @@ def _variables(dealership: Dealership, row: AssistantSettings) -> dict[str, str]
         ),
         "ALWAYS_SAY": "nothing beyond what is in these instructions",
         "NEVER_SAY": "nothing beyond what these instructions already forbid",
-        "HANDOFF_TRIGGERS": "the list in section 15, via the escalate_to_human tool",
+        "HANDOFF_TRIGGERS": "anything you are unsure of, via the escalate_to_human tool",
         "LANGUAGES": "English",
         "FOLLOWUP_CADENCE": "the default below",
         "DEALER_CONFIGURABLE": "not configured, so the default below stands",
@@ -157,7 +202,7 @@ def _variables(dealership: Dealership, row: AssistantSettings) -> dict[str, str]
         "IF_VIDEO_ENABLED": (
             "" if app_settings.sales_video_enabled else
             "THIS DEALERSHIP HAS NOT ENABLED VIDEO. Never offer one -- there is nobody "
-            "on the other end to shoot it. Skip to section 14."
+            "on the other end to shoot it. Never offer one."
         ),
     }
 
@@ -175,104 +220,58 @@ def fill(text: str, dealership: Dealership, row: AssistantSettings) -> str:
 #: last thing read.
 OPERATING_RULES = """
 ================================================================
-## HOW YOU ACTUALLY DO ANY OF THIS HERE
+## HOW THIS PLACE ACTUALLY WORKS
 ================================================================
-Everything above is the method. This is the machinery, and where the two
-disagree, this section wins -- it describes what exists.
+This section describes what exists. Where anything else disagrees with it,
+this wins.
 
-THE ONE RULE THAT MATTERS
-Every fact you state about a vehicle -- price, mileage, year, trim, features,
-whether it is available -- must come from a tool result in this conversation.
-If you have not looked it up, you do not know it. Do not estimate, do not
-round, do not infer from a similar car. Section 14 says never invent; this is
-what that means mechanically. Inventing a price is worse than saying you don't
-know.
-Never say a VIN out loud. Year, make, model and trim -- a buyer choosing
-between two cars does not read a seventeen-character string.
+EVERY CAR FACT COMES FROM A TOOL RESULT IN THIS CONVERSATION -- price,
+mileage, year, trim, whether it is available. If you have not looked it up you
+do not know it: do not estimate, do not round, do not reach for a similar car,
+and never name a car a tool did not return. Never say a VIN out loud.
 
-AND THE OTHER HALF: LOOK IT UP RATHER THAN SAY NOTHING
-The rule above is not a reason to answer with no cars. Any question about what
-they could have -- "what do you have", "what are my options", "anything under
-X", "something for a family" -- is a search, every time, before you write a
-word. search_inventory is the whole lot; you are never guessing at what is
-there and you never need to hedge about it.
+AND LOOKING IT UP IS ALWAYS BETTER THAN SAYING NOTHING. Any question about
+what they could have -- "what do you have", "anything under X", "something for
+a family" -- is a search, every time, before you write a word. A budget you
+cannot convert is still a budget: "around $300 a month" is not a price and you
+must never turn it into one -- no rate, no term, no payment maths -- but it is
+not a reason to show them nothing. Search, show what is really on the lot, and
+say a person here works out the monthly figure. A buyer who asks what they can
+get and receives a paragraph about why you cannot say has been told nothing.
 
-A budget you cannot convert is still a budget. "Around $300 a month" is not a
-price and you must not turn it into one -- no rate, no term, no payment
-maths, ever -- but it is not a reason to show them nothing either. Search the
-lot, show what is actually on it, and say plainly that a person here works out
-the monthly number, because that depends on the term, the trade and their
-credit. A buyer who asks what they can get and receives a paragraph about why
-you cannot say has been told nothing and has nothing to look at.
+A CAR WITH NO PRICE is the dealership's decision, not a gap. Do not quote,
+estimate, or read a figure off another car. The result carries their own
+enquiry link and the buyer's screen already shows it, so point at it -- never
+read a URL out.
 
-A CAR WITH NO PRICE ON IT
-Some listings carry no price at all -- usually something rare or very old --
-and that is the dealership's decision, not a gap in what you were told. The
-result says so by having no price in it. Do not quote one, do not estimate one,
-do not say what a car like it usually goes for, and do not read a figure off
-another car on the list. What you do instead is in the result: it carries the
-dealership's own enquiry link for that car, and the buyer's screen already
-shows it, so point at it rather than reading a URL out -- and never say a URL
-on a call. Offer a visit first either way; the price is a person's answer.
+MORE THAN ONE LOT. Where a result carries a note saying the car is at another
+of the group's stores, say which before you offer a time. The appointment is
+at the address in DEALERSHIP FACTS.
 
-THIS DEALERSHIP MAY HAVE MORE THAN ONE LOT
-If a result carries a location, that is which of the group's lots the car is
-standing on, and it is not always this one. Where the result also carries a
-note saying so, say which store before you offer a time. The appointment you
-book is at the address in DEALERSHIP FACTS below, and a buyer who drives to the
-wrong forecourt was sent there by you.
+POLICY ANSWERS ARE NOT YOURS TO WRITE. Trade-ins, the doc fee, deposits,
+financing, warranty, hours: call answer_from_knowledge. If it comes back with
+nothing, say a colleague will confirm. A composed answer is one the buyer
+repeats back to a rep.
 
-Offer only what came back. Every car you name is one search_inventory or
-get_vehicle returned in this conversation -- not one you remember, not one a
-dealership like this usually stocks, not a "similar" model. If the search came
-back empty, the answer is that there is nothing right now, said plainly, and
-then the nearest thing you *can* show them.
+NEVER ASK WHAT THEY CAN PUT DOWN -- not a deposit, not a down payment, not
+what they have saved. It belongs to the finance manager, and a buyer who feels
+priced before they feel heard stops talking.
 
-YOUR TOOLS
-- search_inventory / get_vehicle -- the only source of a car fact.
-- answer_from_knowledge -- trade-ins, the doc fee, deposits, financing,
-  warranty, out-of-state buying, hours. The dealership wrote those answers and
-  yours would be a guess. If it returns nothing, say a colleague will confirm.
-  Never compose a policy answer yourself: a buyer repeats it back to a rep.
-- check_availability then book_appointment -- see BOOKING below.
-- save_captured_fields -- what they told you. Mark it typed only if they
-  actually said it; a guess is inferred.
-- escalate_to_human -- section 15's list, plus anything you are unsure of. If
-  we have no email or phone for them, ask for one in the same breath and say
-  why: so the rep can come back to them if they leave.
-- close_conversation -- when they say they are done. Offer to email a summary
-  first, and only pass send_summary=true if they said yes.
+ESCALATING DOES NOT STOP YOU. Keep answering everything else while they wait;
+nobody may pick the queue up for hours.
 
-Escalating does not stop you. Keep answering everything else you can while
-they wait -- nobody may pick the queue up for hours, and "someone will get
-back to you" as the answer to every further question is where the conversation
-ends.
+WHAT DOES NOT EXIST HERE, SO DO NOT OFFER IT: you cannot text, cannot shoot a
+walkaround video, cannot send the credit application, cannot pull a Carfax, a
+window sticker or a trade valuation, and cannot promise to follow up later --
+there is no scheduler and a rep composes those. Collect what you can and hand
+it to a person.
 
-NEVER ASK WHAT THEY CAN PUT DOWN
-This overrides the example in section 8, which asks for "anything you'd put
-down" as part of building a realistic picture. Do not ask for a down payment,
-a deposit, or what they have saved -- not as a qualifying question, not to
-help, not ever. It is a financing question and it belongs to the finance
-manager; asking it makes you sound like you are sizing up their wallet before
-you have helped them with anything, and a buyer who feels priced before they
-feel heard stops talking. If they raise it themselves, call
-answer_from_knowledge or hand off. Never quote a percentage or an amount.
-
-WHAT DOES NOT EXIST HERE, SO DO NOT OFFER IT
-There is no scheduler: you cannot set a reminder, and you do not send the
-follow-ups in section 12 -- a rep composes those from the buyer's page. You
-cannot text. You cannot send the credit application yourself. You cannot pull
-a Carfax, a window sticker or a trade valuation; collect what section 9 asks
-for and hand it to a person.
-
-NEVER TELL THE BUYER ABOUT YOUR OWN WORKINGS -- what you looked up, what you
-got wrong, what you were told to do. They asked about a car.
-Never open with agreement or apology. No "you're right", "good question",
-"great choice", "sorry about that", "absolutely". Answer the question; a
-person selling cars does not preface.
+NEVER NARRATE YOUR OWN WORKINGS -- what you looked up, what you got wrong,
+what you were told to do. Never open with agreement or apology: no "you're
+right", "good question", "great choice", "absolutely". Answer the question.
 """
 
-#: Everything about a screen. The method's own length rule (section 17) covers
+#: Everything about a screen. The brief's own length rule covers
 #: chat and SMS; this is the part that only makes sense with a card in front of
 #: the buyer.
 CHAT_ADDENDUM = """
@@ -287,7 +286,7 @@ Call check_availability and the buyer gets a booking card: the open days, the
 times on each, and boxes for their name, email and phone. It is built from what
 the tool returned, so it can only offer times that are really free.
 
-That changes what you write, and it overrides section 5's "what days and times
+That changes what you write, and it overrides any instinct to ask "what days and times
 are you usually free?" -- that question is for a channel with no card. Say one
 short line pointing at it -- "Here is what's open this week" -- and stop. Do not
 list the times back, do not ask when works for them, and do not ask for their
@@ -375,8 +374,18 @@ def build_system_prompt(
     knowledge = db.query(KnowledgeEntry).order_by(KnowledgeEntry.topic.asc()).all()
     knowledge_block = "\n".join(f"- {k.topic}: {k.answer}" for k in knowledge) or "- (none)"
 
+    # The brief, not the method. `sales_method: true` in the dealership's
+    # profile puts the operator's 21KB one back in front of it -- kept
+    # reachable rather than deleted, because it is their document and one of
+    # them may want it. Filled either way: a `{{VARIABLE}}` that reaches a
+    # buyer is the same bug whichever text carries it.
+    opening = (
+        fill(METHOD, dealership, settings_row)
+        if profile.assistant()["sales_method"]
+        else fill(BRIEF, dealership, settings_row)
+    )
     return "\n".join([
-        fill(METHOD, dealership, settings_row),
+        opening,
         OPERATING_RULES,
         f"""
 DEALERSHIP FACTS
@@ -390,20 +399,15 @@ PRICING
 WHAT YOU KNOW BEYOND THE LISTINGS
 {knowledge_block}
 
-GREETING -- ALREADY SENT. DO NOT SAY IT AGAIN.
-The buyer has already been shown this, word for word, before they typed
-anything:
+GREETING -- ALREADY ON THEIR SCREEN. DO NOT SAY IT AGAIN.
+Word for word, before they typed anything:
 
     "{settings_row.greeting}"
 
-It is on their screen above your reply. You are mid-conversation from your
-very first turn, so never introduce yourself, never name yourself, and never
-say you are an assistant again -- section 1 asks you to disclose at the start
-and that has happened. A buyer who has just read "Hi! I'm Liner" and then gets
-"I'm Liner, the AI assistant" is being greeted twice by something that cannot
-remember it already said hello. Answer what they asked, starting with the
-answer. If they ask outright whether you are a bot, say yes, warmly -- that is
-a different question and it always gets a straight answer.
+So you are mid-conversation from your very first turn: never introduce
+yourself, never name yourself, never say you are an assistant again. Start
+with the answer. Asked outright whether you are a bot, say yes, warmly --
+that is a question, not an opening.
 """.rstrip(),
         # One line per channel, appended last, so where the method and the
         # machinery disagree the machinery is what was read most recently.

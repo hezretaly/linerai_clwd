@@ -136,26 +136,42 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `check_availability` builds slots straight from `hours_json` in that frame.
   Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a
   hardcoded 9 PM produced an appointment the calendar could not draw.
-- **The selling method is the operator's file; the operating rules are ours.**
-  `agent/sales_method.md` is supplied and stored byte-for-byte — it is how to
-  sell, and not this codebase's to edit. `prompts.py` fills its
-  `{{VARIABLES}}` (which its own second line asks for) and appends what it
-  cannot know: that there are eight tools, that a chat buyer is looking at a
-  booking card, that a policy answer comes from a table. Ours is appended last,
-  so where the two genuinely disagree ours is what was read most recently — and
-  it says which section it is overriding rather than contradicting it silently.
-  `make agent-check` asserts the filled method appears in both prompts whole.
+- **The prompt is a brief, not a script.** `BRIEF` in `prompts.py` states the
+  job in a paragraph — every turn either helps the buyer more, gets a way to
+  reach them, or books them in — and leaves the selling to a model that
+  already knows how to sell. `OPERATING_RULES` follows with what no executor
+  can enforce. Together they are about 4KB; the whole prompt is 7.6KB and most
+  of the rest is *data*: the dealership's facts, its pricing posture, the
+  knowledge table it wrote, the greeting already on screen.
+  - **It replaced 21KB of NEPQ script, and that was the point.**
+    `agent/sales_method.md` was two thirds of every prompt this system sent,
+    and a model handed two thirds of a script answers like one: long, staged,
+    and reluctant to just say what a car costs. The file is **kept, not
+    deleted** — it is the operator's document and not ours to throw away — and
+    stays reachable through `assistant: sales_method: true` in a dealership's
+    profile, because an archive nobody can switch on is a dead file. Default
+    off, asserted by the gate.
+  - **The gate pins the length.** `make agent-check` fails over 12,000 chars.
+    Without a number, "shorten the prompt" is a thing that happened once and
+    drifts straight back: every rule anybody adds is another paragraph and
+    nothing pushes the other way. It is a bill as well as a behaviour — the
+    prompt is the cached prefix on every turn of every conversation.
+  - **A rule must not cite a section the model cannot see.** The old prompt
+    said "this overrides section 5"; with the script gone that names nothing,
+    so each was rewritten to say what it overrides rather than where.
   - **Every placeholder is answered, including the ones we have nothing for.**
     Left in braces, a model eventually types `{{CURRENT_CAR}}` at a buyer; left
     empty, `{{VDP_VIEWS}}` is an invitation to invent the demand figure the
     sentence around it exists to forbid. So both get a plain statement of the
-    fact instead, and the gate fails on any `{{` surviving in either channel.
-  - **A capability the method assumes and this system lacks becomes a
-    refusal, not a silence.** The personalized video, the follow-up cadence and
-    sending the credit application are all things it tells the assistant to do
-    and nothing here can do. Each is answered where the method asks for it —
-    there is no scheduler, a rep composes the follow-ups, and video is off — so
-    the assistant never offers a buyer something nobody will deliver.
+    fact instead, and the gate fails on any `{{` surviving in either channel —
+    on the archived method too, or the profile key that restores it is a
+    switch onto a crash.
+  - **A capability this system lacks is refused, not merely unmentioned.**
+    These used to answer the method where it asked for them; nothing asks now,
+    which makes them matter more rather than less. A model with no instruction
+    will happily offer to text a buyer, send them the credit application, shoot
+    a walkaround video or promise to follow up next week, and every one of
+    those is a promise nobody here can keep.
 - **The greeting is already on the buyer's screen, and the prompt has to say
   so.** It is client-side only and never a message row, so the model cannot
   see that anything was said — and the method's own section 1 tells it to

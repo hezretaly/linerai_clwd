@@ -382,8 +382,16 @@ def main() -> int:
         written = _prompt(db, db.query(_Dealership).first(), _live(db))
         check("the prompt carries the greeting the buyer has already read",
               _live(db).greeting in written)
-        check("and says plainly that it was already sent",
-              "ALREADY SENT" in written and "never introduce yourself" in written)
+        # Matched against the prompt with its whitespace flattened. These are
+        # hand-wrapped paragraphs, so "never introduce yourself" is split
+        # across a line break in the source and a literal `in` says the rule is
+        # missing when it is right there -- a failing check about nothing,
+        # which is worse than no check because somebody edits the prompt to
+        # satisfy it.
+        flat = " ".join(written.split())
+        check("and says plainly that it is already on their screen",
+              "ALREADY ON THEIR SCREEN" in flat
+              and "never introduce yourself" in flat)
         check("a monthly payment is answered with cars, not a lecture",
               "$300 a month" in written and "not a reason to show them nothing" in written)
 
@@ -438,62 +446,75 @@ def main() -> int:
         # One prompt with an addendum, not two prompts. Two is how the price
         # rule ends up stricter on one channel than the other.
         check("but both carry the rule that matters",
-              "THE ONE RULE THAT MATTERS" in spoken
-              and "THE ONE RULE THAT MATTERS" in written)
+              "EVERY CAR FACT COMES FROM A TOOL RESULT" in spoken
+              and "EVERY CAR FACT COMES FROM A TOOL RESULT" in written)
         check("and both carry the dealership's own facts",
               dealership.name in spoken and dealership.phone in spoken)
 
-        print("\n== the operator's method, filled and not edited ==")
-        from app.agent.prompts import METHOD, UNFILLED, fill
-        # The method is the operator's, stored byte-for-byte, and this is what
-        # stops it drifting: the file on disk goes into the prompt whole, with
-        # only its own `{{VARIABLES}}` replaced -- which the file's own second
-        # line asks for.
+        print("\n== the brief, and the method it replaced ==")
+        from app.agent.prompts import BRIEF, METHOD, UNFILLED, fill
+        from app import profile as dealer_profile
+        # **The 21KB method is off, and the prompt is a brief.** It was two
+        # thirds of every prompt this system sent, and a model handed two
+        # thirds of a script answers like one. The three objectives are what
+        # replaced it -- help, get a number, book -- and they are what every
+        # turn is now choosing between, so the gate reads for all three rather
+        # than for a section count.
+        check("the method is off unless a dealership asks for it",
+              not dealer_profile.assistant()["sales_method"])
         for label, prompt in (("a call", spoken), ("a chat", written)):
-            body = fill(METHOD, dealership, live_settings(db))
-            check(f"{label} carries the method as supplied, section for section",
-                  body in prompt, f"{len(METHOD)} chars")
-        check("every section survives the fill",
-              all(f"## {n}." in written for n in range(1, 21)),
-              "sections 1-20")
+            check(f"{label} opens with the brief, not the script",
+                  fill(BRIEF, dealership, live_settings(db)).strip() in prompt,
+                  f"{len(BRIEF)} chars")
+            check(f"and the 21KB method is nowhere in {label}",
+                  METHOD[:400] not in prompt, f"{len(METHOD)} chars of script")
+        check("all three objectives are stated, since a turn picks between them",
+              all(k in written for k in ("Help them more", "Get a way to reach them",
+                                         "Book them in")))
+        # It has to actually be short. Without a number here "shorten the
+        # prompt" is a thing that happened once and drifts straight back --
+        # every rule anybody adds is a paragraph, and nothing pushes the other
+        # way. The prompt is also the cached prefix on every turn of every
+        # conversation, so this is a bill as well as a behaviour.
+        check("and the whole prompt stays short enough to be a brief",
+              len(written) < 12_000, f"{len(written):,} chars")
         # A placeholder left in braces is one a model will eventually type at a
         # buyer -- "you were trying to get out of the {{CURRENT_CAR}}".
         for label, prompt in (("a call", spoken), ("a chat", written)):
             check(f"and no placeholder reaches {label} unfilled",
                   not UNFILLED.findall(prompt), str(UNFILLED.findall(prompt))[:80])
-        check("the dealership's own name and town are filled in, not described",
-              f"assistant for {dealership.name}" in written, dealership.name)
+        # The method is kept rather than deleted -- it is the operator's
+        # document -- so it has to still be loadable and still fill cleanly,
+        # or the profile key that brings it back is a switch onto a crash.
+        check("the archived method still fills without leaving a placeholder",
+              not UNFILLED.findall(fill(METHOD, dealership, live_settings(db))),
+              f"{len(METHOD)} chars archived")
 
         # Where the method and this system disagree, this system is last and
         # says so. Section 5 asks "what days and times are you usually free?",
         # which is right on a call and wrong on a screen -- there is a card
         # offering real times, and asking as well gets the same question
         # answered in the worse place.
-        check("the booking card overrides the method's open question, on chat only",
-              "overrides section 5" in written and "overrides section 5" not in spoken)
+        check("the booking card overrides asking for a time, on chat only",
+              "what days and times" in written and "what days and times" not in spoken)
 
-        # The method names capabilities this system does not have. Left
-        # unanswered they become promises: a video nobody will shoot, a
-        # follow-up cadence with no scheduler behind it, a credit application
-        # the assistant cannot send.
-        check("a video nobody can shoot is refused rather than offered",
-              "HAS NOT ENABLED VIDEO" in written)
-        check("and the follow-up cadence is named as a rep's job, not a timer",
-              "no scheduler" in written and "a rep composes those" in written)
-        check("and the credit application is handed to a person to send",
-              "you cannot send" in written and "escalate_to_human" in written)
-        # The sentence around this exists to stop invented demand. An empty
-        # placeholder there is an invitation to fill it in.
-        check("demand figures we do not measure say so, rather than sitting empty",
-              "not tracked here" in written)
-        # Section 8 asks for "anything you'd put down" while building a picture
-        # of the deal. That is a finance manager's question, and an assistant
-        # that asks it sounds like it is sizing up a wallet before it has
-        # helped with anything -- so it is overridden by name, on both channels.
+        # **A capability this system lacks is refused, not merely unmentioned.**
+        # These used to answer the method where it asked for them. Nothing asks
+        # now -- and they matter more for that, not less: a model with no
+        # instruction will happily offer to text a buyer, send them the credit
+        # application or shoot a walkaround, and every one of those is a
+        # promise nobody here can keep.
+        for label, prompt in (("a chat", written), ("a call", spoken)):
+            for lacks in ("cannot text", "cannot shoot a", "cannot send the",
+                          "cannot promise to follow up later"):
+                check(f"{label}: {lacks!r} is refused rather than left open",
+                      lacks in prompt)
+        # Asking for a deposit is a finance manager's question, and an
+        # assistant that asks it sounds like it is sizing up a wallet before it
+        # has helped with anything. Refused on both channels.
         for label, prompt in (("a chat", written), ("a call", spoken)):
             check(f"asking what they can put down is refused on {label}",
-                  "NEVER ASK WHAT THEY CAN PUT DOWN" in prompt
-                  and "overrides the example in section 8" in prompt)
+                  "NEVER ASK WHAT THEY CAN PUT DOWN" in prompt)
 
         body = voice.session_payload(spoken, tools.TOOL_DEFS)["session"]
         check("the session body is the shape the realtime API documents",

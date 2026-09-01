@@ -205,3 +205,21 @@ def brand() -> dict:
         # should not change colour because of it.
         "surface": "dark" if str(raw.get("surface") or "").strip().lower() == "dark" else "light",
     }
+
+
+def assistant() -> dict:
+    """What this dealership wants of the assistant beyond `AssistantSettings`.
+
+    One key so far. `sales_method` puts the operator's full 21KB method back in
+    front of every prompt; it is **off by default**, because a model handed two
+    thirds of a script answers like one -- long, staged and reluctant to just
+    say what a car costs. `agent/prompts.BRIEF` replaced it.
+
+    The file is kept rather than deleted and this is what keeps it reachable:
+    an archive nobody can switch on is a dead file, and it is the operator's
+    document rather than ours to throw away. It lives in the profile because it
+    is a fact about a dealership -- one of them may genuinely want the method,
+    and switching dealership must stay one line.
+    """
+    raw = _section("assistant")
+    return {"sales_method": bool(raw.get("sales_method"))}
