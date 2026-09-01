@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import type { AssistantSettings, HandoffRule, KnowledgeEntry, Rail } from '../lib/types'
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
+import { AgentSwitch } from '../components/AgentSwitch'
 import { PageHeader } from '../components/dashboard/AppShell'
 
 interface SettingsPayload {
@@ -56,6 +57,16 @@ export function AssistantPage() {
       )}
 
       <div className="p-6">
+        {/* **Whether Liner answers email is a decision about the assistant**,
+            so it belongs on the page that decides how the assistant behaves --
+            not in the mailbox, which is for reading mail. Above the tabs
+            rather than inside one: it is also the switch somebody reaches for
+            while an inbox is being hammered, and one behind a tab is one they
+            have to already know about. */}
+        <div className="mb-6">
+          <AgentSwitch />
+        </div>
+
         <Card>
           <div className="px-4 pt-2">
             <Tabs

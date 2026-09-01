@@ -3085,6 +3085,42 @@ def main() -> int:
           not held["sent"] and "taken this conversation over" in held["reason"],
           str(held))
 
+    print("\n== campaigns: reaching a group, not answering one ==")
+    # **The audiences are real or they are nothing.** A campaign list with
+    # plausible numbers painted on it would be the one place this product
+    # claimed something it cannot do, so every count here is a query against
+    # rows and the gate checks the arithmetic rather than the rendering.
+    plans = call("GET", "/api/campaigns")
+    by_key = {c["key"]: c for c in plans["campaigns"]}
+    check("every campaign says whether it can run at all",
+          all(isinstance(c["ready"], bool) for c in plans["campaigns"]),
+          str(sorted(by_key)))
+    # Not "coming soon". The whole cost of an unbuilt integration is the hour
+    # spent working out what it needs, so each one names its dependency.
+    unbuilt = [c for c in plans["campaigns"] if not c["ready"]]
+    check("and one that cannot names the dependency, never just 'soon'",
+          unbuilt and all(len(c["blocked_by"]) > 30 and "soon" not in c["blocked_by"].lower()
+                          for c in unbuilt),
+          str([c["key"] for c in unbuilt]))
+    check("Instagram and Facebook are listed as not built, not as empty",
+          by_key["instagram"]["audience"] is None
+          and not by_key["instagram"]["ready"]
+          and "Meta" in by_key["instagram"]["blocked_by"],
+          str(by_key["instagram"])[:80])
+    # The price-drop audience is computable today because `quoted_price` on a
+    # vehicle mention records what the buyer was actually told at the time.
+    # The quote *is* the price history -- no second table for it.
+    drop = by_key["price_drop"]
+    check("the price-drop audience is counted from what buyers were quoted",
+          isinstance(drop["audience"], int), str(drop["audience"]))
+    for row in drop["examples"]:
+        check(f"and {row['name']} really was quoted more than it costs now",
+              row["was"] > row["now"] and row["saving"] == row["was"] - row["now"],
+              f"{row['was']} -> {row['now']}")
+    check("nothing on the page claims to send",
+          "send" not in plans["note"].lower() or "not" in plans["note"].lower()
+          or "yet" in plans["note"].lower(), plans["note"][:80])
+
     print("\n== the details card: asking in boxes rather than in prose ==")
     # **The one ask a chip could never make on its own.** A chip's text is sent
     # as the buyer's own message, so a pre-written one carrying a name or a
@@ -4156,12 +4192,21 @@ def main() -> int:
     # Read out of the page for the same reason `SPA_PREFIXES` is: nothing else
     # here can tell a control that exists from one that was only ever
     # described in a plan.
-    _email_page = pathlib.Path("frontend/src/routes/EmailSetup.tsx").read_text()
+    # It lives on the Liner setup page now, not in the mailbox: whether Liner
+    # answers email is a decision about the assistant, which is what that page
+    # is for. The check follows it rather than being relaxed -- the failure it
+    # exists to catch is "the endpoint has no control anywhere", and moving the
+    # control must not read as removing it.
+    _switch = pathlib.Path("frontend/src/components/AgentSwitch.tsx").read_text()
+    _setup_page = pathlib.Path("frontend/src/routes/Assistant.tsx").read_text()
     check("the dashboard has the switch, not just the endpoint behind it",
-          "'/api/email/agent'" in _email_page and "Switch on" in _email_page,
-          "EmailSetup.tsx does not post to /api/email/agent")
+          "'/api/email/agent'" in _switch and "Switch on" in _switch,
+          "AgentSwitch.tsx does not post to /api/email/agent")
+    check("and it is on the page that decides how Liner behaves",
+          "<AgentSwitch />" in _setup_page,
+          "Liner setup does not render it")
     check("and it names all three things that have to be true separately",
-          all(k in _email_page for k in ("allowed_by_env", "live_model", "state.flag")),
+          all(k in _switch for k in ("allowed_by_env", "live_model", "state.flag")),
           "the card collapses them into one 'off'")
 
     with _BrakeSession() as _db:

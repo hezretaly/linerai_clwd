@@ -26,10 +26,10 @@ const NAV = [
   // dashboard's word for something going wrong.
   { to: '/app/conversations', label: 'Conversations', icon: 'inbox', group: 'Today',
     badge: 'conversations', tone: 'primary' },
-  // Everything sent and received, plus the diagnostics for when one did not
-  // arrive. Under Today because reading the mail is daily work; the setup half
-  // is collapsed on the page rather than living somewhere else.
-  { to: '/app/email', label: 'Email', icon: 'mail', group: 'Today',
+  // Going back to buyers who already talked to this dealership, and the
+  // mailbox that carries it. Under Today because reading the mail is daily
+  // work; the campaigns half is the reason to write in the first place.
+  { to: '/app/campaigns', label: 'Campaigns', icon: 'mail', group: 'Today',
     badge: null, tone: 'muted' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
     badge: 'appointments', tone: 'muted' },

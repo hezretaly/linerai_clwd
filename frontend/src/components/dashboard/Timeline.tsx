@@ -64,6 +64,13 @@ export const CHANNEL_LABEL: Record<string, string> = {
   chat: 'Website chat',
   voice: 'Voice call',
   email: 'Email',
+  // Seeded demo threads only. There is no Meta integration -- nothing is sent
+  // or received on either -- and `/api/campaigns` says which app and webhook
+  // it would take. They are here because the buyer page and the conversations
+  // list are channel-agnostic by construction, and this is what proves it:
+  // one person's Instagram message sits in the same timeline as their call.
+  instagram: 'Instagram',
+  facebook: 'Facebook',
   phone_logged: 'Logged call',
 }
 
@@ -71,6 +78,8 @@ const CHANNEL_ICON: Record<string, 'chat' | 'voice' | 'mail' | 'phone'> = {
   chat: 'chat',
   voice: 'voice',
   email: 'mail',
+  instagram: 'chat',
+  facebook: 'chat',
   phone_logged: 'phone',
 }
 

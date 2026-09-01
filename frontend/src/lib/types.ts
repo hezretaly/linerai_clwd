@@ -148,7 +148,12 @@ export interface Conversation {
   id: string
   lead_id: string | null
   lead?: Lead | null
-  channel: 'chat' | 'voice'
+  // A conversation happens somewhere, and the dashboard is organised by
+  // buyer rather than by channel -- so this widens as channels are added and
+  // nothing downstream branches on it. `instagram` and `facebook` are seeded
+  // demo threads: there is no Meta integration, and /api/campaigns says what
+  // one would need.
+  channel: 'chat' | 'voice' | 'email' | 'instagram' | 'facebook'
   status: 'active' | 'handoff' | 'closed'
   agent_paused: boolean
   stage: Stage

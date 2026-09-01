@@ -15,7 +15,7 @@ import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
 import { ConversationListPage } from './routes/ConversationList'
 import { LeadPage, LeadRedirect } from './routes/LeadPage'
-import { EmailSetupPage } from './routes/EmailSetup'
+import { CampaignsPage } from './routes/Campaigns'
 import { LeadImportPage } from './routes/LeadImport'
 import { CalendarPage } from './routes/Calendar'
 import { InventoryPage } from './routes/Inventory'
@@ -84,7 +84,11 @@ createRoot(document.getElementById('root')!).render(
             <Route path="calendar" element={<CalendarPage />} />
             <Route path="inventory" element={<InventoryPage />} />
             <Route path="inventory/import" element={<ImportPage />} />
-            <Route path="email" element={<EmailSetupPage />} />
+            <Route path="campaigns" element={<CampaignsPage />} />
+            {/* The mailbox is a section of Campaigns now, not a page. Kept as
+                a redirect rather than dropped: a rep may have this bookmarked,
+                and a dead link lands on the catch-all, which leaves the app. */}
+            <Route path="email" element={<Navigate to="/app/campaigns" replace />} />
             <Route path="assistant" element={<AssistantPage />} />
             <Route path="team" element={<TeamPage />} />
           </Route>

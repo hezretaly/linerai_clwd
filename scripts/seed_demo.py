@@ -102,6 +102,21 @@ class Need:
         self.asks = asks
 
 
+#: Every channel a conversation can arrive on. Cycled in `build` so a small
+#: seed still puts all four on the dashboard -- the whole claim of the buyer
+#: page is that it does not care which one a message came in on, and a claim
+#: nothing exercises is one nobody can check.
+CHANNELS = ["chat", "voice", "email", "instagram", "facebook"]
+
+#: How a buyer who first arrived on each channel is recorded. A lead sourced
+#: "adf" whose only thread is a website chat is a contradiction a rep notices
+#: before any of the numbers.
+SOURCE_OF = {
+    "chat": "chat", "voice": "phone", "email": "email",
+    "instagram": "instagram", "facebook": "facebook",
+}
+
+
 def _feature(vehicle, *words) -> bool:
     blob = (vehicle.features_json or "").lower() + " " + (vehicle.keywords or "").lower()
     blob += f" {vehicle.make} {vehicle.model} {vehicle.trim}".lower()
@@ -357,6 +372,227 @@ def _demo_requests(db, rng, now) -> int:
     return made
 
 
+
+# --------------------------------------------------------------------------
+# The five at the top
+# --------------------------------------------------------------------------
+#
+# The conversations list sorts by last activity, so these land first. Each one
+# is a hand-written answer to "what does this actually do", chosen because it
+# is the thing a per-feature screenshot cannot show:
+#
+#   1. one buyer across four channels, in one timeline
+#   2. booked at 9pm with nobody in the building
+#   3. refused to invent a car, and quoted the dealer's own policy verbatim
+#   4. escalated the one question a person owns, and kept answering the rest
+#   5. was quoted a price that has since come down -- which is what puts them
+#      in a campaign audience rather than in a list somebody has to remember
+#
+# Every line is written against the seeded lot, so the prices and mileages in
+# them are the ones in `vehicles`. A transcript quoting a car this dealership
+# does not have is the failure `check_unsourced_vehicles` exists to catch,
+# arriving through the fixture instead of through the model.
+
+
+def _last_evening(now):
+    """The most recent 9:14pm that has already happened.
+
+    The out-of-hours story needs a real out-of-hours timestamp -- "booked at
+    21:14" is the whole point of it, and a fixed offset from `now` lands at
+    whatever time the seed happened to be run. This is the one showcase row
+    that cannot simply be stamped a few minutes ago.
+    """
+    evening = now.replace(hour=21, minute=14, second=0, microsecond=0)
+    return evening if evening < now else evening - timedelta(days=1)
+
+
+def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
+    """Five buyers who each demonstrate one thing. Newest, so they sort first."""
+    made = dict.fromkeys(
+        ("leads", "conversations", "messages", "captured_fields",
+         "appointments", "escalations", "vehicle_mentions"), 0,
+    )
+    priced = [v for v in vehicles if v.price]
+    if not priced:
+        return made
+    car = max(priced, key=lambda v: v.price or 0)
+    cheap = min(priced, key=lambda v: v.price or 0)
+
+    def name_of(v):
+        return f"{v.year} {v.make} {v.model}"
+
+    def thread(lead, channel, ends, lines, *, stage, status="closed",
+               focus=None, summary=""):
+        """`ends` is when the *last* message lands, not the first.
+
+        These have to be the newest activity in the database or they are not
+        the first thing anybody reads, and the list sorts on last message. Told
+        when to start instead, a six-line thread runs several minutes forward
+        and interleaves with the fixture's own recent rows -- which is exactly
+        what happened: three of the five ended up below chat threads seeded
+        minutes earlier.
+        """
+        step = timedelta(seconds=45)
+        started = ends - step * len(lines)
+        convo = Conversation(
+            lead_id=lead.id, channel=channel, status=status, stage=stage,
+            focus_vehicle_id=(focus or car).id, started_at=started,
+            ended_at=None if status == "active" else started + timedelta(minutes=9),
+            summary=summary or lines[-1][1][:160],
+        )
+        db.add(convo)
+        db.flush()
+        made["conversations"] += 1
+        stamp = started
+        for role, content in lines:
+            stamp += step
+            db.add(Message(conversation_id=convo.id, role=role, content=content,
+                           created_at=stamp))
+            made["messages"] += 1
+        return convo
+
+    def buyer(name, email, phone, source, when, owner=None):
+        lead = Lead(name=name, email=email, phone=phone, source=source,
+                    assigned_user_id=owner, created_at=when)
+        db.add(lead)
+        db.flush()
+        made["leads"] += 1
+        return lead
+
+    rep = reps[0].id if reps else None
+    price = f"${car.price:,}"
+    miles = f"{car.mileage or 0:,}"
+    # From the row, never written by hand. A demo transcript naming a feature
+    # this car does not have is the same failure the reply guards catch in the
+    # model, arriving through the fixture where nothing checks it.
+    features = json.loads(car.features_json or "[]") or ["a full service history"]
+    extras = " and ".join(features[:2])
+
+    # ---- 1. one person, four channels, one timeline ----------------------
+    # The whole argument for organising by buyer. Before this the same person
+    # was three unrelated screens and a rep could ring somebody who had
+    # already booked.
+    one = buyer("Marisol Ferrer", "marisol.ferrer@example.invalid",
+                "+15550100201", "instagram", now - timedelta(days=3), rep)
+    thread(one, "instagram", now - timedelta(days=3, hours=2), [
+        ("buyer", f"saw the {car.model} on your page - still available?"),
+        ("assistant", f"It is. The {name_of(car)} is {price}, {miles} miles. "
+                      "Want the full details?"),
+        ("buyer", "yes please"),
+        ("assistant", f"Sending them over. It's the {car.trim or car.model} trim. "
+                      "Anything specific you want to know?"),
+    ], stage="vehicle_focus")
+    thread(one, "email", now - timedelta(days=2, hours=6), [
+        ("buyer", "Following up from Instagram - is the price negotiable at all?"),
+        ("assistant", "That's a conversation for one of our team rather than me. "
+                      "I've flagged it so someone picks it up with you."),
+    ], stage="escalated", status="handoff")
+    thread(one, "voice", now - timedelta(days=1, hours=4), [
+        ("buyer", "Hi, I emailed about the price earlier."),
+        ("assistant", "I have that here. Someone's picking the pricing up with "
+                      "you -- can I get you booked in to see it meanwhile?"),
+        ("buyer", "Sure, Saturday morning?"),
+        ("assistant", "Saturday it is. You'll get a confirmation by email."),
+    ], stage="booked")
+    thread(one, "chat", now, [
+        ("buyer", "Quick one - do you do trade-ins?"),
+        ("assistant", "Yes. Bring the vehicle, the title and any payoff "
+                      "information and we'll appraise it while you're here -- "
+                      "usually about 20 minutes."),
+    ], stage="vehicle_focus")
+    for key, value, prov in (("timeframe", "This week", "typed"),
+                             ("trade_in", "2015 Civic", "typed"),
+                             ("financing", "Financing", "typed")):
+        db.add(CapturedField(lead_id=one.id, key=key, value=value, provenance=prov))
+        made["captured_fields"] += 1
+
+    # ---- 2. booked out of hours ------------------------------------------
+    night = buyer("Dev Raman", "dev.raman@example.invalid", "+15550100202",
+                  "chat", _last_evening(now) - timedelta(minutes=5), rep)
+    thread(night, "chat", _last_evening(now), [
+        ("buyer", "Are you open? I'm looking for something under $20k."),
+        ("assistant", f"We're closed now, but I can still help. The "
+                      f"{name_of(cheap)} is ${cheap.price:,} with "
+                      f"{cheap.mileage or 0:,} miles."),
+        ("buyer", "That could work. Can I come see it?"),
+        ("assistant", "Here's what's open this week -- pick whichever suits you."),
+        ("buyer", "Tuesday morning. dev.raman@example.invalid, 555 0100 202."),
+        ("assistant", "You're booked in for Tuesday morning. It's on the calendar "
+                      "now -- one of our team picks it up from here."),
+    ], stage="booked", focus=cheap,
+        summary="Booked at 9:14pm with nobody in the building.")
+
+    # ---- 3. refused to invent, and quoted the dealer verbatim -------------
+    honest = buyer("Priya Ganesh", "priya.ganesh@example.invalid", "+15550100203",
+                   "chat", now - timedelta(days=2, hours=8), rep)
+    thread(honest, "chat", now - timedelta(minutes=2), [
+        ("buyer", "Do you have a Porsche Cayenne?"),
+        ("assistant", "Nothing from Porsche on the lot right now. The closest I "
+                      f"have is the {name_of(car)} at {price}."),
+        ("buyer", "What's your doc fee?"),
+        ("assistant", "Our documentation fee is $189, and it's the same on every "
+                      "vehicle. It's listed on the buyer's order before anything "
+                      "is signed."),
+        ("buyer", "And what would the monthly be on that one?"),
+        ("assistant", "That depends on the term, the trade and your credit, so "
+                      "it's a person's answer rather than mine. What I can tell "
+                      f"you is the price: {price}."),
+    ], stage="vehicle_focus",
+        summary="Said what it did not have, and quoted the dealership's own words.")
+
+    # ---- 4. escalated the right question, kept answering the rest ---------
+    handed = buyer("Tom Whelan", "tom.whelan@example.invalid", "+15550100204",
+                   "chat", now - timedelta(days=1, hours=9), rep)
+    convo = thread(handed, "chat", now - timedelta(minutes=4), [
+        ("buyer", "What's the out-the-door price on it?"),
+        ("assistant", "A total with tax and fees is one of our team's to give "
+                      "you -- I've flagged it and someone will come back to you."),
+        ("buyer", "Ok. In the meantime, how many miles has it got?"),
+        ("assistant", f"{miles} miles. Escalating doesn't stop me helping -- "
+                      "ask away."),
+        ("buyer", "Does it have CarPlay?"),
+        ("assistant", f"It does. Also on it: {extras}."),
+    ], stage="escalated", status="handoff",
+        summary="Handed the pricing question over and kept answering everything else.")
+    # **Claimed by the rep who owns them, because that is the invariant.**
+    # `app/escalations.py` says an escalation belongs to whoever owns the
+    # buyer, and every writer honours it -- the demo seed included. A fixture
+    # that breaks it puts an owned buyer back in Needs a person, so the row
+    # wears "needs a person" beside the name of the person who has them, and
+    # a manager cannot tell a failed assignment from a lying badge.
+    db.add(Escalation(
+        conversation_id=convo.id,
+        reason="Buyer asked for an out-the-door price.",
+        claimed_by_user_id=rep,
+        claimed_at=(now - timedelta(minutes=3)) if rep else None,
+        created_at=now - timedelta(minutes=5),
+    ))
+    made["escalations"] += 1
+
+    # ---- 5. quoted a price that has since come down -----------------------
+    # The one that makes the campaigns page real: `quoted_price` is what they
+    # were told at the time, so a car that has come down since puts them in an
+    # audience nobody had to remember to write down.
+    dropped = buyer("Alina Sokolova", "alina.sokolova@example.invalid",
+                    "+15550100205", "email", now - timedelta(days=6), rep)
+    was = (car.price or 0) + 1500
+    convo = thread(dropped, "email", now - timedelta(minutes=6), [
+        ("buyer", f"Interested in the {car.model} you have listed."),
+        ("assistant", f"The {name_of(car)} is ${was:,} with {miles} miles. "
+                      "Want to come and see it?"),
+        ("buyer", "A bit above what I wanted to spend. I'll keep looking."),
+        ("assistant", "Understood. I'll be here if anything changes."),
+    ], stage="vehicle_focus",
+        summary=f"Passed at ${was:,}. It is {price} now.")
+    db.add(VehicleMention(
+        conversation_id=convo.id, vehicle_id=car.id, quoted_price=was,
+        created_at=now - timedelta(minutes=6),
+    ))
+    made["vehicle_mentions"] += 1
+    db.commit()
+    return made
+
+
 def build(db, count: int) -> dict[str, int]:
     rng = random.Random(20260813 + count)
     now = utcnow()
@@ -382,6 +618,12 @@ def build(db, count: int) -> dict[str, int]:
 
     made["demo_requests"] += _demo_requests(db, rng, now)
 
+    # The five at the top. Built first so their ids are stable, but dated in
+    # the last few days so they sort above the generated ones -- the list is
+    # ordered by last activity, and these are what somebody should read first.
+    for key, value in _showcase(db, rng, now, vehicles, reps).items():
+        made[key] = made.get(key, 0) + value
+
     for n in range(count):
         name = f"{rng.choice(FIRST)} {rng.choice(LAST)}"
         need = NEEDS[n % len(NEEDS)]
@@ -395,7 +637,17 @@ def build(db, count: int) -> dict[str, int]:
         # and rang the next morning, and that shape only exists if some of
         # them have more than one thread.
         visits = 1 if n % 3 else rng.randint(2, 3)
-        channels = ["voice" if (n + i) % 3 == 0 else "chat" for i in range(visits)]
+        # **All four channels, cycled rather than rolled.** The point of the
+        # buyer page is that it does not care which one a message arrived on --
+        # a person who messaged on Instagram at nine and rang the next morning
+        # is one row and one timeline. A random draw leaves that unproven on a
+        # small seed; cycling guarantees every channel is on the dashboard and
+        # that some buyer has two of them.
+        #
+        # `instagram` and `facebook` are seeded threads and nothing more. There
+        # is no Meta integration -- nothing is sent or received on either --
+        # and `/api/campaigns` names the app and the webhook it would take.
+        channels = [CHANNELS[(n + i) % len(CHANNELS)] for i in range(visits)]
 
         owner = rng.choice(reps).id if reps and n % 3 else None
         lead = Lead(
@@ -407,7 +659,7 @@ def build(db, count: int) -> dict[str, int]:
             # What they first arrived on, not a separate roll. A lead sourced
             # "adf" whose only thread is a website chat is a contradiction a
             # rep would notice before any of the numbers.
-            source="phone" if channels[0] == "voice" else rng.choice(["chat", "chat", "website"]),
+            source=SOURCE_OF.get(channels[0], "chat"),
             assigned_user_id=owner,
             created_at=first_seen,
         )

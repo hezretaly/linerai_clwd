@@ -143,6 +143,7 @@ def create_app() -> FastAPI:
     from app.api import (
         appointments,
         auth,
+        campaigns,
         chat,
         conversations,
         demo,
@@ -176,6 +177,7 @@ def create_app() -> FastAPI:
         outreach.router,
         inbound_email.router,
         mailbox.router,
+        campaigns.router,
         inventory.router,
         ingest.router,
         voice.router,

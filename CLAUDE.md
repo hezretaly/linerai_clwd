@@ -696,6 +696,56 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - `outbound_recipients` returns `None` for no limit and `[]` for nobody.
     Callers must tell them apart; collapsing the two is how an empty list
     starts meaning unrestricted.
+- **`/app/campaigns` is the page; the mailbox is a section of it.** Sending
+  one email and sending forty is the same act at different scale, and
+  splitting them put the composer somewhere different from the reason to use
+  it. `/app/email` redirects rather than 404ing — a rep may have it
+  bookmarked, and the catch-all leaves the SPA.
+  - **The audiences are real or they are nothing.** Each campaign is a
+    question about the database — "who was quoted a car that is now cheaper" —
+    counted per request, because the answer changes whenever the lot does.
+    `vehicle_mentions.quoted_price` is what makes the price-drop one possible
+    today: the quote *is* the price history, so no second table is needed.
+  - **A campaign that cannot run names its dependency, never "soon".**
+    Instagram, Facebook and SMS have no integration at all, so they report
+    which app, webhook or registration it would take instead of sitting at
+    zero — a zero reads as a quiet week. Same rule `/api/integrations`
+    follows for a missing sender.
+  - **The sale-event card is deliberately uncounted.** Every other card
+    answers a question about the buyer; that one is a decision about the
+    dealership's calendar, and "everyone" beside it invites exactly the
+    untargeted blast the others avoid.
+- **Whether Liner answers email is set on the Liner setup page.** It is a
+  decision about how the assistant behaves, which is what that page is for —
+  the mailbox is for reading mail. Above the tabs rather than inside one,
+  because it is also the switch somebody reaches for while an inbox is being
+  hammered. `make smoke` follows it there: the failure the check exists for is
+  "the endpoint has no control anywhere", and moving the control must not read
+  as removing it.
+- **The demo seed covers every channel, and the first five are hand-written.**
+  `CHANNELS` is cycled rather than rolled, so even a small `N` puts chat,
+  voice, email, Instagram and Facebook on the dashboard and gives some buyers
+  two of them — the whole claim of the buyer page is that it does not care
+  which one a message arrived on, and a claim nothing exercises is one nobody
+  can check. `instagram` and `facebook` are **seeded threads and nothing
+  more**: there is no Meta integration, and the campaigns page says what one
+  would need.
+  - `_showcase` writes five buyers who each demonstrate one thing a
+    per-feature screenshot cannot: one person across four channels in one
+    timeline, a booking taken out of hours, a refusal to invent a car beside
+    a policy quoted verbatim, an escalation that kept answering everything
+    else, and a buyer whose quoted price has since come down — which is what
+    puts them in a campaign audience rather than in a list somebody has to
+    remember.
+  - **They are stamped by when they end, not when they start.** The list sorts
+    on last activity, so a thread told when to *start* runs several minutes
+    forward and interleaves with the fixture's own recent rows — which is what
+    happened, and three of the five landed below chat threads seeded minutes
+    earlier.
+  - **Every line is written against the seeded lot**, and features are read
+    off the row. A demo transcript naming a car or a feature this dealership
+    does not have is the failure `check_unsourced_vehicles` exists to catch,
+    arriving through the fixture where nothing checks it.
 - **`/app/email` lists messages *and* people, and they answer different
   questions.** A message list is what you want hunting one send; a list of
   correspondents is what you want deciding who to answer next, because four
