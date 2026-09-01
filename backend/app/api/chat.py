@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.agent import tools
+from app.agent import details as agent_details, tools
 from app.agent.runner import (
     rails_for,
     record_assistant_message,
@@ -121,6 +121,22 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
         fresh = tools.check_availability(db, convo, {})
         if fresh["slots"]:
             out["booking"] = booking_card(fresh["slots"], fresh["slot_minutes"])
+
+    # The details card **is** replayed, unlike availability -- "what is your
+    # number" does not go stale the way a list of open slots does, and losing a
+    # half-filled form to a refresh is the buyer losing their place.
+    #
+    # But only while it is unanswered. `save_details` lands in the transcript
+    # as a tool call when the card is submitted, so a card with one after it
+    # has been dealt with, and redrawing it would ask a buyer for details they
+    # have already given -- which reads as not having been listened to.
+    out["details"] = None
+    for message in out["messages"]:
+        for call in message["tool_calls"]:
+            if call.get("name") == "request_details":
+                out["details"] = call.get("result") or None
+            elif call.get("name") == "save_details":
+                out["details"] = None
     return out
 
 
@@ -253,6 +269,20 @@ async def send_message(
                     booking_card(avail["slots"], avail.get("slot_minutes") or 30),
                 )
 
+            # The details card, drawn from exactly what `request_details`
+            # returned. Same contract as the booking card above: the browser
+            # renders the fields it was sent and cannot invent a ninth.
+            asked = next(
+                (
+                    call.get("result", {})
+                    for call in payload["tool_calls"]
+                    if call.get("name") == "request_details"
+                ),
+                None,
+            )
+            if asked and asked.get("fields"):
+                yield _sse("details", asked)
+
             session.refresh(convo_local)
             yield _sse("rails", {
                 "stage": convo_local.stage,
@@ -346,6 +376,66 @@ def book_from_card(
     appointment = db.query(Appointment).filter_by(id=result["appointment_id"]).one()
     return {
         "appointment": appointment_out(appointment, db),
+        "buyer_message": message_out(buyer_message),
+        "assistant_message": message_out(assistant_message),
+        "rails": [rail_out(r) for r in rails_for(db, convo)],
+        "stage": convo.stage,
+    }
+
+
+class DetailsForm(BaseModel):
+    """Whatever boxes the card showed. Unknown keys are dropped downstream.
+
+    Deliberately not a field per question: which boxes appear is the model's
+    choice at `request_details` time, and a schema listing all eight would go
+    stale the moment the vocabulary in `agent/details.py` moved.
+    """
+
+    values: dict[str, str]
+
+
+@router.post("/sessions/{conversation_id}/details")
+def details_from_card(
+    conversation_id: str, body: DetailsForm, db: Session = Depends(get_db)
+) -> dict:
+    """The details card's submit. Mints the buyer and records what they typed.
+
+    Same shape as the booking card's, and for the same reason: the card's
+    advantage is that a tapped choice and a typed number arrive as fields
+    rather than as prose somebody has to parse back out, not that it gets to
+    skip the rules.
+
+    **The order matters.** The submission is written as the buyer's own message
+    first, and only then are the fields saved -- because `save_captured_fields`
+    accepts `typed` only for a value that appears in something the buyer wrote,
+    and this is what makes that check pass on merit rather than by exemption. A
+    form submission genuinely is the buyer's own words: they typed them into a
+    labelled box, which is a stronger claim than any sentence a model parsed.
+    """
+    convo = _conversation(db, conversation_id)
+    given = {k: v for k, v in (body.values or {}).items() if str(v or "").strip()}
+
+    spoken = agent_details.readable(given)
+    if not spoken:
+        raise HTTPException(400, "Nothing was filled in.")
+    buyer_message = record_buyer_message(db, convo, spoken)
+
+    try:
+        result = tools.save_details(db, convo, given)
+    except tools.ToolError as exc:
+        # 400, not 500: a missing number or a mistyped address is the buyer's
+        # to fix and the card says so under the box. Nothing here is a bug.
+        raise HTTPException(400, str(exc)) from None
+
+    # What happens next, and nothing beyond it. There is no SMS provider here,
+    # so the honest promise is that a person will ring -- never that we will
+    # text, which is the thing a buyer handing over a mobile number expects.
+    reply = "Got it, thank you. Someone here will give you a call about it."
+    assistant_message = record_assistant_message(
+        db, convo, reply, [{"name": "save_details", "input": {}, "result": result}]
+    )
+    return {
+        "saved": result,
         "buyer_message": message_out(buyer_message),
         "assistant_message": message_out(assistant_message),
         "rails": [rail_out(r) for r in rails_for(db, convo)],

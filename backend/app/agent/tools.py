@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db import utcnow
+from app.agent import details
 from app.escalations import claim_for_owner
 from app.events import emit
 from app import matching
@@ -221,6 +222,41 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "vin": {"type": "string"},
             },
             "required": ["name", "email", "starts_at"],
+        },
+    },
+    {
+        "name": "request_details",
+        "description": (
+            "Put a short form on the buyer's screen asking for details, instead of "
+            "asking in prose. Use it the moment you want a way to reach them -- a "
+            "phone number is always included, because a rep can ring it. Do NOT ask "
+            "for the same things in your reply text: the boxes are already there, "
+            "and asking twice gets the question answered in the worse place. Say "
+            "what the details are for and stop."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "array",
+                    "description": (
+                        "Which boxes to show, at most four. Anything not on this list "
+                        "is dropped rather than invented."
+                    ),
+                    "items": {
+                        "type": "string",
+                        "enum": list(details.FIELDS),
+                    },
+                },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "One short line shown above the boxes saying what these are "
+                        "for -- 'so someone can call you about the Silverado'. A form "
+                        "with no stated purpose reads as lead capture, not help."
+                    ),
+                },
+            },
         },
     },
     {
@@ -671,6 +707,58 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
     return {"slot_minutes": slot_len, "slots": slots[:12]}
 
 
+def attach_lead(
+    db: Session, convo: Conversation, *, name: str, email: str, phone: str
+) -> Lead:
+    """Put a buyer behind this conversation, matching an existing one first.
+
+    Extracted from `book_appointment` when the details card arrived, because
+    that card also mints a buyer -- and two copies of "who is this person" is
+    exactly what `app/matching.py` exists to stop. Booking is unchanged: it
+    still passes an email it has already required.
+
+    A conversation that already has a lead keeps it. What is new is folded in
+    rather than overwriting: a blank is filled, and a *changed* email is taken
+    while the old one is kept as a captured field, since a buyer correcting a
+    typo means it and a shared family address is a real thing.
+    """
+    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+    if lead is None:
+        # The same matcher the ADF importer uses, so email *and* phone both
+        # identify a returning buyer. Matching on email alone meant someone who
+        # booked from chat and called back leaving a second address arrived as
+        # a second lead, with the number on file identical on both rows.
+        lead = match_lead(db, email, phone)
+    if lead is None:
+        lead = Lead(name=name, email=email, phone=phone,
+                    source="voice" if convo.channel == "voice" else "chat")
+        db.add(lead)
+        db.flush()
+    else:
+        lead.name = lead.name or name
+        lead.phone = lead.phone or phone
+        # `lead.email or email` silently threw the typed address away. The form
+        # asks "Where should the confirmation go?", so a buyer correcting a
+        # typo means it -- and the confirmation was going to the old address.
+        # The previous one is kept rather than lost: a shared family address is
+        # a real thing and a rep may need it back.
+        if email and lead.email and lead.email != email:
+            _remember_old_email(db, lead)
+        lead.email = email or lead.email
+    # The buyer gave the address for this purpose -- that consent is the
+    # record. Only where they actually gave one: the details card takes a phone
+    # number with the email optional, and stamping consent for an address
+    # nobody offered is a permission we were never given.
+    if lead.email:
+        lead.email_consent_at = lead.email_consent_at or utcnow()
+    convo.lead_id = lead.id
+    # Anything they wrote to us before they were anybody. Runs on an existing
+    # lead too, not only a new one: this is also the moment a buyer's address
+    # is first learnt or corrected, and mail sat unplaced against exactly that.
+    matching.claim_unresolved(db, lead)
+    return lead
+
+
 def book_appointment(
     db: Session, convo: Conversation, args: dict, tool_call_id: str | None = None
 ) -> dict:
@@ -742,36 +830,7 @@ def book_appointment(
             "Call check_availability again and offer what is still open."
         )
 
-    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
-    if lead is None:
-        # The same matcher the ADF importer uses, so email *and* phone both
-        # identify a returning buyer. Matching on email alone meant someone who
-        # booked from chat and called back leaving a second address arrived as
-        # a second lead, with the number on file identical on both rows.
-        lead = match_lead(db, email, phone)
-    if lead is None:
-        lead = Lead(name=name, email=email, phone=phone,
-                    source="voice" if convo.channel == "voice" else "chat")
-        db.add(lead)
-        db.flush()
-    else:
-        lead.name = lead.name or name
-        lead.phone = lead.phone or phone
-        # `lead.email or email` silently threw the typed address away. The form
-        # asks "Where should the confirmation go?", so a buyer correcting a
-        # typo means it -- and the confirmation was going to the old address.
-        # The previous one is kept rather than lost: a shared family address is
-        # a real thing and a rep may need it back.
-        if email and lead.email and lead.email != email:
-            _remember_old_email(db, lead)
-        lead.email = email or lead.email
-    # The buyer gave the address for this purpose -- that consent is the record.
-    lead.email_consent_at = lead.email_consent_at or utcnow()
-    convo.lead_id = lead.id
-    # Anything they wrote to us before they were anybody. Runs on an existing
-    # lead too, not only a new one: this is also the moment a buyer's address
-    # is first learnt or corrected, and mail sat unplaced against exactly that.
-    matching.claim_unresolved(db, lead)
+    lead = attach_lead(db, convo, name=name, email=email, phone=phone)
 
     vehicle = None
     if args.get("vin"):
@@ -813,6 +872,89 @@ def book_appointment(
         "vehicle": _vehicle_payload(vehicle) if vehicle else None,
         "lead_id": lead.id,
     }
+
+
+def request_details(db: Session, convo: Conversation, args: dict) -> dict:
+    """Put the details card on the buyer's screen. Writes nothing by itself.
+
+    The card is the whole result -- what comes back is what the browser draws,
+    so it can only ever ask for what this returned. Nothing is saved until the
+    buyer presses the button, which goes through
+    `POST /api/chat/sessions/{id}/details` and lands on the same executors any
+    other caller uses.
+
+    **Chat only.** A card is a thing on a screen, and a caller has none: on a
+    call this refuses rather than silently succeeding, because a model told a
+    tool worked will say "I've popped a form up for you" to somebody holding a
+    phone. Voice takes the number by ear, which its addendum already covers.
+    """
+    if convo.channel == "voice":
+        raise ToolError(
+            "There is no screen on a call, so there is no card to show. Ask for "
+            "the number out loud and read it back to check it."
+        )
+    card = details.card(args.get("fields"), args.get("reason") or "")
+    return {
+        **card,
+        # Said in the result rather than only in the prompt, because this is
+        # what the model is looking at when it writes the sentence that goes
+        # with the card. The booking card learnt the same lesson: reply text
+        # that lists the times as well gets the question answered in the worse
+        # place, and here it reads as being asked twice for a phone number.
+        "note": (
+            "The boxes are on the buyer's screen now. Say what they are for in one "
+            "line and stop -- do not ask for any of these fields in your reply."
+        ),
+    }
+
+
+def save_details(db: Session, convo: Conversation, values: dict) -> dict:
+    """What the buyer typed into the card. The other half of `request_details`.
+
+    Not a tool the model can call -- it is the card's submit, the same shape as
+    `book_appointment` behind the booking card. It does two things and reuses
+    the existing path for both: `attach_lead` puts a buyer behind the
+    conversation (the one matcher, so a returning caller is not minted twice),
+    and `save_captured_fields` writes the answers.
+
+    Going through `save_captured_fields` rather than writing rows directly is
+    the point. Provenance is enforced there, against the buyer's own messages
+    -- and the submission is written into the transcript as the buyer's message
+    first, so `typed` is accepted because it is *true*, not because this path
+    was allowed to skip the check.
+    """
+    keep = {
+        key: str(value or "").strip()
+        for key, value in (values or {}).items()
+        if key in details.FIELDS and str(value or "").strip()
+    }
+    for required in details.REQUIRED_KEYS:
+        if not keep.get(required):
+            raise ToolError(f"{details.FIELDS[required].label} is required.")
+
+    email = keep.get("email", "").lower()
+    if email and not EMAIL_RE.match(email):
+        raise ToolError("That email address does not look right.")
+
+    lead = attach_lead(
+        db, convo,
+        name=keep.get("name", ""), email=email, phone=keep.get(details.PHONE_KEY, ""),
+    )
+    db.commit()
+
+    # The contact columns live on `leads` and are already written above; the
+    # rest are captured fields. Storing a phone number in both places would be
+    # two answers to one question, and `app/matching.py` reads the column.
+    rest = [
+        {"key": key, "value": value, "provenance": "typed"}
+        for key, value in keep.items()
+        if key not in ("name", "email", details.PHONE_KEY)
+    ]
+    saved = save_captured_fields(db, convo, {"fields": rest}) if rest else {"saved": []}
+    emit(db, "lead.qualified", {
+        "lead_id": lead.id, "conversation_id": convo.id, "fields": sorted(keep),
+    })
+    return {"lead_id": lead.id, "given": sorted(keep), **saved}
 
 
 def save_captured_fields(db: Session, convo: Conversation, args: dict) -> dict:
@@ -1142,6 +1284,7 @@ EXECUTORS = {
     "search_inventory": search_inventory,
     "get_vehicle": get_vehicle,
     "check_availability": check_availability,
+    "request_details": request_details,
     "save_captured_fields": save_captured_fields,
 }
 

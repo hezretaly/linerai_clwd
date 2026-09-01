@@ -6,6 +6,8 @@ import { api, streamMessages } from '../lib/api'
 import { useDealership } from '../lib/dealership'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
+import { DetailsCard } from '../components/DetailsCard'
+import type { DetailsCardData } from '../components/DetailsCard'
 import { money } from '../lib/format'
 import type { IntegrationsPayload, Rail } from '../lib/types'
 
@@ -39,6 +41,7 @@ type Item =
   | { kind: 'text'; id: string; role: 'buyer' | 'assistant' | 'rep'; content: string }
   | { kind: 'vehicles'; id: string; vehicles: VehicleCardData[] }
   | { kind: 'booking'; id: string; data: BookingCardData }
+  | { kind: 'details'; id: string; data: DetailsCardData }
 
 interface ChatMessage {
   id: string
@@ -119,6 +122,9 @@ export function Chat() {
   // that have since moved on, and tapping it would submit a slot the buyer was
   // offered several turns ago.
   const liveBookingId = [...items].reverse().find((i) => i.kind === 'booking')?.id
+  // Same rule for the details card: an older one asks questions the buyer
+  // has already answered, and submitting it would re-ask them.
+  const liveDetailsId = [...items].reverse().find((i) => i.kind === 'details')?.id
 
   // While a booking card is up its own controls are the ask, so the stage
   // followups ("Saturday morning works") would be the same question posed a
@@ -190,6 +196,11 @@ export function Chat() {
           setItems((prev) => [
             ...prev,
             { kind: 'booking', id: `book-${Date.now()}`, data: data as unknown as BookingCardData },
+          ])
+        } else if (event === 'details') {
+          setItems((prev) => [
+            ...prev,
+            { kind: 'details', id: `details-${Date.now()}`, data: data as unknown as DetailsCardData },
           ])
         } else if (event === 'rails') {
           setRails(data.rails as Rail[])
@@ -326,6 +337,34 @@ export function Chat() {
             )
           }
 
+          if (item.kind === 'details') {
+            return (
+              <DetailsCard
+                key={item.id}
+                data={item.data}
+                stale={item.id !== liveDetailsId}
+                submit={async (values) => {
+                  const result = await api.post<{
+                    buyer_message: ChatMessage
+                    assistant_message: ChatMessage
+                    rails: Rail[]
+                  }>(`/api/chat/sessions/${conversationId}/details`, { values })
+                  // Appended where the card sits, like every other entry --
+                  // the transcript is one ordered list and what the buyer was
+                  // shown stays where it was shown.
+                  setItems((prev) => [
+                    ...prev,
+                    { kind: 'text', id: result.buyer_message.id, role: 'buyer',
+                      content: result.buyer_message.content },
+                    { kind: 'text', id: result.assistant_message.id, role: 'assistant',
+                      content: result.assistant_message.content },
+                  ])
+                  setRails(result.rails)
+                }}
+              />
+            )
+          }
+
           return (
             <BookingCard
               key={item.id}
@@ -424,6 +463,7 @@ async function resume(
     messages: ChatMessage[]
     rails: Rail[]
     booking: BookingCardData | null
+    details: DetailsCardData | null
   }
   try {
     payload = await api.get(`/api/chat/sessions/${id}`)
@@ -455,6 +495,11 @@ async function resume(
   }
   // Times are not replayed from the transcript -- the server looked them up
   // again, because a slot list from ten minutes ago may be gone.
+  // Only sent while it is unanswered -- the server drops it once `save_details`
+  // is in the transcript, so a refresh never re-asks for details already given.
+  if (payload.details) {
+    rebuilt.push({ kind: 'details', id: `details-${payload.id}`, data: payload.details })
+  }
   if (payload.booking) {
     rebuilt.push({ kind: 'booking', id: `book-${payload.id}`, data: payload.booking })
   }

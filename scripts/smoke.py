@@ -3027,10 +3027,106 @@ def main() -> int:
     # assistant -- what is short-circuited is only the pre-written question.
     actions = {name for name in _actions.ACTIONS}
     check("only chips with a fixed meaning carry one",
-          actions == {"under_price", "with_seats", "matching", "cheaper", "fewer_miles"},
+          actions == {"under_price", "with_seats", "matching", "cheaper",
+                      "fewer_miles", "call_me"},
           str(sorted(actions)))
     check("and a malformed action falls back to the model rather than raising",
           _actions.action_of(SimpleNamespace(action_json="{not json")) == ("", {}))
+
+    print("\n== the details card: asking in boxes rather than in prose ==")
+    # **The one ask a chip could never make on its own.** A chip's text is sent
+    # as the buyer's own message, so a pre-written one carrying a name or a
+    # number puts words in their mouth -- which is exactly how a real person
+    # once told Liner they were a fixture buyer called Jordan Reyes. The card
+    # asks and the buyer types, which is what makes the answer `typed`.
+    from app.agent import details as _details
+
+    card_convo = call("POST", "/api/chat/sessions")["conversation_id"]
+
+    # Get to a stage that offers it: one search, then narrow to a car.
+    say(card_convo, content="What do you have under $30,000?")
+    _r, after, _e = say(card_convo, content="Tell me more about the first one.")
+    call_chip = pick(after["rails"], "call me")
+    check("a buyer looking at one car is offered a call back",
+          call_chip is not None, str([r["label"] for r in after["rails"]]))
+
+    reply, _rails, got = say(card_convo, rail_id=call_chip)
+    said = (reply or {}).get("content", "")
+    card = next((d for e, d in got if e == "details"), None)
+    check("pressing it puts boxes on the screen, with no model turn",
+          card is not None and bool(card.get("fields")),
+          str(card)[:80] if card else "(no card)")
+    keys = [f["key"] for f in (card or {}).get("fields", [])]
+    check("the number is always one of them, since a rep can ring it",
+          _details.PHONE_KEY in keys and _details.PHONE_KEY in (card or {}).get("required", []),
+          str(keys))
+    # Asking in the reply as well is the same question in the worse place --
+    # the booking card learnt this first, and here it reads as asking twice.
+    check("and the reply does not ask for the same thing in prose",
+          "your number" not in said.lower() and "phone number" not in said.lower(),
+          said[:70])
+    # Every key the card can offer is one `agent/details.py` names. The column
+    # is a free string and had already drifted -- this database held both
+    # `timeframe` and `timeline` rows meaning the same thing.
+    check("and it can only ever ask for keys the vocabulary names",
+          set(keys) <= set(_details.FIELDS), str(keys))
+
+    filled = {"name": f"Card Buyer {run}", _details.PHONE_KEY: "(502) 555-0134",
+              "budget": "under $28,000"}
+    saved = call("POST", f"/api/chat/sessions/{card_convo}/details", {"values": filled})
+    check("submitting it mints the buyer behind the conversation",
+          bool(saved["saved"]["lead_id"]), str(saved["saved"])[:80])
+    made = call("GET", f"/api/leads/{saved['saved']['lead_id']}")
+    check("with the number on the row, where the matcher reads it",
+          "5550134" in re.sub(r"\D", "", made["phone"] or ""), made["phone"])
+    # **Provenance passes on merit, not by exemption.** The submission is
+    # written into the transcript as the buyer's own message first, so
+    # `save_captured_fields` finds the value in something they wrote -- the
+    # same check every other caller faces, and a form submission satisfies it
+    # more literally than any sentence a model parsed.
+    budget = next((f for f in made["captured_fields"] if f["key"] == "budget"), None)
+    check("and what they typed is recorded as typed, through the same check",
+          budget is not None and budget["provenance"] == "typed", str(budget))
+    # A phone number belongs in the column the matcher reads, not in two
+    # places. Two answers to one question is what this codebase keeps fixing.
+    check("the number is not also written as a captured field",
+          not any(f["key"] == _details.PHONE_KEY for f in made["captured_fields"]),
+          str([f["key"] for f in made["captured_fields"]]))
+    # Required means required. Without a number the lead is not workable, and
+    # a card that quietly accepts nothing is a card that captures nothing.
+    try:
+        call("POST", f"/api/chat/sessions/{card_convo}/details",
+             {"values": {"name": "No Number"}})
+        check("and it refuses a submission with no number, naming what is missing",
+              False, "it was accepted")
+    except AssertionError as exc:
+        check("and it refuses a submission with no number, naming what is missing",
+              "400" in str(exc) and "Phone" in str(exc), str(exc)[:90])
+
+    # **A card is a thing on a screen, and a caller has none.** Told the tool
+    # worked, a model says "I've popped a form up for you" to somebody holding
+    # a phone. It refuses rather than silently succeeding; voice takes the
+    # number by ear, which its own addendum already covers.
+    from app.agent import tools as _tools
+    from app.db import SessionLocal as _CardSession
+    from app.models import Conversation as _Convo
+
+    _cdb = _CardSession()
+    try:
+        spoken_convo = _Convo(channel="voice", stage="opening")
+        _cdb.add(spoken_convo)
+        _cdb.commit()
+        try:
+            _tools.request_details(_cdb, spoken_convo, {"fields": ["phone"]})
+            check("a call refuses the card rather than promising a screen",
+                  False, "it returned a card")
+        except _tools.ToolError as exc:
+            check("a call refuses the card rather than promising a screen",
+                  "no screen" in str(exc), str(exc)[:60])
+        _cdb.delete(spoken_convo)
+        _cdb.commit()
+    finally:
+        _cdb.close()
 
     print("\n== the dealership is served, never written into a page ==")
     import yaml as _yaml
@@ -3165,6 +3261,31 @@ def main() -> int:
     )
     check("nothing points at a table the reseed empties without being emptied too",
           not dangling, str(dangling))
+
+    # **And in an order the foreign keys allow, which failed separately.**
+    # `email_replies_due` was on the list, so the membership check above passed
+    # -- five places *after* the `outreach` it points at. The reseed died on
+    # the same bare `DELETE FROM outreach` FOREIGN KEY error, with the table
+    # sitting in the list looking perfectly correct. Membership and order are
+    # two properties and only one of them was being checked.
+    order = [
+        cls.__table__.name
+        for name in re.findall(r"\b[A-Z][A-Za-z]+\b", body)
+        for cls in _Base.__subclasses__()
+        if cls.__name__ == name
+    ]
+    at = {name: i for i, name in enumerate(order)}
+    too_late = sorted(
+        f"{child} after {parent}"
+        for child, i in at.items()
+        for parent in {
+            fk.column.table.name
+            for fk in _Base.metadata.tables[child].foreign_keys
+        }
+        if parent in at and parent != child and at[parent] < i
+    )
+    check("and it empties them child-first, so no delete trips a foreign key",
+          not too_late, str(too_late))
     # inbound_emails is the exception, and it is detached rather than deleted:
     # a delivery nobody could place is listed in OUR mailbox at /ops, so
     # dropping it on a dealership reseed is mail thrown away on somebody's

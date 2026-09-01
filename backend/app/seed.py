@@ -199,12 +199,27 @@ RAILS = [
      "Do you have anything with lower mileage?", "browsing", 3, False,
      {"do": "fewer_miles", "args": {}}),
 
+    # The one ask a chip could never make on its own. Its `message_text` is
+    # sent as the buyer's own words, so a pre-written chip cannot carry a phone
+    # number -- the card asks and the buyer types, which is what makes the
+    # answer `typed` rather than a guess. Offered where a buyer has narrowed to
+    # one car and where they have raised an objection: both are moments a
+    # person is more use than an assistant.
+    ("followup", "vehicle_focus", "Have someone call me",
+     "Could someone give me a call about it?", "qualifying", 3, True,
+     {"do": "call_me", "args": {"reason":
+      "Leave your number and someone here will call you about this one."}}),
+    ("followup", "objection", "Have someone call me",
+     "Could someone give me a call about it?", "qualifying", 3, False,
+     {"do": "call_me", "args": {"reason":
+      "Leave your number and one of the team will call you back."}}),
+
     ("followup", "vehicle_focus", "Can I see it this week?",
      "Can I come see it this week?", "slot_offered", 1, True, None),
     ("followup", "vehicle_focus", "Is the price negotiable?",
      "Is the price negotiable on that one?", "objection", 2, True, None),
     ("followup", "vehicle_focus", "How many miles on it?",
-     "How many miles does it have?", "vehicle_focus", 3, True, None),
+     "How many miles does it have?", "vehicle_focus", 4, True, None),
 
     ("followup", "objection", "That works for me",
      "Okay, that works for me.", "qualifying", 1, False, None),
@@ -260,10 +275,17 @@ def _clear(db: Session) -> None:
     # conversation and go with it. The audio files under backend/var/ are not
     # touched here -- they are named by row id, so a stale one is orphaned
     # rather than served to the wrong buyer.
+    #
+    # **Order is as load-bearing as membership, and it failed separately.**
+    # `EmailReplyDue` was on the list -- so the completeness check above it
+    # passed -- but five places *after* `Outreach`, which it points at. The
+    # reseed died on the same bare `DELETE FROM outreach` FOREIGN KEY error as
+    # before, with the table sitting right there in the list looking correct.
+    # Anything holding a foreign key must be emptied before what it points at.
     for model in (
         CallSegment, CallUsage, CallBuyerTrack, CallRecording,
-        VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
         EmailReplyDue, LeadAddress, RuntimeFlag,
+        VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
         Conversation, Lead, IngestRun, Vehicle, Rail, KnowledgeEntry, HandoffRule,
         AssistantSettings, User, Dealership, Event,
     ):

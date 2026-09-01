@@ -33,7 +33,7 @@ import json
 
 from sqlalchemy.orm import Session
 
-from app.agent import phrasing, tools
+from app.agent import details, phrasing, tools
 from app.models import Conversation, Rail, Vehicle
 
 #: How many cars a chip answers with. Three is what the stub shows and what
@@ -142,6 +142,31 @@ def fewer_miles(db: Session, convo: Conversation, args: dict) -> tuple[str, list
     return reply, calls
 
 
+def call_me(db: Session, convo: Conversation, args: dict) -> tuple[str, list[dict]]:
+    """"Have someone call me" -- put the details card up. No model turn.
+
+    The most fixed meaning of any chip here: a buyer pressing it has decided
+    they want a person, and there is nothing for a model to interpret. It is
+    also the one ask a chip could never make on its own -- a chip's text is
+    sent as the buyer's own message, so a pre-written "my number is..." would
+    put words in their mouth. The card asks; the buyer types; the answer is
+    theirs.
+
+    The lead-in and the boxes come from the same call, so they cannot disagree
+    about what is being asked for -- the rule every chip in this file follows.
+    """
+    result = tools.request_details(db, convo, {
+        "fields": args.get("fields") or list(details.DEFAULT_KEYS),
+        "reason": args.get("reason") or "",
+    })
+    calls = [{"name": "request_details", "input": args, "result": result}]
+    return (
+        "Of course. Pop your details in below and someone here will give you a "
+        "ring.",
+        calls,
+    )
+
+
 #: The whole set. A rail's `action_json` names one of these keys and carries
 #: its arguments; anything else -- including a key that used to exist and no
 #: longer does -- falls through to the model, which is the behaviour every
@@ -152,6 +177,7 @@ ACTIONS = {
     "matching": matching,
     "cheaper": cheaper,
     "fewer_miles": fewer_miles,
+    "call_me": call_me,
 }
 
 #: Actions that answer relative to the cars already on screen. `rails_for`
