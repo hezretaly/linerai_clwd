@@ -22,6 +22,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make backend` / `make frontend` | One at a time, in the foreground |
 | `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
 | `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
+| `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
 | `make reset-db` | Delete the database and reseed — **loses the `ops_` tables too** |
 | `make reset-dealership` | Rebuild the showroom fixture in place, keeping `ops_users` and `ops_demo_requests` |
 | `make add-owners` | Put `founder@`/`cto@` in `ops_users` on an **existing** database — no reseed, no data loss |

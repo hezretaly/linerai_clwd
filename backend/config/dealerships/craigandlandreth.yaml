@@ -125,8 +125,23 @@ inventory:
 #
 # Each gets a generated password, printed once by the seed. Only `manager` and
 # `rep` -- our own accounts are in `ops_users` and never come from here.
+# **Austin is real; the four below are placeholders.** They are here because a
+# roster of one has nobody to hand a buyer to, so assignment, the per-rep
+# queues and the team page have nothing to show -- and a demo that cannot show
+# those is missing the half of the product a manager cares about.
+#
+# They are invented, and the addresses say so: `@placeholder.invalid` cannot
+# resolve or receive mail, so nothing here can reach anyone, and a name that
+# turns out to be wrong is visibly wrong rather than quietly plausible. Replace
+# the four with their real people before this is in front of them -- invented
+# colleagues on a page their own manager is reading is the failure this file
+# otherwise exists to prevent -- and delete any that are left over.
 staff:
   - { name: Austin, email: austin@craigandlandrethcars.com, role: manager }
+  - { name: Sales Rep One, email: rep1@placeholder.invalid, role: rep }
+  - { name: Sales Rep Two, email: rep2@placeholder.invalid, role: rep }
+  - { name: Sales Rep Three, email: rep3@placeholder.invalid, role: rep }
+  - { name: Sales Rep Four, email: rep4@placeholder.invalid, role: rep }
 
 # ---------------------------------------------------------------------------
 # What Liner knows beyond the listings.
