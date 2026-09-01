@@ -18,12 +18,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.agent import details as agent_details, tools
+from app.agent import details as agent_details, nudge, tools
 from app.agent.runner import (
     rails_for,
     record_assistant_message,
     record_buyer_message,
     run_agent_turn,
+    run_nudge_turn,
 )
 from app.agent.tools import when_label
 from app.api.settings import live_settings
@@ -378,6 +379,48 @@ def book_from_card(
         "appointment": appointment_out(appointment, db),
         "buyer_message": message_out(buyer_message),
         "assistant_message": message_out(assistant_message),
+        "rails": [rail_out(r) for r in rails_for(db, convo)],
+        "stage": convo.stage,
+    }
+
+
+@router.post("/sessions/{conversation_id}/nudge")
+def nudge_quiet_buyer(conversation_id: str, db: Session = Depends(get_db)) -> dict:
+    """One follow-up on a buyer who has stopped typing. See `agent/nudge.py`.
+
+    Asked for by the buyer's own page, because that is the only place that can
+    know they are still on it -- `/chat` has no socket, so a message written
+    into a thread nobody is watching would surface on refresh or above their
+    next message, out of order.
+
+    **The allowance is enforced here, not in the browser.** A client can be
+    reloaded, opened twice, or simply lie, and none of those may buy a second
+    follow-up. `nudge.allowed` reads the transcript, which is the one thing
+    that cannot be reset from the page: one assistant message standing after
+    the buyer's last, and no more.
+
+    A refusal is a 200 with a reason rather than an error. Nothing has gone
+    wrong when a rep took the thread over or the buyer already had their one
+    message -- and the reason is exactly what somebody debugging "why did it
+    not follow up" needs.
+    """
+    convo = _conversation(db, conversation_id)
+    may, why = nudge.allowed(db, convo)
+    if not may:
+        return {"sent": False, "reason": why}
+
+    try:
+        message = run_nudge_turn(db, convo)
+    except NotConfigured as exc:
+        # LLM_MODE=live with no key. Silence is the right outcome: the buyer
+        # asked for nothing and nothing is owed. Reported so it is not
+        # indistinguishable from the allowance being spent.
+        return {"sent": False, "reason": f"No model to write it: {exc}"}
+    if message is None:
+        return {"sent": False, "reason": "Liner is holding this conversation."}
+    return {
+        "sent": True,
+        "assistant_message": message_out(message),
         "rails": [rail_out(r) for r in rails_for(db, convo)],
         "stage": convo.stage,
     }

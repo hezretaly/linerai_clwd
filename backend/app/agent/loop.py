@@ -86,6 +86,7 @@ def run_turn(
     provider: Provider | None = None,
     *,
     channel: str = "",
+    addendum: str = "",
 ) -> tuple[str, list[dict]]:
     """One buyer turn. Returns (reply, tool_calls).
 
@@ -96,12 +97,22 @@ def run_turn(
     call, or an inbox. It defaults to the conversation's own, so a caller
     cannot forget: an email answered with the chat rules offers a booking card
     nobody can see.
+
+    ``addendum`` is one more block for *this turn only*, and it exists so a
+    situation the model needs to know about does not have to arrive disguised
+    as the buyer speaking. The follow-up on a quiet buyer is the case: sent as
+    a user message it makes the model answer somebody who said nothing, which
+    is the same failure the guard's retry note had to be rewritten for.
     """
     provider = provider or get_provider()
     dealership = db.query(Dealership).first()
     system = build_system_prompt(
         db, dealership, live_settings(db), channel=channel or convo.channel or "chat"
     )
+    if addendum:
+        # Last, like every other addendum here, so it is what was read most
+        # recently where it narrows something above it.
+        system = f"{system}\n{addendum.strip()}"
 
     messages = _history(db, convo)
     # The caller normally persists the buyer's message before getting here, so

@@ -3033,6 +3033,58 @@ def main() -> int:
     check("and a malformed action falls back to the model rather than raising",
           _actions.action_of(SimpleNamespace(action_json="{not json")) == ("", {}))
 
+    print("\n== one follow-up when a buyer goes quiet ==")
+    # **The allowance is the server's, and that is the whole check.** The clock
+    # lives in the browser -- it is the only thing that can tell the buyer is
+    # still on the page -- but a client can be reloaded, opened twice, or
+    # simply lie, and none of those may buy a second follow-up. `nudge.allowed`
+    # reads the transcript, which cannot be reset from a page.
+    quiet = call("POST", "/api/chat/sessions")["conversation_id"]
+    cold = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
+    check("a thread nobody has spoken in is not followed up",
+          not cold["sent"] and "Nothing has been said" in cold["reason"], str(cold))
+
+    say(quiet, content="What do you have under $30,000?")
+    first = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
+    check("after Liner's reply, a quiet buyer gets one message",
+          first["sent"] and bool(first["assistant_message"]["content"]),
+          (first.get("assistant_message") or {}).get("content", str(first))[:70])
+    # Never this. It says nothing and answers nothing, and it is the one
+    # follow-up guaranteed to be unwelcome.
+    check("and it offers a next step rather than asking if they are there",
+          "still there" not in first["assistant_message"]["content"].lower(),
+          first["assistant_message"]["content"][:70])
+
+    again = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
+    check("but only one -- a reload cannot buy a second",
+          not again["sent"] and "already been followed up" in again["reason"],
+          str(again))
+
+    # The buyer speaking resets it, which is the behaviour wanted: quiet, one
+    # prompt, then silence until they say something. A tab left open all
+    # afternoon costs one turn, not one every two minutes for ever.
+    say(quiet, content="Tell me more about the first one.")
+    third = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
+    check("and the buyer typing earns the next one",
+          third["sent"], str(third)[:70])
+
+    # A rep pressing Take over owns the thread. Their silence is a person
+    # deciding what to write, not a gap for Liner to fill.
+    from app.db import SessionLocal as _QuietSession
+    from app.models import Conversation as _QuietConvo
+
+    _qdb = _QuietSession()
+    try:
+        row = _qdb.query(_QuietConvo).filter_by(id=quiet).one()
+        row.agent_paused = True
+        _qdb.commit()
+    finally:
+        _qdb.close()
+    held = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
+    check("a rep who has taken over is not talked over",
+          not held["sent"] and "taken this conversation over" in held["reason"],
+          str(held))
+
     print("\n== the details card: asking in boxes rather than in prose ==")
     # **The one ask a chip could never make on its own.** A chip's text is sent
     # as the buyer's own message, so a pre-written one carrying a name or a

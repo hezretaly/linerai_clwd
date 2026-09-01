@@ -131,6 +131,35 @@ def run_agent_turn(
     return record_assistant_message(db, convo, reply, calls)
 
 
+def run_nudge_turn(db: Session, convo: Conversation) -> Message | None:
+    """One follow-up on a buyer who has gone quiet. See `agent/nudge.py`.
+
+    Deliberately its own entry point rather than `run_agent_turn("")`. The
+    buyer said nothing, so there is no text -- and the difference has to reach
+    the model as an instruction about the situation rather than as a user
+    message, or it answers somebody who never spoke.
+
+    Whether it is *allowed* is decided by the caller against `nudge.allowed`,
+    which reads the transcript. This runs the turn.
+    """
+    from app.agent import nudge
+
+    if settings.llm_mode == "live":
+        from app.agent import loop
+
+        reply, calls = loop.run_turn(db, convo, "", addendum=nudge.NUDGE_ADDENDUM)
+    else:
+        # The stub is a state machine over `stage` and has no notion of a
+        # silence, so asking it for a follow-up would re-run whatever the last
+        # buyer message meant and say the same thing twice. One honest line
+        # instead, built from the thread rather than composed -- the same
+        # argument as `app/recap.py`, and there is no model here at all.
+        reply, calls = stub.nudge(db, convo), []
+        reply = _guarded(db, convo, reply, calls, "")
+
+    return record_assistant_message(db, convo, reply, calls)
+
+
 def _guarded(
     db: Session, convo: Conversation, reply: str, calls: list[dict], text: str
 ) -> str:

@@ -270,6 +270,57 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   master/detail and calendar is an agenda. Admin pages just have to not
   overflow. `make shots` discovers a real buyer page rather than listing one,
   because it is the screen most likely to overflow and the one a rep reads.
+- **The assistant asks in boxes, not only in prose.** `request_details` puts a
+  short form in the thread — same contract as the booking card: built from a
+  tool result, so it can only offer what the tool returned, and its submit goes
+  through the same executors. `attach_lead` is *extracted* from
+  `book_appointment` rather than copied, because two answers to "who is this
+  person" is what `app/matching.py` exists to prevent.
+  - **It is the ask a chip could never make.** A chip's `message_text` is sent
+    as the buyer's own words, so a pre-written one carrying a name or a number
+    puts words in their mouth. The card asks and the buyer types, so `typed`
+    provenance is more literally true here than anywhere else — and it is not
+    an exemption: the submission is written into the transcript as the buyer's
+    message *before* the fields are saved, so `save_captured_fields` finds the
+    value in something they wrote and accepts it on merit.
+  - **The phone number is always asked for and always required.** A rep can
+    ring it; an email cannot be answered at five past six on a Friday. Email
+    stays optional, so `attach_lead` stamps email consent only where an
+    address was actually given.
+  - **The vocabulary is closed**, which is the point of `agent/details.py`.
+    `CapturedField.key` is a free string and had already drifted — this
+    database holds both `timeframe` and `timeline` rows meaning the same thing,
+    written by the same model on different days.
+  - **Refused on a call.** A card is a thing on a screen and a caller has none;
+    told the tool worked, a model says "I've popped a form up for you" to
+    somebody holding a phone.
+  - **Replayed on refresh, unlike availability** — "what is your number" does
+    not go stale the way a slot list does — but only while unanswered.
+- **Liner follows up once when a buyer goes quiet, and the browser is what
+  asks.** `/chat` has no socket and no poll, so a message written server-side
+  into a thread nobody is watching would surface on refresh or *above* their
+  next message. The only buyer this can help is one still on the page, so the
+  page notices the silence and requests one more turn. A closed tab produces
+  nothing, which is correct — there would be nobody to read it — and nothing is
+  queued, so nothing survives to interrupt somebody tomorrow.
+  - **The allowance is the server's; only the clock is the browser's.** A
+    client can be reloaded, opened twice, or simply lie. `nudge.allowed` reads
+    the transcript, which cannot be reset from a page: exactly one assistant
+    message standing after the buyer's last. The buyer typing resets it
+    naturally, so a tab left open all afternoon costs one turn rather than one
+    every two minutes for ever.
+  - **It reaches the model as an instruction, never as a user message.** The
+    buyer said nothing; told otherwise, a model opens by answering somebody who
+    never spoke — the same failure the guard's retry note had to be rewritten
+    for. `run_turn` takes a per-turn `addendum` for exactly this.
+  - **The last thing *said*, not the last thing in the list.** After a search
+    the newest entry is the row of cars, so testing `items[len - 1]` for an
+    assistant reply never matched — which is every turn that shows anything,
+    i.e. the case this exists for. Measured at zero requests before the fix.
+  - **Never over a card.** A booking or details card is something to fill in,
+    and the pause while somebody types their email is not a silence to fill.
+  - It never asks "are you still there?" — that says nothing, answers nothing,
+    and is the one follow-up guaranteed to be unwelcome.
 - **Booking does not close the thread.** It used to: the stage reached `booked`
   and the turn ended the conversation. But a buyer who has just booked very
   often keeps going — financing, a trade, a second car — so Liner went on

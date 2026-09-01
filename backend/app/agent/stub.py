@@ -21,7 +21,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agent import phrasing, tools
-from app.models import Conversation, Rail
+from app.models import Conversation, Rail, Vehicle
 
 # Anchored on word characters at both ends so sentence punctuation ("...my
 # email is a@b.com.") does not end up inside the address.
@@ -615,3 +615,43 @@ def _slot_label(iso: str) -> str:
 
 def next_stage_for(convo: Conversation) -> str:
     return convo.stage
+
+
+def nudge(db: Session, convo: Conversation) -> str:
+    """One line to a buyer who has gone quiet, composed from rows.
+
+    The stub is a state machine over `stage`, so it has no notion of a silence:
+    asked for a follow-up it would re-run whatever the last buyer message meant
+    and say the same thing again. This is built from what the thread actually
+    holds instead -- the same argument as `app/recap.py`, and here there is no
+    model in the process at all.
+
+    Every branch offers a *next step*, never "are you still there?" -- that
+    says nothing, answers nothing, and is the one follow-up guaranteed to be
+    unwelcome.
+    """
+    if convo.stage == "booked":
+        return (
+            "One more thing before you go -- if anything changes about the time, "
+            "just say and I'll move it."
+        )
+
+    focused = (
+        db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
+        if convo.focus_vehicle_id else None
+    )
+    if focused is not None:
+        return (
+            f"Still here if you want to line up a look at the {focused.year} "
+            f"{focused.make} {focused.model} -- or I can pass your number to "
+            "someone who can talk it through."
+        )
+    if json.loads(convo.last_results_json or "[]"):
+        return (
+            "Take your time. If none of those is quite right, tell me what to "
+            "change and I'll have another look."
+        )
+    return (
+        "No rush -- tell me roughly what you're after and I'll see what we have "
+        "on the lot."
+    )

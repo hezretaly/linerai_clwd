@@ -37,6 +37,12 @@ interface VehicleCardData {
  *  every card that survived piled up at the bottom next to none of the
  *  messages that produced them. Anything the buyer was shown stays where it
  *  was shown. */
+/** How long a silence has to run before Liner says one more thing. Matches
+ *  `QUIET_SECONDS` in `agent/nudge.py`; the server holds the allowance, this
+ *  holds the clock, and they are written down in both places so a change in
+ *  one is visible against the other. */
+const QUIET_MS = 120_000
+
 type Item =
   | { kind: 'text'; id: string; role: 'buyer' | 'assistant' | 'rep'; content: string }
   | { kind: 'vehicles'; id: string; vehicles: VehicleCardData[] }
@@ -131,6 +137,63 @@ export function Chat() {
   // second, worse way. The knowledge chips stay: they are about something else,
   // and they are the way out of the card without typing.
   const visibleRails = liveBookingId ? rails.filter((r) => r.kind === 'knowledge') : rails
+
+  // ---- the follow-up on a quiet buyer ----------------------------------
+  //
+  // Driven from here because this is the only place that can tell the buyer is
+  // still on the page. `/chat` has no socket, so a message written server-side
+  // into a thread nobody is watching would surface on refresh, or above their
+  // next message, out of order. A closed tab asks for nothing, which is right:
+  // there would be nobody to read it.
+  //
+  // The allowance is the server's -- `agent/nudge.py` reads the transcript and
+  // permits exactly one standing after the buyer's last message. This timer
+  // being restarted by a reload, or running twice in two tabs, therefore
+  // cannot buy a second follow-up.
+  useEffect(() => {
+    if (!conversationId || typing) return
+    // The last thing *said*, not the last thing in the list. After a search
+    // the newest entry is the row of cars, so testing `items[len - 1]` for an
+    // assistant reply never matched -- which is every turn that shows
+    // anything, i.e. the case this exists for. Measured: zero requests.
+    const spoken = [...items].reverse().find((i) => i.kind === 'text')
+    // Only after Liner has spoken. A buyer who has just sent something is
+    // owed the reply that is still on its way, not a nudge on top of it.
+    if (!spoken || spoken.kind !== 'text' || spoken.role !== 'assistant') return
+    // And never over a card. A booking card or a details card is something to
+    // fill in, and the pause while somebody types their email is not a silence
+    // to fill -- a message arriving under a half-finished form is an
+    // interruption, not a follow-up.
+    const last = items[items.length - 1]
+    if (last && (last.kind === 'booking' || last.kind === 'details')) return
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await api.post<{
+            sent: boolean
+            assistant_message?: ChatMessage
+            rails?: Rail[]
+          }>(`/api/chat/sessions/${conversationId}/nudge`, {})
+          if (!result.sent || !result.assistant_message) return
+          setItems((prev) => [
+            ...prev,
+            {
+              kind: 'text',
+              id: result.assistant_message!.id,
+              role: 'assistant',
+              content: result.assistant_message!.content,
+            },
+          ])
+          if (result.rails) setRails(result.rails)
+        } catch {
+          // A follow-up nobody asked for is not worth an error in front of a
+          // buyer. Staying quiet is exactly what would have happened anyway.
+        }
+      })()
+    }, QUIET_MS)
+    return () => clearTimeout(timer)
+  }, [items, typing, conversationId])
 
   const send = async (payload: { content?: string; rail_id?: string }, label: string) => {
     if (!conversationId || typing) return
