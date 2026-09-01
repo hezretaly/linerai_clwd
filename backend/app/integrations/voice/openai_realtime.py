@@ -255,10 +255,22 @@ def price_of(usage: dict, model: str = "") -> float:
     return per_million / 1_000_000
 
 
-#: Which transcribers accept a keyword list. Sending `keywords` to one that
-#: does not is a 400 that takes the whole call with it, so this is checked
-#: rather than hoped.
-KEYWORD_MODELS = ("gpt-transcribe", "gpt-live-transcribe")
+#: Which transcribers accept the newer config surface -- `keywords` and
+#: `delay`. Sending either to a model that does not is a 400 that takes the
+#: whole call with it, so this is checked rather than hoped.
+#:
+#: **`delay` was not checked, and the default configuration was the broken
+#: one.** `VOICE_TRANSCRIBE_MODEL` defaults to `gpt-4o-transcribe` and
+#: `VOICE_TRANSCRIBE_DELAY` defaults to `high`, so a deployment that set
+#: `VOICE_PROVIDER=openai` and changed nothing else got
+#: `"The 'delay' parameter is not supported for this model"` and no call at
+#: all. `keywords` had this guard because somebody hit it once; `delay` was
+#: added a line away without one, which is the argument for the two sharing a
+#: list rather than each remembering separately.
+EXTENDED_MODELS = ("gpt-transcribe", "gpt-live-transcribe")
+
+#: Kept as a name because the reasoning above is about keywords first.
+KEYWORD_MODELS = EXTENDED_MODELS
 
 
 def _transcription(keywords: list[str] | None = None) -> dict:
@@ -279,12 +291,20 @@ def _transcription(keywords: list[str] | None = None) -> dict:
       expect and every reason to mangle, and they are sitting in the inventory
       table. Only two models accept them.
     """
-    config: dict = {"model": settings.voice_transcribe_model}
+    model = settings.voice_transcribe_model
+    extended = model.startswith(EXTENDED_MODELS)
+
+    config: dict = {"model": model}
+    # `language` is accepted everywhere, and it is the one that matters most:
+    # without it a telephone-quality "mm" comes back as 嗯.
     if settings.voice_language:
         config["language"] = settings.voice_language
-    if settings.voice_transcribe_delay:
+    # Both of these belong to the newer transcribers only. Withheld rather
+    # than sent hopefully: losing a little accuracy is a smaller cost than a
+    # 400 that ends the call before it starts.
+    if extended and settings.voice_transcribe_delay:
         config["delay"] = settings.voice_transcribe_delay
-    if keywords and settings.voice_transcribe_model.startswith(KEYWORD_MODELS):
+    if extended and keywords:
         config["keywords"] = keywords[:100]
     return config
 

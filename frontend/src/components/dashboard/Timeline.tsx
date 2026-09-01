@@ -146,7 +146,13 @@ function Message({ e, showChannel }: { e: TimelineEntry; showChannel: boolean })
   )
 }
 
-function Outreach({ e }: { e: TimelineEntry }) {
+function Outreach({
+  e,
+  onOpen,
+}: {
+  e: TimelineEntry
+  onOpen?: (entry: TimelineEntry) => void
+}) {
   // A reply the buyer sent us, not a send. Same row shape, opposite direction,
   // and a rep skimming a timeline has to be able to tell at a glance who wrote
   // which -- so it leans to the buyer's side and says who it is from.
@@ -197,6 +203,20 @@ function Outreach({ e }: { e: TimelineEntry }) {
         <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
           {e.body}
         </p>
+      )}
+      {/* **The clamp needs a way out.** An email is the one entry here that is
+          routinely longer than three lines -- a chat message is a sentence and
+          a call entry is a header over a recording -- so this card was a
+          summary of something a rep had nowhere to read in full. They went to
+          their own mail client instead, which is where a reply stops being
+          visible to this system. */}
+      {onOpen && e.channel === 'email' && (
+        <button
+          onClick={() => onOpen(e)}
+          className="mt-1.5 text-[11px] font-medium text-primary hover:underline"
+        >
+          Open{e.direction === 'in' ? ' and reply' : ''}
+        </button>
       )}
       <p className="tnum mt-1.5 text-[11px] text-muted-foreground">
         {e.to_address ? `${inbound ? 'From' : 'To'} ${e.to_address} · ` : ''}
@@ -357,9 +377,14 @@ export function Timeline({
   /** Multi-channel pages mark each turn; a single thread does not need to say
    *  "website chat" against every line of one website chat. */
   markChannels,
+  /** Opens one email in full. Optional, so a page that has nowhere to put a
+   *  reader simply renders the card as it always did rather than offering a
+   *  click that does nothing. */
+  onOpenEmail,
 }: {
   entries: TimelineEntry[]
   markChannels: boolean
+  onOpenEmail?: (entry: TimelineEntry) => void
 }) {
   let lastConversation: string | null | undefined
   const rows: React.ReactNode[] = []
@@ -381,7 +406,7 @@ export function Timeline({
       ) : e.kind === 'message' ? (
         <Message key={e.id} e={e} showChannel={false} />
       ) : e.kind === 'outreach' ? (
-        <Outreach key={e.id} e={e} />
+        <Outreach key={e.id} e={e} onOpen={onOpenEmail} />
       ) : e.kind === 'appointment' ? (
         <Appointment key={e.id} e={e} />
       ) : (

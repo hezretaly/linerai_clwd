@@ -189,3 +189,44 @@ def reply_to_address(token: str) -> str:
     if not settings.sending_domain:
         return ""
     return f"reply+{token}@{settings.sending_domain}"
+
+
+def signature(db: Session) -> str:
+    """The dealership's sign-off, composed from its row.
+
+    **Not written by the model, and not typed by a rep.** It is the
+    dealership's name, address and phone -- three facts that live in
+    `dealerships` and are the same on every message. A model asked to sign off
+    improvises it, which makes the wording drift between emails and puts the
+    phone number in a place it can be invented; a rep typing it from memory
+    gets it wrong eventually, and typing it at all is work nobody should do
+    twice a day. Same argument as `buyer_summary`: composed from rows, so it
+    can be checked against the data rather than trusted.
+
+    Returned as text and appended at the point of send, so the preview a rep
+    sees under the composer is the message rather than an impression of it.
+    """
+    from app.models import Dealership
+
+    row = db.query(Dealership).first()
+    if row is None:
+        return ""
+    return "\n".join(
+        line for line in (row.name, row.address, row.phone) if (line or "").strip()
+    )
+
+
+def with_signature(db: Session, body: str) -> str:
+    """`body` plus the sign-off, unless it is already there.
+
+    Idempotent on purpose. A rep who types the dealership's name at the bottom
+    out of habit should not send it twice, and a draft composed against an
+    earlier version of this must not grow a second block when it is sent.
+    """
+    text = (body or "").rstrip()
+    block = signature(db)
+    if not block:
+        return text
+    if block in text:
+        return text
+    return f"{text}\n\n{block}"

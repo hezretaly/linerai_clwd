@@ -637,7 +637,11 @@ def compose(
         kind="reply" if answering is not None else "manual",
         to_address=to,
         subject=(payload.subject or "").strip(),
-        body=payload.body or "",
+        # The dealership's sign-off, appended here rather than typed. Stored on
+        # the row as well as sent, so the timeline shows what actually went out
+        # -- a body that reads differently on the buyer's page from what landed
+        # in their inbox is the one thing a record must never do.
+        body=outreach_send.with_signature(db, payload.body or ""),
         provider=sender.name,
         status="queued",
         reply_token=outreach_send.mint_reply_token(db),

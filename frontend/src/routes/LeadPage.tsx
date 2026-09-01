@@ -12,6 +12,7 @@ import type { Conversation, Lead, TeamMember } from '../lib/types'
 import { Button, Input, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
+import { EmailReader } from '../components/dashboard/EmailReader'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
 import { LeadComposers } from '../components/dashboard/LeadDrawer'
 import { AssignTo } from '../components/dashboard/AssignTo'
@@ -41,6 +42,9 @@ interface TimelinePayload {
   recap: string
   /** Which thread a reply lands on, or null when every one is closed. */
   reply_to: string | null
+  /** The dealership's sign-off, appended on send. Shown in the composer so a
+   *  rep sees the message rather than an approximation of it. */
+  email_signature: string
 }
 
 interface Duplicate {
@@ -58,6 +62,8 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
   const [reply, setReply] = useState('')
   const [booking, setBooking] = useState(false)
   const [emailing, setEmailing] = useState(false)
+  // The email currently open in the reader, or null.
+  const [reading, setReading] = useState<TimelineEntry | null>(null)
   const [channel, setChannel] = useState('')
 
   const base = of === 'lead' ? `/api/leads/${id}` : `/api/conversations/${id}`
@@ -138,12 +144,9 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
 
   const lead = data.lead
   const name = lead?.name || 'Unnamed buyer'
-  // Their last inbound email, which is what a reply answers. Read off the same
-  // timeline the page is rendering rather than fetched again -- two answers to
-  // "what are we replying to" is how a reply threads under the wrong message.
-  const lastInbound = [...(data?.entries ?? [])]
-    .reverse()
-    .find((e) => e.kind === 'outreach' && e.direction === 'in' && e.channel === 'email')
+  // There is no `lastInbound` any more, deliberately. Guessing which email a
+  // rep meant to answer is the thing the reader removed: they press Open on
+  // the one they are reading, and it is on screen while they write.
 
   const entries = channel
     ? // Appointments and escalations carry no channel: they happened, rather
@@ -208,14 +211,15 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
               lead={lead}
               onDone={() => { setEmailing(false); invalidate() }}
             />
-            {/* Answering what they actually wrote, rather than sending one of
-                the two drafts above. A buyer mid-exchange has asked a
-                question; a templated follow-up is not an answer to it, and a
-                rep who has to leave for their own mail client takes the reply
-                out of this system for good. */}
+            {/* **A new message, not a reply.** Answering a particular email
+                happens in the reader, where that email stays on screen while
+                it is being answered -- so this deliberately no longer takes
+                `answering`. Two controls that both reply, one of them blind to
+                what it is replying to, is how a rep answers the wrong message;
+                and the one where the buyer's words are visible should win. */}
             <EmailReply
               lead={lead}
-              answering={lastInbound}
+              answering={undefined}
               onDone={() => { setEmailing(false); invalidate() }}
             />
           </div>
@@ -227,9 +231,23 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
               Nothing on this channel yet.
             </p>
           ) : (
-            <Timeline entries={entries} markChannels />
+            <Timeline entries={entries} markChannels onOpenEmail={setReading} />
           )}
         </div>
+
+        {/* One email, in full. The timeline card is a summary -- clamped to
+            three lines -- and until this existed there was nowhere the whole
+            thing could be read, so a rep went to their own mail client and the
+            reply left this system. */}
+        {lead && (
+          <EmailReader
+            entry={reading}
+            lead={lead}
+            signature={data?.email_signature ?? ''}
+            onClose={() => setReading(null)}
+            onSent={invalidate}
+          />
+        )}
 
         <div className="shrink-0 border-t border-border bg-background p-4">
           {target === null ? (

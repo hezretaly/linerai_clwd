@@ -211,7 +211,12 @@ def answer(
         kind="reply",
         to_address=to,
         subject=subject if subject.lower().startswith("re:") else f"Re: {subject}",
-        body=reply,
+        # Same sign-off a rep's reply gets, from the same place. The model is
+        # no longer asked to write one: an improvised sign-off drifts between
+        # emails and is a second place the dealership's phone number could be
+        # invented, which is what `answer_from_knowledge` exists to prevent
+        # everywhere else.
+        body=outreach_send.with_signature(db, reply),
         provider=sender.name,
         status="queued",
         reply_token=outreach_send.mint_reply_token(db),

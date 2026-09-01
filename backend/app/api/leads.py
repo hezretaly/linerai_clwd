@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import matching, timeline
+from app import matching, outreach_send, timeline
 from app.recap import lead_recap
 from app.api.deps import current_user, find_staff
 from app.db import get_db, utcnow
@@ -316,6 +316,11 @@ def get_timeline(
         # Lead-level, not the newest thread's: an appointment booked in a
         # chat last night does not belong to the call made this morning.
         "recap": lead_recap(db, lead),
+        # The dealership's sign-off, so the composer can show what will
+        # actually be appended rather than an impression of it. Served rather
+        # than written into the page for the same reason the dealership's name
+        # is: a prospect's instance must not sign off as somebody else.
+        "email_signature": outreach_send.signature(db),
         # Where a reply goes. A rep typing into this page has to be told which
         # thread they are answering on -- the alternative is a message landing
         # on a conversation the buyer closed last week.

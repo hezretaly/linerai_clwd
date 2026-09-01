@@ -537,9 +537,32 @@ def main() -> int:
         # exactly where inference produces confident nonsense.
         # Free accuracy: the model hears the audio directly and never waits on
         # this text, so a slower transcriber delays only the dealer's record.
-        check("the transcriber is given time to think, which costs nothing here",
-              body["audio"]["input"]["transcription"].get("delay") == cfg.voice_transcribe_delay,
-              str(body["audio"]["input"]["transcription"].get("delay")))
+        # **And withheld from a model that rejects it, exactly like keywords.**
+        # It was not, and the *default* configuration was the broken one:
+        # `VOICE_TRANSCRIBE_MODEL` defaults to `gpt-4o-transcribe`,
+        # `VOICE_TRANSCRIBE_DELAY` to `high`, and that pair comes back
+        # "The 'delay' parameter is not supported for this model" -- no call at
+        # all for a deployment that set VOICE_PROVIDER and changed nothing else.
+        was_delay_model = cfg.voice_transcribe_model
+        try:
+            cfg.voice_transcribe_model = "gpt-live-transcribe"
+            rich = voice.session_payload(spoken, [])["session"]["audio"]["input"]
+            check("the transcriber is given time to think, which costs nothing here",
+                  rich["transcription"].get("delay") == cfg.voice_transcribe_delay,
+                  str(rich["transcription"].get("delay")))
+        finally:
+            cfg.voice_transcribe_model = was_delay_model
+        check("and it is withheld from a model that would 400 on it",
+              "delay" not in body["audio"]["input"]["transcription"],
+              str(sorted(body["audio"]["input"]["transcription"])))
+        # The check that would have caught it: whatever the defaults are, the
+        # body they build has to be one the default model accepts. A setting
+        # that is only safe once somebody changes another setting is a broken
+        # default, and this is the one place that pairing is visible.
+        check("and the default configuration builds a body the default model takes",
+              set(body["audio"]["input"]["transcription"]) <= {"model", "language"},
+              f"{cfg.voice_transcribe_model}: "
+              f"{sorted(body['audio']['input']['transcription'])}")
         # The dealership's own vocabulary. "E-Class" came back as a Chinese
         # transliteration on a real call, and those words are sitting in the
         # inventory table.

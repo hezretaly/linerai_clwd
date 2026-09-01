@@ -3137,6 +3137,51 @@ def main() -> int:
     check("and putting it back lowers it again",
           not call("GET", "/api/assistant-settings")["has_unpublished_changes"])
 
+    print("\n== an email has a sign-off, and it is composed ==")
+    # **Not written by the model and not typed by a rep.** It is the
+    # dealership's name, address and phone -- three facts in `dealerships` that
+    # are the same on every message. A model asked to sign off improvises it,
+    # which is a second place the phone number can be invented; a rep typing it
+    # from memory gets it wrong eventually. Same argument as `buyer_summary`.
+    from app import outreach_send as _send
+    from app.db import SessionLocal as _SigSession
+    from app.models import Dealership as _SigDealer
+
+    _sdb = _SigSession()
+    try:
+        block_text = _send.signature(_sdb)
+        dealer_row = _sdb.query(_SigDealer).first()
+        check("the sign-off is built from the dealership's own row",
+              dealer_row.name in block_text and dealer_row.phone in block_text,
+              repr(block_text)[:80])
+        signed = _send.with_signature(_sdb, "Hi Sam,\n\nStill here.")
+        check("and it is appended to a body that does not have it",
+              signed.endswith(block_text) and signed.startswith("Hi Sam,"),
+              repr(signed)[-60:])
+        # A rep who types the dealership's name out of habit must not send it
+        # twice, and a draft composed against an earlier version must not grow
+        # a second block when it is finally sent.
+        check("but never twice", _send.with_signature(_sdb, signed) == signed)
+    finally:
+        _sdb.close()
+
+    # The model is no longer asked to write one. Two sign-offs is what the
+    # buyer reads if both happen.
+    from app.agent.prompts import EMAIL_ADDENDUM as _EMAIL
+    check("and the model is told not to write its own",
+          "Do not\nsign off" in _EMAIL or "do not sign off" in _EMAIL.lower(),
+          _EMAIL[-120:])
+
+    # The composer shows what will actually be appended, which is only honest
+    # if it comes from the same place the send does.
+    _lead_for_sig = next(
+        (l for l in call("GET", "/api/leads?limit=50")["leads"] if l["email"]), None
+    )
+    if _lead_for_sig:
+        served = call("GET", f"/api/leads/{_lead_for_sig['id']}/timeline")["email_signature"]
+        check("and the buyer page is served the same block the send appends",
+              served == block_text, repr(served)[:70])
+
     print("\n== campaigns: reaching a group, not answering one ==")
     # **The audiences are real or they are nothing.** A campaign list with
     # plausible numbers painted on it would be the one place this product
