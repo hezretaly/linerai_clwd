@@ -89,6 +89,39 @@ def thread_for(db: Session, lead: Lead) -> Conversation:
     return convo
 
 
+def remember_inbound(db: Session, convo: Conversation, received: Outreach, text: str) -> None:
+    """Put the buyer's email into their thread, exactly once.
+
+    Two callers reach this: the intake, which mints the thread on the *first*
+    delivery so a rep has a conversation to take over, and `answer`, which
+    needs the message in the transcript before the model reads it. Whichever
+    arrives first writes it; the other finds it and does nothing. Written twice,
+    the buyer's page showed the same email twice -- and it would have been the
+    unanswered ones, since those are the deliveries the intake handles alone.
+
+    Always mirrored, never plain. `tool_calls_json` carries the `outreach_id`
+    and `app/timeline.py` folds a mirror into the outreach row it copies, so
+    the buyer's page shows one entry rather than a message beside an identical
+    email. That is the same mechanism an appointment confirmation uses.
+    """
+    already = (
+        db.query(Message)
+        .filter(
+            Message.conversation_id == convo.id,
+            Message.role == "buyer",
+            Message.tool_calls_json.contains(received.id),
+        )
+        .first()
+    )
+    if already is not None:
+        return
+    db.add(Message(
+        conversation_id=convo.id, role="buyer", content=text,
+        tool_calls_json=_dump([{"name": "outreach", "outreach_id": received.id}]),
+    ))
+    db.commit()
+
+
 def answer(
     db: Session,
     claim: InboundEmail,
@@ -126,8 +159,7 @@ def answer(
             "detail": "A rep has taken this thread over.",
         }
 
-    db.add(Message(conversation_id=convo.id, role="buyer", content=text))
-    db.commit()
+    remember_inbound(db, convo, received, text)
 
     from app.agent.loop import run_turn
     from app.integrations.base import NotConfigured

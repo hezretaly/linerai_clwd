@@ -3123,6 +3123,37 @@ def main() -> int:
     check("and it can only ever ask for keys the vocabulary names",
           set(keys) <= set(_details.FIELDS), str(keys))
 
+    # **The assistant asks too, not only the chip.** A chip is the buyer
+    # volunteering; the brief's second objective is Liner deciding it needs a
+    # way to reach them. Driven through the scripted agent so it holds with no
+    # key -- a live model reaches the same tool from the same prompt.
+    asked_convo = call("POST", "/api/chat/sessions")["conversation_id"]
+    # The stub is a state machine, so `qualifying` is walked to rather than
+    # jumped to. This is the path a buyer actually takes: find cars, narrow to
+    # one, raise something, then answer it.
+    for step in ("What do you have under $30,000?",
+                 "Tell me more about the first one.",
+                 "Is the price negotiable?"):
+        say(asked_convo, content=step)
+    _r, _s, qualified = say(
+        asked_convo,
+        content="That works for me. I'd be financing and hoping to buy in a couple of weeks.")
+    self_card = next((d for e, d in qualified if e == "details"), None)
+    check("Liner asks for a way to reach them without being prompted",
+          self_card is not None and _details.PHONE_KEY in
+          [f["key"] for f in (self_card or {}).get("fields", [])],
+          str([f["key"] for f in (self_card or {}).get("fields", [])]) if self_card
+          else "(no card)")
+    # `timeframe`, not `timeline`. Both keys are in this database meaning the
+    # same thing and the stub is where the second one came from -- the drift
+    # the closed vocabulary exists to stop, being caused by our own code.
+    # As a *key*, not anywhere in the file -- the first version of this check
+    # matched the comment explaining the fix and failed on its own explanation.
+    _stub_src = pathlib.Path("backend/app/agent/stub.py").read_text()
+    check("and the vocabulary it writes is the closed one",
+          '"timeline"' not in _stub_src and "'timeline'" not in _stub_src,
+          "stub.py still writes a `timeline` key")
+
     filled = {"name": f"Card Buyer {run}", _details.PHONE_KEY: "(502) 555-0134",
               "budget": "under $28,000"}
     saved = call("POST", f"/api/chat/sessions/{card_convo}/details", {"values": filled})
@@ -3864,10 +3895,16 @@ def main() -> int:
         _, refused = replier.readable("   ")
         check("and one with nothing in it is not answered at all", bool(refused))
 
+        # Ceiling raised for the same reason as the section below: it counts
+        # Liner's sends across the whole database in the last hour, so a few
+        # smoke runs in quick succession trip it and fail a check about
+        # something else entirely. Its own check sets its own value.
         was_env, was_cool = _cfg.email_agent, _cfg.email_reply_cooldown_minutes
+        was_ceiling = _cfg.email_replies_per_hour
         try:
             _cfg.email_agent = True
             _cfg.email_reply_cooldown_minutes = 0
+            _cfg.email_replies_per_hour = 10_000
             _flags.set(_db, "email_agent", "on", reason="smoke")
 
             buyer = _L(name="Pat Quinn", email=f"pat.{stamp}@example.invalid",
@@ -3948,6 +3985,7 @@ def main() -> int:
                   invented["sent"] and "still available" not in body, body[:60])
         finally:
             _cfg.email_agent, _cfg.email_reply_cooldown_minutes = was_env, was_cool
+            _cfg.email_replies_per_hour = was_ceiling
             _flags.set(_db, "email_agent", "off", reason="smoke reset")
 
     print("\n== every reply waits, and a person can get there first ==")
@@ -3968,10 +4006,19 @@ def main() -> int:
     )
 
     with _WaitSession() as _db:
-        keep = (_s.email_agent, _s.email_reply_cooldown_minutes)
+        # The ceiling is raised for this section and restored below. It counts
+        # Liner's sends across the *whole database* in the last hour, so on a
+        # box where smoke has been run a few times in quick succession it trips
+        # on the previous runs' mail and fails a check about the timer -- the
+        # same self-poisoning shape as the appointment slots, where each bad
+        # run left the next one worse. The ceiling has its own check further
+        # down, which sets its own value and is not affected by this.
+        keep = (_s.email_agent, _s.email_reply_cooldown_minutes,
+                _s.email_replies_per_hour)
         try:
             _s.email_agent = True
             _s.email_reply_cooldown_minutes = 5
+            _s.email_replies_per_hour = 10_000
             _f.set(_db, "email_agent", "on", reason="smoke")
 
             def arrives(tag):
@@ -4043,7 +4090,8 @@ def main() -> int:
             check("the wait is the one setting, not a second number",
                   _s.email_reply_cooldown_minutes == 5)
         finally:
-            _s.email_agent, _s.email_reply_cooldown_minutes = keep
+            (_s.email_agent, _s.email_reply_cooldown_minutes,
+             _s.email_replies_per_hour) = keep
             _f.set(_db, "email_agent", "off", reason="smoke reset")
 
     print("\n== the brakes, built before there is anything to stop ==")
@@ -4122,6 +4170,15 @@ def main() -> int:
         was_ceiling = cfg_settings.email_replies_per_hour
         try:
             cfg_settings.email_agent = True
+            # **Raised for the checks above the ceiling's own.** It counts
+            # Liner's sends across the whole database in the last hour, so on a
+            # box where smoke has run a few times in quick succession the very
+            # first `may_reply` here trips it -- and tripping it *throws the
+            # kill switch*, which is correct behaviour and persists in the
+            # database, so every later check in this block then failed with
+            # `switched_off`. Seven failures, none of them about what they
+            # were testing. The ceiling's own check sets its own value below.
+            cfg_settings.email_replies_per_hour = 10_000
             runtime_flags.set(_db, "email_agent", "on", reason="smoke")
             fresh = _Lead(name="Brake Test", email=f"brake.{stamp}@example.invalid",
                           phone="", source="email")
@@ -4300,8 +4357,53 @@ def main() -> int:
     # conversation could get. True while ADF was the only way in, and a plain
     # untruth once an email could mint one.
     recap = call("GET", f"/api/leads/{casey['id']}/timeline")["recap"]
+    # They wrote in and never chatted or called. The recap has to say so: the
+    # verb is composed from the channels actually present, because the old
+    # hand-written pairs fell through to "started a chat" for anything that
+    # was not chat or voice -- which, once email got a conversation of its own,
+    # was every email buyer.
     check("and the recap says how they actually arrived",
-          "by email" in recap and "lead document" not in recap, recap[:70])
+          "wrote in" in recap and "chatted" not in recap
+          and "lead document" not in recap, recap[:80])
+
+    # **A buyer who writes in is in the conversations list from the first
+    # email.** The thread used to be minted only when Liner *replied*, so
+    # somebody who wrote once and was not answered had no conversation at all
+    # -- no Take over, no composer, no row -- and the one person who could have
+    # helped had to find them on a diagnostics tab.
+    from app.db import SessionLocal as _MailSession
+    from app.models import Conversation as _MailConvo
+
+    _mdb = _MailSession()
+    try:
+        threads = (
+            _mdb.query(_MailConvo)
+            .filter_by(lead_id=casey["id"], channel="email")
+            .all()
+        )
+        check("one email thread exists from the first delivery, not the third",
+              len(threads) == 1, f"{len(threads)} thread(s)")
+    finally:
+        _mdb.close()
+    listed = call("GET", "/api/conversations")["conversations"]
+    check("and the buyer is in the conversations list on that alone",
+          any(c["lead"] and c["lead"]["id"] == casey["id"]
+              and c["channel"] == "email" for c in listed),
+          f"{len(listed)} listed")
+    # The message is mirrored, so `app/timeline.py` folds it into the outreach
+    # row it copies. Written plainly it would show twice on the buyer's page --
+    # and on exactly the unanswered deliveries, since those are the ones the
+    # intake handles on its own.
+    entries = call("GET", f"/api/leads/{casey['id']}/timeline")["entries"]
+    inbound_shown = [
+        e for e in entries
+        if e["kind"] == "outreach" and e.get("direction") == "in"
+    ]
+    plain = [e for e in entries if e["kind"] == "message" and e.get("role") == "buyer"]
+    check("and their email appears once on the timeline, not beside a copy",
+          len(inbound_shown) >= 1 and not plain,
+          f"{len(inbound_shown)} email(s), {len(plain)} loose message(s)")
+
 
     print("\n== one row per person, and one definition of a back and forth ==")
     # `/app/email` lists messages, which is what you want hunting one send.

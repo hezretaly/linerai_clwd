@@ -581,13 +581,27 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       a later email rename a buyer a rep has confirmed is how somebody ends up
       on the phone to the wrong name, which is the failure provenance exists
       to prevent.
-    - **The conversation is minted on the first reply, not on the third
-      exchange.** `Conversation` carries Take over, `agent_paused`, escalation
-      and the message rows; without one, for two exchanges a rep could not grab
-      the thread and the kill switch would be the only brake — on the turns
-      where Liner is guessing most. The three-exchange threshold governs
-      *presentation* instead: below it the row is in the inbound list, at it
-      the buyer appears in the conversations list.
+    - **The conversation is minted on the first delivery, not on the first
+      reply.** `Conversation` carries Take over, `agent_paused`, escalation and
+      the message rows; without one a buyer who wrote in and was not answered
+      had no thread at all — no composer, no Take over, and no row in
+      `/app/conversations` — so the one person who could have helped had to
+      find them on a diagnostics tab. Email is a channel like any other here
+      and the dashboard is organised by buyer.
+      - **The buyer's message is mirrored, never written plain.** It carries
+        `outreach_id`, and `app/timeline.py` folds a mirror into the outreach
+        row it copies — the same mechanism an appointment confirmation uses.
+        Written plainly the buyer's page shows the same email twice, and it
+        would be the *unanswered* ones, since those are the deliveries the
+        intake handles alone. `remember_inbound` is the single writer, so
+        whichever of the intake and `answer` gets there first wins and the
+        other does nothing.
+      - **The recap's verb is composed from the channels present.** The
+        hand-written pairs covered chat and voice and fell through to "started
+        a chat" — so the moment email had a conversation, a recap about
+        somebody who had only ever written in said they had started a chat. A
+        rep reads that as a channel they can answer in, and it is the one that
+        buyer never used.
     - **Over the cap it hands over rather than answers half a message.**
       `MAX_BODY_CHARS` keeps the top when a message is long, because a person's
       ask is at the top — but the cap is a refusal, not a trim: confidently

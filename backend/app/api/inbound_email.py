@@ -372,6 +372,23 @@ def _place(receipt_id: str, refused: str = "") -> None:
         db.add(record)
         db.flush()
 
+        # **The thread exists from the first email, not the third exchange.**
+        # It used to be minted only when Liner *replied*, so a buyer who wrote
+        # in and was not answered had no conversation at all -- no Take over,
+        # no composer, no row in `/app/conversations` -- and the one person who
+        # could have helped had to find them on a diagnostics tab. Email is a
+        # channel like any other here, and the dashboard is organised by buyer.
+        #
+        # The buyer's message is mirrored into it carrying `outreach_id`, the
+        # same mechanism an appointment confirmation uses: `app/timeline.py`
+        # folds a mirror and its outreach row into one entry, so this costs no
+        # duplicate on the buyer's page. Without the mirror the thread would
+        # exist and read as empty -- `/api/conversations` lists a conversation
+        # only once a buyer has actually said something in it, which is what
+        # stops an opened-and-closed chat widget reaching a rep.
+        convo = email_reply.thread_for(db, lead)
+        email_reply.remember_inbound(db, convo, record, just_the_reply(claim.body))
+
         # Before the receipt is stamped, not after. `accepted` is what the
         # setup page shows and what the gate waits on, so anything still
         # outstanding when it appears is a race -- the receipt reads filed

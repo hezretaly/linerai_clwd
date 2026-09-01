@@ -21,6 +21,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agent import phrasing, tools
+from app.agent import details
 from app.models import Conversation, Rail, Vehicle
 
 # Anchored on word characters at both ends so sentence punctuation ("...my
@@ -368,12 +369,32 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
             fields.append({"key": "trade_in", "value": text.strip()[:80],
                            "provenance": "typed"})
         if re.search(r"week|month|soon|days", text, re.IGNORECASE):
-            fields.append({"key": "timeline", "value": text.strip()[:80],
-                           "provenance": "typed"})
+            # `timeframe`, not `timeline`. Both are in this database meaning
+            # the same thing and the stub is where the second one came from --
+            # exactly the drift `agent/details.py` closed the vocabulary for.
+            fields.append({"key": details.FIELDS["timeframe"].key,
+                           "value": text.strip()[:80], "provenance": "typed"})
         if fields and convo.lead_id:
             call("save_captured_fields", {"fields": fields})
         convo.stage = "qualifying"
         db.commit()
+
+        # **Nobody knows who this is yet, so ask.** The brief's second
+        # objective is a way to reach them, and a buyer who has told us their
+        # budget and their timing and then leaves is worth nothing without a
+        # number. Asked here rather than left to the chip: a chip is the buyer
+        # volunteering, and the assistant has to be able to ask too.
+        if not convo.lead_id:
+            result = call("request_details", {
+                "fields": ["name", details.PHONE_KEY, "timeframe"],
+                "reason": "So someone here can pick this up with you properly.",
+            })
+            if result.get("fields"):
+                return (
+                    "Got it, that helps. Leave me a number and I'll get the right "
+                    "person onto it -- or I can find you a time to come in.",
+                    calls,
+                )
         return (
             "Got it, that helps. The quickest way forward is to get you in front of the car "
             "-- want me to find a time?",

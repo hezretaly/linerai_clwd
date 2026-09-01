@@ -184,13 +184,23 @@ def lead_recap(db: Session, lead: Lead) -> str:
             return f"{name} wrote in by email.{traffic}"
         return f"{name} arrived as a lead document. No conversation yet."
 
-    channels = {c.channel for c in convos}
-    if channels == {"chat", "voice"}:
-        verb = "chatted and called"
-    elif channels == {"voice"}:
-        verb = "called in"
-    else:
-        verb = "started a chat"
+    # **Composed from the channels present, not enumerated pair by pair.**
+    # The hand-written combinations covered chat and voice and fell through to
+    # "started a chat" for everything else -- so the moment an email buyer got
+    # a conversation of their own, a recap about somebody who had only ever
+    # written in said they had started a chat. A rep reads that as a channel
+    # they can answer in and it is the one channel that buyer never used.
+    verbs = {
+        "chat": "chatted", "voice": "called", "email": "wrote in",
+        "social": "messaged on social",
+    }
+    used = [
+        verbs[c] for c in ("chat", "voice", "email", "social")
+        if c in {x.channel for x in convos} and c in verbs
+    ]
+    if not used:
+        used = ["been in touch"]
+    verb = used[0] if len(used) == 1 else " and ".join([", ".join(used[:-1]), used[-1]])
     opening = f"{name} {verb}"
     if len(convos) > 1:
         opening += f" across {len(convos)} conversations"
