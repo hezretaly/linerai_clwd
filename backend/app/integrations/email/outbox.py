@@ -19,6 +19,12 @@ class OutboxSender(EmailSender):
     def send(
         self, to: str, subject: str, body: str,
         reply_to: str = "", in_reply_to: str = "", from_address: str = "",
+        # Accepted and ignored: this sender delivers plain text, and an image
+        # cannot go in plain text. Taking the argument is not optional -- the
+        # caller always passes it, and a sender that refuses it raises a
+        # TypeError inside the send rather than at import, so it surfaces as
+        # mail that quietly failed instead of as a broken build.
+        html_tail: str = "",
     ) -> SendResult:
         # The From is echoed back rather than dropped, and it goes through the
         # same `can_send_as` rule a real provider would apply. An outbox that
@@ -45,6 +51,13 @@ class ConsoleSender(OutboxSender):
     def send(
         self, to: str, subject: str, body: str,
         reply_to: str = "", in_reply_to: str = "", from_address: str = "",
+        # Accepted and ignored: this sender delivers plain text, and an image
+        # cannot go in plain text. Taking the argument is not optional -- the
+        # caller always passes it, and a sender that refuses it raises a
+        # TypeError inside the send rather than at import, so it surfaces as
+        # mail that quietly failed instead of as a broken build.
+        html_tail: str = "",
     ) -> SendResult:
         print(f"\n--- email (not delivered) ---\nTo: {to}\nSubject: {subject}\n\n{body}\n---\n")
-        return super().send(to, subject, body, reply_to, in_reply_to, from_address)
+        return super().send(to, subject, body, reply_to, in_reply_to,
+                            from_address, html_tail)

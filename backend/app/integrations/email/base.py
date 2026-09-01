@@ -56,8 +56,16 @@ class EmailSender:
         reply_to: str = "",
         in_reply_to: str = "",
         from_address: str = "",
+        html_tail: str = "",
     ) -> SendResult:
         """`in_reply_to` is a provider message id, not a header value.
+
+        `html_tail` is markup appended to the HTML half only, and the one thing
+        it carries today is a signature image. **Plain text cannot hold an
+        image**, so a sender that delivers only text simply ignores it and the
+        recipient reads the text sign-off -- which is the correct degradation
+        rather than a broken attachment. It is markup by necessity and is
+        therefore built here, never taken from a request body.
 
         Each implementation maps it to whatever its vendor wants -- Resend
         takes a `headers` object, Gmail wants MIME headers on the raw

@@ -160,6 +160,7 @@ def create_app() -> FastAPI:
         redirect,
         settings as settings_api,
         showroom,
+        signature,
         team,
         voice,
         ws,
@@ -186,6 +187,7 @@ def create_app() -> FastAPI:
         demo.router,
         ops.router,
         showroom.router,
+        signature.router,
     ):
         app.include_router(router, prefix="/api")
 
@@ -193,6 +195,9 @@ def create_app() -> FastAPI:
     app.include_router(ws.router)
     # Nor here: /r/<token> is a link a buyer follows from their inbox, and
     # it has to be short enough to read in an email client's status bar.
+    # No /api prefix: /s/<token> is what a recipient's mail client fetches,
+    # for the same reason /r/<token> is what their browser follows.
+    app.include_router(signature.public)
     app.include_router(redirect.router)
 
     @app.get("/api/photos/{vin}")

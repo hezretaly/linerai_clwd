@@ -3099,9 +3099,17 @@ def main() -> int:
     # and filtering the picker to `rep` would leave a one-manager dealership
     # with nobody to assign to at all.
     every = call("GET", "/api/leads?limit=300")["leads"]
-    owners = {l["assigned_user_id"] for l in every if l["assigned_user_id"]}
-    check("and the demo spreads buyers across it rather than onto one person",
-          len(owners) >= max(3, len(roster) - 3), f"{len(owners)} of {len(roster)} carrying")
+    owned = [l["assigned_user_id"] for l in every if l["assigned_user_id"]]
+    # **A share, not a headcount.** How many people are carrying something
+    # depends on whether `make seed-demo` has run, so counting them made this
+    # a check about which command was last used. What is always true, on the
+    # fixture and on a full demo alike, is that no one person is carrying the
+    # floor -- which is the actual bug: every showcase buyer landed on one rep
+    # and the team page read as one person doing all the work.
+    biggest = max((owned.count(u) for u in set(owned)), default=0)
+    check("and buyers are spread across the floor, not piled onto one person",
+          not owned or biggest <= max(2, len(owned) * 0.6),
+          f"busiest holds {biggest} of {len(owned)} assigned")
     check("with some left unowned, since Needs a person is the point",
           any(not l["assigned_user_id"] for l in every))
 
@@ -3145,7 +3153,7 @@ def main() -> int:
     # from memory gets it wrong eventually. Same argument as `buyer_summary`.
     from app import outreach_send as _send
     from app.db import SessionLocal as _SigSession
-    from app.models import Dealership as _SigDealer
+    from app.models import Dealership as _SigDealer, User as _SigUser
 
     _sdb = _SigSession()
     try:
@@ -3181,6 +3189,72 @@ def main() -> int:
         served = call("GET", f"/api/leads/{_lead_for_sig['id']}/timeline")["email_signature"]
         check("and the buyer page is served the same block the send appends",
               served == block_text, repr(served)[:70])
+
+    print("\n== each person's own sign-off ==")
+    # **A table, not columns on `users`.** `create_all` adds a table to a
+    # database that already exists and never a column, so a signature stored on
+    # the user row would work on a fresh seed and be missing on every box that
+    # has ever run -- which is every box that matters.
+    from app.models import UserSignature as _Sig
+
+    check("the signature lives in its own table, so create_all can add it",
+          _Sig.__tablename__ == "user_signatures",
+          _Sig.__tablename__)
+
+    mine = call("GET", "/api/me/signature")
+    # Not "empty to begin with": a browser pass or an earlier run may already
+    # have written one, so that would be a check about this database's history
+    # rather than about the endpoint. What is always true is that whoever asks
+    # gets a signature to edit, with the fallback beside it.
+    check("everybody who can send has one to edit",
+          isinstance(mine["text"], str) and "fallback" in mine and "image_url" in mine,
+          str(sorted(mine)))
+    # Blank is a real setting rather than a gap, so the page is told what blank
+    # does instead of leaving somebody to find out by sending one.
+    check("and blank is answered by the dealership's own block",
+          dealer_row.name in mine["fallback"], mine["fallback"][:40])
+
+    written = call("PUT", "/api/me/signature",
+                   {"text": f"Dana Mercer\nSales Manager\n{run}"})
+    check("what a person writes is what they get back", run in written["text"])
+    # Theirs on their sends; Liner's own replies stay the dealership's, because
+    # an automated message carrying a rep's name puts that person on words they
+    # never saw.
+    _sdb2 = _SigSession()
+    try:
+        me_row = _sdb2.query(_SigUser).filter_by(email=LOGIN["email"]).one()
+        check("their own block is what goes under mail they send",
+              run in _send.with_signature(_sdb2, "Hi.", user=me_row),
+              _send.with_signature(_sdb2, "Hi.", user=me_row)[-40:])
+        check("and Liner's own replies are still signed by the dealership",
+              run not in _send.with_signature(_sdb2, "Hi."),
+              _send.with_signature(_sdb2, "Hi.")[-40:])
+    finally:
+        _sdb2.close()
+
+    # An image cannot go in plain text, so it rides the HTML half -- and a
+    # sender that delivers only text ignores it and the reader still gets the
+    # words, which is the right way for this to degrade.
+    from app.integrations.email.resend import ResendSender as _Resend
+
+    shaped = _Resend.payload(
+        _Resend.__new__(_Resend), "a@b.c", "S", "Hello", "", "", "",
+        '<img src="https://x/y.png" alt="">',
+    )
+    check("an image rides the HTML half and never the text",
+          "<img" in shaped["html"] and "<img" not in shaped["text"],
+          shaped["text"])
+    # Every sender has to accept it, including the ones that cannot use it:
+    # the caller always passes it, and one that refuses raises inside the send
+    # rather than at import -- so it surfaces as mail that quietly failed.
+    import inspect as _inspect
+    from app.integrations.email.outbox import OutboxSender as _Outbox
+    from app.integrations.email.gmail import GmailSender as _Gmail
+
+    for sender_cls in (_Outbox, _Gmail, _Resend):
+        check(f"{sender_cls.__name__} accepts the html tail rather than raising",
+              "html_tail" in _inspect.signature(sender_cls.send).parameters,
+              str(sorted(_inspect.signature(sender_cls.send).parameters)))
 
     print("\n== campaigns: reaching a group, not answering one ==")
     # **The audiences are real or they are nothing.** A campaign list with

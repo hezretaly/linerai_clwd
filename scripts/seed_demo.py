@@ -406,6 +406,48 @@ def _last_evening(now):
     return evening if evening < now else evening - timedelta(days=1)
 
 
+def _buyer_email(rng, lead, car, need) -> str:
+    """A reply the length real ones are, signature and all.
+
+    Every fact in it comes from the row -- the car, the price, the mileage --
+    for the same reason the transcripts do: a demo email quoting a car this
+    dealership does not have is the failure `check_unsourced_vehicles` exists
+    to catch, arriving through the fixture where nothing checks it.
+    """
+    name = lead.name or "there"
+    opening = rng.choice([
+        f"Thanks for getting back to me about the {car.make} {car.model}.",
+        f"Following up on the {car.year} {car.make} {car.model}.",
+        f"I saw your note about the {car.make} {car.model} -- thanks.",
+    ])
+    asks = rng.sample([
+        "Has it had any paintwork or bodywork that you know of?",
+        "Is the service history complete, and is it available to look at?",
+        f"Is the ${car.price or 0:,} the drive-away figure or before fees?",
+        f"It shows {car.mileage or 0:,} miles -- is that current?",
+        "Would you take a part-exchange against it?",
+        "Can I have a mechanic look at it before I commit?",
+    ], k=rng.randint(2, 3))
+    closing = rng.choice([
+        "I can come in at the weekend if that suits.",
+        "Happy to come by this week -- mornings are easier for me.",
+        "No rush on my end, but I would like to see it before it goes.",
+    ])
+    sign_off = rng.choice(["Thanks,", "Best,", "Cheers,"])
+    # A signature block, because real mail has one -- and because it is what
+    # `signature_name` reads when an envelope carries no display name.
+    block = rng.choice([
+        f"{name}\n{rng.choice(['Mobile', 'Cell'])}: {lead.phone or '(555) 010-0000'}",
+        f"{name}",
+        f"{name}\nSent from my phone",
+    ])
+    return (
+        f"Hi,\n\n{opening} A few things before I come over:\n\n"
+        + "\n".join(f"- {a}" for a in asks)
+        + f"\n\n{closing}\n\n{sign_off}\n{block}"
+    )
+
+
 def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     """Five buyers who each demonstrate one thing. Newest, so they sort first."""
     made = dict.fromkeys(
@@ -914,15 +956,23 @@ def build(db, count: int) -> dict[str, int]:
                 kind = "reminder"
                 subject = f"Your visit to see the {car.year} {car.make} {car.model}"
                 body = (
+                    f"Hi {(lead.name or 'there').split()[0]},\n\n"
                     f"You're booked in for {when:%A %-d %B at %-I:%M %p} to see the "
-                    f"{car.year} {car.make} {car.model}. Reply here if anything changes."
+                    f"{car.year} {car.make} {car.model}.\n\n"
+                    "Bring your licence and proof of insurance if you would like to "
+                    "drive it, and allow about half an hour. Reply to this email if "
+                    "anything changes and we will move it."
                 )
             else:
                 kind = "followup"
                 subject = f"That {car.make} {car.model} you asked about"
                 body = (
-                    f"You were after {need.want}. The {car.year} {car.make} {car.model} "
-                    f"is still on the lot at ${car.price or 0:,}. Want to come and see it?"
+                    f"Hi {(lead.name or 'there').split()[0]},\n\n"
+                    f"You were after {need.want}. The {car.year} {car.make} "
+                    f"{car.model} is still here at ${car.price or 0:,}, with "
+                    f"{car.mileage or 0:,} miles on it.\n\n"
+                    "If you would like to see it, tell me a day that suits and I "
+                    "will hold a slot. No obligation either way."
                 )
             db.add(Outreach(
                 lead_id=lead.id, channel="email", direction="out", kind=kind,
@@ -936,11 +986,14 @@ def build(db, count: int) -> dict[str, int]:
                 db.add(Outreach(
                     lead_id=lead.id, channel="email", direction="in", kind="reply",
                     to_address=lead.email, subject=f"Re: {subject}",
-                    body=rng.choice([
-                        "Yes please, Saturday works.",
-                        f"Is the {car.model} still there?",
-                        "Thanks -- I'll think about it.",
-                    ]),
+                    # **Written the way people actually write email**, which is
+                    # the point: a one-line reply is a chat message that
+                    # happens to have a subject, and it made the timeline's
+                    # three-line clamp look like plenty. A real buyer asks
+                    # three things in a paragraph and signs off with a name, a
+                    # title and a number -- which is exactly what a rep needs
+                    # to be able to read in full and could not.
+                    body=_buyer_email(rng, lead, car, need),
                     provider="inbound", status="sent",
                     sent_at=sent + timedelta(hours=3), created_at=sent + timedelta(hours=3),
                 ))

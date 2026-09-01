@@ -71,6 +71,7 @@ class ResendSender(EmailSender):
         reply_to: str = "",
         in_reply_to: str = "",
         from_address: str = "",
+        html_tail: str = "",
     ) -> dict:
         """The request body, built separately so it can be asserted without
         being sent. `make smoke` checks the shape offline; the HTTP call is the
@@ -93,7 +94,9 @@ class ResendSender(EmailSender):
             "to": [to],
             "subject": subject,
             "text": body,
-            "html": as_html(body),
+            # The image, if there is one, rides here and nowhere else. The
+            # text half keeps the words and loses nothing a reader needs.
+            "html": as_html(body) + (html_tail or ""),
         }
         if reply_to:
             out["reply_to"] = reply_to
@@ -116,12 +119,14 @@ class ResendSender(EmailSender):
         reply_to: str = "",
         in_reply_to: str = "",
         from_address: str = "",
+        html_tail: str = "",
     ) -> SendResult:
         self.check()
         try:
             response = httpx.post(
                 API,
-                json=self.payload(to, subject, body, reply_to, in_reply_to, from_address),
+                json=self.payload(to, subject, body, reply_to, in_reply_to,
+                              from_address, html_tail),
                 headers={"Authorization": f"Bearer {settings.resend_api_key}"},
                 timeout=TIMEOUT,
             )

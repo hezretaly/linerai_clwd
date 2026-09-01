@@ -46,6 +46,7 @@ from app.models import (
     Rail,
     RuntimeFlag,
     User,
+    UserSignature,
     Vehicle,
     VehicleMention,
 )
@@ -284,7 +285,7 @@ def _clear(db: Session) -> None:
     # Anything holding a foreign key must be emptied before what it points at.
     for model in (
         CallSegment, CallUsage, CallBuyerTrack, CallRecording,
-        EmailReplyDue, LeadAddress, RuntimeFlag,
+        EmailReplyDue, LeadAddress, RuntimeFlag, UserSignature,
         VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
         Conversation, Lead, IngestRun, Vehicle, Rail, KnowledgeEntry, HandoffRule,
         AssistantSettings, User, Dealership, Event,

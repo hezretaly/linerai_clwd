@@ -9,6 +9,7 @@ import { hoursLabel, initials } from '../../lib/format'
 import { foreignZoneLabel, useNow, zonedStamp } from '../../lib/clock'
 import type { IntegrationsPayload, Overview, User } from '../../lib/types'
 import { Button } from '../ui'
+import { SignatureSheet } from './SignatureSheet'
 import { Icon, type IconName } from '../Icon'
 import { usePublicDemo } from '../../routes/RequireAuth'
 
@@ -223,6 +224,8 @@ function AccountFooter({ dealership, collapsed }: { dealership: string; collapse
     retry: false,
   })
 
+  const [signing, setSigning] = useState(false)
+
   const logout = useMutation({
     mutationFn: () => api.post('/api/auth/logout'),
     onSuccess: () => {
@@ -246,13 +249,26 @@ function AccountFooter({ dealership, collapsed }: { dealership: string; collapse
       </span>
       <div className={clsx('min-w-0', collapsed && 'lg:hidden')}>
         <div className="truncate text-sm font-medium leading-tight">{me?.user.name}</div>
-        <button
-          onClick={() => logout.mutate()}
-          className="truncate text-xs capitalize text-muted-foreground hover:text-foreground hover:underline"
-        >
-          {me?.user.role} -- sign out
-        </button>
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          {/* A signature carries this person's own name, so it is a personal
+              preference rather than a dealership setting -- it hangs off their
+              own menu rather than a page a manager administers. */}
+          <button
+            onClick={() => setSigning(true)}
+            className="truncate hover:text-foreground hover:underline"
+          >
+            Signature
+          </button>
+          <span aria-hidden>·</span>
+          <button
+            onClick={() => logout.mutate()}
+            className="truncate capitalize hover:text-foreground hover:underline"
+          >
+            {me?.user.role} -- sign out
+          </button>
+        </div>
       </div>
+      {signing && <SignatureSheet onClose={() => setSigning(false)} />}
     </div>
   )
 }

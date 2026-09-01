@@ -216,17 +216,82 @@ def signature(db: Session) -> str:
     )
 
 
-def with_signature(db: Session, body: str) -> str:
+def with_signature(db: Session, body: str, user=None) -> str:
     """`body` plus the sign-off, unless it is already there.
+
+    `user` is whoever is sending: their own block where they have written one,
+    the dealership's otherwise. Liner passes nothing and always signs as the
+    dealership -- an automated reply carrying a rep's name puts that person on
+    words they never saw.
 
     Idempotent on purpose. A rep who types the dealership's name at the bottom
     out of habit should not send it twice, and a draft composed against an
     earlier version of this must not grow a second block when it is sent.
     """
     text = (body or "").rstrip()
-    block = signature(db)
+    block = signature_for(db, user)
     if not block:
         return text
     if block in text:
         return text
     return f"{text}\n\n{block}"
+
+
+def signature_for(db: Session, user=None) -> str:
+    """The sign-off for mail *this person* is sending, or the dealership's.
+
+    A rep's own block where they have written one; the dealership's otherwise.
+    Liner's own replies pass `None` and always get the dealership's -- an
+    automated message signed by a rep who never saw it puts that person's name
+    on words they did not write, which is the same failure `save_captured_fields`
+    refuses for a captured field.
+    """
+    from app.models import UserSignature
+
+    if user is not None:
+        row = db.query(UserSignature).filter_by(user_id=user.id).one_or_none()
+        if row is not None and (row.text or "").strip():
+            return row.text.strip()
+    return signature(db)
+
+
+def signature_image_url(db: Session, user=None, base: str = "") -> str:
+    """A publicly fetchable URL for this person's signature image, or "".
+
+    **Public on purpose, and unguessable for the same reason.** The thing that
+    loads it is a recipient's mail client: it has no session, no cookie and no
+    way to get one, so an authenticated path renders a broken image in every
+    email. The token is random rather than the user id, so somebody who
+    received one email cannot walk the staff list from it.
+    """
+    from app.models import UserSignature
+
+    if user is None:
+        return ""
+    row = db.query(UserSignature).filter_by(user_id=user.id).one_or_none()
+    if row is None or not row.image_token:
+        return ""
+    root = (base or settings.public_base_url or "").rstrip("/")
+    return f"{root}/s/{row.image_token}.{row.image_ext or 'png'}"
+
+
+def signature_html(db: Session, user=None, base: str = "") -> str:
+    """The `<img>` that goes under this person's sign-off, or "".
+
+    **Built here, never taken from a request.** It is markup going into
+    somebody's inbox, so the only variable in it is a URL this system minted --
+    the token, the extension and the base. Nothing a person typed reaches it,
+    which is why there is no template and no rich-text editor behind this.
+
+    Sized in the tag as well as styled: a mail client that ignores CSS is the
+    normal case, and a 1200px logo that ignores `max-width` is a signature
+    wider than the message.
+    """
+    url = signature_image_url(db, user, base)
+    if not url:
+        return ""
+    return (
+        '<p style="margin-top:12px"><img src="'
+        + url
+        + '" alt="" width="180" style="max-width:180px;height:auto;border:0"></p>'
+    )

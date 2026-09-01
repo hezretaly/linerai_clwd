@@ -697,6 +697,44 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - `outbound_recipients` returns `None` for no limit and `[]` for nobody.
     Callers must tell them apart; collapsing the two is how an empty list
     starts meaning unrestricted.
+- **An email opens; it is not read three lines at a time.** In the buyer's
+  timeline the subject was `truncate`d and the body `line-clamp-3` with nothing
+  to press — and an email is the one entry type routinely longer than that, a
+  chat message being a sentence and a call entry a header over a recording. A
+  rep could not read a buyer's email on the page the dashboard sends them to,
+  so they opened their own mail client, which is where the reply stops being
+  visible to this system. `EmailReader` shows the envelope, the whole body, and
+  Reply underneath with the message still on screen.
+  - **It removed a guess rather than adding a control.** The inline composer
+    took `lastInbound` — the page's best guess at which email a reply was for.
+    Two controls that both reply, one blind to what it is replying to, is how a
+    rep answers the wrong message. The inline one is a new message only now.
+  - **The demo's emails are written the length real ones are.** They were
+    one-liners, so nothing was ever clipped and the reader looked like overkill
+    on the only data anybody sees. A one-line email is a chat message with a
+    subject.
+- **A sign-off is composed, and it is the sender's own.** The dealership's
+  name, address and phone come from its row; a rep who has written their own
+  gets theirs instead, and Liner's own replies always sign as the dealership —
+  an automated message carrying a rep's name puts that person on words they
+  never saw. `with_signature` is idempotent, so a rep who types the
+  dealership's name out of habit does not send it twice.
+  - **Per person means a new table, not two columns.** `create_all` adds a
+    table to an existing database and never a column, so `user_signatures` is
+    a table for the same reason `runtime_flags` is.
+  - **The image is served publicly, which is a requirement rather than a
+    shortcut.** What loads it is the recipient's mail client: no session and no
+    way to get one, so anything behind `current_user` renders as a broken image
+    in every email. The token is random rather than the user id, so somebody
+    who received one email cannot walk the staff list from it.
+  - **It rides the HTML half only**, because plain text cannot carry a picture.
+    A sender that delivers text alone accepts `html_tail` and ignores it, and
+    the reader still gets the words — the right way for this to degrade. Every
+    sender has to accept the argument even when it cannot use it: the caller
+    always passes it, and one that refuses raises *inside the send*, so it
+    surfaces as mail that quietly failed rather than as a broken build.
+  - **Everybody edits their own and nobody edits anybody else's**, so it hangs
+    off the account menu rather than a page a manager administers.
 - **`/app/campaigns` is the page; the mailbox is a section of it.** Sending
   one email and sending forty is the same act at different scale, and
   splitting them put the composer somewhere different from the reason to use
@@ -973,8 +1011,20 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   does not pay — the model never waits on this text — and `keywords` feeds the
   transcriber the dealership's own makes, models and trims, which is exactly
   the vocabulary that comes back mangled ("E-Class" arrived as 比克拉斯). Only
-  some transcription models accept keywords, so they are withheld from the rest
-  rather than 400-ing the session.
+  some transcription models accept `keywords` **and `delay`**, so both are
+  withheld from the rest rather than 400-ing the session.
+  - **The defaults were the broken pair, and that is the worse half.**
+    `VOICE_TRANSCRIBE_MODEL` defaults to `gpt-4o-transcribe` and
+    `VOICE_TRANSCRIBE_DELAY` to `high`, and that model rejects `delay` — so a
+    deployment that set `VOICE_PROVIDER=openai` and changed nothing else got
+    *"The 'delay' parameter is not supported for this model"* and no call at
+    all. `keywords` had a model guard because somebody hit exactly this once;
+    `delay` was added a line away without one, which is the argument for the
+    two sharing a list rather than each remembering separately. `make
+    agent-check` pins the property that would have caught it: whatever the
+    defaults are, the body they build must be one the default model accepts.
+    A setting that is only safe once you change another setting is a broken
+    default.
 - **A call is recorded twice, and the second one is not a copy.** The mix is
   what a rep plays back; the buyer's microphone alone is written to
   `call_buyer_tracks` so the call can be transcribed properly after it ends.

@@ -12,7 +12,7 @@ Every URL here is unchanged by the move.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -588,6 +588,7 @@ class Compose(BaseModel):
 @router.post("/email/compose")
 def compose(
     payload: Compose,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
@@ -641,7 +642,11 @@ def compose(
         # the row as well as sent, so the timeline shows what actually went out
         # -- a body that reads differently on the buyer's page from what landed
         # in their inbox is the one thing a record must never do.
-        body=outreach_send.with_signature(db, payload.body or ""),
+        # **This rep's own sign-off**, or the dealership's where they have not
+        # written one. Stored on the row as well as sent -- a body that reads
+        # differently on the buyer's page from what landed in their inbox is
+        # the one thing a record must never do.
+        body=outreach_send.with_signature(db, payload.body or "", user=user),
         provider=sender.name,
         status="queued",
         reply_token=outreach_send.mint_reply_token(db),
@@ -663,6 +668,12 @@ def compose(
             reply_to=outreach_send.reply_to_address(record.reply_token),
             in_reply_to=record.in_reply_to or "",
             from_address=outreach_send.dealership_from(db, sender),
+            # The image half of this rep's sign-off. HTML only, because plain
+            # text cannot carry a picture -- a sender that delivers text alone
+            # ignores it and the reader still gets the words, which is the
+            # right way for this to degrade. Built here rather than taken from
+            # the request: it is markup going into somebody's inbox.
+            html_tail=outreach_send.signature_html(db, user, str(request.base_url)),
         )
     except Exception as exc:  # NotConfigured, or anything the provider raised
         record.status = "failed"

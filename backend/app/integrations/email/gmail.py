@@ -83,6 +83,12 @@ class GmailSender(EmailSender):
     def send(
         self, to: str, subject: str, body: str,
         reply_to: str = "", in_reply_to: str = "", from_address: str = "",
+        # Accepted and ignored: this sender delivers plain text, and an image
+        # cannot go in plain text. Taking the argument is not optional -- the
+        # caller always passes it, and a sender that refuses it raises a
+        # TypeError inside the send rather than at import, so it surfaces as
+        # mail that quietly failed instead of as a broken build.
+        html_tail: str = "",
     ) -> SendResult:
         self.check()
         # Gmail will not let a message claim a From the authenticated user does

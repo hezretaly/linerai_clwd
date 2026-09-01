@@ -88,6 +88,45 @@ class EmailReplyDue(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class UserSignature(Base):
+    """One person's email sign-off, and the image that goes under it.
+
+    **A table, not two columns on `users`.** `create_all` adds a table to a
+    database that already exists and never a column, so a signature stored on
+    the user row would exist on a fresh seed and be missing on every box that
+    has ever run -- which is every box that matters. The same reason
+    `runtime_flags` is a table.
+
+    One row per person, and only their own: a signature carries somebody's
+    name, so it is theirs to write and nobody else's to edit. The dealership's
+    own block (`outreach_send.signature`) is the fallback and what Liner's own
+    mail always uses -- an automated reply signed by a rep who did not write it
+    is a person's name on words they never saw.
+
+    **The image is a file, not bytes in here.** A table growing by megabytes a
+    row ruins every backup, which is the same call `call_recordings` made. What
+    is stored is an unguessable token and the extension, because the file has
+    to be fetchable by a *recipient's mail client* -- unauthenticated, from
+    outside -- and a URL keyed on `user_id` would let anyone who received one
+    email enumerate the staff list.
+    """
+
+    __tablename__ = "user_signatures"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True, unique=True)
+    #: The sign-off itself. Plain text -- everything this system sends is, and
+    #: the HTML half is derived from it.
+    text: Mapped[str] = mapped_column(Text, default="")
+    #: Unguessable, and the public URL is built from it. Empty when there is
+    #: no image, which is the ordinary case.
+    image_token: Mapped[str] = mapped_column(String(40), default="", index=True)
+    #: `png`, `jpeg` or `gif`. Kept beside the bytes for the same reason a call
+    #: recording keeps its format: serving one as another shows nothing.
+    image_ext: Mapped[str] = mapped_column(String(8), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class RuntimeFlag(Base):
     """A switch somebody can throw without a restart, and a note of who did.
 
