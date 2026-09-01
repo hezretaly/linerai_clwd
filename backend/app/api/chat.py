@@ -121,7 +121,9 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     if offered and convo.stage != "booked":
         fresh = tools.check_availability(db, convo, {})
         if fresh["slots"]:
-            out["booking"] = booking_card(fresh["slots"], fresh["slot_minutes"])
+            out["booking"] = booking_card(
+                fresh["slots"], fresh["slot_minutes"], tools.contact_on(db, convo)
+            )
 
     # The details card **is** replayed, unlike availability -- "what is your
     # number" does not go stale the way a list of open slots does, and losing a
@@ -267,7 +269,11 @@ async def send_message(
             if avail and avail.get("slots"):
                 yield _sse(
                     "booking",
-                    booking_card(avail["slots"], avail.get("slot_minutes") or 30),
+                    booking_card(
+                        avail["slots"],
+                        avail.get("slot_minutes") or 30,
+                        tools.contact_on(session, convo_local),
+                    ),
                 )
 
             # The details card, drawn from exactly what `request_details`
@@ -303,8 +309,12 @@ async def send_message(
 class BookingForm(BaseModel):
     starts_at: str
     name: str
-    email: str
+    # A number, not an address. `book_appointment` owns the real rule and the
+    # card enforces it, but the shape on the wire says which of the two this
+    # channel treats as required -- and an email that is required here and
+    # optional there is a 409 the buyer cannot act on.
     phone: str = ""
+    email: str = ""
     vin: str | None = None
 
 
@@ -368,8 +378,12 @@ def book_from_card(
         f"now -- one of our team picks it up from here and confirms with you "
         f"before then."
     )
-    if settings.email_sender == "gmail":
+    if settings.email_sender == "gmail" and body.email.strip():
         reply += f" The confirmation goes to {body.email.strip()}."
+    # Every turn ends by offering more, a booking included -- a buyer who has
+    # just booked very often has a second question, and the appointment does
+    # not close the thread.
+    reply += " Anything else I can help you with?"
     assistant_message = record_assistant_message(
         db, convo, reply, [{"name": "book_appointment", "input": {}, "result": result}]
     )

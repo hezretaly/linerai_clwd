@@ -281,7 +281,37 @@ def main() -> int:
               conversation_out(convo, db).get("open_escalation") is not None)
 
         print("\n== the buyer ends it, and can have a summary ==")
+        # **The last moment there is, so it is the last chance to ask.** A
+        # conversation that ends with nobody able to ring them is worth nothing
+        # to the floor however well it went, so the first close on a buyer with
+        # no number is refused and the assistant is sent back to ask.
         convo = fresh_conversation(db)
+        _, calls = loop.run_turn(db, convo, "that's all thanks", provider=FakeProvider([
+            call_tool("close_conversation", summary="Browsed, gave nothing."),
+            say("Before you go -- can I take a number?"),
+        ]))
+        db.refresh(convo)
+        check("closing on a buyer with no number is refused, once",
+              "error" in calls[0]["result"] and "ring this buyer" in calls[0]["result"]["error"],
+              str(calls[0]["result"])[:70])
+        check("and the conversation is still open, so they can answer",
+              convo.ended_at is None)
+
+        # And exactly once. A buyer who says "no thanks, goodbye" and is asked
+        # again, and again, cannot leave -- which is worse than never asking.
+        _, calls = loop.run_turn(db, convo, "no, that's fine", provider=FakeProvider([
+            call_tool("close_conversation", summary="Declined to leave a number."),
+            say("No problem at all -- have a good evening."),
+        ]))
+        db.refresh(convo)
+        check("and the second close goes through, whatever they answered",
+              calls[0]["result"].get("closed") is True, str(calls[0]["result"])[:60])
+        check("stamped with an end time", convo.ended_at is not None)
+
+        # A buyer we *can* reach closes on the first ask, with no detour.
+        convo = fresh_conversation(db)
+        tools.attach_lead(db, convo, name="Sam Ford", email="", phone="502 555 0134")
+        db.commit()
         _, calls = loop.run_turn(db, convo, "that's all thanks", provider=FakeProvider([
             call_tool("close_conversation",
                       summary="Wanted a third row under 25k. Showed the Sienna and Sorento.",
@@ -432,7 +462,12 @@ def main() -> int:
         # and answered "we have eleven". On a screen the card offers the times;
         # out loud nothing does unless the assistant is told to.
         check("and is told to offer real times rather than ask an open question",
-              "check_availability first" in spoken and "two real times" in spoken)
+              "check_availability" in spoken and "two real times" in spoken)
+        # And to get somebody's name and number before offering any of them. A
+        # buyer who picks a time and then vanishes has left nothing behind;
+        # a name and a number is a lead whichever way the booking goes.
+        check("and to take a name and a number before the times",
+              "name and number\nfirst" in spoken)
         # It promised to read the address back and then booked without doing
         # it, which is how a lead ends up unreachable.
         check("and to wait for the email to be confirmed before booking",

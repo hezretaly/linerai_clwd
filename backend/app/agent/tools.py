@@ -27,7 +27,7 @@ from app.db import utcnow
 from app.agent import details
 from app.escalations import claim_for_owner
 from app.events import emit
-from app import matching
+from app import conversation_once, matching
 from app.matching import match_lead
 from app.models import (
     Appointment,
@@ -193,8 +193,9 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "check_availability",
         "description": (
-            "Open appointment slots. Always offer two concrete times from this result; "
-            "never ask the buyer when works for them."
+            "Open appointment slots. Get their name and phone number first -- times "
+            "are worth nothing without somebody to hold them for. Always offer two "
+            "concrete times from this result; never ask the buyer when works for them."
         ),
         "input_schema": {
             "type": "object",
@@ -210,18 +211,20 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "book_appointment",
         "description": (
-            "Book a test drive. Requires a name and an email address; phone is optional."
+            "Book a test drive. Requires a name and a phone number. An email is "
+            "optional and is best asked for once the time is set -- a number is what "
+            "a rep will actually use."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "email": {"type": "string"},
                 "phone": {"type": "string"},
+                "email": {"type": "string", "description": "Optional."},
                 "starts_at": {"type": "string", "description": "ISO 8601"},
                 "vin": {"type": "string"},
             },
-            "required": ["name", "email", "starts_at"],
+            "required": ["name", "phone", "starts_at"],
         },
     },
     {
@@ -704,7 +707,47 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
         if len(slots) >= 12:
             break
 
-    return {"slot_minutes": slot_len, "slots": slots[:12]}
+    # Whether we already know who this is, and how to ring them.
+    #
+    # **Offering times to somebody we cannot contact is the wrong order.** A
+    # buyer who picks a slot and then abandons the form has cost us the one
+    # thing worth having; a buyer who has already given a name and a number is
+    # a lead whatever happens next. So the name and the number come first, and
+    # this says whether they have. It is a note rather than a refusal -- "are
+    # you open Saturday?" deserves an answer, and the booking card is where
+    # this stops being a request and becomes a rule, since it will not submit
+    # without them.
+    known = contact_on(db, convo)
+    result = {
+        "slot_minutes": slot_len,
+        "slots": slots[:12],
+        "contact_known": bool(known["name"] and known["phone"]),
+    }
+    if not result["contact_known"]:
+        result["note"] = (
+            "You do not have a name and a phone number for this buyer yet. Get those "
+            "first -- on a screen call request_details, on a call ask out loud -- and "
+            "offer times once you have them."
+        )
+    return result
+
+
+def contact_on(db: Session, convo: Conversation) -> dict[str, str]:
+    """What is already on file for whoever this conversation belongs to.
+
+    Read from `leads` rather than from the transcript: the columns are what a
+    rep will actually ring, and `attach_lead` is the only thing that writes
+    them. Empty strings rather than None, because this is serialised straight
+    onto a card and a JSON null in a text input is the string "null".
+    """
+    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+    if lead is None:
+        return {"name": "", "email": "", "phone": ""}
+    return {
+        "name": lead.name or "",
+        "email": lead.email or "",
+        "phone": lead.phone or "",
+    }
 
 
 def attach_lead(
@@ -787,12 +830,33 @@ def book_appointment(
     email = (args.get("email") or "").strip().lower()
     phone = (args.get("phone") or "").strip()
 
+    # A name and a way to reach them, and the way is a phone number first.
+    #
+    # **This used to require an email and take the phone as optional, and that
+    # was the wrong way round.** An address cannot be answered at five past six
+    # on a Friday and a number can be rung, which is the same reasoning the
+    # details card already followed -- it took the number and left email
+    # optional while booking insisted on the opposite, so the two cards asked a
+    # buyer for different things to do the same job. Worse, on a call an email
+    # has to be spelled out letter by letter and mis-heard, and a booking that
+    # could not proceed without one was a booking lost to a transcription
+    # error.
+    #
+    # Email is still taken and still validated where it is given: it is how a
+    # written confirmation goes out, which is why it is asked for straight
+    # after the time is set rather than not at all.
     if not name:
         raise ToolError("A name is required to book.")
-    if not EMAIL_RE.match(email):
+    if email and not EMAIL_RE.match(email):
         raise ToolError(
-            "A valid email address is required to book -- it is how the rep confirms "
-            "and follows up. Ask the buyer where to send the confirmation."
+            f"'{email}' is not a valid email address. Read it back to the buyer and "
+            "check it, or leave it out -- the phone number is what a rep will use."
+        )
+    if not phone and not email:
+        raise ToolError(
+            "A booking needs a way to reach them. Ask for a phone number -- somebody "
+            "here can ring it -- and take an email instead only if they would rather "
+            "not give one."
         )
 
     try:
@@ -1034,6 +1098,33 @@ def close_conversation(
 
     if convo.ended_at is not None:
         return {"closed": True, "already_closed": True, "summary": convo.summary}
+
+    # **One last ask before the door closes.**
+    #
+    # The moment a buyer says they are done is the last moment there is, and a
+    # conversation that ends with nobody able to ring them is worth nothing to
+    # the floor however well it went. So if there is no number on file, this
+    # refuses and sends the assistant back to ask -- which is the operator's
+    # rule, and a rule a prompt can only request.
+    #
+    # **Exactly once, and that is why there is a row for it.** A buyer who says
+    # "no thanks, goodbye" and is asked again, and again, cannot leave; that is
+    # worse than never asking. `conversation_once.claim` is the one chance, and
+    # taking it is what spends it -- so the second call goes through whatever
+    # the buyer answered.
+    if not contact_on(db, convo)["phone"] and conversation_once.claim(
+        db, convo, conversation_once.ASKED_FOR_CONTACT
+    ):
+        raise ToolError(
+            "Before you sign off: nobody here has a way to ring this buyer. "
+            + (
+                "Ask for their number out loud, read it back, and save it."
+                if convo.channel == "voice" else
+                "Call request_details for their name and number."
+            )
+            + " Say what it is for in one line. If they would rather not, that is "
+            "fine -- close the conversation on the next turn and it will go through."
+        )
 
     convo.summary = summary
     convo.ended_at = utcnow()

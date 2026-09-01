@@ -214,14 +214,19 @@ def availability(
     behalf. Looked up now, never replayed -- see api/chat.py."""
     convo = _get(db, conversation_id)
     fresh = tools.check_availability(db, convo, {})
-    return booking_card(fresh["slots"], fresh["slot_minutes"])
+    return booking_card(
+        fresh["slots"], fresh["slot_minutes"], tools.contact_on(db, convo)
+    )
 
 
 class RepBooking(BaseModel):
     starts_at: str
     name: str
-    email: str
+    # Same shape as the buyer's card: a number is what a rep will ring, and an
+    # email that was required here and optional there would be one rule for
+    # the dealership and another for the buyer filling in the same form.
     phone: str = ""
+    email: str = ""
 
 
 @router.post("/{conversation_id}/book")

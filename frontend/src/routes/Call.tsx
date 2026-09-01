@@ -230,6 +230,14 @@ export function Call() {
   /* Set when close_conversation succeeds. The buyer said they were done, so the
    * goodbye is allowed to finish and then the line goes down. */
   const closing = useRef(false)
+  /** Whether the response now generating has actually spoken. Reset per
+   *  response, and the only way to tell a turn that said goodbye *and* called
+   *  close_conversation from one that called it and said nothing -- which need
+   *  opposite answers, and getting it wrong is either a sentence after the
+   *  goodbye or a line that never goes down. */
+  const spoke = useRef(false)
+  const saidGoodbye = useRef(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const hangingUp = useRef(false)
   const lastHeard = useRef(Date.now())
   // Read from the event handlers that open the mic, where the `muted` state
@@ -361,12 +369,61 @@ export function Call() {
     )
   }
 
+  /** Stop the voice, now, before anything slow happens.
+   *
+   * **This is why Liner carried on talking after the red button.** `hangUp`
+   * plays the falling chime, then stops the recorders, then waits for every
+   * queued slice to finish uploading -- and only *then* closes the peer
+   * connection. All of that is seconds, and for every one of them the remote
+   * track was still playing a sentence the buyer had just ended the call in
+   * the middle of. Pressing hang up and being talked over is the single most
+   * broken thing a phone can do.
+   *
+   * So silencing is separated from tearing down and runs first, synchronously.
+   * Three things, and all three are needed: the provider is told to stop
+   * generating (otherwise it keeps producing audio, and billing for it), the
+   * audio already buffered on the wire is cleared, and the returning track is
+   * stopped at this end so nothing that was in flight reaches the speaker
+   * anyway. The microphone shuts with them -- a call that has ended must not
+   * still be listening while the uploads drain.
+   */
+  const silence = () => {
+    micOpen.current = false
+    applyMic()
+    try {
+      // Only when there is something to cancel: the provider answers a
+      // `response.cancel` with no active response with an error, and this page
+      // renders provider errors to the buyer.
+      if (channel.current?.readyState === 'open') {
+        if (generating.current) {
+          channel.current.send(JSON.stringify({ type: 'response.cancel' }))
+        }
+        channel.current.send(JSON.stringify({ type: 'output_audio_buffer.clear' }))
+      }
+    } catch {
+      /* The line is going down regardless. */
+    }
+    generating.current = false
+    owed.current = false
+    // Stopped at the receiver as well, because the cancel above is a request
+    // to a machine on the other side of a network and the buyer is waiting
+    // now. This is the half that does not depend on anyone answering.
+    pc.current?.getReceivers().forEach((r) => r.track?.stop())
+    if (audio.current) {
+      audio.current.pause()
+      audio.current.srcObject = null
+    }
+    setSpeaking(false)
+  }
+
   const teardown = () => {
     // Before the tracks stop, or there is nothing left to salvage.
     rescue()
     clearTimeout(openTimer.current)
+    clearTimeout(closeTimer.current)
     micOpen.current = false
     closing.current = false
+    saidGoodbye.current = false
     channel.current?.close()
     pc.current?.close()
     mic.current?.getTracks().forEach((t) => t.stop())
@@ -406,8 +463,31 @@ export function Call() {
     applyMic()
   }
 
-  /** Ask for one reply, once everything it is waiting on has been answered. */
+  /** Ask for one reply, once everything it is waiting on has been answered.
+   *
+   *  **Once the call is ending, the goodbye is the last thing said.**
+   *  `close_conversation` arrives as a tool call like any other, so it left a
+   *  reply owed -- and the prompt asks the model to say its goodbye in that
+   *  same turn. When it does, the owed reply is a *second* sentence after the
+   *  goodbye, and whichever of `response.done` and the goodbye's
+   *  `output_audio_buffer.stopped` arrived first decided whether the buyer
+   *  heard it. That is why Liner kept talking after hanging up.
+   *
+   *  So the two cases are told apart rather than both answered: a closing turn
+   *  that has already spoken gets nothing more, and one that called the tool
+   *  and said nothing gets exactly one response, which is the goodbye. */
   const respondWhenReady = () => {
+    if (hangingUp.current) {
+      owed.current = false
+      return
+    }
+    if (closing.current) {
+      owed.current = false
+      if (spoke.current || saidGoodbye.current || generating.current) return
+      saidGoodbye.current = true
+      channel.current?.send(JSON.stringify({ type: 'response.create' }))
+      return
+    }
     if (outstanding.current > 0 || !owed.current || generating.current) return
     owed.current = false
     channel.current?.send(JSON.stringify({ type: 'response.create' }))
@@ -444,6 +524,12 @@ export function Call() {
     // something closes them. The goodbye is allowed to finish first.
     if (name === 'close_conversation' && (output as any)?.result?.closed) {
       closing.current = true
+      // A backstop, not the mechanism. The line comes down on the goodbye's
+      // `output_audio_buffer.stopped`; if the model says nothing at all, or
+      // that event never arrives, this is what stops a closed conversation
+      // leaving a live microphone open and a meter running.
+      clearTimeout(closeTimer.current)
+      closeTimer.current = setTimeout(() => void hangUp(), 12_000)
     }
     outstanding.current = Math.max(outstanding.current - 1, 0)
     respondWhenReady()
@@ -453,6 +539,7 @@ export function Call() {
     switch (event.type) {
       case 'response.created':
         generating.current = true
+        spoke.current = false
         break
       case 'response.done':
         generating.current = false
@@ -510,6 +597,7 @@ export function Call() {
         break
       case 'output_audio_buffer.started':
         setSpeaking(true)
+        spoke.current = true
         spokeFrom.current = Date.now()
         lastHeard.current = Date.now()
         break
@@ -725,6 +813,8 @@ export function Call() {
     outstanding.current = 0
     owed.current = false
     generating.current = false
+    spoke.current = false
+    saidGoodbye.current = false
     hangingUp.current = false
     setSaved('')
 
@@ -861,7 +951,10 @@ export function Call() {
     hangingUp.current = true
     const id = convo.current
     setPhase('ended')
-    setSpeaking(false)
+    // Before the chime, before the uploads, before anything that can await.
+    // Everything below this line takes seconds, and Liner used to spend them
+    // finishing the sentence the buyer hung up on.
+    silence()
 
     // The falling pair, straight away. A phone that goes silent when you press
     // the red button leaves you wondering whether it heard you -- and this is

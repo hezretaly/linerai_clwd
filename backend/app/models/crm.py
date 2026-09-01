@@ -219,6 +219,38 @@ class Conversation(Base):
     outcome: Mapped[str] = mapped_column(String(20), default="")
 
 
+class ConversationOnce(Base):
+    """Something that may happen once in a conversation, and never twice.
+
+    There is exactly one of these so far and it is the last-chance ask for a
+    phone number: when the buyer says they are done and nobody here has a way
+    to ring them, `close_conversation` refuses once so the assistant can ask.
+    Refusing *twice* would be worse than never asking -- a buyer who says "no
+    thanks, goodbye" and is asked again, and again, cannot leave.
+
+    A table rather than a column on `conversations`, for the reason
+    `runtime_flags` and `user_signatures` are tables: `create_all` adds a table
+    to a database that already exists and never a column, and there is no
+    Alembic here by design.
+
+    The vocabulary is closed in `app/conversation_once.py`. A free key/value
+    store keyed on a conversation is where per-thread state goes to become
+    unfindable.
+    """
+
+    __tablename__ = "conversation_once"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "key", name="uq_convo_once"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    key: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = created()
+
+
 class Message(Base):
     __tablename__ = "messages"
 

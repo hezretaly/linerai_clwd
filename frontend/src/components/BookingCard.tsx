@@ -19,6 +19,11 @@ export interface BookingDay {
 export interface BookingCardData {
   slot_minutes: number
   days: BookingDay[]
+  /** What the buyer has already told us, off their lead row. The card fills
+   *  its boxes from this and asks for nothing it already has -- being asked
+   *  for a number you gave two turns ago reads as not having been listened
+   *  to. Optional so an older payload still renders. */
+  known?: { name?: string; email?: string; phone?: string }
 }
 
 export interface BookingResult {
@@ -58,7 +63,11 @@ export function BookingCard({
 }) {
   const [day, setDay] = useState<BookingDay | null>(data.days.length === 1 ? data.days[0] : null)
   const [slot, setSlot] = useState<BookingSlot | null>(null)
-  const [form, setForm] = useState({ name: '', email: '', phone: '' })
+  const [form, setForm] = useState({
+    name: data.known?.name ?? '',
+    email: data.known?.email ?? '',
+    phone: data.known?.phone ?? '',
+  })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
@@ -70,9 +79,21 @@ export function BookingCard({
   const submit = async () => {
     const next: Record<string, string> = {}
     if (!form.name.trim()) next.name = 'We need a name for the appointment.'
-    // Matched loosely on purpose: the server owns the real rule, and a strict
-    // regex here would reject an address the backend would have accepted.
-    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) next.email = 'A valid email, please.'
+    // **A number, not an address.** This card used to require an email and
+    // treat the phone as optional, which was the wrong way round: a rep can
+    // ring a number this evening and cannot get an answer out of an inbox at
+    // five past six on a Friday. It is also what the details card has always
+    // asked for, and the two cards asking a buyer for different things to do
+    // the same job is how one of them starts being the wrong one to fill in.
+    if (form.phone.replace(/\D/g, '').length < 7) {
+      next.phone = 'A number someone here can call you on.'
+    }
+    // Loosely matched, and only when there is something to match: the server
+    // owns the real rule, a strict regex here would reject an address the
+    // backend would have accepted, and blank is now a legitimate answer.
+    if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim())) {
+      next.email = 'That address does not look right.'
+    }
     setErrors(next)
     if (Object.keys(next).length > 0 || !slot) return
 
@@ -162,14 +183,16 @@ export function BookingCard({
                 {day?.label} at {slot.label}
               </span>{' '}
               <span className="text-muted-foreground">
-                -- {data.slot_minutes} minutes. Where should the confirmation go?
+                -- {data.slot_minutes} minutes. Who should we ask for?
               </span>
             </p>
             {(
               [
                 { key: 'name', label: 'Name', type: 'text', hint: '' },
-                { key: 'email', label: 'Email', type: 'email', hint: '' },
-                { key: 'phone', label: 'Phone', type: 'tel', hint: ' (optional)' },
+                { key: 'phone', label: 'Phone', type: 'tel', hint: '' },
+                // Last, and optional. The confirmation goes here when there is
+                // one; a rep rings the number above either way.
+                { key: 'email', label: 'Email', type: 'email', hint: ' (optional)' },
               ] as const
             ).map((field) => (
               <label key={field.key} className="block">

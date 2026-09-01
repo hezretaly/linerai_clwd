@@ -31,6 +31,12 @@ NAME_IN_TEXT = re.compile(
     r"(?:i'?m|my name is|this is|it'?s)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", re.IGNORECASE
 )
 MONEY_IN_TEXT = re.compile(r"\$\s?([\d,]+)")
+# Ten digits, however somebody punctuates them. Deliberately strict about the
+# count: a budget ("25000") and a year ("2019") must not read as a phone
+# number, and a lead minted against one is a rep dialling nothing.
+PHONE_IN_TEXT = re.compile(
+    r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b"
+)
 
 ESCALATION_PATTERNS = [
     (r"out[- ]the[- ]door|otd price|total with tax|drive[- ]?off price", "out_the_door_price"),
@@ -238,10 +244,11 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
     stage = convo.stage
     next_stage = rail.advances_to if rail and rail.advances_to else stage
 
-    # An email address is an unambiguous "book me" at any stage. Without this,
+    # Contact details are an unambiguous "book me" at any stage. Without this,
     # rail matching can route a buyer who just handed over their details back
-    # into another round of slot offers.
-    if EMAIL_IN_TEXT.search(text) and stage != "booked":
+    # into another round of slot offers. A phone number counts as much as an
+    # address now: it is the one this asks for first.
+    if (EMAIL_IN_TEXT.search(text) or PHONE_IN_TEXT.search(text)) and stage != "booked":
         next_stage = "contact_capture"
 
     # Naming a different car is a change of subject, whatever stage the script
@@ -452,7 +459,11 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
     # ---- contact_capture -> book -----------------------------------------
     if next_stage in {"contact_capture", "booked"}:
         email_match = EMAIL_IN_TEXT.search(text)
+        phone_match = PHONE_IN_TEXT.search(text)
         name_match = NAME_IN_TEXT.search(text)
+        known = tools.contact_on(db, convo)
+        phone = phone_match.group(0) if phone_match else known["phone"]
+        email = email_match.group(0) if email_match else known["email"]
 
         # Resolve which of the offered times the buyer just agreed to.
         chosen, unmet_day, unmet_period = "", "", ""
@@ -493,13 +504,17 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         if chosen:
             convo.chosen_slot = chosen
 
-        if not email_match:
+        # **A number, not an address.** This used to hold the booking until an
+        # email arrived, which is the wrong thing to wait for: a rep rings a
+        # number, and an inbox cannot be answered at five past six on a Friday.
+        # The email is worth having and is asked for after the time is set.
+        if not phone and not email:
             convo.stage = "contact_capture"
             db.commit()
             when = f" for {_slot_label(chosen)}" if chosen else ""
             return (
-                f"Perfect{when}. Can I get your name and the best email for you? I'll send "
-                "the confirmation and the address there.",
+                f"Perfect{when}. Can I get your name and the best number for you? "
+                "That way someone here can confirm it with you.",
                 calls,
             )
 
@@ -521,8 +536,12 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
 
         try:
             result = call("book_appointment", {
-                "name": name_match.group(1) if name_match else email_match.group(0).split("@")[0],
-                "email": email_match.group(0),
+                "name": (
+                    name_match.group(1) if name_match
+                    else known["name"] or (email.split("@")[0] if email else "")
+                ) or "Caller",
+                "phone": phone,
+                "email": email,
                 "starts_at": chosen,
             }, tool_call_id=f"stub-book-{convo.id}")
         except tools.ToolError as exc:
@@ -534,9 +553,22 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
             f" to see the {vehicle['year']} {vehicle['make']} {vehicle['model']}"
             if vehicle else ""
         )
+        # Two things every ending here has to do: say what actually happens
+        # next, and ask whether there is anything else. A booking is not the
+        # end of a conversation -- financing, a trade, a second car -- and the
+        # thread stays open for exactly that reason.
+        confirm = (
+            f"I've sent a confirmation to {email}."
+            if email else
+            "Someone here will call you to confirm."
+        )
+        followup = (
+            "" if email else
+            " If you'd like it in writing too, just give me an email address."
+        )
         return (
-            f"Booked -- {when}{car}. I've sent a confirmation to "
-            f"{email_match.group(0)}. See you then!",
+            f"Booked -- {when}{car}. {confirm}{followup} "
+            "Anything else I can help you with?",
             calls,
         )
 

@@ -443,6 +443,13 @@ def main() -> int:
     }
     check("no already-booked time is offered", not (open_slots & taken),
           f"{len(open_slots)} offered")
+    # **The card knows who it is talking to.** A buyer who gave their name and
+    # number two turns ago and is then asked for both again reads that as not
+    # having been listened to, so the card carries what is already on the lead
+    # row and fills its boxes from it.
+    check("and the card carries what is already known, so it asks nothing twice",
+          set(card.get("known", {})) == {"name", "email", "phone"},
+          str(card.get("known")))
 
     print("\n== a refreshed buyer gets the whole thread back ==")
     again = call("GET", f"/api/chat/sessions/{cid}")
@@ -475,15 +482,25 @@ def main() -> int:
     print("\n== the form books through the executor, refusals and all ==")
     slot = card["days"][0]["slots"][0]["starts_at"]
     code, _ = status_of("POST", f"/api/chat/sessions/{cid}/book",
-                        {"starts_at": slot, "name": "", "email": "sam@example.invalid"})
+                        {"starts_at": slot, "name": "", "phone": "555-0161"})
     check("a form with no name is refused", code == 409, str(code))
     code, _ = status_of("POST", f"/api/chat/sessions/{cid}/book",
-                        {"starts_at": slot, "name": "Sam Okafor", "email": "not-an-email"})
+                        {"starts_at": slot, "name": "Sam Okafor", "phone": "555-0161",
+                         "email": "not-an-email"})
     check("and so is a malformed email", code == 409, str(code))
+    # **A number, not an address, and that is a reversal.** Booking used to
+    # require an email and take the phone as optional; a rep rings a number
+    # this evening and cannot get an answer out of an inbox at five past six
+    # on a Friday, and on a call an address has to be spelled out and misheard.
+    # So a booking with neither is refused, and one with only a number is not.
+    code, detail = status_of("POST", f"/api/chat/sessions/{cid}/book",
+                             {"starts_at": slot, "name": "Sam Okafor"})
+    check("and so is a booking with no way to reach them at all", code == 409,
+          detail[:70])
 
     form = call("POST", f"/api/chat/sessions/{cid}/book", {
         "starts_at": slot, "name": "Sam Okafor",
-        "email": "sam.okafor@example.invalid", "phone": "555-0161",
+        "phone": "555-0161", "email": "sam.okafor@example.invalid",
     })
     booked_here.append(form["appointment"]["id"])
     check("a complete form books", form["appointment"]["starts_at"] == slot,
@@ -498,10 +515,46 @@ def main() -> int:
           "sam.okafor@example.invalid" in form["buyer_message"]["content"])
 
     again = call("POST", f"/api/chat/sessions/{cid}/book", {
-        "starts_at": slot, "name": "Sam Okafor", "email": "sam.okafor@example.invalid",
+        "starts_at": slot, "name": "Sam Okafor", "phone": "555-0161",
     })
     check("a double-tapped submit does not book twice",
           again["appointment"]["id"] == form["appointment"]["id"])
+
+    # **A booking does not end the conversation, so the reply does not either.**
+    # A buyer who has just booked very often has a second question -- financing,
+    # a trade, another car -- and the thread stays open for exactly that.
+    check("and it ends by offering more, the way every turn does",
+          "Anything else" in form["assistant_message"]["content"],
+          form["assistant_message"]["content"][-40:])
+
+    # A number on its own is enough. That is the whole point of the reversal:
+    # the buyer who will give a phone number and not an address is a lead, and
+    # used to be refused.
+    phone_only = call("POST", "/api/chat/sessions")["conversation_id"]
+    spare = next(
+        (s2["starts_at"] for d in card["days"] for s2 in d["slots"]
+         if s2["starts_at"] != slot),
+        "",
+    )
+    if spare:
+        by_phone = call("POST", f"/api/chat/sessions/{phone_only}/book", {
+            "starts_at": spare, "name": "Ada Nkemelu", "phone": "319-555-0188",
+        })
+        booked_here.append(by_phone["appointment"]["id"])
+        check("a buyer who gives only a number can still book",
+              by_phone["appointment"]["starts_at"] == spare)
+        check("and no email is promised to somebody who gave none",
+              "confirmation goes to" not in by_phone["assistant_message"]["content"],
+              by_phone["assistant_message"]["content"][:60])
+
+    # And once they are somebody, the card says so. Empty above because that
+    # conversation had nobody behind it yet; here it is the same buyer, and a
+    # card that asked them for a number again would be asking twice.
+    filled = call("GET", f"/api/conversations/{cid}/availability")
+    check("a card drawn for a known buyer comes pre-filled",
+          filled["known"]["phone"] == "555-0161"
+          and filled["known"]["name"] == "Sam Okafor",
+          str(filled["known"]))
 
     other = call("POST", "/api/chat/sessions")["conversation_id"]
     code, detail = status_of("POST", f"/api/chat/sessions/{other}/book",

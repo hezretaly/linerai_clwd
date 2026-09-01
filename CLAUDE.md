@@ -287,7 +287,10 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **The phone number is always asked for and always required.** A rep can
     ring it; an email cannot be answered at five past six on a Friday. Email
     stays optional, so `attach_lead` stamps email consent only where an
-    address was actually given.
+    address was actually given. **The booking card now agrees with it** — it
+    used to require the opposite, and two cards asking a buyer for different
+    things to do the same job is how one of them becomes the wrong one to
+    fill in.
   - **The vocabulary is closed**, which is the point of `agent/details.py`.
     `CapturedField.key` is a free string and had already drifted — this
     database holds both `timeframe` and `timeline` rows meaning the same thing,
@@ -331,6 +334,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `close_conversation`, and `record_buyer_message` reopens a closed chat that
   somebody types into again — chat only, because a voice call that ended really
   did end and its `ended_at` is how long it ran.
+- **Every turn ends by offering more, and the last one asks for a number.**
+  Two halves of the operator's rule, and they sit in different places for the
+  usual reason. "Is there anything else I can help with" is a *behaviour* and
+  lives in `BRIEF` and each addendum — it is not a sign-off, it is the
+  question that finds the second thing the buyer came for, and most buyers
+  have one. What cannot be left to a prompt is the moment they say there is
+  nothing else: a conversation that ends with nobody able to ring them is
+  worth nothing to the floor however well it went. So `close_conversation`
+  refuses the first close on a buyer with no phone number and sends the
+  assistant back to ask.
+  - **Once, and that is what the row is for.** A buyer who says "no thanks,
+    goodbye" and is asked again, and again, cannot leave — worse than never
+    asking. `conversation_once.claim` is the single chance and taking it
+    spends it, so whatever they answer, the next close goes through.
+    `ConversationOnce` is a **table** because `create_all` adds a table to an
+    existing database and never a column, and its vocabulary is closed for
+    the reason `runtime_flags`' is: a free key/value store keyed on a
+    conversation is where per-thread state goes to become unfindable.
+  - It cannot be read off the transcript instead, which was the first
+    attempt: voice tool calls are relayed through `/api/voice/tools` and are
+    never written as messages, so on the channel where this matters most
+    there would be nothing to read.
 - **Escalating notifies a rep; it does not gag Liner.** Only a rep pressing
   Take over sets `agent_paused`. Stopping on escalation meant a buyer who asked
   one question a human had to answer got "someone is picking this up" to
@@ -424,6 +449,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   instead, because the same question asked twice gets answered in the worse
   place. `book_appointment` owns the clash check: a card can sit on screen for
   minutes, so "still open" has to be re-decided at submit, not at render.
+  - **A number, not an address, and that is a deliberate reversal.** Booking
+    required a valid email and took the phone as optional; it now requires a
+    name and a phone number and takes the email after. A rep rings a number
+    this evening and cannot get an answer out of an inbox at five past six on
+    a Friday — which is the reasoning `request_details` already followed, so
+    the two cards were asking a buyer for different things to do the same job.
+    On a call it is worse than a preference: an address has to be spelled out
+    by ear, and a booking that could not proceed without one was a booking
+    lost to a transcription error. `book_appointment` still refuses a booking
+    with *neither*, and still validates an email where one is given.
+  - **Name and number come before the times, not with them.** A buyer who
+    picks a slot and then abandons the form has left nothing behind; a name
+    and a number is a lead whichever way the booking goes. So
+    `check_availability` reports `contact_known` and says so in its note, the
+    prompt asks for `request_details` first, and the card is where it stops
+    being a request: it will not submit without a number. It is a note rather
+    than a refusal because "are you open Saturday?" deserves an answer.
+  - **The card carries what is already known and asks nothing twice.**
+    `booking_card` takes the lead row's name, phone and email and pre-fills
+    from them. Being asked for a number you gave two turns ago reads exactly
+    like not having been listened to — the same rule the reply text follows
+    about not listing the times back.
 - **The chat transcript is one ordered list, and a card is an entry in it.**
   Search results and the booking card used to sit in their own state, render
   under the whole thread and get cleared on every send, so three cars the buyer
@@ -987,6 +1034,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   phone down, and the client hangs up once the goodbye has finished playing.
   Two minutes of silence in both directions does it too, because a forgotten
   tab is a live microphone.
+  - **And hanging up is not tearing down, which is why Liner talked over the
+    red button.** `hangUp` played the falling chime, stopped the recorders and
+    waited for every queued slice to upload before it closed the peer
+    connection — seconds, and for all of them the remote track was still
+    finishing the sentence the buyer had just ended the call in the middle of.
+    `silence()` is separated out and runs first, synchronously: `response.cancel`
+    and `output_audio_buffer.clear` tell the provider to stop generating (and
+    stop billing), the receiving tracks are stopped at this end so nothing
+    already in flight reaches the speaker, and the microphone shuts with them.
+    Both halves are needed — the cancel is a request to a machine across a
+    network, and the buyer is waiting now.
+  - **The goodbye is the last thing said, and telling the two closing turns
+    apart is what makes that true.** `close_conversation` arrives as a tool
+    call like any other, so it left a reply owed — and the prompt asks for the
+    goodbye in that same turn. When the model obeys, the owed reply is a
+    *second* sentence after the goodbye, and whichever of `response.done` and
+    the goodbye's `output_audio_buffer.stopped` arrived first decided whether
+    the buyer heard it. So `spoke` records whether the closing response
+    actually said anything: one that did gets nothing more, one that called
+    the tool silently gets exactly one response, which is the goodbye. A
+    twelve-second timer is the backstop, not the mechanism — a closed
+    conversation must never leave a live microphone open.
 - **The buyer's summary email is composed from rows, like the rail's recap.**
   `close_conversation` takes a model-written `summary` and that used to be the
   entire email. A real call mailed *"John Doe is all set … A summary will be

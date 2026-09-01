@@ -458,7 +458,9 @@ def ingest_run_out(r: IngestRun) -> dict:
     }
 
 
-def booking_card(slots: list[str], slot_minutes: int) -> dict:
+def booking_card(
+    slots: list[str], slot_minutes: int, known: dict | None = None
+) -> dict:
     """Group check_availability's flat slot list into day -> times.
 
     Deliberately built here from the tool *result* rather than asked of the
@@ -466,6 +468,12 @@ def booking_card(slots: list[str], slot_minutes: int) -> dict:
     second place it could offer a time the calendar does not have. This
     reshapes what check_availability already returned and invents nothing --
     if a time is not in that list it cannot appear on the card.
+
+    `known` is whatever is already on the buyer's lead row. The card fills its
+    boxes from it and asks for nothing it already has: a buyer who gave their
+    name and number two turns ago and is then asked for both again reads that
+    as not having been listened to, which is the same rule the reply text
+    follows about not listing the times back.
     """
     from app.agent.tools import clock_label
 
@@ -486,4 +494,12 @@ def booking_card(slots: list[str], slot_minutes: int) -> dict:
             },
         )
         day["slots"].append({"starts_at": iso, "label": clock_label(when)})
-    return {"slot_minutes": slot_minutes, "days": list(days.values())}
+    return {
+        "slot_minutes": slot_minutes,
+        "days": list(days.values()),
+        "known": {
+            "name": (known or {}).get("name") or "",
+            "email": (known or {}).get("email") or "",
+            "phone": (known or {}).get("phone") or "",
+        },
+    }
