@@ -30,3 +30,11 @@ is not available.
 
 - `backend/app/integrations/email/resend.py:3` -- the HTTP call has never run here. There is no RESEND_API_KEY in this environment and inventing one to make a green tick appear is the opposite of what this codebase is for. Everything either side of the request is real and tested -- the allow-list guard, the Reply-To that makes a reply traceable, the row that records what was attempted, the error path that stores what the API said. Only the send itself is unproven, and ``check()`` says so until a key exists.
 
+## twilio
+
+- `backend/app/integrations/voice/twilio_voice.py:3` -- no request in this file has ever run. There is no `TWILIO_ACCOUNT_SID` in this environment and `api.twilio.com` is refused by the egress proxy besides. What *is* real and asserted offline by `make smoke` is everything either side of the wire: the signature check that guards the public webhook, the TwiML each endpoint returns, the body an outbound call would post, and `check()` naming the missing variable rather than failing vaguely. Only the request itself is unproven.
+
+## twilio-bridge
+
+- `backend/app/phone_bridge.py:3` -- this has never run end to end. There is no `OPENAI_API_KEY` here, `api.openai.com` is refused by the egress proxy, and no Twilio account has ever opened this socket. What is real and exercised by `make smoke` is everything that does not need either: the frame each side is sent, the barge-in ordering, the tool dispatch, and the fact that a socket with no model configured closes with a reason instead of hanging.
+

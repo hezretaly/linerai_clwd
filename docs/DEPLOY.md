@@ -566,6 +566,68 @@ Three things in the full file are load-bearing:
 `ENV=production`, so over plain HTTP nobody can stay logged in. It fails loudly
 rather than sending a dealer's session in the clear.
 
+### The phone line, when you want it
+
+Twilio, and it is the one integration whose inbound half is a **public URL on
+your own host** rather than an API you call. That changes what can go wrong,
+so it is worth doing in this order.
+
+One thing has to be true before any of it: `PUBLIC_BASE_URL` must be set to the
+address in the certificate, and Twilio must be able to reach it. The signature
+on every inbound webhook is computed over the full URL, so a value that differs
+from what you paste into the Twilio console — a trailing slash, `http` against
+`https`, a bare IP — fails every call with a message about signatures and no
+hint that an address is the problem.
+
+```bash
+# In /srv/liner/.env
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your-real-auth-token      # production refuses to boot on the dev default
+TWILIO_NUMBER=+15025550100                  # the number you bought, E.164
+PUBLIC_BASE_URL=https://YOUR-HOST           # must match the console exactly
+
+# Optional: the handset an outbound click-to-call rings first
+TWILIO_OPS_NUMBER=+15025550111
+```
+
+Restart, then open `/ops/phone` as `founder@`. It says which of those is still
+missing, by name, and composes the two URLs to paste — copy them from there
+rather than typing them, because they are the ones the signature is checked
+against.
+
+In the Twilio console, on your number, under **Voice Configuration**:
+
+| Twilio field | Value |
+|---|---|
+| A call comes in | `https://YOUR-HOST/api/phone/incoming`, HTTP POST |
+| Call status changes | `https://YOUR-HOST/api/phone/status`, HTTP POST |
+
+The media stream needs no configuration: the TwiML returned by the first URL
+tells Twilio where to open it, which is why it is derived from
+`PUBLIC_BASE_URL` rather than set separately.
+
+**The media socket is at `/ws/phone/media`, deliberately.** The shipped nginx
+config carries the `Upgrade` and `Connection` headers on `location /ws/` and
+sets `Connection ""` on everything else, so a socket under `/api/` would
+connect, play the greeting and then go silent — with nothing in the app's log,
+because the app never saw the upgrade. If you wrote your own nginx config,
+`/ws/` needs those headers.
+
+**The assistant needs a model as well as a line.** `LLM_MODE=live`, an API key
+and `VOICE_MODEL`. Without them the number answers and nobody speaks, and
+`/ops/phone` reports that as a separate fault from "no Twilio" — they have
+completely different fixes.
+
+Then choose who answers, on the same page: Liner's own assistant (pitches
+Liner, books a demo) or the dealership's (real inventory, real test drives).
+The switch takes effect on the next call and needs no restart, so the same
+number can be handed to a prospect mid-demo.
+
+**Never set `TWILIO_VALIDATE_SIGNATURE=false` on a real host.** It exists for a
+local tunnel, where the URL Twilio signed is not the one this process sees;
+production refuses to boot with it off, because that signature is the only
+thing standing in front of a URL that answers by opening a paid call.
+
 ## 7. Check it
 
 ```bash

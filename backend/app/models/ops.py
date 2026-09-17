@@ -25,7 +25,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -195,13 +203,67 @@ class OpsMailState(Base):
     )
 
 
+class PhoneCall(Base):
+    """One call on Liner's own Twilio number, either direction.
+
+    **Ours, even when the dealership's assistant answered it.** The number is
+    Liner's: a prospect rings it to hear what their buyers would hear, and the
+    persona switch decides which assistant picks up. So the call log survives
+    `make reset-dealership` like every other `ops_` table -- a rehearsal must
+    not throw away the record of somebody having rung us.
+
+    `conversation_id` is deliberately **not** a foreign key. In dealership
+    persona the call really does mint a `conversations` row, and that table is
+    emptied by a reseed while this one is not; a constraint across that line
+    would make `_clear` fail on `DELETE FROM conversations` for a call that
+    happened weeks ago. The id is kept as text because it is still the way to
+    find the transcript while it exists, and a dangling one after a reseed is a
+    link that has gone rather than a row that lies.
+    """
+
+    __tablename__ = "ops_phone_calls"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: "in" when somebody rang us, "out" when we rang them.
+    direction: Mapped[str] = mapped_column(String(4), default="in")
+    #: Twilio's own id for the call, which is the handle for their logs and the
+    #: key a status callback arrives under. Indexed for exactly that lookup.
+    call_sid: Mapped[str] = mapped_column(String(64), default="", index=True)
+    from_number: Mapped[str] = mapped_column(String(32), default="")
+    to_number: Mapped[str] = mapped_column(String(32), default="")
+    #: Which assistant answered: "liner", "dealership", or "" for an outbound
+    #: call, where there is no assistant on the line at all.
+    persona: Mapped[str] = mapped_column(String(20), default="")
+    #: Twilio's last word on it -- queued, ringing, in-progress, completed,
+    #: busy, no-answer, failed. Stored as given rather than mapped onto our own
+    #: vocabulary: "no-answer" and "failed" are different facts and only one of
+    #: them is worth trying again.
+    status: Mapped[str] = mapped_column(String(20), default="")
+    duration_sec: Mapped[int] = mapped_column(Integer, default=0)
+    #: The thread the bridge wrote, while it exists. See the note above on why
+    #: this is text and not a constraint.
+    conversation_id: Mapped[str] = mapped_column(String(36), default="")
+    #: Who pressed Call. Null on an inbound one, which nobody placed.
+    placed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ops_users.id"), nullable=True
+    )
+    #: Set when a call books a demo, so the calendar entry and the call that
+    #: produced it can be read together.
+    demo_request_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ops_demo_requests.id"), nullable=True
+    )
+    started_at: Mapped[datetime] = created()
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 #: Every table on our side of the line, by name. `make reset-db` reads this to
 #: leave them alone: rebuilding the dealership's fixture must not throw away
 #: the demos people booked with us, which are real bookings with real people
-#: on the other end -- nor the mail we wrote them.
+#: on the other end -- nor the mail we wrote them, nor who rang us.
 OPS_TABLES = (
     OpsUser.__tablename__,
     DemoRequest.__tablename__,
     OpsMessage.__tablename__,
     OpsMailState.__tablename__,
+    PhoneCall.__tablename__,
 )

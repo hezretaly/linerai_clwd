@@ -28,6 +28,21 @@ class Flag:
     #: The value when nothing has been set. Safe, always: a flag that defaults
     #: to the permissive side is one that goes wrong quietly.
     default: str
+    #: What it may be set to. Empty means any string, which is what an on/off
+    #: switch already was. A flag carrying a *choice* needs this or a typo
+    #: silently becomes a fourth state -- `phone_persona="dealerhsip"` reads as
+    #: neither persona and the line answers as nobody.
+    values: tuple[str, ...] = ()
+
+
+#: Who picks up Liner's own phone number. Three values, not a boolean, because
+#: "nobody" and "somebody, and here is which" is one question and not two -- a
+#: separate on/off switch beside a persona choice is two controls that can
+#: disagree, and the disagreement is a line that rings out.
+PHONE_OFF = "off"
+PHONE_LINER = "liner"
+PHONE_DEALERSHIP = "dealership"
+PHONE_PERSONAS = (PHONE_OFF, PHONE_LINER, PHONE_DEALERSHIP)
 
 
 #: Every switch there is.
@@ -42,6 +57,26 @@ FLAGS = {
             # thrown back off in a hurry. `EMAIL_AGENT` in `.env` is the
             # other half, and the stricter of the two wins.
             default="off",
+            values=("off", "on"),
+        ),
+        Flag(
+            key="phone_persona",
+            label="Who answers the phone",
+            # **Not off, and this one is the exception that proves the rule
+            # above it.** Every other flag defaults to the safe side because
+            # the permissive side goes wrong quietly. Here the permissive side
+            # cannot be reached quietly at all: it takes three secrets in
+            # `.env` and a number bought from Twilio and pointed at this host,
+            # which is nobody's accident. Given that, defaulting to `off`
+            # would mean doing all of that and still getting a line that does
+            # not answer, with nothing on any screen saying why -- the exact
+            # failure `EMAIL_AGENT` shipped with and had to be fixed for.
+            #
+            # `dealership` is the switch to throw for a demo: the same number,
+            # answered by the buyer-facing assistant, so a prospect can ring it
+            # and hear what their own customers would hear.
+            default=PHONE_LINER,
+            values=PHONE_PERSONAS,
         ),
     )
 }
@@ -63,6 +98,11 @@ def set(db: Session, key: str, value: str, *, reason: str = "", by: str | None =
     """
     if key not in FLAGS:
         raise KeyError(f"{key} is not a runtime flag. Known: {', '.join(sorted(FLAGS))}")
+    allowed = FLAGS[key].values
+    if allowed and value not in allowed:
+        raise ValueError(
+            f"{value!r} is not a value {key} takes. One of: {', '.join(allowed)}."
+        )
     row = db.query(RuntimeFlag).filter_by(key=key).one_or_none()
     if row is None:
         row = RuntimeFlag(key=key)
@@ -85,6 +125,11 @@ def all_flags(db: Session) -> list[dict]:
             "label": flag.label,
             "value": row.value if row is not None and row.value else flag.default,
             "default": flag.default,
+            # What the dashboard may offer. Sent rather than hardcoded in the
+            # page for the reason the consent wording is served: a second copy
+            # of a closed vocabulary drifts, and the one in the browser is the
+            # copy that ends up offering a value the server refuses.
+            "values": list(flag.values),
             "reason": row.reason if row is not None else "",
             "updated_at": row.updated_at if row is not None else None,
         })

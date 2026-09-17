@@ -63,7 +63,7 @@ DEALER = [
 # is a separate list rather than two more entries above. It gets the same
 # 390px rule as everything else: two people run this company and both of them
 # will read a new demo on a phone.
-OPS = ["/ops", "/ops/mail"]
+OPS = ["/ops", "/ops/mail", "/ops/phone"]
 
 
 # Reps and managers work from phones, so a route that overflows there is a real

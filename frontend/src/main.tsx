@@ -26,6 +26,7 @@ import { OpsShell } from './routes/ops/OpsShell'
 import { RequireOwner } from './routes/ops/RequireOwner'
 import { OpsCalendarPage } from './routes/ops/OpsCalendar'
 import { OpsMailPage } from './routes/ops/OpsMail'
+import { OpsPhonePage } from './routes/ops/OpsPhone'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -106,6 +107,7 @@ createRoot(document.getElementById('root')!).render(
           >
             <Route index element={<OpsCalendarPage />} />
             <Route path="mail" element={<OpsMailPage />} />
+            <Route path="phone" element={<OpsPhonePage />} />
           </Route>
 
           <Route path="*" element={<LeaveToLanding />} />

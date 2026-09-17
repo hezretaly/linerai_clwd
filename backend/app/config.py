@@ -24,6 +24,11 @@ DEV_SEED_PASSWORD = "liner-dev"
 # ever assert the 503, and the signature check, the dedupe and the whole
 # resolution ladder would ship untested.
 DEV_WEBHOOK_SECRET = "liner-dev-inbound-secret"
+#: Same argument as the line above, for the same reason. Without a default
+#: the whole inbound call path could only ever be tested by asserting the
+#: refusal, and the signature check, the TwiML and the persona switch would
+#: ship unexercised. Production refuses to boot on it.
+DEV_TWILIO_TOKEN = "liner-dev-twilio-token"
 
 
 class Settings(BaseSettings):
@@ -124,6 +129,34 @@ class Settings(BaseSettings):
     email_replies_per_hour: int = 30
 
     webhook_secret: str = DEV_WEBHOOK_SECRET
+
+    # --- Phone (Twilio) ----------------------------------------------------
+    # Liner's own number, in both directions: people ring it and hear the
+    # assistant, and `/ops/phone` rings people from it. Three secrets and the
+    # feature is on -- there is no separate switch, because buying a number and
+    # putting it here *is* the decision. Who answers is the `phone_persona`
+    # runtime flag, which can be thrown mid-demo without a restart.
+    twilio_account_sid: str = ""
+    #: Also what inbound webhooks are signed with, which is why it has a
+    #: development default and production refuses to boot on it -- the same
+    #: shape as WEBHOOK_SECRET, and for the same reason.
+    twilio_auth_token: str = DEV_TWILIO_TOKEN
+    #: The number itself, E.164 (+15025550100). It is the caller ID on an
+    #: outbound call too: a carrier will not present a number you do not own.
+    twilio_number: str = ""
+    #: Who an outbound click-to-call rings *first*. Twilio dials this, and
+    #: bridges the prospect in once somebody here picks up -- the other way
+    #: round makes the prospect listen to silence while we answer.
+    twilio_ops_number: str = ""
+    #: One sentence played before the assistant hears anything, the same way
+    #: `/call` plays a pre-roll: identical every time, impossible to improvise
+    #: into the caller's line, and it costs no generated audio.
+    phone_greeting: str = "Thanks for calling. Just a moment."
+    #: Off only for a local tunnel, where the URL Twilio signed is not the URL
+    #: this process sees. Never in production: the webhook is a public address
+    #: and the signature is the only thing standing in front of it, so
+    #: `ENV=production` refuses to boot with this false.
+    twilio_validate_signature: bool = True
 
     # --- Voice -------------------------------------------------------------
     # `openai` is the only implementation. Empty means voice is off, and the
@@ -482,6 +515,30 @@ def get_settings() -> Settings:
                 "take the leads with it."
                 if {"FOUNDER_PASSWORD", "CTO_PASSWORD"} & set(stale) else ""
             )
+        )
+    # **The phone comes after the passwords deliberately.** Whichever of
+    # these raises first is the only message anybody reads, and a password
+    # printed in the README is both likelier and worse than a line nobody
+    # has finished setting up.
+    if settings.is_production and settings.twilio_auth_token == DEV_TWILIO_TOKEN:
+        raise RuntimeError(
+            "TWILIO_AUTH_TOKEN is still the development default while "
+            "ENV=production. It is what inbound call webhooks are signed with, "
+            "so anyone who found the path could open a paid call on this "
+            "account. Copy the real one from the Twilio console."
+        )
+    if settings.is_production and not settings.twilio_validate_signature:
+        # The argument WEBHOOK_SECRET makes, with a worse blast
+        # radius: /api/phone/incoming opens a Realtime session, which bills by
+        # the minute, and hands whatever `From` it was given to an assistant
+        # that may write it down as a lead. The setting exists for a local
+        # tunnel, where the URL Twilio signed is not the URL this process sees.
+        raise RuntimeError(
+            "TWILIO_VALIDATE_SIGNATURE is false while ENV=production. That "
+            "signature is the only thing standing in front of /api/phone/incoming, "
+            "which is a public URL that answers by opening a paid call. Turn it "
+            "back on; if signatures are failing, PUBLIC_BASE_URL does not match "
+            "the webhook URL in the Twilio console, which is the usual cause."
         )
     # Every pair, not just the first two. `owner` reaches /ops and a dealership
     # never should, so sharing a password with the rep account is the one

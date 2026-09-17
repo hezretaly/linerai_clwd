@@ -111,14 +111,32 @@ def follow(url: str) -> tuple[int, str]:
         return exc.code, exc.headers.get("Location", "")
 
 
-def status_of(method: str, path: str, body: dict | None = None) -> tuple[int, str]:
+def status_of(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    form: bool = False,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, str]:
     """Like call(), but a 4xx is the answer rather than a failure. The booking
     card's refusals (no name, bad email, slot gone) are all things the buyer
-    acts on, so the gate has to be able to assert on them."""
-    data = json.dumps(body).encode() if body is not None else None
+    acts on, so the gate has to be able to assert on them.
+
+    `form` posts `application/x-www-form-urlencoded` instead of JSON, and
+    `headers` adds to the request. Both exist for Twilio, which is not a
+    browser and not our own client: it posts a form and signs it in a header,
+    and a gate that could only speak JSON could not exercise that path at all.
+    """
+    if form:
+        data = urllib.parse.urlencode(body or {}).encode()
+        content = "application/x-www-form-urlencoded"
+    else:
+        data = json.dumps(body).encode() if body is not None else None
+        content = "application/json"
     request = urllib.request.Request(
         BASE + path, data=data, method=method,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": content, **(headers or {})},
     )
     try:
         with opener.open(request, timeout=60) as response:
@@ -5027,6 +5045,182 @@ def main() -> int:
         cfg.dealership = was
         if probe.is_dir():
             shutil.rmtree(probe)
+
+    print("\n== the phone line: Twilio in, Twilio out ==")
+    # No Twilio account is needed for any of this. The inbound signature is an
+    # HMAC under a shared secret, and `TWILIO_AUTH_TOKEN` has a development
+    # default for exactly this reason -- the same argument WEBHOOK_SECRET
+    # already makes. Without it the whole inbound path could only ever be
+    # checked by asserting the refusal.
+    sys.path.insert(0, str(TSX.parent.parent.parent / "backend"))
+    from app.config import DEV_TWILIO_TOKEN as _TOKEN
+    from app.integrations.voice import twilio_voice as _twilio
+    from app import phone_bridge as _bridge
+
+    # **The published test vector.** This is the one check here that proves the
+    # recipe rather than proving we agree with ourselves: URL, then every POST
+    # parameter in sorted key order, HMAC-SHA1, base64. Getting the sort wrong
+    # validates roughly one request in n factorial and is invisible until a
+    # real call arrives.
+    check("the signature matches Twilio's own published example",
+          _twilio.signature_for(
+              "https://mycompany.com/myapp.php?foo=1&bar=2",
+              {"CallSid": "CA1234567890ABCDE", "Caller": "+14158675309",
+               "Digits": "1234", "From": "+14158675309", "To": "+18005551212"},
+              "12345",
+          ) == "RSOYDt4T1cUTdK1PDd93/VVr8B8=")
+    check("an unset token refuses rather than signing with an empty key",
+          not _twilio.valid_signature("u", {}, "anything", ""))
+
+    _params = {"CallSid": f"CAsmoke{stamp}", "From": "+15025550142",
+               "To": "+15025550100", "CallStatus": "ringing"}
+    _url = _twilio.webhook_url("/api/phone/incoming", BASE)
+    _sig = _twilio.signature_for(_url, _params, _TOKEN)
+
+    code, _ = status_of("POST", "/api/phone/incoming", _params, form=True)
+    check("an unsigned call webhook is refused", code == 403, str(code))
+    code, _ = status_of("POST", "/api/phone/incoming", _params, form=True,
+                        headers={"X-Twilio-Signature": "forged"})
+    check("and so is a forged signature", code == 403, str(code))
+    # The signature covers the body, so one captured from a real call cannot be
+    # replayed with a different caller -- which is the attack that matters
+    # here, since `From` is what a rep would later ring back.
+    code, _ = status_of("POST", "/api/phone/incoming",
+                        dict(_params, From="+15025559999"), form=True,
+                        headers={"X-Twilio-Signature": _sig})
+    check("a valid signature does not carry to a different caller",
+          code == 403, str(code))
+
+    code, twiml = status_of("POST", "/api/phone/incoming", _params, form=True,
+                            headers={"X-Twilio-Signature": _sig})
+    check("a properly signed call is answered", code == 200, str(code))
+    check("with TwiML that connects the media stream",
+          "<Connect><Stream" in twiml and "/ws/phone/media" in twiml, twiml[:90])
+    check("carrying the call id, so the socket is not asked who it is",
+          "?call=" in twiml)
+
+    _done = {"CallSid": f"CAsmoke{stamp}", "CallStatus": "completed",
+             "CallDuration": "91"}
+    _surl = _twilio.webhook_url("/api/phone/status", BASE)
+    code, _ = status_of("POST", "/api/phone/status", _done, form=True,
+                        headers={"X-Twilio-Signature":
+                                 _twilio.signature_for(_surl, _done, _TOKEN)})
+    check("a signed status callback is accepted", code == 200, str(code))
+
+    # The outbound leg carries the number in its URL, and the signature covers
+    # the URL -- so it cannot be rewritten into a call somewhere expensive by
+    # anyone who finds the path.
+    _q = urllib.parse.urlencode({"to": "+15025550142"})
+    _ourl = _twilio.webhook_url("/api/phone/outbound-twiml?" + _q, BASE)
+    _osig = _twilio.signature_for(_ourl, {}, _TOKEN)
+    code, dialled = status_of("POST", "/api/phone/outbound-twiml?" + _q, {}, form=True,
+                              headers={"X-Twilio-Signature": _osig})
+    check("a signed outbound leg dials what it was signed for",
+          code == 200 and "+15025550142" in dialled, dialled[:80])
+    code, _ = status_of("POST", "/api/phone/outbound-twiml?" +
+                        urllib.parse.urlencode({"to": "+447700900123"}), {}, form=True,
+                        headers={"X-Twilio-Signature": _osig})
+    check("and a rewritten number is refused", code == 403, str(code))
+    check("a configured number is presented as caller ID, never the prospect's",
+          'callerId="+15025550100"' in _twilio.dial("+15025550142", "+15025550100"))
+    check("and none is invented when there is no number to present",
+          "callerId" not in _twilio.dial("+15025550142", ""))
+
+    # The outbound request body, asserted without being sent -- the same trick
+    # ResendSender.payload allows, and the only way to check this with no
+    # account.
+    _body = _twilio.call_payload("+15025550142", "https://x/answer", "https://x/status")
+    check("an outbound call rings us first and bridges them in",
+          _body["Url"] == "https://x/answer" and _body["Method"] == "POST",
+          str(sorted(_body)))
+    check("and subscribes only to the end of the call, not every ring",
+          _body["StatusCallbackEvent"] == "completed")
+
+    print("\n== the media bridge's frames ==")
+    # A frame with a misspelled key is silently dropped by whichever side
+    # receives it -- Twilio ignores an unknown event, the provider ignores an
+    # unknown type -- so the failure is a call with no audio and nothing in any
+    # log. These are the only part of the bridge checkable without both
+    # vendors, which is exactly why they are functions.
+    check("caller audio goes to the provider untranscoded",
+          json.loads(_bridge.to_model("QUJD")) ==
+          {"type": "input_audio_buffer.append", "audio": "QUJD"})
+    check("and model audio goes back naming the stream it belongs to",
+          json.loads(_bridge.to_caller("MZ1", "QUJD")) ==
+          {"event": "media", "streamSid": "MZ1", "media": {"payload": "QUJD"}})
+    check("a barge-in clears what Twilio already holds",
+          json.loads(_bridge.clear_caller("MZ1")) ==
+          {"event": "clear", "streamSid": "MZ1"})
+    from app.integrations.voice.openai_realtime import PHONE_AUDIO, OpenAIRealtimeProvider
+    _audio = OpenAIRealtimeProvider().session_payload("x", [], None, PHONE_AUDIO)
+    _audio = _audio["session"]["audio"]
+    check("the session asks the model to speak the telephone's own codec",
+          _audio["input"]["format"]["type"] == "audio/pcmu"
+          and _audio["output"]["format"]["type"] == "audio/pcmu",
+          PHONE_AUDIO)
+    # And the browser path must NOT name a format: WebRTC negotiates Opus
+    # between the browser and the provider, and pinning mu-law there would put
+    # telephone audio on a laptop call.
+    _web = OpenAIRealtimeProvider().session_payload("x", [])["session"]["audio"]
+    check("while the browser call still negotiates its own",
+          "format" not in _web["input"])
+
+    print("\n== who answers, and who may decide ==")
+    check("the phone page needs a session at all",
+          anonymous_status("/api/ops/phone") == 401)
+    check("and a dealership manager is refused -- this line is ours",
+          status_of("GET", "/api/ops/phone")[0] == 403)
+    # One cookie jar, one session at a time, and the dealership's is handed
+    # back at the end -- the same dance the demo-calendar section does.
+    call("POST", "/api/auth/login",
+         {"email": "founder@linerai.us", "password": "liner-dev"})
+    state = call("GET", "/api/ops/phone")
+    check("an owner is told exactly what .env is missing",
+          "TWILIO_ACCOUNT_SID" in state["missing"], str(state["missing"]))
+    check("the webhook URLs are composed rather than typed into the page",
+          "webhooks" in state and set(state["webhooks"]) == {"voice", "status", "stream"})
+    check("the call this run made is in the log",
+          any(c["from"] == "+15025550142" for c in state["calls"]),
+          f"{len(state['calls'])} call(s)")
+    check("with the length the status callback reported",
+          any(c["duration_sec"] == 91 for c in state["calls"]))
+
+    _was = state["persona"]
+    try:
+        out = call("POST", "/api/ops/phone/persona", {"value": "dealership"})
+        check("the persona switches without a restart", out["persona"] == "dealership")
+        code, _ = status_of("POST", "/api/ops/phone/persona", {"value": "dealerhsip"})
+        check("a typo is refused rather than becoming a fourth state",
+              code == 400, str(code))
+        call("POST", "/api/ops/phone/persona", {"value": "off"})
+        _off = dict(_params, CallSid=f"CAoff{stamp}")
+        code, said = status_of(
+            "POST", "/api/phone/incoming", _off, form=True,
+            headers={"X-Twilio-Signature": _twilio.signature_for(_url, _off, _TOKEN)})
+        check("with it off a caller is told so rather than met with silence",
+              code == 200 and "<Say>" in said and "<Connect>" not in said, said[:90])
+    finally:
+        # Left as it was found, and the dealership's session handed back --
+        # every section after this one signs in as a rep.
+        call("POST", "/api/ops/phone/persona", {"value": _was})
+        call("POST", "/api/auth/login", LOGIN)
+
+    print("\n== Liner's own line keeps out of the dealership's data ==")
+    # The realm split, arriving on a new channel. A caller asking Liner about
+    # Liner must not be able to reach a showroom's inventory or buyers, and the
+    # guarantee is that the model is handed no tool that could.
+    from app import phone_persona as _persona
+
+    _names = {t["name"] for t in _persona.TOOL_DEFS}
+    check("its tools are the demo ones and nothing else",
+          _names == {"check_demo_slots", "book_demo", "end_call"}, str(sorted(_names)))
+    from app.agent import tools as _agent_tools
+
+    _dealer = {t["name"] for t in _agent_tools.TOOL_DEFS}
+    check("and none of the dealership's reaches it",
+          not (_names & _dealer), str(sorted(_names & _dealer)))
+    check("the brief never invents a price, because it has none to read",
+          "Never quote a number of any kind" in _persona.instructions())
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to

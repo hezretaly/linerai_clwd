@@ -46,6 +46,7 @@ from app.models.ops import (
     OpsMailState,
     OpsMessage,
     OpsUser,
+    PhoneCall,
 )
 
 __all__ = [
@@ -53,6 +54,7 @@ __all__ = [
     "OpsMailState",
     "OpsMessage",
     "OpsUser",
+    "PhoneCall",
     "PROVENANCE",
     "STAGES",
     "Appointment",

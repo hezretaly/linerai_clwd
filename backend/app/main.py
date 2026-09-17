@@ -140,6 +140,7 @@ def create_app() -> FastAPI:
         # 503, not 500: the feature exists, the credential does not.
         return JSONResponse(status_code=503, content=exc.as_dict())
 
+    from app import phone_bridge
     from app.api import (
         appointments,
         auth,
@@ -156,6 +157,7 @@ def create_app() -> FastAPI:
         mailbox,
         ops,
         outreach,
+        phone,
         overview,
         redirect,
         settings as settings_api,
@@ -186,6 +188,8 @@ def create_app() -> FastAPI:
         settings_api.router,
         demo.router,
         ops.router,
+        phone.router,
+        phone.ops,
         showroom.router,
         signature.router,
     ):
@@ -193,6 +197,9 @@ def create_app() -> FastAPI:
 
     # No /api prefix: the socket lives at /ws/dealer.
     app.include_router(ws.router)
+    # Nor here -- `phone_bridge` declares its own full path, because Twilio
+    # is handed the address as an absolute wss:// URL and it has to match.
+    app.include_router(phone_bridge.router)
     # Nor here: /r/<token> is a link a buyer follows from their inbox, and
     # it has to be short enough to read in an email client's status bar.
     # No /api prefix: /s/<token> is what a recipient's mail client fetches,

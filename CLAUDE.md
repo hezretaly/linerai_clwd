@@ -903,6 +903,117 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   on it.** Same shape as `MANAGER_PASSWORD`. Without a default the inbound
   path could only ever be tested by asserting the 503, and the signature
   check, the dedupe and the whole resolution ladder would ship untested.
+- **Liner's own phone number answers as either assistant, and the switch is a
+  runtime flag.** `/ops/phone` is the page, because the number is Liner's
+  rather than a dealership's — a prospect rings it, and `phone_persona`
+  decides whether they get our own assistant (which pitches Liner and books a
+  demo) or the dealership's (real inventory, real test drives, the same
+  assistant a buyer meets on the website). Thrown mid-demo without a restart,
+  which is the point: the same number is both the sales line and the
+  demonstration.
+  - **The persona is stamped on the call row when the call arrives, not read
+    when somebody looks.** A log saying a call was answered by whichever
+    assistant happens to be selected an hour later cannot be read back.
+  - **It is one three-valued switch, not a boolean plus a chooser.** "Nobody",
+    "ours" and "theirs" is one question; two controls is two things that can
+    disagree, and the disagreement is a line that rings out. `flags.Flag`
+    gained a `values` tuple so a typo is refused rather than becoming a fourth
+    state — `phone_persona="dealerhsip"` would otherwise read as neither.
+  - **It is the one flag that does not default to the safe side**, and the
+    reason is that the permissive side here cannot be reached quietly: it
+    takes three secrets and a number bought and pointed at this host.
+    Defaulting to `off` would mean doing all of that and getting a line that
+    does not answer with nothing saying why — the exact failure `EMAIL_AGENT`
+    shipped with.
+  - **The realm split is enforced by what the model is handed.** Liner's own
+    persona has three tools reaching `ops_demo_requests` and none reaching a
+    showroom. A caller asking us about us cannot walk into somebody's buyer
+    list, because there is no tool that would — not because the prompt asks it
+    not to.
+  - **`app/demo_slots.py` is extracted, not copied.** The marketing form and
+    the phone assistant both offer demo times and both book one; two
+    implementations of "which slots are free" is how the page offers a time
+    the phone gave away a minute ago. The single writer also owns the
+    `demo.requested` emit, so a second caller cannot book a demo nobody is
+    told about.
+  - **Consent on the phone has its own wording.** The web form's begins "By
+    submitting" and describes a checkbox; nobody on a call submitted anything.
+    A consent record whose text describes an act that did not happen is the
+    one failure a consent record has to avoid — the same reason the support
+    form has wording of its own.
+- **The inbound webhook's signature is the whole security model, and it is
+  checked against Twilio's published test vector.** `/api/phone/incoming` is a
+  public URL that will be found, and it answers by opening a Realtime session
+  that bills by the minute and takes a `From` a rep may later ring back.
+  `X-Twilio-Signature` is an HMAC-SHA1 over the full URL with the POST
+  parameters appended **in sorted key order** — and the sort is the part that
+  is easy to get wrong and impossible to notice, because hashing in arrival
+  order validates roughly one request in n factorial. Checking it against our
+  own implementation would only prove we agree with ourselves, so the gate
+  uses the vector from Twilio's docs.
+  - **An unset token refuses rather than signing with an empty key.** "Not
+    configured" must never read as "allowed", and without that line every
+    request on a fresh install is forgeable by anyone who computes a signature
+    over `""`. Verified by deleting it: the forgery is accepted.
+  - **`TWILIO_AUTH_TOKEN` has a development default and production refuses to
+    boot on it**, exactly like `WEBHOOK_SECRET` and for the identical reason —
+    without one the inbound path could only ever be tested by asserting the
+    refusal, and the signature check, the TwiML and the persona switch would
+    all ship unexercised. Everything that asks "is the phone set up" reads
+    `real_token()`, which sees through the default, so a fresh clone reports
+    an unconfigured line rather than a configured one.
+  - **The phone's boot checks come after the password ones.** Whichever
+    raises first is the only message anybody reads, and a password printed in
+    the README is both likelier and worse than a line nobody has finished
+    setting up. Found by the gate: the new check fired first and changed the
+    message four existing assertions were reading.
+  - **The URL is part of what is signed, so `PUBLIC_BASE_URL` has to match the
+    Twilio console exactly.** Behind a proxy the address this process thinks
+    it is serving is not the one Twilio called, and the mismatch fails every
+    honest request while reading exactly like a wrong auth token. `/ops/phone`
+    composes the URLs to paste rather than asking for them to be typed — and
+    shows nothing at all when there is no base, because `/api/phone/incoming`
+    is not an address and offering half a URL invites it being copied.
+  - **The outbound leg carries the number in its signed URL.** `to=` is
+    covered by the signature, so a leg rewritten to dial somewhere expensive
+    fails the check. It is percent-encoded, because a bare `+` in a query
+    string decodes as a space and would dial a different number entirely.
+- **An outbound call rings us first.** Twilio dials `TWILIO_OPS_NUMBER` and
+  bridges the prospect in once somebody here picks up. The other way round
+  makes them listen to silence while we answer, which is how a dealership
+  decides we are a robocall. Refused rather than defaulted when it is unset:
+  guessing which handset to ring is a call to a stranger.
+- **The media socket is at `/ws/phone/media`, not under `/api/`.** The shipped
+  nginx config carries the `Upgrade` and `Connection` headers on `location
+  /ws/` and sets `Connection ""` on everything else, so a socket served under
+  `/api/` connects, plays the greeting and then goes silent — with nothing in
+  the app's log, because the app never saw the upgrade. `/ws/dealer` had
+  already settled the convention; this was written the other way first and
+  caught by reading the nginx config rather than by anything failing here,
+  where there is no proxy.
+- **The phone bridge is the one channel with the server in the audio path**,
+  and that is forced rather than chosen — a telephone call has no browser, so
+  this process holds the provider connection. One good thing falls out: tool
+  calls arrive in the process that owns the database session, so they run
+  directly instead of being relayed to `/api/voice/tools`. Same executors
+  either way, which is what keeps the guarantees.
+  - **No transcoding anywhere.** Twilio speaks 8kHz G.711 mu-law and the
+    Realtime session is told `audio/pcmu`, so the base64 payload passes
+    through byte for byte. The alternative is a resample per frame per call
+    leaning on `audioop`, which Python removed in 3.13.
+    `session_payload` gained an audio-format argument rather than growing a
+    second copy — the browser call still negotiates Opus, and the gate asserts
+    both, because pinning mu-law on WebRTC would put telephone audio on a
+    laptop.
+  - **Barge-in has an order.** Cancel the response *and* clear Twilio's
+    buffer: cancelling alone leaves seconds of audio already queued at Twilio,
+    which the caller hears as the assistant talking over them after they cut
+    in — the same failure `/call` had, arriving by a different route. Asserted
+    by recording the frames the loop writes and checking the order.
+  - **The frames are functions, because they are the only part checkable
+    without both vendors.** A frame with a misspelled key is silently dropped
+    by whichever side receives it, so the failure is a call with no audio and
+    nothing in any log.
 - **A call runs the same executors, and cannot run the same guard.** Audio
   goes browser-to-OpenAI directly — proxying it would add a round trip to every
   syllable, and latency is the product on a phone call — so the model is on the
@@ -1946,6 +2057,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same eight tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
 | Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
 | Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
+| Phone (Twilio) | **Written and never executed.** A real number in both directions: people ring it and `app/phone_bridge.py` bridges Twilio Media Streams to OpenAI Realtime; `/ops/phone` rings people from it. No Twilio account here and `api.twilio.com` is blocked, so no request has run — but the inbound path is signed with a shared secret we own, so `make smoke` drives the whole of it: the signature against Twilio's *published test vector*, a forged one, a valid one replayed with a different caller, the TwiML, the persona switch and the realm split. |
 | Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |
 | Post-call transcription | **Written and never executed** — same missing key, same blocked host. The buyer's own track is recorded, the marks are stored, and the merge, cross-talk filter and transcript rewrite all run in `make agent-check` against a transcription handed over rather than fetched. Only the request to `/v1/audio/transcriptions` is unproven. |
 | Inventory source | **The local database, and that is the real answer.** Rows arrive by seed, by CSV import or by hand, and `search_inventory` reads them. The scraper works against the fixture site but has no adapter for any real dealer site — no two are laid out alike, so that needs real URLs. An optional second source nobody has chosen is not a missing dependency, and it is not in the banner. |

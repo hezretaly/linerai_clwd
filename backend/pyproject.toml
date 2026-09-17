@@ -25,6 +25,12 @@ dependencies = [
     # ADF uploads are untrusted XML. stdlib ElementTree is still open to
     # entity-expansion DoS ("billion laughs"); defusedxml closes it.
     "defusedxml>=0.7.1",
+    # The Twilio media bridge is a WebSocket *client* -- this process dials
+    # OpenAI Realtime, rather than being dialled. uvicorn[standard] happens to
+    # pull this in for its own server side, and relying on that is how a build
+    # breaks the day uvicorn switches to wsproto. Declared because it is a
+    # dependency of ours.
+    "websockets>=12",
 ]
 
 [project.optional-dependencies]

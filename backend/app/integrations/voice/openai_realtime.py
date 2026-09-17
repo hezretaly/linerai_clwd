@@ -45,6 +45,17 @@ from app.integrations.voice.base import VoiceProvider, VoiceSession
 API = "https://api.openai.com/v1/realtime/client_secrets"
 TIMEOUT = 20.0
 
+#: The WebSocket a *server* connects to, as opposed to the WebRTC offer a
+#: browser posts. `app/phone_bridge.py` is the only caller: a telephone call
+#: arrives at this process rather than at somebody's browser, so this side
+#: holds the provider connection.
+SOCKET_URL = "wss://api.openai.com/v1/realtime"
+
+#: What Twilio speaks, in the provider's vocabulary. 8kHz G.711 mu-law, which
+#: both ends accept natively -- the reason there is no transcoding in the
+#: bridge at all.
+PHONE_AUDIO = "audio/pcmu"
+
 #: Where the browser sends its SDP offer. Handed to the client rather than
 #: hardcoded there, so a compatible or proxied endpoint is a server-side
 #: setting and not a frontend rebuild.
@@ -73,7 +84,11 @@ class OpenAIRealtimeProvider(VoiceProvider):
             )
 
     def session_payload(
-        self, instructions: str, tools: list[dict], keywords: list[str] | None = None
+        self,
+        instructions: str,
+        tools: list[dict],
+        keywords: list[str] | None = None,
+        audio_format: str = "",
     ) -> dict:
         """The request body, built separately so it can be asserted without
         being sent -- the same trick `ResendSender.payload` uses, and the only
@@ -90,6 +105,15 @@ class OpenAIRealtimeProvider(VoiceProvider):
                 "instructions": instructions,
                 "audio": {
                     "input": {
+                        # Left out for WebRTC, where the browser and the
+                        # provider negotiate Opus between themselves. Named for
+                        # a telephone call, where the format is not ours to
+                        # choose: Twilio sends 8kHz G.711 mu-law and takes it
+                        # back the same way, so asking the model to speak it
+                        # directly means no transcoding anywhere in the path --
+                        # no resampling, no `audioop` (gone in Python 3.13),
+                        # and no CPU between the caller and the answer.
+                        **({"format": {"type": audio_format}} if audio_format else {}),
                         # Without a transcription model the buyer's own words
                         # never reach us: the model hears them and answers, and
                         # the dealer's transcript is a monologue.
@@ -105,7 +129,10 @@ class OpenAIRealtimeProvider(VoiceProvider):
                         # model is better at.
                         "turn_detection": _turn_detection(),
                     },
-                    "output": {"voice": settings.voice_voice},
+                    "output": {
+                        "voice": settings.voice_voice,
+                        **({"format": {"type": audio_format}} if audio_format else {}),
+                    },
                 },
                 # Flat function definitions -- name and parameters at the top
                 # level -- which is the same shape the Responses API takes, so

@@ -12,15 +12,15 @@ endpoint really offered, and a refusal to take a time already taken.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import get_db, utcnow
-from app.events import emit
+from app import demo_slots
+from app.db import get_db
 from app.models import DemoRequest, OpsUser
 from app.api.deps import require_owner
 from app.schemas.serialize import iso, stamp
@@ -51,31 +51,13 @@ LIMIT = 500
 
 
 def _slots(db: Session) -> list[datetime]:
-    """Times a demo can actually be booked into.
+    """The shared answer, in `app/demo_slots.py`.
 
-    Built from a weekday window rather than a calendar we do not have, and the
-    ones already taken are removed -- so the page can only ever offer a time
-    that is really free, which is the same rule `check_availability` follows
-    for a buyer looking at a dealership's week.
+    Kept as a name here because this module reads it three times, and moved
+    there because the phone assistant offers the same times: two copies of
+    "which slots are free" is how the form offers one the phone just gave away.
     """
-    now = utcnow()
-    taken = {
-        row.slot_at
-        for row in db.query(DemoRequest)
-        .filter(DemoRequest.slot_at.isnot(None), DemoRequest.status != "cancelled")
-        .all()
-    }
-    hours = [int(h) for h in settings.demo_hours.split(",") if h.strip().isdigit()]
-    out: list[datetime] = []
-    day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    for _ in range(settings.demo_days_ahead):
-        if day.weekday() < 5:  # Mon-Fri
-            for hour in hours:
-                at = day.replace(hour=hour)
-                if at > now and at not in taken:
-                    out.append(at)
-        day += timedelta(days=1)
-    return out
+    return demo_slots.open_slots(db)
 
 
 @router.get("/slots")
@@ -142,24 +124,16 @@ def book_demo(body: Booking, db: Session = Depends(get_db)) -> dict:
         if at not in _slots(db):
             raise HTTPException(409, "That time has just been taken. Pick another.")
 
-    row = DemoRequest(
-        kind="demo" if at is not None else "support",
-        slot_at=at,
-        consent_at=utcnow(),
+    row = demo_slots.create(
+        db,
+        fields=fields,
+        slot=at,
         # The wording that was actually on the checkbox they ticked, which is
-        # a different one on each path.
+        # a different one on each path -- and a third one on the phone, where
+        # nobody ticked anything.
         consent_text=CONSENT if at is not None else SUPPORT_CONSENT,
-        **fields,
+        source="form",
     )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    # The one thing on our own dashboard that nobody clicked for, so it is the
-    # one thing worth interrupting somebody about.
-    emit(db, "demo.requested", {
-        "request_id": row.id, "kind": row.kind, "name": row.name,
-        "dealership": row.dealership, "slot_at": iso(row.slot_at),
-    })
     return {
         "id": row.id,
         "kind": row.kind,
