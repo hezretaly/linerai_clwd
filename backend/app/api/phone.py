@@ -285,6 +285,11 @@ def phone_state(
         },
         "greeting": settings.phone_greeting,
         "signature_checked": settings.twilio_validate_signature,
+        # Which credential outbound calls authenticate with -- never the
+        # credential itself. Worth reporting because it is invisible otherwise:
+        # both work, and the difference only shows up on the day somebody has
+        # to rotate one of them.
+        "auth_source": twilio_voice.auth_source(),
         "calls": [_call_out(row) for row in calls],
     }
 

@@ -978,6 +978,27 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     covered by the signature, so a leg rewritten to dial somewhere expensive
     fails the check. It is percent-encoded, because a bare `+` in a query
     string decodes as a space and would dial a different number entirely.
+- **The auth token signs webhooks; an API key does the REST calls.** One
+  secret was doing both jobs, and the two have opposite rotation stories: the
+  token *cannot* be replaced for signing — Twilio has no API-key equivalent —
+  so rotating it because a REST credential leaked also breaks signature
+  validation, and every inbound call in that gap is refused. `TWILIO_API_KEY_SID`
+  and `TWILIO_API_KEY_SECRET` are optional and separate them, so revoking one
+  stops outbound and leaves the phone answering. `TWILIO_ACCOUNT_SID` is still
+  required with a key: the account names the request URL and only the
+  Basic-auth pair changes, which is counterintuitive enough that a key set
+  without it looks right and 401s.
+  - **Both halves or neither, and a half-set pair refuses.** Falling back to
+    the token would leave somebody believing they hold a revocable credential
+    when every call still authenticates with the one secret that signs
+    webhooks — which is the entire thing the key exists to prevent. So
+    `missing()` names the partner variable and `check()` refuses the send.
+    Verified by putting the fallback back: the line then reads *configured*
+    and sends an **empty password**, which is a bare 401 from Twilio with
+    nothing anywhere saying why.
+  - **`/ops/phone` reports which one is in use, never the value.** Both work,
+    so it is not a warning; it is the one fact that decides what happens on
+    the day somebody rotates a secret, and it is invisible otherwise.
 - **An outbound call rings us first.** Twilio dials `TWILIO_OPS_NUMBER` and
   bridges the prospect in once somebody here picks up. The other way round
   makes them listen to silence while we answer, which is how a dealership

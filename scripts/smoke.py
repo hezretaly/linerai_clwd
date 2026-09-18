@@ -5136,6 +5136,61 @@ def main() -> int:
     check("and subscribes only to the end of the call, not every ring",
           _body["StatusCallbackEvent"] == "completed")
 
+    # **One secret doing two jobs is what the API key separates.** The auth
+    # token signs inbound webhooks and cannot be replaced for that, so
+    # rotating it over a leaked REST credential also breaks signature
+    # validation. A key is revocable on its own -- but only if a half-set one
+    # refuses rather than quietly falling back to the token it exists to
+    # avoid, which is the branch worth pinning.
+    import contextlib as _ctx
+
+    @_ctx.contextmanager
+    def _twilio_env(**values):
+        from app.config import settings as _cfg
+        was = {k: getattr(_cfg, k) for k in values}
+        for k, v in values.items():
+            setattr(_cfg, k, v)
+        try:
+            yield
+        finally:
+            for k, v in was.items():
+                setattr(_cfg, k, v)
+
+    with _twilio_env(twilio_account_sid="ACsmoke", twilio_auth_token="tok",
+                     twilio_number="+15025550100",
+                     twilio_api_key_sid="", twilio_api_key_secret=""):
+        check("with no API key, outbound falls back to the account",
+              _twilio.rest_auth() == ("ACsmoke", "tok")
+              and _twilio.auth_source() == "auth_token")
+
+    with _twilio_env(twilio_account_sid="ACsmoke", twilio_auth_token="tok",
+                     twilio_number="+15025550100",
+                     twilio_api_key_sid="SKsmoke", twilio_api_key_secret="shh"):
+        check("with one, the key is the credential and the token is untouched",
+              _twilio.rest_auth() == ("SKsmoke", "shh")
+              and _twilio.auth_source() == "api_key")
+        # The account still names the URL. A key set without the account SID
+        # looks like it should work and 401s, so this is the counterintuitive
+        # half worth pinning: the key replaces the password, not the account.
+        from app.config import settings as _cfg
+        check("and the account still names the request URL, not the key",
+              _cfg.twilio_account_sid == "ACsmoke"
+              and _twilio.rest_auth()[0].startswith("SK"))
+
+    with _twilio_env(twilio_account_sid="ACsmoke", twilio_auth_token="tok",
+                     twilio_number="+15025550100",
+                     twilio_api_key_sid="SKsmoke", twilio_api_key_secret=""):
+        check("half a key is named as missing, never silently fallen back on",
+              _twilio.missing() == ["TWILIO_API_KEY_SECRET"]
+              and not _twilio.configured(),
+              str(_twilio.missing()))
+        try:
+            _twilio.check()
+            check("and the send is refused while it is half-set", False)
+        except Exception as exc:
+            check("and the send is refused while it is half-set",
+                  "TWILIO_API_KEY_SECRET" in str(exc), str(exc)[:60])
+
     print("\n== the media bridge's frames ==")
     # A frame with a misspelled key is silently dropped by whichever side
     # receives it -- Twilio ignores an unknown event, the provider ignores an

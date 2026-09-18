@@ -71,7 +71,55 @@ def real_token() -> str:
 
 
 def configured() -> bool:
-    return bool(settings.twilio_account_sid and real_token() and settings.twilio_number)
+    return not missing()
+
+
+def api_key() -> tuple[str, str]:
+    """The API Key pair, or ("", "") when it is not fully set.
+
+    Both halves or neither: one on its own is not a credential, and the whole
+    point of `half_key` below is that it must not quietly become one.
+    """
+    sid = settings.twilio_api_key_sid.strip()
+    secret = settings.twilio_api_key_secret.strip()
+    return (sid, secret) if sid and secret else ("", "")
+
+
+def half_key() -> str:
+    """The partner variable, when exactly one half of the key pair is set.
+
+    **A silent fallback here would be the worst outcome available.** Somebody
+    who sets `TWILIO_API_KEY_SID` has decided the account's master token should
+    not be doing REST calls; falling back to it anyway leaves them believing
+    they hold a revocable credential while every outbound call still
+    authenticates with the one secret that also signs inbound webhooks. So a
+    half-configured pair is reported as missing and refuses the send, rather
+    than working in a way that is wrong on purpose.
+    """
+    sid = settings.twilio_api_key_sid.strip()
+    secret = settings.twilio_api_key_secret.strip()
+    if sid and not secret:
+        return "TWILIO_API_KEY_SECRET"
+    if secret and not sid:
+        return "TWILIO_API_KEY_SID"
+    return ""
+
+
+def rest_auth() -> tuple[str, str]:
+    """What authenticates an outbound REST call: the key pair, or the account.
+
+    The account SID stays in the *URL* either way -- an API Key does not
+    replace the account, it replaces the password. That is counterintuitive
+    enough to be worth a line, since a key set without the account SID looks
+    like it should work and 401s.
+    """
+    key = api_key()
+    return key if key[0] else (settings.twilio_account_sid, settings.twilio_auth_token)
+
+
+def auth_source() -> str:
+    """Which of the two is in use, for the page to report. Never the secret."""
+    return "api_key" if api_key()[0] else "auth_token"
 
 
 def missing() -> list[str]:
@@ -81,22 +129,43 @@ def missing() -> list[str]:
         "TWILIO_AUTH_TOKEN": real_token(),
         "TWILIO_NUMBER": settings.twilio_number,
     }
-    return [key for key in REQUIRED if not have[key]]
+    absent = [key for key in REQUIRED if not have[key]]
+    # Appended rather than in REQUIRED: the key is optional, so it is only ever
+    # "missing" when its other half is present and somebody is halfway through
+    # setting it up.
+    partner = half_key()
+    if partner:
+        absent.append(partner)
+    return absent
 
 
 def check() -> None:
     """Raise the typed error the UI renders, naming what is absent."""
     absent = missing()
-    if absent:
+    if not absent:
+        return
+    partner = half_key()
+    if absent == [partner]:
+        # Everything else is set, so this is not "the phone is off" -- it is a
+        # key somebody is halfway through swapping in, and saying the line is
+        # off would send them to check the wrong three variables.
         raise NotConfigured(
             "phone",
             absent,
-            "The phone line is off. Set "
-            + ", ".join(absent)
-            + " to answer a real number. Left empty on purpose: a Twilio "
-            "account present for something else should not start this system "
-            "picking up calls it has not been told to take.",
+            f"Half of a Twilio API Key is set, so {partner} is missing. Both "
+            "halves or neither: with one, outbound calls would silently fall "
+            "back to the account's auth token -- the same secret that signs "
+            "inbound webhooks, which is what a key exists to stop.",
         )
+    raise NotConfigured(
+        "phone",
+        absent,
+        "The phone line is off. Set "
+        + ", ".join(absent)
+        + " to answer a real number. Left empty on purpose: a Twilio "
+        "account present for something else should not start this system "
+        "picking up calls it has not been told to take.",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -276,7 +345,7 @@ def place_call(to: str, answer_url: str, status_url: str = "") -> dict:
         response = httpx.post(
             url,
             data=call_payload(to, answer_url, status_url),
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+            auth=rest_auth(),
             timeout=TIMEOUT,
         )
     except httpx.HTTPError as exc:

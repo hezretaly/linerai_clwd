@@ -144,6 +144,20 @@ class Settings(BaseSettings):
     #: The number itself, E.164 (+15025550100). It is the caller ID on an
     #: outbound call too: a carrier will not present a number you do not own.
     twilio_number: str = ""
+    #: An API Key (SK...) and its secret, used as the password on outbound REST
+    #: calls **instead of** the auth token. Optional, and recommended.
+    #:
+    #: One secret doing two jobs is what this separates. The auth token signs
+    #: inbound webhooks and cannot be replaced for that -- Twilio has no
+    #: API-key equivalent -- so rotating it to deal with a leaked REST
+    #: credential also breaks signature validation, and every call in the gap
+    #: is refused. A key can be revoked on its own: outbound stops and the
+    #: phone keeps answering.
+    #:
+    #: `TWILIO_ACCOUNT_SID` is still required alongside one: it names the
+    #: account in the request URL, and only the Basic-auth pair changes.
+    twilio_api_key_sid: str = ""
+    twilio_api_key_secret: str = ""
     #: Who an outbound click-to-call rings *first*. Twilio dials this, and
     #: bridges the prospect in once somebody here picks up -- the other way
     #: round makes the prospect listen to silence while we answer.

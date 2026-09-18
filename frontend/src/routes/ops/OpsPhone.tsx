@@ -49,6 +49,8 @@ interface PhoneState {
   webhooks: { voice: string; status: string; stream: string }
   greeting: string
   signature_checked: boolean
+  /** Which credential outbound REST calls use: 'api_key' or 'auth_token'. */
+  auth_source: string
   calls: PhoneCall[]
 }
 
@@ -172,6 +174,28 @@ export function OpsPhonePage() {
           <p className="mt-3 text-xs text-muted-foreground">
             The assistant also needs <code className="font-mono">LLM_MODE=live</code> and
             an API key. Without them the line answers and nobody speaks.
+          </p>
+        )}
+
+        {/* Which credential outbound uses. Both work, so this is not a
+            warning -- it is the one fact that decides what happens on the day
+            somebody has to rotate a secret, and it is invisible otherwise. */}
+        {data.configured && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {data.auth_source === 'api_key' ? (
+              <>
+                Outbound calls authenticate with an API key, so it can be revoked
+                without touching the token that signs inbound webhooks.
+              </>
+            ) : (
+              <>
+                Outbound calls authenticate with the account auth token — the same
+                secret that signs inbound webhooks. Setting{' '}
+                <code className="font-mono">TWILIO_API_KEY_SID</code> and{' '}
+                <code className="font-mono">TWILIO_API_KEY_SECRET</code> separates
+                them, so revoking one does not stop the phone answering.
+              </>
+            )}
           </p>
         )}
       </Card>
@@ -377,4 +401,7 @@ const HINT: Record<string, string> = {
   TWILIO_AUTH_TOKEN: 'Beside it. Also what inbound webhooks are signed with.',
   TWILIO_NUMBER: 'The number itself, E.164: +15025550100.',
   PUBLIC_BASE_URL: 'How this install is reached from outside. Twilio has to be able to reach it.',
+  // Only ever listed when its other half is set, so the hint speaks to that.
+  TWILIO_API_KEY_SID: 'The other half of the API key you started setting up.',
+  TWILIO_API_KEY_SECRET: 'Shown once when the key is created. Both halves or neither.',
 }

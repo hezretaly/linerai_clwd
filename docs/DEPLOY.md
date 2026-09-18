@@ -586,9 +586,20 @@ TWILIO_AUTH_TOKEN=your-real-auth-token      # production refuses to boot on the 
 TWILIO_NUMBER=+15025550100                  # the number you bought, E.164
 PUBLIC_BASE_URL=https://YOUR-HOST           # must match the console exactly
 
+# Optional but recommended: an API Key for outbound REST calls, so the token
+# that signs inbound webhooks is not also the REST password. Both halves or
+# neither -- one on its own is reported as missing rather than falling back.
+TWILIO_API_KEY_SID=SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_API_KEY_SECRET=shown-once-when-you-create-it
+
 # Optional: the handset an outbound click-to-call rings first
 TWILIO_OPS_NUMBER=+15025550111
 ```
+
+Create the key under **Account → API keys & tokens** in the Twilio console.
+Keep `TWILIO_ACCOUNT_SID` set alongside it — the account names the request URL
+and only the password changes, so a key without it looks right and 401s.
+`/ops/phone` says which credential outbound is using.
 
 Restart, then open `/ops/phone` as `founder@`. It says which of those is still
 missing, by name, and composes the two URLs to paste — copy them from there
