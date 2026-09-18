@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
 import { useDealership } from '../lib/dealership'
@@ -36,6 +36,22 @@ export function Login() {
   )
   const [password, setPassword] = useState(seeded ? 'liner-dev' : '')
 
+  // Already signed in to the dashboard this door leads to? Go there. Asked per
+  // door, because there are two: `?as=owner` is Liner's and everything else is
+  // the dealership's. So the sidebar's "Dealership sign-in" link still reaches
+  // the form -- an owner asking for the dealership's login has not signed in
+  // to it, and that link exists precisely to swap accounts.
+  //
+  // Not `RequireAuth`'s fetcher, which walks through the public-demo door when
+  // there is no session: that would mint a rep session for a stranger who did
+  // nothing but open the login page. Plain `/api/auth/me`, like `RequireOwner`,
+  // sharing the one `['me']` entry so there is one answer to who is signed in.
+  const { data: session, isLoading: checking } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: User }>('/api/auth/me'),
+    retry: false,
+  })
+
   const login = useMutation({
     mutationFn: () => api.post<{ user: User }>('/api/auth/login', { email, password }),
     onSuccess: async (data) => {
@@ -47,6 +63,15 @@ export function Login() {
       navigate(data.user.role === 'owner' ? '/ops' : '/app')
     },
   })
+
+  // After every hook, never beside the thing it is for: an early return above
+  // one changes the hook count between renders and React blanks the page.
+  if (checking) {
+    return <div className="p-10 text-sm text-muted-foreground">Loading...</div>
+  }
+  const role = session?.user.role
+  if (role === 'owner' && wantsOwner) return <Navigate to="/ops" replace />
+  if (role && role !== 'owner' && !wantsOwner) return <Navigate to="/app" replace />
 
   return (
     <div className="flex h-full items-center justify-center bg-muted/40 px-4">

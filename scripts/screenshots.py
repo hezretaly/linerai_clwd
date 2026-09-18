@@ -200,6 +200,9 @@ async def main() -> int:
 
         errors: list[str] = []
         bad_urls: list[str] = []
+        signed_out_probe: list[str] = []
+        # Which route is being shot, for the one excuse below that depends on it.
+        here = [""]
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.on(
             "console",
@@ -209,10 +212,21 @@ async def main() -> int:
         # to come off the request itself to tell an expected gap from a real
         # break. Both signals matter: a 404 arrives as a response, a blocked
         # host as a failed request.
-        page.on(
-            "response",
-            lambda r: bad_urls.append(r.url) if r.status >= 400 else None,
-        )
+
+        def on_response(r) -> None:
+            if r.status < 400:
+                return
+            # `/login` asks who is signed in so it can send somebody who already
+            # is to their own dashboard, and for a visitor who is not the honest
+            # answer is 401. Excused *only there*: every dealer and ops route is
+            # shot with a session, so a 401 from this endpoint anywhere else is
+            # a real break and still fails the run.
+            if r.status == 401 and r.url.endswith("/api/auth/me") and here[0] == "/login":
+                signed_out_probe.append(r.url)
+                return
+            bad_urls.append(r.url)
+
+        page.on("response", on_response)
         page.on("requestfailed", lambda r: bad_urls.append(r.url))
 
         phone = False
@@ -220,6 +234,8 @@ async def main() -> int:
         async def shot(route: str) -> None:
             errors.clear()
             bad_urls.clear()
+            signed_out_probe.clear()
+            here[0] = route
             await page.goto(BASE + route, wait_until="networkidle")
             await page.wait_for_timeout(700)
 
@@ -300,6 +316,8 @@ async def main() -> int:
                     excused.append(f"blocked in this sandbox: {url.split('/')[2]}")
                 else:
                     unexplained.append(url)
+            if signed_out_probe:
+                excused.append("nobody signed in, so /api/auth/me answers 401")
 
             if excused and not unexplained:
                 # Every failed request is accounted for, so the generic

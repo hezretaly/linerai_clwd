@@ -125,6 +125,23 @@ break: one element wider than the viewport makes the browser shrink-to-fit the
 whole document, so a single wide table renders every other element tiny. The
 failure names the offending element and its width.
 
+**Two ways a browser check rots, both found in `ops_browser.py` on the same
+day.** Neither failed where the fault was, which is what makes them worth
+writing down:
+
+- **A blind coordinate is a time bomb.** `page.mouse.click(700, 400)` was there
+  to dismiss a popover that `Escape` had already closed. It did nothing until
+  enough demos accumulated on the calendar for those coordinates to land *on*
+  one — then it opened that demo's detail dialog, whose overlay blocked every
+  nav link for the rest of the run. The failure named the mail tab, three
+  sections later. Assert the thing closed instead.
+- **`has-text` is a case-insensitive substring over the whole subtree.**
+  `button:has-text("Reply")` matched five message rows from
+  `no-reply@billing.example` before it matched the Reply button, and `.first`
+  clicked one of those. Every control in that file is an exact label that is
+  also an ordinary English word appearing in somebody's mail — send, close,
+  write, sent — so they are all `:text-is` now.
+
 There is no pytest suite and no Playwright suite — deliberately (see below).
 
 ## Conventions
@@ -1437,6 +1454,27 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       every panel in it 403ing: broken, rather than "this is not yours".
       `make ops-ui` asserts all three, and that `/api/auth/me` still answers
       200 afterwards each time.
+    - **And the login page is the fourth door, which had no check at all.**
+      Every redirect here lives in a guard component, and `/login` has none —
+      it is what the guards point *at* — so a signed-in owner who opened it
+      got the form. Worse than an inconvenience: the form prefills the
+      *dealership* manager unless `?as=owner`, so one click swapped an owner
+      session for a rep one (prefill is `import.meta.env.DEV` only, but the
+      swap works anywhere). It is asked **per door**, not "any session
+      redirects": `?as=owner` is Liner's and everything else is the
+      dealership's, so the sidebar's **Dealership sign-in** link still reaches
+      a form — an owner asking for the dealership's login has not signed in to
+      it, and swapping accounts is exactly what that link is for. It uses a
+      plain `/api/auth/me`, never `RequireAuth`'s fetcher, which walks through
+      the public-demo door and would mint a rep session for a stranger who did
+      nothing but open the login page.
+      - **A visitor who is not signed in makes that endpoint answer 401, and
+        that is not a broken page.** `make shots` fails a route on any failed
+        request, so it now excuses this one — reported as a `NOTE` rather than
+        hidden, like the blocked hosts — and **only on `/login`**: every dealer
+        and ops route is shot with a session, so a 401 from `/api/auth/me`
+        anywhere else is a real break and still fails. Verified by pointing the
+        excuse at another route, which fails `/login` again.
     - **`_clear` never touches an `ops_` table**, so rebuilding the showroom
       fixture cannot throw away demos real people booked with us. Its list
       also has to stay **complete**: four call tables and `inbound_emails`

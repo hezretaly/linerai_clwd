@@ -132,6 +132,11 @@ def main() -> int:
             page.fill("input[type=password]", "liner-dev")
             page.click("button[type=submit]")
             page.wait_for_url("**/app", timeout=15000)
+            # The same door check, the dealership's side: a rep who opens the
+            # login page again is already in, and gets their dashboard rather
+            # than a form prefilled with somebody's address.
+            page.goto(f"{BASE}/login")
+            page.wait_for_url("**/app", timeout=10000)
             page.goto(f"{BASE}/ops")
             # The login form, not a dead end -- but a login form arriving
             # unannounced reads as "your session expired", and theirs has not.
@@ -154,7 +159,20 @@ def main() -> int:
             still = page.evaluate('async () => (await fetch("/api/auth/me")).status')
             assert still == 200, f"the ops session was flushed: /api/auth/me {still}"
 
+            say("and an owner who opens their own sign-in again is already in")
+            # The fourth door, and the one that was missing: /login had no
+            # session check at all, so a signed-in owner got the form. Asked
+            # per door -- bare /login is the dealership's, and an owner asking
+            # for that one has not signed in to it, which is what the sidebar's
+            # "Dealership sign-in" link is for.
+            page.goto(f"{BASE}/login?as=owner")
+            page.wait_for_url("**/ops", timeout=10000)
+            page.goto(f"{BASE}/login")
+            page.wait_for_selector("input[type=password]", timeout=8000)
+            assert "/login" in page.url, f"the dealership door bounced an owner: {page.url}"
+
             say("founder signs in and lands on /ops")
+            page.evaluate('async () => { await fetch("/api/auth/logout", {method: "POST"}) }')
             page.goto(f"{BASE}/login?as=owner")
             assert page.input_value("input[type=email]") == "founder@linerai.us"
             page.fill("input[type=password]", "liner-dev")
@@ -179,7 +197,7 @@ def main() -> int:
             assert page.locator("text=New demo booked").count() == 0, "toast survived the click"
             wait_for_badge(page, start)
             page.screenshot(path=SHOTS / "04-detail.png")
-            page.click('[role=dialog] button:has-text("Close")')
+            page.click('[role=dialog] button:text-is("Close")')
 
             say("and it stays away across a reload -- read is a state, not a session")
             page.reload()
@@ -196,7 +214,13 @@ def main() -> int:
             page.screenshot(path=SHOTS / "05-bell.png")
             page.locator("text=Clear all").count()  # only shown for more than one
             page.keyboard.press("Escape")
-            page.mouse.click(700, 400)
+            # Escape closes it -- measured, no dialog and no overlay left. There
+            # used to be a `mouse.click(700, 400)` after this to make sure, and
+            # a blind coordinate is a time bomb on a calendar that fills up: once
+            # enough demos had accumulated it landed *on* one, opened its detail
+            # dialog, and the overlay then blocked every nav link for the rest of
+            # the run. The failure named the mail tab, three sections away.
+            page.wait_for_selector("[role=dialog]", state="detached", timeout=5000)
 
             say("the inbox lists forms and unmatched mail, and the counts add up")
             page.click('a[href="/ops/mail"]')
@@ -207,16 +231,23 @@ def main() -> int:
             assert counts["counts"]["all"] == len(counts["messages"]), "a box says one thing and shows another"
 
             say("unmatched mail is labelled as matching nobody")
-            page.click('button:has-text("Unmatched")')
+            page.click('button:text-is("Unmatched")')
             page.wait_for_timeout(800)
             page.locator("ul li button").first.click()
             page.wait_for_selector("text=Matched nobody", timeout=10000)
             page.screenshot(path=SHOTS / "07-unmatched.png")
 
             say("a reply says what the sender really did, not just that it worked")
-            page.click('button:has-text("Reply")')
+            # `:text-is`, not `:has-text`, on every control in this file.
+            # `has-text` is a case-insensitive *substring* over the whole
+            # subtree, so `button:has-text("Reply")` matched five message rows
+            # from `no-reply@billing.example` before it matched the Reply
+            # button, and clicked one of those. Every label here is exact and
+            # every one of them is also an ordinary English word that turns up
+            # in somebody's mail -- send, close, write, sent.
+            page.click('button:text-is("Reply")')
             page.fill("textarea", "Checking the composer path.")
-            page.click('button:has-text("Send")')
+            page.click('button:text-is("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
             print(f"      {page.locator('text=Not delivered').first.inner_text()}")
             page.screenshot(path=SHOTS / "08-reply-outbox.png")
@@ -226,9 +257,9 @@ def main() -> int:
             # dealership we want to talk to meant leaving for a mail client --
             # where the send is invisible to this system for good and goes out
             # under whatever address that client is configured with.
-            page.click('button:has-text("Close")')       # one composer at a time
+            page.click('button:text-is("Close")')       # one composer at a time
             page.wait_for_timeout(400)
-            page.click('button:has-text("Write")')
+            page.click('button:text-is("Write")')
             page.wait_for_selector("text=New message", timeout=5000)
             fields = page.locator("input")
             assert fields.count() >= 2, "the composer should offer To and Subject"
@@ -238,7 +269,7 @@ def main() -> int:
             fields.first.fill("first.contact@example.invalid")
             fields.nth(1).fill("About Liner")
             page.fill("textarea", "Reaching out about a demo.")
-            page.click('button:has-text("Send")')
+            page.click('button:text-is("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
             page.screenshot(path=SHOTS / "08b-write-outbox.png")
 
@@ -275,17 +306,17 @@ def main() -> int:
 
             say("a draft is kept, and sending moves it rather than copying it")
             drafts_before, sent_before = box_count("Drafts"), box_count("Sent")
-            page.click('button:has-text("Write")')
+            page.click('button:text-is("Write")')
             page.wait_for_selector("text=New message", timeout=5000)
             fields = page.locator("input")
             fields.first.fill("draft.check@example.invalid")
             fields.nth(1).fill("Half a thought")
             page.fill("textarea", "Started this, will finish later.")
-            page.click('button:has-text("Save draft")')
+            page.click('button:text-is("Save draft")')
             page.wait_for_selector("text=Draft kept", timeout=8000)
             page.wait_for_timeout(1200)   # the sidebar counts refetch after the save
             assert box_count("Drafts") == drafts_before + 1, "the draft should be kept"
-            page.click('button:has-text("Send")')
+            page.click('button:text-is("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
             page.wait_for_timeout(1000)
             # One message a person wrote must not become two rows in two boxes.
@@ -294,7 +325,7 @@ def main() -> int:
             page.screenshot(path=SHOTS / "08c-draft-sent.png", full_page=True)
 
             say("trash keeps what you put in it, and restore puts it back")
-            page.click('button:has-text("Sent")')
+            page.click('button:text-is("Sent")')
             page.wait_for_timeout(1000)
             page.locator("ul li button").first.click()
             page.wait_for_timeout(800)
@@ -307,7 +338,7 @@ def main() -> int:
             page.wait_for_timeout(1000)
             page.locator("ul li button").first.click()
             page.wait_for_timeout(800)
-            assert page.locator('button:has-text("Restore")').count(), (
+            assert page.locator('button:text-is("Restore")').count(), (
                 "trash without restore is a delete wearing a friendlier word"
             )
             page.get_by_role("button", name="Restore", exact=True).click()
