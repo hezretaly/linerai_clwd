@@ -125,6 +125,20 @@ export function OpsPhonePage() {
 
   if (isLoading || !data) return <Spinner />
 
+  // Why the Call button will not go, in the words of the thing to edit. The
+  // two conditions are separate settings with separate fixes, and collapsing
+  // them into one "not configured" sends whoever is reading to the wrong line
+  // of `.env` -- the same reason the email agent names its three facts apart.
+  // `TWILIO_OPS_NUMBER` is deliberately not in `missing`: the line answers
+  // without it and only ringing out needs it, so it cannot be listed as
+  // missing at the top of a page about a phone that works.
+  const cannotCall = !data.configured
+    ? `Add ${data.missing.join(', ')} to .env and restart, then this can ring out.`
+    : !data.ops_number
+      ? 'Set TWILIO_OPS_NUMBER to the handset that should ring first. ' +
+        'Twilio rings it and bridges the other person in when you pick up.'
+      : ''
+
   return (
     <div className="space-y-4 p-4 lg:p-6">
       <div>
@@ -284,19 +298,29 @@ export function OpsPhonePage() {
       <Card className="p-4">
         <h2 className="text-sm font-semibold">Ring somebody</h2>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {/* Always how it works, never what to set. What is missing is one
+              ordered list under the button -- said in both places, a card with
+              nothing configured asked for TWILIO_OPS_NUMBER in the paragraph
+              and four other variables underneath, which is two instructions
+              for one job and neither of them first. */}
+          Twilio rings{' '}
           {data.ops_number ? (
-            <>
-              Twilio rings <span className="tnum font-medium">{data.ops_number}</span> first
-              and bridges them in when you pick up -- so they never sit listening
-              to silence. No assistant is on this one.
-            </>
+            <span className="tnum font-medium">{data.ops_number}</span>
           ) : (
-            <>
-              Set <code className="font-mono">TWILIO_OPS_NUMBER</code> to the handset
-              that should ring first. Without it there is nothing here to bridge from.
-            </>
-          )}
+            'your own handset'
+          )}{' '}
+          first and bridges them in when you pick up -- so they never sit
+          listening to silence. No assistant is on this one.
         </p>
+        {/* The field is never disabled. Typing a number costs nothing and
+            cannot go wrong, and a greyed-out input gives no reason at all --
+            it reads as a broken page rather than as one that is not set up
+            yet. The refusal belongs on the button, which is the thing that
+            would actually place the call, and it is spelled out underneath
+            rather than left to the paragraph above: two conditions stop this
+            card and they need different edits, so "you cannot use this" has
+            to say which one. Same rule the email composer follows -- it says
+            what will happen *before* the send, not after. */}
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <div className="min-w-0 flex-1">
             <Field label="Their number">
@@ -304,20 +328,21 @@ export function OpsPhonePage() {
                 value={dialling}
                 onChange={(e) => setDialling(e.target.value)}
                 placeholder="+15025550142"
-                disabled={!data.configured || !data.ops_number}
               />
             </Field>
           </div>
           <Button
             variant="primary"
-            disabled={
-              !data.configured || !data.ops_number || !dialling.trim() || call.isPending
-            }
+            title={cannotCall || undefined}
+            disabled={Boolean(cannotCall) || !dialling.trim() || call.isPending}
             onClick={() => call.mutate(dialling.trim())}
           >
             {call.isPending ? 'Ringing you...' : 'Call'}
           </Button>
         </div>
+        {cannotCall && (
+          <p className="mt-2 text-xs text-muted-foreground">{cannotCall}</p>
+        )}
       </Card>
 
       {problem && (
