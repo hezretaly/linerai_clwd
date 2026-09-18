@@ -799,6 +799,11 @@ def attach_lead(
     # lead too, not only a new one: this is also the moment a buyer's address
     # is first learnt or corrected, and mail sat unplaced against exactly that.
     matching.claim_unresolved(db, lead)
+    # And the same ladder for texts, which the email one cannot do: a text
+    # carries no address, so it resolves on the phone rung alone.
+    from app import sms as sms_module
+
+    sms_module.claim_unresolved(db, lead)
     return lead
 
 

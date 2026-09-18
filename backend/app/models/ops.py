@@ -256,6 +256,39 @@ class PhoneCall(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class SmsOptOut(Base):
+    """Somebody who texted STOP. **This one must never be lost.**
+
+    It lives on our side of the line for a reason that outranks whose buyer it
+    is: `_clear` empties the dealership's tables on a reseed, and an opt-out
+    that a rehearsal wipes is a person who said stop and gets texted again.
+    Every other fact here can be rebuilt from a seed; this one cannot be
+    rebuilt at all, and getting it wrong is the one failure in this feature
+    with a legal edge on it. The number is Liner's too, which points the same
+    way -- the opt-out is against the number that sent the message.
+
+    Keyed on the last ten digits, the same normalisation `app/matching.py`
+    uses, so `+1 (502) 555-0142` and `5025550142` are one person. The number as
+    received is kept beside it for a human to read.
+
+    `resumed_at` rather than a delete: START is a real message somebody sent,
+    and a consent record that erases its own history answers nothing later.
+    """
+
+    __tablename__ = "ops_sms_opt_outs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    phone_key: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    phone: Mapped[str] = mapped_column(String(32), default="")
+    #: The word they actually sent -- STOP, CANCEL, UNSUBSCRIBE -- or how else
+    #: it was recorded. Stored because "they asked" and "the carrier told us"
+    #: are different facts.
+    reason: Mapped[str] = mapped_column(String(40), default="")
+    at: Mapped[datetime] = created()
+    #: Set when they text START. Null means still opted out.
+    resumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 #: Every table on our side of the line, by name. `make reset-db` reads this to
 #: leave them alone: rebuilding the dealership's fixture must not throw away
 #: the demos people booked with us, which are real bookings with real people
@@ -266,4 +299,5 @@ OPS_TABLES = (
     OpsMessage.__tablename__,
     OpsMailState.__tablename__,
     PhoneCall.__tablename__,
+    SmsOptOut.__tablename__,
 )

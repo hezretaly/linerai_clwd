@@ -5220,6 +5220,135 @@ def main() -> int:
     check("while the browser call still negotiates its own",
           "format" not in _web["input"])
 
+    print("\n== texting a buyer, and reading what they text back ==")
+    from contextlib import contextmanager as _ctxmgr
+
+    from app import sms as _sms
+    from app.db import SessionLocal as _SmsSession
+    from app.matching import digits as _digits
+    from app.models import Lead as _Lead, SmsOptOut as _OptOut
+
+    @_ctxmgr
+    def _session():
+        db = _SmsSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    # **Every event type this codebase emits has to be in the registry.** It is
+    # a hand-written set that development cannot check -- an unregistered type
+    # logs a warning and goes out anyway -- and reading it against every
+    # `emit()` call site found five that had been missing for months, plus the
+    # ones the phone work added. Same lesson as SPA_PREFIXES.
+    _root = TSX.parent.parent.parent / "backend" / "app"
+    from app.events import EVENT_TYPES as _TYPES
+    _unregistered = [
+        f"{f.relative_to(_root)}:{m.group(1)}"
+        for f in _root.rglob("*.py")
+        for m in re.finditer(r'emit\(\s*\w+\s*,\s*"([^"]+)"', f.read_text())
+        if m.group(1) not in _TYPES
+    ]
+    check("every emitted event type is registered", not _unregistered,
+          ", ".join(_unregistered[:3]) or f"{len(_TYPES)} types")
+
+    _texted = f"+1319555{stamp[-4:]}"
+    with _session() as _db:
+        _lead = _db.query(_Lead).filter(_Lead.phone != "").first()
+        _lead_id, _lead_phone = _lead.id, _lead.phone
+
+    # The body carries this run's stamp, because the *lead* is the same one
+    # every run and its timeline keeps what earlier runs left there. Counting
+    # every text on it would pass once and fail for ever after -- the same
+    # shape as the three history-dependent checks already fixed here.
+    _text_body = f"is the Silverado still there? ({stamp})"
+    _params = {"MessageSid": f"SMsmoke{stamp}", "From": _lead_phone,
+               "To": "+15025550100", "Body": _text_body}
+    _surl = _twilio.webhook_url("/api/phone/sms", BASE)
+    _ssig = _twilio.signature_for(_surl, _params, _TOKEN)
+
+    code, _ = status_of("POST", "/api/phone/sms", _params, form=True)
+    check("an unsigned text is refused, like every other webhook",
+          code == 403, str(code))
+
+    code, xml = status_of("POST", "/api/phone/sms", _params, form=True,
+                          headers={"X-Twilio-Signature": _ssig})
+    check("a signed one is accepted", code == 200, str(code))
+    # **The one line that would connect an assistant to SMS is the one that is
+    # not here.** TwiML with a <Message> in it would auto-reply; an empty
+    # Response says nothing back, which is the whole posture.
+    check("and nothing answers it -- no assistant is on this channel",
+          "<Message>" not in xml and "<Response>" in xml, xml[:70])
+
+    # Twice with the same SID is one row: a webhook that timed out on our side
+    # is retried, and a buyer's question landing twice is a rep answering
+    # something they already answered.
+    status_of("POST", "/api/phone/sms", _params, form=True,
+              headers={"X-Twilio-Signature": _ssig})
+    _entries = call("GET", f"/api/leads/{_lead_id}/timeline")["entries"]
+    _texts = [e for e in _entries
+              if e.get("channel") == "sms" and e.get("body") == _text_body]
+    check("it lands on that buyer's timeline, once", len(_texts) == 1,
+          f"{len(_texts)} of this run's text(s)")
+    check("as a text rather than an email, which decides how a rep answers",
+          _texts and _texts[0].get("direction") == "in")
+
+    print("\n== the brakes are the ones email already has ==")
+    with _session() as _db:
+        _refusal = _sms.blocked_reason(_db, _texted)
+    check("OUTBOUND_ONLY_TO gates a text as it gates mail",
+          "OUTBOUND_ONLY_TO" in _refusal, _refusal[:60])
+
+    _stop = {"MessageSid": f"SMstop{stamp}", "From": _texted, "To": "+15025550100",
+             "Body": "STOP"}
+    status_of("POST", "/api/phone/sms", _stop, form=True,
+              headers={"X-Twilio-Signature":
+                       _twilio.signature_for(_surl, _stop, _TOKEN)})
+    with _session() as _db:
+        check("STOP is recorded on our side, not only at Twilio",
+              _sms.opted_out(_db, _texted))
+        check("and the refusal names it before any send is attempted",
+              "texted STOP" in _sms.blocked_reason(_db, _texted))
+        # The row is kept even when the send never happens: a refused message
+        # is the one a rep most needs to find again.
+        _row = _sms.send(_db, _texted, "one more thing")
+        check("a refused text is kept as a row with the reason on it",
+              _row.status == "failed" and "STOP" in _row.error, _row.status)
+
+    _start = {"MessageSid": f"SMstart{stamp}", "From": _texted,
+              "To": "+15025550100", "Body": "start"}
+    status_of("POST", "/api/phone/sms", _start, form=True,
+              headers={"X-Twilio-Signature":
+                       _twilio.signature_for(_surl, _start, _TOKEN)})
+    with _session() as _db:
+        check("START lets them back in", not _sms.opted_out(_db, _texted))
+        # Kept rather than deleted: the opt-out happened, and a consent record
+        # that erases its own history answers nothing later.
+        check("and the opt-out is kept as history, not deleted",
+              _db.query(_OptOut).filter_by(
+                  phone_key=_digits(_texted)).count() == 1)
+
+    print("\n== a text from somebody we do not know yet ==")
+    _stranger = f"+1312555{stamp[-4:]}"
+    _hello = {"MessageSid": f"SMnew{stamp}", "From": _stranger,
+              "To": "+15025550100", "Body": "saw the Tacoma on your site"}
+    status_of("POST", "/api/phone/sms", _hello, form=True,
+              headers={"X-Twilio-Signature":
+                       _twilio.signature_for(_surl, _hello, _TOKEN)})
+    with _session() as _db:
+        _unplaced = [r for r in _sms.unresolved(_db) if r.to_address == _stranger]
+        check("is stored rather than dropped", len(_unplaced) == 1)
+        # The other half of the resolution ladder, by number -- a text carries
+        # no address, so the phone rung is the whole of it here.
+        _new = _Lead(name="Smoke Stranger", email="", phone=_stranger, source="chat")
+        _db.add(_new)
+        _db.commit()
+        _db.refresh(_new)
+        check("and moves onto their timeline once they become a buyer",
+              _sms.claim_unresolved(_db, _new) == 1)
+        check("so it is no longer listed as unplaced",
+              not [r for r in _sms.unresolved(_db) if r.to_address == _stranger])
+
     print("\n== who answers, and who may decide ==")
     check("the phone page needs a session at all",
           anonymous_status("/api/ops/phone") == 401)
@@ -5233,7 +5362,9 @@ def main() -> int:
     check("an owner is told exactly what .env is missing",
           "TWILIO_ACCOUNT_SID" in state["missing"], str(state["missing"]))
     check("the webhook URLs are composed rather than typed into the page",
-          "webhooks" in state and set(state["webhooks"]) == {"voice", "status", "stream"})
+          "webhooks" in state
+          and set(state["webhooks"]) == {"voice", "status", "stream", "sms"},
+          str(sorted(state.get("webhooks", {}))))
     check("the call this run made is in the log",
           any(c["from"] == "+15025550142" for c in state["calls"]),
           f"{len(state['calls'])} call(s)")

@@ -612,6 +612,7 @@ In the Twilio console, on your number, under **Voice Configuration**:
 |---|---|
 | A call comes in | `https://YOUR-HOST/api/phone/incoming`, HTTP POST |
 | Call status changes | `https://YOUR-HOST/api/phone/status`, HTTP POST |
+| A message comes in (under Messaging) | `https://YOUR-HOST/api/phone/sms`, HTTP POST |
 
 The media stream needs no configuration: the TwiML returned by the first URL
 tells Twilio where to open it, which is why it is derived from
@@ -633,6 +634,28 @@ Then choose who answers, on the same page: Liner's own assistant (pitches
 Liner, books a demo) or the dealership's (real inventory, real test drives).
 The switch takes effect on the next call and needs no restart, so the same
 number can be handed to a prospect mid-demo.
+
+### Texting
+
+SMS needs no extra credentials — same account, same number, same signature
+check. The third webhook row above is the whole setup.
+
+**No assistant is connected to SMS.** Every text is written by a rep from the
+buyer's page and their replies land on that buyer's timeline. `OUTBOUND_ONLY_TO`
+gates texts exactly as it gates mail, so a rehearsal cannot reach a real
+prospect's phone.
+
+**STOP is honoured on both sides.** Twilio blocks a number that texted STOP and
+answers a send to it with error 21610; this system also records the opt-out and
+refuses before attempting, so a rep sees a reason rather than a send that looks
+like it went. The record lives in `ops_sms_opt_outs`, which `make
+reset-dealership` deliberately does not touch — an opt-out a rehearsal wiped is
+somebody who said stop and got texted again.
+
+**Bulk texting still needs A2P 10DLC registration.** One-to-one works today;
+sending the same message to a list from an unregistered number gets it filtered
+by the carriers rather than refused by Twilio, so it is billed and arrives
+nowhere. `/app/campaigns` says so rather than offering a button.
 
 **Never set `TWILIO_VALIDATE_SIGNATURE=false` on a real host.** It exists for a
 local tunnel, where the URL Twilio signed is not the one this process sees;

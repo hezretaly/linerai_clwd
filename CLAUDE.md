@@ -999,6 +999,71 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **`/ops/phone` reports which one is in use, never the value.** Both work,
     so it is not a warning; it is the one fact that decides what happens on
     the day somebody rotates a secret, and it is invisible otherwise.
+- **A rep can text a buyer, and no assistant can.** SMS runs on the same
+  Twilio number, the same credentials and the same signature check as the
+  phone line — there is nothing extra in `.env` and one more webhook in the
+  console. **There is deliberately no switch that would connect the
+  assistant to it**, which is not a phase-one compromise: an autonomous
+  texter needs its own consent story, its own rate limit and its own
+  loop-breaker, and none of those exist. The inbound webhook answers with an
+  empty `<Response>` — TwiML with a `<Message>` in it is the one line that
+  would change that, and the gate asserts it is absent.
+  - **It reuses `Outreach`, which is what inbound email already does.** A text
+    is the same shape as a mail — a recipient, a body, a provider id, a status
+    — so it gets `channel="sms"` and `direction` in or out, and `app/timeline.py`
+    renders it with no new entry kind. A table of its own would have bought a
+    second timeline composer and a second definition of what counts as contact.
+    The channel strip needed no change at all: it counts what is there, so the
+    Text tab appears the first time somebody texts. That rule was written when
+    SMS did not exist, and this is what it was for.
+  - **`OUTBOUND_ONLY_TO` gates a text exactly as it gates mail**, one setting
+    for both. A rehearsal that texts a real prospect is worse than one that
+    mails them: it costs per message and arrives on a phone at whatever hour it
+    is there. Compared on the last ten digits as well as verbatim, because the
+    setting is written by a person and `+15025550142` and `(502) 555-0142` are
+    one number.
+  - **STOP is honoured here as well as at Twilio.** Twilio blocks the number
+    and answers a send with error 21610, so the law is met either way — but a
+    system that keeps trying learns nothing, logs a failure per attempt and
+    shows a rep a send that looks like it went. The opt-out is recorded before
+    the send is attempted, and a 21610 coming back records one we did not
+    know about. Matched on the whole trimmed body, never a word inside it:
+    "please stop sending me the blue one" is a sentence about a car.
+  - **`ops_sms_opt_outs` is on our side of the line for a reason that outranks
+    whose buyer it is.** Every other fact here can be rebuilt from a seed;
+    this one cannot, and `make reset-dealership` wiping it means somebody who
+    said stop gets texted again. `resumed_at` rather than a delete, because
+    START is a real message and a consent record that erases its own history
+    answers nothing later.
+  - **The resolution ladder runs both ways for texts too.** A number that
+    matches nobody is stored rather than dropped and listed on `/ops/phone` —
+    there is one number, so unlike email there is no addressee to say whose
+    desk it belongs on — and `attach_lead` claims it onto the buyer the moment
+    they come into existence. By number only: a text carries no address and a
+    name is not identity.
+  - **Bulk is still blocked, for a narrower reason than before.** The
+    campaigns card now says A2P 10DLC registration rather than "no SMS
+    provider": an unregistered bulk send is filtered by the carriers rather
+    than refused by Twilio, so it is billed and arrives nowhere. Flipping it to
+    ready because sending works would be exactly the "looked ready to press"
+    failure that page exists to avoid.
+  - **The assistant's own rule stays, reworded.** It said "you cannot text";
+    it now says a colleague can and it still cannot, which is the truth a
+    buyer must not be told wrongly — the failure to avoid is Liner promising
+    a text nobody will send.
+- **Every emitted event type has to be in `EVENT_TYPES`, and now the gate reads
+  it.** An unregistered type logs a warning and goes out anyway, so nothing
+  ever failed — and checking the set against every `emit()` call site found
+  **five that had been missing for months** (`lead.updated`, `lead.created`,
+  `email.agent`) plus the ones the phone work had just added. Same lesson as
+  `SPA_PREFIXES`: a hand-written list is exactly what development cannot check,
+  so something has to read it.
+- **The timeline's outreach card had email baked into it.** It drew a mail icon
+  and labelled every inbound row "Email reply", which is correct for the only
+  thing that could be there until a text could. A rep skimming a timeline
+  decides *how to answer* from that label, so it now comes from the channel —
+  and the subject line is hidden when there is none, because a text has no
+  subject and an empty bold line reads as something that failed to load.
 - **An outbound call rings us first.** Twilio dials `TWILIO_OPS_NUMBER` and
   bridges the prospect in once somebody here picks up. The other way round
   makes them listen to silence while we answer, which is how a dealership
@@ -2079,6 +2144,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
 | Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
 | Phone (Twilio) | **Written and never executed.** A real number in both directions: people ring it and `app/phone_bridge.py` bridges Twilio Media Streams to OpenAI Realtime; `/ops/phone` rings people from it. No Twilio account here and `api.twilio.com` is blocked, so no request has run — but the inbound path is signed with a shared secret we own, so `make smoke` drives the whole of it: the signature against Twilio's *published test vector*, a forged one, a valid one replayed with a different caller, the TwiML, the persona switch and the realm split. |
+| SMS | **Written and never executed, and no assistant touches it.** A rep texts a buyer from their page; replies arrive at `/api/phone/sms`, resolve by number and land on that buyer's timeline. Same account, credentials and signature check as the phone line. No Twilio account here, so the send has never run — but the inbound path is signed with a secret we own, so `make smoke` drives all of it: a forged signature, the dedupe, the timeline landing, `OUTBOUND_ONLY_TO`, STOP and START, and a stranger's text being claimed onto a buyer later. Bulk sending stays blocked pending A2P 10DLC. |
 | Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |
 | Post-call transcription | **Written and never executed** — same missing key, same blocked host. The buyer's own track is recorded, the marks are stored, and the merge, cross-talk filter and transcript rewrite all run in `make agent-check` against a transcription handed over rather than fetched. Only the request to `/v1/audio/transcriptions` is unproven. |
 | Inventory source | **The local database, and that is the real answer.** Rows arrive by seed, by CSV import or by hand, and `search_inventory` reads them. The scraper works against the fixture site but has no adapter for any real dealer site — no two are laid out alike, so that needs real URLs. An optional second source nobody has chosen is not a missing dependency, and it is not in the banner. |
@@ -2093,8 +2159,12 @@ suite, no generated OpenAPI types, no shadcn CLI. These were scoped out on
 request; `smoke.py` plus screenshots is the whole verification story. If you add
 migrations later, do it before there is production data to preserve.
 
-Also out: multi-tenancy, SMS, billing, CRM/DMS sync, scheduled ingest,
+Also out: multi-tenancy, billing, CRM/DMS sync, scheduled ingest,
 model-generated rail chips. Each is additive against the current schema.
+
+SMS was on this list and is not any more — a rep can text a buyer and read the
+replies. What is still out is an **assistant** on that channel, deliberately,
+and bulk sending, which needs A2P 10DLC registration.
 
 ## Don't
 

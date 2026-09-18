@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import matching, outreach_send, timeline
+from app import matching, outreach_send, sms as sms_module, timeline
+from app.integrations import twilio_account
+from app.integrations.sms import twilio_sms
 from app.recap import lead_recap
 from app.api.deps import current_user, find_staff
 from app.db import get_db, utcnow
@@ -468,3 +470,77 @@ def get_duplicates(
         row.update(summaries.get(other.id, {}))
         out.append({"reason": why, "lead": row})
     return {"duplicates": out}
+
+
+class TextBody(BaseModel):
+    body: str
+    #: Optional. Defaults to the number on the buyer's row, which is what a rep
+    #: means by "text them"; passed only to reach a second number they gave.
+    to: str = ""
+
+
+@router.get("/{lead_id}/sms")
+def sms_state(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Whether this buyer can be texted, and why not when they cannot.
+
+    Asked before the composer opens rather than discovered on send: "no number
+    on file", "they texted STOP" and "Twilio is not set up" are three different
+    answers and only one of them is something the rep can fix by typing.
+    """
+    lead = _get(db, lead_id)
+    to = (lead.phone or "").strip()
+    return {
+        "configured": sms_module.configured(),
+        "to": to,
+        "opted_out": bool(to) and sms_module.opted_out(db, to),
+        "blocked": sms_module.blocked_reason(db, to) if to else "No number on file.",
+        "segment": twilio_sms.SEGMENT,
+        "max_body": twilio_sms.MAX_BODY,
+    }
+
+
+@router.post("/{lead_id}/sms")
+def send_sms(
+    lead_id: str,
+    body: TextBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """A rep texts this buyer.
+
+    **A person wrote this and a person pressed send.** No assistant is involved
+    on this path and there is no setting that would put one there; see
+    `app/sms.py`.
+
+    Open to any rep, like the email composer: answering a buyer is the work,
+    not an administrative act. What it will not skip is `blocked_reason` --
+    a composer is exactly where a rehearsal reaches a real prospect, and here
+    it reaches their phone.
+    """
+    lead = _get(db, lead_id)
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(400, "There is no message to send.")
+
+    to = (body.to or lead.phone or "").strip()
+    if not to:
+        raise HTTPException(400, "No number on file for this buyer.")
+
+    base = twilio_account.base_url(str(request.base_url))
+    row = sms_module.send(
+        db, to, text, lead=lead, by=user,
+        status_url=twilio_account.webhook_url("/api/phone/sms-status", base) if base else "",
+    )
+    return {
+        "sent": row.status not in ("failed",),
+        "status": row.status,
+        # The provider's own words, verbatim, when it refused. A composer that
+        # says only "failed" costs whoever reads it a search through the logs.
+        "detail": row.error,
+        "outreach_id": row.id,
+    }

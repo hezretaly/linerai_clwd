@@ -32,9 +32,14 @@ is not available.
 
 ## twilio
 
+- `backend/app/integrations/twilio_account.py:3` -- no request built here has ever run. There is no `TWILIO_ACCOUNT_SID` in this environment and `api.twilio.com` is refused by the egress proxy besides. What is real and asserted offline by `make smoke` is everything either side of the wire: the signature that guards every public webhook, the credential the REST calls authenticate with, and `check()` naming the missing variable rather than failing vaguely.
 - `backend/app/integrations/voice/twilio_voice.py:3` -- no request in this file has ever run. There is no `TWILIO_ACCOUNT_SID` in this environment and `api.twilio.com` is refused by the egress proxy besides. What *is* real and asserted offline by `make smoke` is everything either side of the wire: the signature check that guards the public webhook, the TwiML each endpoint returns, the body an outbound call would post, and `check()` naming the missing variable rather than failing vaguely. Only the request itself is unproven.
 
 ## twilio-bridge
 
 - `backend/app/phone_bridge.py:3` -- this has never run end to end. There is no `OPENAI_API_KEY` here, `api.openai.com` is refused by the egress proxy, and no Twilio account has ever opened this socket. What is real and exercised by `make smoke` is everything that does not need either: the frame each side is sent, the barge-in ordering, the tool dispatch, and the fact that a socket with no model configured closes with a reason instead of hanging.
+
+## twilio-sms
+
+- `backend/app/integrations/sms/twilio_sms.py:3` -- the request here has never run. No Twilio account in this environment and `api.twilio.com` is refused by the egress proxy. What is real and asserted by `make smoke` is the body it builds, which is the only part of a send that can be wrong in a way an account would not tell you about.
 

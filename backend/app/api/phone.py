@@ -28,13 +28,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app import flags
+from app import flags, sms
 from app.api.deps import require_owner
 from app.config import settings
 from app.db import get_db, utcnow
 from app.events import emit
 from app.integrations.voice import twilio_voice
-from app.models import OpsUser, PhoneCall
+from app.models import OpsUser, Outreach, PhoneCall
 from app.schemas.serialize import stamp
 
 log = logging.getLogger("liner.phone")
@@ -213,6 +213,63 @@ async def outbound_twiml(request: Request, db: Session = Depends(get_db)) -> Res
 
 
 # --------------------------------------------------------------------------
+# SMS
+# --------------------------------------------------------------------------
+
+#: What Twilio gets back when a text arrives. An empty Response means "no
+#: auto-reply", which is the whole posture: **no assistant is connected to
+#: SMS and there is deliberately no switch that would connect one.** Every
+#: text out of this system is written by a person. Returning TwiML with a
+#: `<Message>` in it is the one line that would change that, and it is not
+#: here.
+NO_REPLY = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+
+
+@router.post("/sms")
+async def incoming_sms(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Somebody texted the number. File it against a buyer, and say nothing."""
+    params = await _verified(request, "/api/phone/sms")
+    sms.receive(db, params)
+    return Response(NO_REPLY, media_type=XML)
+
+
+@router.post("/sms-status")
+async def sms_status(request: Request, db: Session = Depends(get_db)) -> Response:
+    """Twilio's word on whether the message actually arrived.
+
+    **Worth wiring even though the send already returned 201.** A text is
+    accepted by the API and *then* rejected by a carrier -- a landline, a
+    number that does not exist, a block -- so without this a message that never
+    arrived sits on the buyer's timeline reading `sent` forever, and the rep
+    waits for a reply to something nobody received.
+    """
+    params = await _verified(request, "/api/phone/sms-status")
+    sid = (params.get("MessageSid") or params.get("SmsSid") or "").strip()
+    row = (
+        db.query(Outreach).filter_by(provider_message_id=sid, channel="sms").first()
+        if sid else None
+    )
+    if row is None:
+        # A callback for a message this instance never sent is what a reseed or
+        # a second environment looks like. Answering 404 makes Twilio retry
+        # something that will never resolve.
+        return Response("", media_type=XML)
+
+    row.status = params.get("MessageStatus", row.status)
+    code = (params.get("ErrorCode") or "").strip()
+    if code:
+        row.error = f"Twilio error {code}: {params.get('ErrorMessage') or 'no detail given'}"
+        # The one error worth acting on rather than only recording.
+        if code == sms.OPTED_OUT_CODE:
+            sms.opt_out(db, row.to_address, reason=f"Twilio {code}")
+    db.commit()
+    emit(db, "sms.status", {
+        "outreach_id": row.id, "lead_id": row.lead_id, "status": row.status,
+    })
+    return Response("", media_type=XML)
+
+
+# --------------------------------------------------------------------------
 # Ours: the controls on /ops/phone
 # --------------------------------------------------------------------------
 
@@ -282,7 +339,21 @@ def phone_state(
             "voice": twilio_voice.webhook_url("/api/phone/incoming") if base else "",
             "status": twilio_voice.webhook_url("/api/phone/status") if base else "",
             "stream": twilio_voice.stream_url() if base else "",
+            "sms": twilio_voice.webhook_url("/api/phone/sms") if base else "",
         },
+        # Texts that matched nobody. Listed here rather than in the
+        # dealership's mailbox because there is one number and no addressee to
+        # say whose desk it belongs on -- unlike email, where `support@` and
+        # `sales@` settle it.
+        "unresolved_sms": [
+            {
+                "id": row.id,
+                "from": row.to_address,
+                "body": row.body,
+                "at": stamp(row.sent_at or row.created_at),
+            }
+            for row in sms.unresolved(db, limit=25)
+        ],
         "greeting": settings.phone_greeting,
         "signature_checked": settings.twilio_validate_signature,
         # Which credential outbound calls authenticate with -- never the

@@ -62,6 +62,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
   const [reply, setReply] = useState('')
   const [booking, setBooking] = useState(false)
   const [emailing, setEmailing] = useState(false)
+  const [texting, setTexting] = useState(false)
   // The email currently open in the reader, or null.
   const [reading, setReading] = useState<TimelineEntry | null>(null)
   const [channel, setChannel] = useState('')
@@ -89,6 +90,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
     setReply('')
     setChannel('')
     setEmailing(false)
+    setTexting(false)
     setBooking(false)
   }, [id])
 
@@ -174,7 +176,9 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           onDecline={() => decline.mutate()}
           onBook={() => setBooking(true)}
           emailing={emailing}
-          onEmail={() => setEmailing(!emailing)}
+          onEmail={() => { setEmailing(!emailing); setTexting(false) }}
+          texting={texting}
+          onText={() => { setTexting(!texting); setEmailing(false) }}
         />
 
         {/* All is the sum of the tabs beside it, not the number of rows below.
@@ -221,6 +225,15 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
               lead={lead}
               answering={undefined}
               onDone={() => { setEmailing(false); invalidate() }}
+            />
+          </div>
+        )}
+
+        {texting && lead && (
+          <div className="border-b border-border bg-card p-3">
+            <SmsComposer
+              lead={lead}
+              onDone={() => { setTexting(false); invalidate() }}
             />
           </div>
         )}
@@ -322,6 +335,8 @@ function Header({
   onDecline,
   onBook,
   emailing,
+  texting,
+  onText,
   onEmail,
 }: {
   name: string
@@ -331,6 +346,8 @@ function Header({
   onDecline: () => void
   onBook: () => void
   emailing: boolean
+  texting: boolean
+  onText: () => void
   onEmail: () => void
 }) {
   const declined = conversations.some((c) => c.outcome === 'declined')
@@ -373,13 +390,26 @@ function Header({
             {emailing ? 'Cancel' : 'Email them'}
           </button>
         ) : (
-          lead && (
+          lead && !lead.phone && (
             <Unavailable
               label="Email them"
               size="sm"
-              why="No email on file, and SMS is out of scope, so this product has no way to reach them. A rep has to call."
+              why="No email and no number on file, so there is nothing to reach them on. A rep has to wait for them to get in touch."
             />
           )
+        )}
+        {lead?.phone && (
+          <button
+            onClick={onText}
+            className={clsx(
+              'inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium transition-colors',
+              texting
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-input bg-background hover:border-primary hover:bg-primary hover:text-primary-foreground',
+            )}
+          >
+            {texting ? 'Cancel' : 'Text them'}
+          </button>
         )}
         {conversation && (
           <>
@@ -928,6 +958,119 @@ function LinkedAddresses({ lead }: { lead: Lead }) {
         </button>
       )}
       {note && <p className="mt-1.5 text-xs text-muted-foreground">{note}</p>}
+    </div>
+  )
+}
+
+/** Texting a buyer, from the page their whole history is on.
+ *
+ * **A person writes this and a person presses send.** No assistant is
+ * connected to SMS and there is deliberately no setting that would connect
+ * one — see `app/sms.py`. The composer asks the server what it is allowed to
+ * do *before* it opens, because "no number", "they texted STOP" and "Twilio is
+ * not set up" are three different answers and only one of them is something a
+ * rep can fix by typing.
+ */
+function SmsComposer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+  const [body, setBody] = useState('')
+  const [problem, setProblem] = useState('')
+
+  const { data: state } = useQuery({
+    queryKey: ['lead-sms', lead.id],
+    queryFn: () =>
+      api.get<{
+        configured: boolean
+        to: string
+        opted_out: boolean
+        blocked: string
+        segment: number
+        max_body: number
+      }>(`/api/leads/${lead.id}/sms`),
+  })
+
+  const send = useMutation({
+    mutationFn: () =>
+      api.post<{ sent: boolean; status: string; detail: string }>(
+        `/api/leads/${lead.id}/sms`,
+        { body },
+      ),
+    onSuccess: (result) => {
+      // A refusal comes back 200 with the reason on it, because the row is
+      // kept either way — the same shape the email composer uses. Reporting
+      // only "sent" would hide the one message a rep needs to see again.
+      if (!result.sent) {
+        setProblem(result.detail || `The provider said: ${result.status}.`)
+        return
+      }
+      setBody('')
+      onDone()
+    },
+    onError: (e: unknown) => {
+      const err = e as ApiError
+      setProblem(String((err?.payload as { detail?: string })?.detail ?? err?.message ?? e))
+    },
+  })
+
+  const segment = state?.segment ?? 160
+  const over = state ? body.length > state.max_body : false
+  // Blank until the server answers, so the composer never claims a refusal it
+  // has not been told about.
+  const refused = state?.blocked ?? ''
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        Texting <span className="tnum font-medium text-foreground">{state?.to || lead.phone}</span>{' '}
+        from the dealership&apos;s number. They can reply, and it lands on this timeline.
+      </p>
+
+      {refused ? (
+        <p className="rounded-md border border-warning/30 bg-warning-muted p-2.5 text-xs leading-relaxed text-warning-foreground">
+          {refused}
+        </p>
+      ) : (
+        <>
+          <textarea
+            value={body}
+            onChange={(e) => { setBody(e.target.value); setProblem('') }}
+            rows={3}
+            placeholder={`Text ${lead.name || 'them'}...`}
+            className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Said before the send, not billed silently after it: a text is
+                charged per segment, and a rep pasting a paragraph has no other
+                way to know they are sending three messages. */}
+            <span className="text-[11px] text-muted-foreground">
+              {body.length} characters
+              {body.length > segment
+                ? ` · ${Math.ceil(body.length / segment)} messages`
+                : ''}
+            </span>
+            <div className="ml-auto flex gap-2">
+              <Button size="sm" variant="ghost" onClick={onDone}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={!body.trim() || over || send.isPending}
+                onClick={() => send.mutate()}
+              >
+                {send.isPending ? 'Sending...' : 'Send text'}
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {state && !state.configured && (
+        <p className="text-[11px] text-muted-foreground">
+          Twilio is not configured on this install, so nothing will leave the
+          building.
+        </p>
+      )}
+      {problem && <p className="text-xs text-destructive">{problem}</p>}
     </div>
   )
 }

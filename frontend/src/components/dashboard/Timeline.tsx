@@ -71,6 +71,9 @@ export const CHANNEL_LABEL: Record<string, string> = {
   // one person's Instagram message sits in the same timeline as their call.
   instagram: 'Instagram',
   facebook: 'Facebook',
+  // Real, unlike the two above: sent and received on the dealership's Twilio
+  // number by a person. No assistant is connected to it.
+  sms: 'Text',
   phone_logged: 'Logged call',
 }
 
@@ -80,6 +83,7 @@ const CHANNEL_ICON: Record<string, 'chat' | 'voice' | 'mail' | 'phone'> = {
   email: 'mail',
   instagram: 'chat',
   facebook: 'chat',
+  sms: 'chat',
   phone_logged: 'phone',
 }
 
@@ -173,11 +177,23 @@ function Outreach({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
+          {/* Both of these used to be hardcoded to email, because email was
+              the only thing an outreach row could be. A text is the same row
+              with a different channel, and an inbound one read "Email reply"
+              under a mail icon -- which is the one thing a rep scanning a
+              timeline must not be told wrongly, since it decides how they
+              answer. */}
           <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Icon name="mail" className="h-3 w-3 shrink-0" />
-            {inbound ? 'Email reply' : CHANNEL_LABEL[e.channel] ?? e.channel}
+            <Icon name={CHANNEL_ICON[e.channel] ?? 'mail'} className="h-3 w-3 shrink-0" />
+            {inbound
+              ? `${CHANNEL_LABEL[e.channel] ?? e.channel} reply`
+              : CHANNEL_LABEL[e.channel] ?? e.channel}
           </span>
-          <p className="mt-0.5 truncate text-sm font-medium">{e.subject}</p>
+          {/* A text has no subject, and an empty bold line above the body
+              reads as something that failed to load. */}
+          {e.subject && (
+            <p className="mt-0.5 truncate text-sm font-medium">{e.subject}</p>
+          )}
         </div>
         {/* Only where a link was there to follow. An email with nothing
             trackable in it is not "unopened". */}

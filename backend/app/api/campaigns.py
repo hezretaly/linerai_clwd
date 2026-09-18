@@ -248,14 +248,26 @@ def list_campaigns(
             {
                 "key": "sms",
                 "name": "Text message",
-                "why": "A phone number is the thing Liner asks for, and it cannot text it.",
+                "why": "A phone number is the thing Liner asks for, and now a rep can text it.",
                 "channel": "sms",
                 "audience": None,
                 "examples": [],
+                # **Still blocked, and for a narrower reason than before.**
+                # One-to-one texting is real now -- a rep sends from the buyer's
+                # page and replies land on their timeline. What a *campaign*
+                # additionally needs is A2P 10DLC registration: sending the same
+                # message to a list from a number that is not registered as a
+                # brand gets it filtered by the carriers rather than refused by
+                # Twilio, which is the worst of both -- billed, and delivered to
+                # nobody. Flipping this to ready because sending works would be
+                # exactly the "looked ready to press" failure the note below
+                # exists to prevent.
                 "ready": False,
                 "blocked_by": (
-                    "No SMS provider. This needs a number, a carrier registration "
-                    "and per-message consent recorded against each buyer."
+                    "Texting one buyer works from their own page. A campaign needs "
+                    "A2P 10DLC brand and campaign registration first -- without it "
+                    "carriers filter bulk sends silently, so they are billed and "
+                    "never arrive."
                 ),
             },
         ],

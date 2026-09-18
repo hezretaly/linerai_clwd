@@ -40,6 +40,20 @@ EVENT_TYPES = {
     # URL grow the events table.
     "email.received",
     "lead.imported",
+    # **These three predate the SMS work and were never registered**, so every
+    # one of them logged "emitting unregistered event type" and went out
+    # anyway. Found by the gate check that now reads this set against every
+    # `emit()` call site -- the same trick `SPA_PREFIXES` needed, because a
+    # hand-written list is exactly what development cannot check.
+    #
+    # A buyer's row changed under a rep who may be looking at it: a name
+    # learned from an email signature, an address a rep linked.
+    "lead.updated",
+    # An email from somebody nobody had on file minted a buyer.
+    "lead.created",
+    # Whether Liner answers email was switched, which every open dashboard
+    # needs to agree about immediately.
+    "email.agent",
     # Somebody asked us for a demo. Ours, not a dealership's -- it is the one
     # event on this system that nobody clicked for and that we have to act on.
     "demo.requested",
@@ -56,6 +70,22 @@ EVENT_TYPES = {
     # A call's transcript has been rewritten from its own recording, which
     # happens minutes after the call ended and while a rep may be reading it.
     "call.transcribed",
+    # Liner's own Twilio number. `phone.*` is a real telephone call in or out;
+    # `call.*` above is the browser's WebRTC call on /call, and they are
+    # deliberately not the same name.
+    "phone.started",
+    "phone.ended",
+    "phone.persona",
+    # Texts. `sms.received` fires for one that resolved to nobody as well as
+    # one that landed on a buyer -- a stranger's text has no buyer page to
+    # appear on instead, the same reason `email.received` does it.
+    "sms.sent",
+    "sms.received",
+    "sms.status",
+    # Somebody asked to stop being texted, or to start again. Worth an event
+    # because it changes what every composer on the dashboard may do next.
+    "sms.opt_out",
+    "sms.resumed",
 }
 
 

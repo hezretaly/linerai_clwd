@@ -46,7 +46,8 @@ interface PhoneState {
   persona: string
   personas: string[]
   model_ready: boolean
-  webhooks: { voice: string; status: string; stream: string }
+  webhooks: { voice: string; status: string; stream: string; sms: string }
+  unresolved_sms: { id: string; from: string; body: string; at: string }[]
   greeting: string
   signature_checked: boolean
   /** Which credential outbound REST calls use: 'api_key' or 'auth_token'. */
@@ -254,6 +255,7 @@ export function OpsPhonePage() {
             [
               ['A call comes in (HTTP POST)', data.webhooks.voice],
               ['Call status changes (HTTP POST)', data.webhooks.status],
+              ['A message comes in (HTTP POST)', data.webhooks.sms],
               ['Media stream (set for you, by the TwiML above)', data.webhooks.stream],
             ] as const
           ).map(([label, url]) => (
@@ -322,6 +324,34 @@ export function OpsPhonePage() {
         <p className="text-sm text-destructive" role="alert">
           {problem}
         </p>
+      )}
+
+      {/* Texts nobody could place. There is one number, so unlike email there
+          is no addressee to decide whose these are -- they land here because
+          the number is ours. */}
+      {data.unresolved_sms.length > 0 && (
+        <Card className="p-4">
+          <h2 className="text-sm font-semibold">
+            Texts from numbers we don&apos;t recognise
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Stored rather than dropped. If one of these becomes a buyer, their
+            earlier texts move onto that buyer&apos;s timeline automatically.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {data.unresolved_sms.map((row) => (
+              <li key={row.id} className="rounded-md border border-border p-2.5">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="tnum text-sm font-medium">{row.from}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {relative(row.at)}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm leading-relaxed">{row.body}</p>
+              </li>
+            ))}
+          </ul>
+        </Card>
       )}
 
       {/* The log. */}

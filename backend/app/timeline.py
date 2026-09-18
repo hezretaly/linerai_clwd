@@ -244,8 +244,12 @@ def conversation_timeline(db: Session, convo: Conversation) -> list[dict]:
 def channel_counts(entries: list[dict]) -> dict[str, int]:
     """What the filter strip offers, built from what is actually here.
 
-    Never a fixed list of channels. SMS has no provider in this system, and a
-    tab that is always empty claims a capability that does not exist.
+    Never a fixed list of channels, and SMS is what that rule was written for.
+    There was no SMS provider at all when this was written, so a declared tab
+    would have sat at zero forever; now there is one, and the tab appears the
+    moment a buyer actually texts -- because a text is an `outreach` row with
+    `channel="sms"` and this counts what is there. Nothing was added here to
+    make that work, which is the point.
 
     **It counts conversations, not turns.** This used to count entries, so a
     single eight-minute call with sixteen transcript lines read `Voice call 17`
