@@ -1,0 +1,256 @@
+# Al's Bou Cars -- https://www.alsboucars.com/
+#
+# ============================================================================
+# THIS PROFILE IS NOT FILLED IN YET, AND SEEDING IT WILL REFUSE.
+#
+#   make seed DEALERSHIP=alsbou
+#     -> "alsbou.yaml is not filled in yet. Missing: address, phone, hours"
+#
+# That refusal is the feature, not a snag. A prospect's real address, phone
+# and opening hours cannot be looked up from this machine -- the egress proxy
+# answers 403 to CONNECT for www.alsboucars.com:443, so their own site was
+# never read -- and the one thing worse than a blank address is a plausible
+# one. An invented address survives a demo and gets repeated back to a
+# customer; `check_availability` builds the slots Liner offers a buyer
+# straight out of `hours`, so an invented Saturday is an appointment nobody
+# is there for.
+#
+# Everything that does NOT depend on their real details is done: the file is
+# structurally complete, every key below is one the code actually reads, and
+# the storefront, brand and inventory blocks are ready for their design and
+# their lot to drop straight in. Fill in the four facts marked TO FILL and
+# this seeds.
+# ============================================================================
+
+name: Al's Bou Cars          # TO FILL -- their own legal/trading name, exactly
+                             # as it appears on their site. This is printed to
+                             # buyers on the chat header, the call header, the
+                             # login subtitle and the storefront, so a guess
+                             # here greets their customer as the wrong company.
+
+# TO FILL. The lot this instance *is*. One dealership per instance -- if they
+# run more than one store, this is the address appointments are booked at, and
+# the others are distinguished per car by `location` in the CSV.
+address: ""
+phone: ""
+
+# TO FILL. An IANA zone, not an offset -- naive timestamps here are
+# dealership-local and the header clock formats in this. Left at Chicago as a
+# placeholder only because a blank one would fail differently; correct it.
+timezone: America/Chicago
+
+website_url: "https://www.alsboucars.com/"
+
+# TO FILL, from their own "Hours" table. Keep it exact rather than rounding to
+# one range: Craig and Landreth close an hour earlier on Friday and Saturday,
+# and flattening that produced a 7:30 PM Friday slot with nobody there.
+# `null` means closed that day. At least one day must be set or the seed
+# refuses -- a week of nulls is a calendar with no slots in it.
+hours:
+  monday:    null   # { open: "09:00", close: "18:00" }
+  tuesday:   null
+  wednesday: null
+  thursday:  null
+  friday:    null
+  saturday:  null
+  sunday:    null
+
+# ---------------------------------------------------------------------------
+# Their livery. READY FOR THEIR DESIGN -- every key here is read.
+#
+# Only the accent family travels. Structural tokens all still come from the
+# one theme layer, so a prospect's colour cannot restyle the product into
+# something unreadable, and `destructive` still means "this one broke".
+#
+# `accent` and `accent_ink` are validated to a hex and dropped otherwise --
+# the value lands in a stylesheet. `surface` takes only `light` or `dark` and
+# is read ONLY by /showroom: their storefront can be dark without their reps'
+# dashboard changing colour, because that is a working tool.
+brand:
+  accent: ""        # e.g. "#c8102e" -- sample it from their site, or read it
+                    # off a screenshot by eye and say so here, which is what
+                    # was done for Craig and Landreth.
+  accent_ink: "#ffffff"   # Text drawn on top of the accent. White unless
+                          # their accent is pale enough to need dark ink.
+  surface: light          # `dark` if their own site is light-on-dark.
+  logo_url: ""            # Their CDN URL. Hotlinked, and it falls back on
+                          # `onError` -- a torn-page icon beside their own
+                          # name mid-demo is the failure to avoid.
+
+# ---------------------------------------------------------------------------
+# Their front page, as /showroom renders it. READY FOR THEIR COPY.
+#
+# Every string here is theirs and belongs in this file rather than in
+# `Showroom.tsx` -- a prospect's sentences hardcoded in a component is the
+# "Riverside Auto" bug one level up, and the next instance greets somebody
+# else in Al's Bou's words.
+#
+# All of it is optional: with no `site:` block at all, /showroom renders a
+# plain page carrying their name, address, phone and real lot, which is an
+# honest storefront. Fill it in to make it look like theirs.
+#
+# Every href is validated to `https://` or `/` before it reaches the page --
+# it comes from a file an operator edits and lands in a browser. The links
+# point at their real site on purpose: a nav that 404s inside our app during a
+# demo is worse than one that leaves it, and these are pages we are not
+# pretending to have rebuilt.
+#
+# Caps the code enforces: tagline and heading 160 chars, welcome 4 paragraphs,
+# links 8, social 6. Anything beyond is dropped rather than rendered.
+site:
+  tagline: ""        # The line under their name.
+  heading: ""        # e.g. "Welcome To Al's Bou Cars"
+  hero_image: ""     # Their banner, from their CDN. Falls back on error.
+  welcome: []        # Up to 4 paragraphs, their words:
+                     #   - >-
+                     #       First paragraph.
+                     #   - >-
+                     #       Second paragraph.
+  links: []          # Up to 8:
+                     #   - { label: Inventory, href: "https://www.alsboucars.com/inventory" }
+  social: []         # Up to 6, same shape.
+
+# ---------------------------------------------------------------------------
+# Where their cars come from. READY FOR THEIR LOT.
+#
+# These are facts about the dealership, so they live here rather than in
+# `.env`: switching DEALERSHIP= to another prospect and forgetting to change a
+# SCRAPER_ line crawled one dealer's site into another's instance, silently,
+# because a successful crawl of the wrong site looks exactly like a successful
+# crawl of the right one.
+#
+# TWO WAYS IN, and either is fine:
+#
+#  1. `fixture_csv` -- a committed export. The answer when their site refuses
+#     the crawler or the network cannot reach it, which is the situation here.
+#     Put the file at `backend/fixtures/alsbou/inventory.csv` and name it
+#     below; `make reset-db` then rebuilds their real lot with no network at
+#     all. It goes through the same CSV importer a dealer's own upload does.
+#
+#     Columns, as Craig and Landreth's export is written:
+#       vin,year,make,model,trim,price,mileage,body_style,seats,features,
+#       photo_url,listing_url,location,dealer_phone,doc_fee,stock_number
+#
+#     `vin,year,make,model,trim,price,mileage,body_style,seats` is what the
+#     importer requires; the rest are optional and common aliases are mapped.
+#     Cost columns are DROPPED before a row is built -- acquisition cost,
+#     margin and salesperson never enter the database, because once a column
+#     exists it reaches `search_inventory` and from there the model.
+#     A car with no price is a listing state, not a gap: leave `price` empty
+#     and it sorts last and gets an enquiry link instead of a number.
+#
+#  2. `source_url` -- crawl their site. Run `make ingest` to see every step
+#     narrated, then `make ingest ARGS=--publish` to apply it. If their site
+#     is Dealer Car Search there is an adapter already; anything else needs a
+#     capture first (`make capture URL=...`), because no two dealer sites are
+#     laid out alike and an adapter written from a guess is a crawl that
+#     silently drops every card.
+#
+# Both can be set: the CSV seeds the lot today and a later crawl is a diff
+# against the same VINs rather than a second lot.
+inventory:
+  fixture_csv: ""    # e.g. "alsbou/inventory.csv"
+  source_url: ""     # e.g. "https://www.alsboucars.com/inventory"
+  dealer_id: ""      # ONLY if their listing page mixes several stores, as
+                     # Dealer Car Search sites do -- each card carries its own
+                     # id and this app holds one dealership. Without it Liner
+                     # offers a buyer a car an hour from the showroom it says
+                     # it is standing in. Leave empty for a single-store feed.
+
+# ---------------------------------------------------------------------------
+# No `showroom_fixture` here, deliberately, and the gate checks for it.
+#
+# Riverside's fourteen curated vehicles, its sample CSV lot, its populated
+# yesterday and its thirteen written policy answers are invented for a
+# dealership that does not exist. Seeded here they are not a head start, they
+# are wrong data: their buyer searches the lot and is offered a Toyota Sienna
+# from Cedar Falls, Iowa, then asks the doc fee and is told $189 -- quoted
+# verbatim, because that is exactly what knowledge entries are for.
+#
+# It is read from this key rather than from the filename, so a file copied
+# from riverside.yaml cannot inherit it by accident.
+
+# ---------------------------------------------------------------------------
+# Their people, so a reseed rebuilds them. TO FILL when you have real names.
+#
+# Each gets a generated password, printed once by the seed. Only `manager` and
+# `rep` -- our own accounts live in `ops_users` and never come from here.
+# `make add-user` is the other half, for adding somebody to a live box where a
+# reseed would take the leads with it.
+#
+# A roster of one has nobody to hand a buyer to, so assignment, the per-rep
+# queues and the team page have nothing to show -- and a demo that cannot show
+# those is missing the half of the product a manager cares about. So placeholder
+# reps are here to give the floor a shape, and their addresses say so:
+# `@placeholder.invalid` cannot resolve or receive mail, so nothing can reach
+# anyone, and a name that turns out to be wrong is visibly wrong rather than
+# quietly plausible.
+#
+# REPLACE THESE BEFORE THIS IS IN FRONT OF THEM. Invented colleagues on a page
+# their own manager is reading is the failure this file otherwise exists to
+# prevent. Delete any that are left over.
+staff:
+  - { name: Sales Manager, email: manager@placeholder.invalid, role: manager }
+  - { name: Sales Rep One, email: rep1@placeholder.invalid, role: rep }
+  - { name: Sales Rep Two, email: rep2@placeholder.invalid, role: rep }
+  - { name: Sales Rep Three, email: rep3@placeholder.invalid, role: rep }
+
+# ---------------------------------------------------------------------------
+# What Liner knows beyond the listings. EMPTY ON PURPOSE.
+#
+# `answer_from_knowledge` returns the `answer` below **word for word**. It is
+# never summarised, never rephrased and never composed -- a policy answer is
+# one a buyer repeats back to a rep, so a plausible near-miss is worse than
+# nothing. An unanswered question returns `found: false`, Liner says a
+# colleague will confirm, and the buyer lands in Needs a person. That is the
+# correct behaviour until Al's Bou have actually told us their policies.
+#
+# The gate asserts a prospect never carries Riverside's *answers*: sharing a
+# topic is fine (it is the words a buyer types), but "$189" is a policy nobody
+# at this dealership agreed to.
+#
+# TWO CHIPS DEPEND ON THIS LIST. "What's your doc fee?" and "Do you take
+# trade-ins?" are only put on the buyer's screen when the matching topic
+# exists -- a button promising an answer nobody wrote is a question the
+# dealership is asking on its own behalf and cannot answer. With this list
+# empty, neither chip is drawn, which is right.
+#
+# HOW A QUESTION FINDS AN ENTRY (`lookup_knowledge`)
+#   A word shared with the *topic* scores 3, a word shared with the *answer*
+#   scores 1, and nothing under 3 matches at all. So the topic has to carry
+#   the words a buyer would actually type -- "Doc fee" is matched by "what's
+#   your doc fee?", where a topic called "Fees and charges" is not. Common
+#   words are stripped first and a trailing plural is trimmed, so "deposits"
+#   finds "Deposit".
+#
+# WRITING ONE
+#   - Topic: two or three words, the ones a buyer says. Not a heading.
+#   - Answer: one or two sentences, first person, no markdown -- it is spoken
+#     aloud on a call as well as printed in chat.
+#   - State what is true and stop. An answer that hedges ("typically", "may
+#     vary") is one the buyer has to ask a person about anyway.
+#
+# ASK THEM THESE. Each is a question a buyer asks in the first five minutes,
+# and today each one costs a rep a phone call. Uncomment and fill in -- do not
+# guess, and leave out anything they have not answered.
+#
+# - topic: Doc fee
+#   answer: "..."        # The number, and whether it is on the buyer's order.
+# - topic: Trade-ins
+#   answer: "..."        # Appraised on the spot? What should they bring?
+# - topic: Deposits
+#   answer: "..."        # Does a deposit hold a car? How much, refundable?
+# - topic: Financing
+#   answer: "..."        # Who do they finance through? Bad credit?
+# - topic: Warranty
+#   answer: "..."        # What comes with a car as standard?
+# - topic: Test drives
+#   answer: "..."        # Walk-in or booked? Licence and insurance needed?
+# - topic: Vehicle history
+#   answer: "..."        # CarFax free? Printed before signing?
+# - topic: Payment methods
+#   answer: "..."        # Cash limit? Personal cheques?
+#
+# Hours and the address are deliberately NOT here. They are on the dealership
+# row and reach the prompt from `hours_json`; a second copy in this table is a
+# second thing to change when they open later on a Saturday.
