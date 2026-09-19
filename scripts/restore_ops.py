@@ -61,6 +61,26 @@ ORDER = [
     (SmsOptOut.__tablename__, SmsOptOut),
 ]
 
+def identity_of(table: str, row: dict) -> tuple[str, str]:
+    """What makes two ops rows, in two different databases, the same row.
+
+    The primary key everywhere except `ops_users`, where it is the **address**.
+    Three stores each seeded `founder@` with an id of its own, so the id says
+    nothing about whether it is the same person -- and `ops_users.email` is
+    unique, so inserting the second copy would fail the index and roll a whole
+    restore back.
+
+    One function because two callers ask this question in opposite directions:
+    the restore asks *is this row already there* before inserting, and
+    `prune_ops.py` asks *is this row safely there* before dropping the table it
+    sits in. Two copies of the rule is how one of them starts deleting a row
+    the other would not have recognised.
+    """
+    if table == OpsUser.__tablename__:
+        return ("email", (row.get("email") or "").lower())
+    return ("id", row.get("id"))
+
+
 def _revive(model, row: dict) -> dict:
     """Turn the dump's ISO strings back into the types the columns declare.
 
@@ -132,10 +152,9 @@ def main() -> int:
                         skipped[table] = skipped.get(table, 0) + 1
                         continue
                     if model is OpsUser:
-                        # One address, one account. Three stores each seeded
-                        # their own copy with a different id, so the id says
-                        # nothing about whether this is the same person.
-                        email = (raw.get("email") or "").lower()
+                        # One address, one account -- `identity_of`, the same
+                        # rule `prune_ops.py` reads before it drops a table.
+                        email = identity_of(table, raw)[1]
                         if email in seen_emails:
                             merged[table] = merged.get(table, 0) + 1
                             continue

@@ -146,6 +146,7 @@ def main() -> int:
     }
 
     grand = 0
+    strays = []
     print()
     for slug in stores():
         data = dump_store(slug)
@@ -154,6 +155,10 @@ def main() -> int:
         payload["stores"][slug or "(default)"] = data
         counts = ", ".join(f"{k.removeprefix('ops_')}={len(v)}" for k, v in data.items() if v)
         label = slug if slug else "(default)"
+        if slug != OPS and data:
+            # The tables are *present* in this store's file, whether or not they
+            # hold anything -- which is the fact `make prune-ops` acts on.
+            strays.append(label)
         print(f"  {label:22} {total:5} rows   {counts or 'nothing'}")
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -170,6 +175,16 @@ def main() -> int:
         # thing standing between a migration and somebody's demo request.
         print("  This is the ops tables only. Before dropping anything, also run")
         print("  `make dump-ops ARGS=--files` and copy the databases themselves.\n")
+    if strays:
+        # These are files seeded before the split. Nothing reads them any more,
+        # so this is tidying rather than a fault -- but it is worth naming,
+        # because a table nobody has looked at is where a demo request goes to
+        # be forgotten, and that is the whole reason this tool walks the stores.
+        print(f"  {len(strays)} store(s) still carry the pre-split ops_ tables: "
+              f"{', '.join(strays)}")
+        print("  Now that this dump exists, `make prune-ops` reports what it would")
+        print("  drop and `make prune-ops ARGS=--apply` removes them. It refuses any")
+        print("  store holding a row this dump's target database does not have.\n")
     return 0
 
 

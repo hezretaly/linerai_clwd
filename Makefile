@@ -1,4 +1,4 @@
-.PHONY: help install build set-password add-user ingest agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
+.PHONY: prune-ops help install build set-password add-user ingest agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -79,6 +79,9 @@ demo-db: ## Delete this store's database and rebuild it with demo buyers (N=50)
 
 dump-ops: ## Save every ops_ row to JSON before a migration: ARGS=--files for the file copy
 	$(PY) scripts/dump_ops.py $(ARGS) $(OUT)
+
+prune-ops: ## Drop the pre-split ops_ tables out of the store files: ARGS=--apply
+	$(PY) scripts/prune_ops.py $(ARGS)
 
 restore-ops: ## Read a dump-ops file back into ops.db: FILE=... [ARGS=--dry-run]
 	@test -n "$(FILE)" || (echo 'Usage: make restore-ops FILE=backend/var/ops-dump-<stamp>.json'; exit 1)

@@ -27,6 +27,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make stores` | Every dealership this deployment can serve, and which are seeded |
 | `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
 | `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
+| `make prune-ops` | Drop the pre-split `ops_` tables out of the store files. Reports by default, `ARGS=--apply` removes them, and it refuses any store holding a row `ops.db` does not |
 | `make reset-dealership` | Rebuild the showroom fixture in place, keeping the store's `inbound_emails` receipts — it detaches them rather than deleting them |
 | `make add-owners` | Put `founder@`/`cto@` in `ops_users` on an **existing** database — no reseed, no data loss |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
@@ -1461,13 +1462,35 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         anything against a single monotonic sequence, so there is one events
         table and ops writes into it. Emitting on an ops session is
         `no such table: events`.
-      - **The old files are not cleaned up at startup.** Dropping a table
-        that might hold the only copy of a demo request is not a migration to
-        run silently on boot. `make dump-ops` finds those rows and
-        `make restore-ops` reads them into `ops.db`, de-duplicating the
-        `founder@` and `cto@` copies on the address — three stores each seeded
-        their own with a different id, so the id says nothing about whether it
-        is the same person.
+      - **The old files are not cleaned up at startup, but there is a command
+        for it.** Dropping a table that might hold the only copy of a demo
+        request is not a migration to run silently on boot. `make dump-ops`
+        finds those rows and `make restore-ops` reads them into `ops.db`,
+        de-duplicating the `founder@` and `cto@` copies on the address — three
+        stores each seeded their own with a different id, so the id says
+        nothing about whether it is the same person. `make prune-ops` then
+        drops the empty tables, and it is the one tool here that deletes a
+        table, so three rules hold it:
+        - **It verifies against `ops.db` before it drops, per row.** Every row
+          is looked for by `restore_ops.identity_of` — the primary key, or the
+          address for `ops_users`. One function, because the restore asks *is
+          this already there* before inserting and the prune asks *is this
+          safely there* before deleting; two copies is how one of them stops
+          recognising a row the other would have kept. A row that is not over
+          there stops the whole store and exits non-zero, and there is
+          deliberately **no flag to force it** — the answer is `make
+          restore-ops` first.
+        - **A store is cleaned as a set, or not at all.** Deciding per table
+          was the first version and it was wrong: `ops_phone_calls` points at
+          `ops_users` and `ops_demo_requests`, so keeping one while dropping
+          its parent leaves a table referencing one that is gone. SQLite only
+          refuses that drop while the child still holds a row — measured, and
+          with an *empty* child it goes through and the orphan then accepts
+          inserts without complaint, so the breakage is silent until something
+          reads it.
+        - **Children first, from `ORDER` reversed.** That list is parent-first
+          because it inserts; this deletes, so it reads the same list from the
+          other end rather than keeping a second copy in step.
     - **The session names its realm.** Two tables mean a bare `uid` is
       ambiguous, and an ambiguous id is one that can be looked up in the wrong
       table. The cookie carries `realm`; a cookie without one predates the
@@ -1829,10 +1852,10 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     every store's file, because `create_all` builds a whole metadata: a known
     cost taken deliberately, with "the day a second store is live in earnest"
     named as when to fix it. That day arrived with the second profile, so
-    `OpsBase` is now its own metadata and its own database. The duplicates in
-    the older files are left where they are and `make dump-ops` is what finds
-    them — a table nobody has looked at is invisible until a demo request goes
-    missing, which is why it was written down rather than left implicit.
+    `OpsBase` is now its own metadata and its own database. `make dump-ops`
+    finds the duplicates in the older files and `make prune-ops` removes them —
+    a table nobody has looked at is invisible until a demo request goes missing,
+    which is why it was written down rather than left implicit.
   - `make stores` lists them and says which are seeded; `make reset-db` takes
     a `DEALERSHIP=` and deletes only that store's file. It goes through
     `scripts/drop_db.py`, which computes the path the way the application

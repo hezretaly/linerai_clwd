@@ -3705,16 +3705,20 @@ def main() -> int:
     check("and it is a real schema, not an empty file that passes vacuously",
           len(built) > 20, f"{len(built)} tables")
 
-    # The restore's own hand-written list, checked the same way. A table
-    # missing from `ORDER` is not restored and the run still reports success,
-    # which is the failure mode a backup tool must not have.
-    restore_src = pathlib.Path("scripts/restore_ops.py").read_text()
-    ordered = [
-        cls.__tablename__
-        for name in re.findall(r"\b([A-Z][A-Za-z]+)\.__tablename__", restore_src)
-        for cls in _OpsBase.__subclasses__()
-        if cls.__name__ == name
-    ]
+    # The restore's own hand-written list. A table missing from `ORDER` is not
+    # restored and the run still reports success, which is the failure mode a
+    # backup tool must not have.
+    #
+    # Read as the imported list rather than scraped out of the source, which is
+    # what this did first and what broke the moment `identity_of` was added: it
+    # mentions `OpsUser.__tablename__` too, the regex counted it as a seventh
+    # entry, and `ops_users` picked up that line's position instead of its own.
+    # `_clear` above has to be read as text because it is a function body with
+    # no list to import; this is a list, so there is no reason to guess at it.
+    sys.path.insert(0, str(pathlib.Path("scripts").resolve()))
+    import restore_ops as _restore
+
+    ordered = [name for name, _model in _restore.ORDER]
     check("make restore-ops reads back every ops table",
           set(ordered) == set(_OPS_TABLES),
           str(sorted(set(ordered) ^ set(_OPS_TABLES))))
@@ -3733,6 +3737,33 @@ def main() -> int:
     )
     check("and inserts them parent-first, so no row trips a foreign key",
           not backwards, str(backwards))
+
+    # `make prune-ops` drops those tables out of the files seeded before the
+    # split, and it is the one tool here that deletes a table. Three properties,
+    # all of them things a later edit could quietly lose.
+    import prune_ops as _prune
+
+    # It asks `identity_of` rather than comparing ids, or every `founder@` copy
+    # reads as a row ops.db does not have and no store is ever cleanable.
+    check("make prune-ops decides sameness with the restore's own rule",
+          _prune.identity_of is _restore.identity_of)
+    # Children first. `ORDER` is parent-first because it inserts; reading the
+    # same list backwards is what keeps the two from drifting apart.
+    check("and drops children before parents, ORDER read the other way up",
+          _prune.DROP_ORDER == [n for n, _m in reversed(_restore.ORDER)],
+          str(_prune.DROP_ORDER[:2]))
+    # All-or-nothing per store. Deciding per table let a kept child sit next to
+    # a dropped parent -- and SQLite only refuses that while the child still
+    # holds a row, so with an empty one it goes through and the orphan then
+    # accepts inserts in silence.
+    prune_src = pathlib.Path("scripts/prune_ops.py").read_text()
+    check("and never drops one ops table out of a store while keeping another",
+          "KEPT ENTIRELY" in prune_src and "unsafe" in prune_src)
+    # Liner's own database is not a target. It is what every store is checked
+    # *against*, so a bug letting it into the loop would drop the originals and
+    # report the copies as safely held.
+    check("and ops.db itself is never a table it would drop",
+          "!= OPS" in prune_src)
 
     # Their livery. `surface` picks a stylesheet class rather than carrying a
     # value into one, so an unknown word must never reach the DOM -- and it is

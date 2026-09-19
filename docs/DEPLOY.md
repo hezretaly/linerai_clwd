@@ -754,15 +754,23 @@ somebody booked with us landed in whichever file happened to be active.
 
 `OpsBase` is a second SQLAlchemy metadata rather than the same one pointed at
 another engine, so a store's `create_all` cannot build an ops table by
-accident. The tables in files seeded before the split are **left alone** —
-deleting something that might be the only copy of a demo request is not a
-migration to run on boot. Two commands cover them:
+accident. The tables in files seeded before the split are **not removed on
+boot** — deleting something that might be the only copy of a demo request is
+not a migration to run silently. Three commands cover them:
 
 ```bash
 make dump-ops                 # every ops_ row, from ops.db AND every store
 make dump-ops ARGS=--files    # prints the cp commands for the files themselves
 make restore-ops FILE=backend/var/ops-dump-<stamp>.json
+make prune-ops                # report what it would drop from the store files
+make prune-ops ARGS=--apply   # drop them
 ```
+
+Run them in that order on an upgrade: dump, restore, then prune. `prune-ops`
+checks every row against `ops.db` first and **refuses a whole store** that holds
+one it cannot find there, exiting non-zero and naming the row — there is no flag
+to override it, because the answer is to restore first. It reports by default and
+writes only with `--apply`.
 
 `dump-ops` walks every store because that is where the strays are. `restore-ops`
 reads it all into `ops.db`: rows already present by primary key are skipped, so
