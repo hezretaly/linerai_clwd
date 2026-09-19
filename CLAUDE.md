@@ -103,6 +103,19 @@ them, because `book_appointment` refuses a clash and the fixture's week only
 holds about twenty slots. A run that kept them would poison the next one, which
 is exactly what happened once.
 
+**A fixture value has to be shaped like the thing it stands for.** The two SMS
+sections built a phone number as `f"+1312555{stamp[-4:]}"` — hex where digits
+belong. `app/matching.py` compares the last ten **digits**, so `+1312555efff`
+and `+1312555abcd` both reduce to `1312555` and match *each other*: any two runs
+whose four characters were all letters were the same buyer. And the section
+minted a lead to prove the number ladder claims a stranger's text without ever
+removing it, so the odds grew with every run — sixteen `Smoke Stranger` rows
+were on the board when it finally broke. Exactly the appointment-slot leak in a
+different column, and the same two-part fix: a value that cannot collide
+(digits), and giving it back at the end. It surfaced as *"is stored rather than
+dropped"*, which names the storing and not the number, and it had nothing to do
+with the change being tested.
+
 **The release of those slots runs in a `finally`, and that is not tidiness.**
 `book_appointment` refuses a clash and the fixture week holds about twenty
 slots, so a run that keeps a booking leaves fewer for the next one. Two ways
@@ -2102,6 +2115,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     ever drawn left an empty folder behind — all under the same fallback name,
     so the debris read as a real dealership's. `_dir` computes, `folder`
     creates, and `make smoke` fails if a lookup makes one.
+    - **And a lookup must not create a database**, which is the same rule one
+      layer down and was got wrong twice in one afternoon. Two places walk
+      every profile to find something — `locate_store` on an unprefixed
+      sign-in, `ops_inbox._each` on every `/ops` read — and *connecting* to
+      SQLite creates the file. Both caught the `no such table` that follows
+      and neither stopped the file appearing, so each unseeded profile gained
+      an empty 4KB database with no tables in it, per request. `make stores`
+      then reports it "not seeded" while it sits there looking like a
+      dealership, and deleting a store's file does not stay deleted.
+      `db.has_database` is the one question both now ask *before* opening, and
+      it is a function rather than three lines in each because the second copy
+      is how one of them stops asking.
+      - **A deleted SQLite file that a process still holds is not gone**, and
+        it made this look fixed when it was not. The engine is cached and its
+        pool keeps the connection, so after the file is unlinked the inode
+        stays alive on an open descriptor — `lsof` shows `(deleted)` — and
+        every later walk reuses it rather than creating anything. So deleting
+        the file and re-testing on the same process proves nothing: the bug
+        only reproduces on a **fresh** one, and both directions have to be
+        measured that way.
 - **Hours come from `hours_json`.** No page states its own.
 - **Live means still being said, not merely still open.** Only the buyer
   closes a thread, so an abandoned tab stays open for ever — and *In progress*

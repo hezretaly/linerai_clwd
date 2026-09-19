@@ -25,7 +25,7 @@ import logging
 from sqlalchemy.exc import OperationalError
 
 from app.config import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, has_database
 from app.models import InboundEmail
 from app.stores import known_stores
 
@@ -45,9 +45,16 @@ def _each(fn):
     empty one — so the query then fails with `no such table: inbound_emails`
     rather than returning nothing. That exact shape took down every sign-in
     once; it is skipped here rather than allowed to 500 the ops dashboard.
+
+    Asked through `has_database` **before** the connect, which is the half
+    this originally missed: catching the error afterwards keeps `/ops`
+    working but the file has already been created by then, and this runs on
+    every read of the ops inbox.
     """
     out = []
     for slug in _stores():
+        if not has_database(slug):
+            continue
         try:
             with SessionLocal(slug) as db:
                 out.append((slug, fn(db)))

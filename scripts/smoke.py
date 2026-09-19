@@ -359,7 +359,30 @@ def release_slots() -> int:
     return released
 
 
+def _store_files() -> set[str]:
+    """The slugs that have a database on disk right now."""
+    import pathlib as _pl
+    import sys as _sys
+
+    _sys.path.insert(0, "backend")
+    from app.config import settings as _s
+
+    return {
+        slug for slug in _s.store_slugs
+        if _pl.Path(_s.database_url_for(slug).split("///", 1)[-1]).exists()
+    }
+
+
 def main() -> int:
+    # Which store files exist *before* this run touches anything. Read here and
+    # nowhere else, because the property it proves — that no request creates a
+    # store database — is destroyed by the first request that does. The check
+    # itself lives in `_stores_section` near the end, and computing the set
+    # there made it silently skip: `/ops` had already created the file, so the
+    # section found every profile seeded and reported nothing to probe. A check
+    # that quietly has no work to do is worse than one that fails.
+    _stores_before = _store_files()
+
     print("\n== health ==")
     health = call("GET", "/api/health")
     check("api is up", health["status"] == "ok")
@@ -952,6 +975,20 @@ def main() -> int:
 
     print("\n== the marketing site books a demo ==")
     stamp = secrets.token_hex(4)
+    #: The same idea for a *phone number*, and it has to be digits.
+    #:
+    #: The two SMS sections built theirs as `f"+1319555{stamp[-4:]}"`, which
+    #: puts hex where digits belong -- and `app/matching.py` compares the last
+    #: ten **digits**, so `+1312555efff` and `+1312555abcd` both reduce to
+    #: `1312555` and match each other. Any two runs whose four hex characters
+    #: happened to be all letters were therefore the same buyer, and each run
+    #: also leaves its stranger behind, so the chance of a collision grows with
+    #: every run: sixteen accumulated strangers is where it started failing.
+    #: Self-reinforcing and it surfaces as "is stored rather than dropped",
+    #: which names the storing rather than the number. Same shape as the
+    #: appointment-slot leak, and the same two-part fix -- a value that cannot
+    #: collide, and giving it back at the end.
+    digits = "".join(secrets.choice("0123456789") for _ in range(4))
     # The page's own back end. Its customer is a dealership rather than a car
     # buyer, which is why it has its own table: putting prospects into `leads`
     # would put strangers in the list a rep works from.
@@ -5350,7 +5387,7 @@ def main() -> int:
     from app import sms as _sms
     from app.db import SessionLocal as _SmsSession, ops_session as _OptOutSession
     from app.matching import digits as _digits
-    from app.models import Lead as _Lead, SmsOptOut as _OptOut
+    from app.models import Lead as _Lead, Outreach as _Outreach, SmsOptOut as _OptOut
 
     @_ctxmgr
     def _session():
@@ -5376,7 +5413,7 @@ def main() -> int:
     check("every emitted event type is registered", not _unregistered,
           ", ".join(_unregistered[:3]) or f"{len(_TYPES)} types")
 
-    _texted = f"+1319555{stamp[-4:]}"
+    _texted = f"+1319555{digits}"
     with _session() as _db:
         _lead = _db.query(_Lead).filter(_Lead.phone != "").first()
         _lead_id, _lead_phone = _lead.id, _lead.phone
@@ -5454,7 +5491,7 @@ def main() -> int:
                   phone_key=_digits(_texted)).count() == 1)
 
     print("\n== a text from somebody we do not know yet ==")
-    _stranger = f"+1312555{stamp[-4:]}"
+    _stranger = f"+1312555{digits}"
     _hello = {"MessageSid": f"SMnew{stamp}", "From": _stranger,
               "To": "+15025550100", "Body": "saw the Tacoma on your site"}
     status_of("POST", "/api/phone/sms", _hello, form=True,
@@ -5473,6 +5510,19 @@ def main() -> int:
               _sms.claim_unresolved(_db, _new) == 1)
         check("so it is no longer listed as unplaced",
               not [r for r in _sms.unresolved(_db) if r.to_address == _stranger])
+        # Given back, like the appointment slots are. This section mints a
+        # buyer to prove the number ladder claims a stranger's text, and every
+        # run leaving that buyer behind is what turned a one-in-a-lot
+        # collision into a certainty -- sixteen Smoke Strangers were on the
+        # board when it finally broke. The text goes with them: it points at
+        # the lead, and an outreach row pointing at a deleted buyer is worse
+        # debris than the buyer was.
+        _db.query(_Outreach).filter(_Outreach.lead_id == _new.id).delete()
+        _db.delete(_new)
+        _db.commit()
+        _left = _db.query(_Lead).filter_by(phone=_stranger).count()
+        check("and the stranger this run invented is cleaned up after it",
+              _left == 0, f"{_left} left on the board")
 
     print("\n== who answers, and who may decide ==")
     check("the phone page needs a session at all",
@@ -5533,7 +5583,7 @@ def main() -> int:
     check("the brief never invents a price, because it has none to read",
           "Never quote a number of any kind" in _persona.instructions())
 
-    _stores_section()
+    _stores_section(_stores_before)
 
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
@@ -5559,7 +5609,7 @@ def main() -> int:
     return report()
 
 
-def _stores_section() -> None:
+def _stores_section(before: set[str]) -> None:
     """One process, several dealerships, told apart by the URL.
 
     Every check here is against a store that is **seeded**, and the section
@@ -5588,6 +5638,37 @@ def _stores_section() -> None:
           "ops" in _RESERVED and _split("/ops/mail") == ("", "/ops/mail"))
     check("nor are the app's own top-level paths",
           all(_split(f"/{name}/x") == ("", f"/{name}/x") for name in ("api", "ws", "assets")))
+
+    # **Nothing this run did may create a store database.** Two places walk
+    # every profile to look something up -- `locate_store` on an unprefixed
+    # sign-in and `ops_inbox._each` on every `/ops` read -- and *connecting* to
+    # SQLite creates the file. Both caught the `no such table` that follows and
+    # neither stopped the file appearing, so each unseeded profile gained an
+    # empty 4KB database with no tables in it. `make stores` then reports it
+    # "not seeded" while it sits there looking like a dealership, and deleting
+    # a store's file does not stay deleted. Same rule `photo_path` follows.
+    #
+    # Compared against a set read at the *start* of the run, because by the
+    # time this section is reached the requests above have already done it --
+    # computing the candidates here made the check find every profile seeded
+    # and skip itself, which is how it passed against the bug.
+    #
+    # And the walk is *provoked* rather than waited for. An address the default
+    # store holds is found on the first query and never reaches the others, and
+    # an owner is answered out of `ops.db` before any store is opened -- so an
+    # ordinary run touches no unseeded profile and the comparison passes
+    # whatever the code does. It took removing the fix twice to see that: the
+    # first version only caught the bug because the probe it made was itself
+    # the thing doing the walking. An address nobody has is what forces every
+    # store to be tried.
+    status_of("POST", "/api/auth/login",
+              {"email": f"nobody.{secrets.token_hex(4)}@example.invalid",
+               "password": "wrong"})
+    # The other walker: `/ops` reads `inbound_emails` across every store.
+    status_of("GET", "/api/ops/mail?box=all")
+    appeared = sorted(_store_files() - before)
+    check("no request in this run created a store database",
+          not appeared, f"appeared: {appeared}" if appeared else f"{len(before)} seeded throughout")
 
     seeded = [
         slug for slug in _settings.store_slugs

@@ -222,6 +222,29 @@ def sqlite_path(slug: str | None = None) -> Path | None:
     return Path(url.split("///", 1)[-1]) if "///" in url else None
 
 
+def has_database(slug: str | None = None) -> bool:
+    """Whether this store has a database yet — asked without creating one.
+
+    **Connecting to SQLite creates the file**, so anything that walks the
+    store list to look something up has to ask this first. Two places do:
+    `locate_store` on every unprefixed sign-in, and `ops_inbox._each` on every
+    `/ops` read. Both handled the resulting `no such table` correctly and both
+    still left an empty 4KB database behind for each unseeded profile — which
+    `make stores` then reports "not seeded" while it sits there looking like a
+    dealership, and which makes deleting a store's file not stay deleted.
+
+    One function rather than the same three lines in each, because this was
+    written twice in one afternoon and the second copy is how one of them
+    stops asking. Same rule `photo_path` follows: a lookup must not create the
+    thing it is looking for.
+
+    A deployment that is not on SQLite has no file to test, so it answers True
+    and the caller's error handling stays the path that covers it.
+    """
+    path = sqlite_path(slug)
+    return True if path is None else path.exists()
+
+
 def readonly_help() -> str:
     """What "attempt to write a readonly database" actually means here.
 

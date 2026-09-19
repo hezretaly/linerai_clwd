@@ -17,7 +17,7 @@ from app.api.deps import (
     verify_password,
 )
 from app.config import settings
-from app.db import SessionLocal, current_store, get_db, ops_session
+from app.db import SessionLocal, current_store, get_db, has_database, ops_session
 from app.models import OpsUser, User
 from app.ratelimit import SlidingWindow
 from app.stores import known_stores
@@ -151,12 +151,19 @@ def locate_store(email: str) -> str:
     default = settings.dealership.strip()
     order = [default] + [s for s in known_stores() if s != default]
     for slug in order:
+        # Asked before opening, because connecting is what creates the file.
+        # See `has_database` -- an unprefixed sign-in walks every profile, so
+        # without this each unseeded one gained an empty database per login.
+        if not has_database(slug):
+            continue
         try:
             with SessionLocal(slug) as db:
                 found = db.query(User.id).filter_by(email=email, active=True).first()
         except OperationalError:
-            # A store with a profile but no database yet. Opening it *creates*
-            # the file, so the next query fails with `no such table: users`
+            # Still caught, because the check above cannot cover every case:
+            # a file that exists but holds no tables is exactly the debris
+            # this used to leave, and a Postgres deployment has no path to
+            # test. Without it the query fails with `no such table: users`
             # rather than returning nothing -- which came back as a 500 on
             # every sign-in, and took the constant-time guard with it: the
             # unknown-address path raised before it reached bcrypt, so an
