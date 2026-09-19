@@ -447,6 +447,14 @@ class Settings(BaseSettings):
     #: remembering a `WHERE` clause.
     stores_dir: Path = BACKEND_DIR / "var" / "stores"
 
+    #: Liner's own database: the demos people booked with us, the mail we
+    #: wrote, who rang the number. **One file, never per store.** It sat in
+    #: whichever store was the default, which meant `founder@` existed once
+    #: per dealership and a demo landed in whichever file happened to be
+    #: active — scattered rows that a backup looking in one place would have
+    #: missed entirely.
+    ops_database_url: str = f"sqlite:///{BACKEND_DIR / 'var' / 'ops.db'}"
+
     def database_url_for(self, slug: str) -> str:
         """Where one store's rows live.
 

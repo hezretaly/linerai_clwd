@@ -30,7 +30,7 @@ import sys
 from passlib.context import CryptContext
 
 from app.config import DEV_SEED_PASSWORD, settings
-from app.db import SessionLocal
+from app.db import SessionLocal, ops_session
 from app.models import OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -52,17 +52,19 @@ def main() -> int:
     args = parser.parse_args()
 
     db = SessionLocal()
+    ops = ops_session()
     try:
         # Both tables: our accounts are in `ops_users` and a password change
         # is exactly as much a password change for one of them.
         email = args.email.strip().lower()
         user = (
             db.query(User).filter(User.email == email).one_or_none()
-            or db.query(OpsUser).filter(OpsUser.email == email).one_or_none()
+            # Ours are in Liner's own database, not this store's.
+            or ops.query(OpsUser).filter(OpsUser.email == email).one_or_none()
         )
         if user is None:
             known = [u.email for u in db.query(User).order_by(User.email).all()] + [
-                u.email for u in db.query(OpsUser).order_by(OpsUser.email).all()
+                u.email for u in ops.query(OpsUser).order_by(OpsUser.email).all()
             ]
             print(f"No account with the email {args.email!r}.", file=sys.stderr)
             if known:

@@ -12,13 +12,27 @@ A separate table cannot be queried by accident. That is the whole argument:
 the separation stops being something five call sites have to remember and
 becomes something the schema enforces.
 
-Still one database, deliberately. Two would mean two connections, two backups,
-two `create_all`s and no way to read both sides in one request -- and the
-`events` table the dealer socket replays from lives on the other side of that
-line. What the split buys is the thing that actually went wrong; a second
-database buys isolation against a threat that does not exist while we are the
-only operator. If it ever does, these are the tables that move, and they are
-already the only ones that would.
+**And now a database of their own**, which this file said for a long time was
+unnecessary. What changed is that a dealership got its own SQLite file: with
+one database per store, a table built from the shared metadata is built into
+*every* store, so `founder@` and `cto@` existed once per dealership and a demo
+somebody booked with us landed in whichever file happened to be active. The
+rows were scattered, and a dump written to look in one place would have missed
+them. That is the failure this file's own argument predicted -- these are the
+tables that move, and they were already the only ones that would.
+
+They can move wholesale because they are a closed set: the only foreign keys
+here point at other `ops_` tables, and nothing on the dealership's side points
+back. A cross-database foreign key is impossible in SQLite, so that was the
+question that decided the shape of the split rather than a detail found
+afterwards.
+
+`OpsBase` is a second declarative base, and that is what makes it real.
+Sharing one `Base` and simply pointing a different engine at it would leave
+`create_all` building all six into every store's file -- empty, unread, and
+waiting to be written to by anything that forgot. Two metadatas mean a store's
+`create_all` cannot build an ops table even by accident, which is the same
+argument the `ops_` prefix makes one level down.
 """
 
 from __future__ import annotations
@@ -36,11 +50,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db import Base
+from app.db import OpsBase
 from app.models.base import created, new_id
 
 
-class OpsUser(Base):
+class OpsUser(OpsBase):
     """Us. Not a `User` -- a `User` works at the dealership.
 
     The two tables have almost the same columns and that is not a reason to
@@ -71,7 +85,7 @@ class OpsUser(Base):
         return "owner"
 
 
-class DemoRequest(Base):
+class DemoRequest(OpsBase):
     """Somebody asking Liner AI for a demo, or for help.
 
     Not a `Lead`. A lead is a person buying a car from the dealership; this is
@@ -110,7 +124,7 @@ class DemoRequest(Base):
     created_at: Mapped[datetime] = created()
 
 
-class OpsMessage(Base):
+class OpsMessage(OpsBase):
     """Mail *we* wrote: a draft being written, or one that has gone out.
 
     Sending used to leave no row at all -- `sender.send()` was called and the
@@ -166,7 +180,7 @@ class OpsMessage(Base):
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
-class OpsMailState(Base):
+class OpsMailState(OpsBase):
     """Read and trash marks for mail we did *not* write.
 
     A separate table because the two sources it covers are separate tables and
@@ -203,7 +217,7 @@ class OpsMailState(Base):
     )
 
 
-class PhoneCall(Base):
+class PhoneCall(OpsBase):
     """One call on Liner's own Twilio number, either direction.
 
     **Ours, even when the dealership's assistant answered it.** The number is
@@ -256,7 +270,7 @@ class PhoneCall(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-class SmsOptOut(Base):
+class SmsOptOut(OpsBase):
     """Somebody who texted STOP. **This one must never be lost.**
 
     It lives on our side of the line for a reason that outranks whose buyer it

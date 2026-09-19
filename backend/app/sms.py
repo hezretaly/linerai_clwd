@@ -36,8 +36,8 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import utcnow
-from app.events import emit
+from app.db import ops_session, utcnow
+from app.events import emit, emit_ops
 from app.integrations import twilio_account as account
 from app.integrations.sms import twilio_sms
 from app.matching import digits, match_lead
@@ -67,49 +67,68 @@ OPTED_OUT_CODE = "21610"
 # Opting out
 # --------------------------------------------------------------------------
 
-def opted_out(db: Session, phone: str) -> bool:
-    row = _opt_out_row(db, phone)
-    return row is not None and row.resumed_at is None
+def opted_out(phone: str) -> bool:
+    """Has this number told us to stop?
+
+    **No `db` argument, on purpose.** `ops_sms_opt_outs` is in Liner's own
+    database now, not a dealership's -- there is one Twilio number and an
+    opt-out is against *it*, so it cannot be per store. Taking a session would
+    mean four callers each deciding which one to hand over, and the one that
+    guessed the dealership's would get "not opted out" for somebody who had.
+    That answer is a text to a person who said stop.
+    """
+    with ops_session() as ops:
+        row = _opt_out_row(ops, phone)
+        return row is not None and row.resumed_at is None
 
 
 def _opt_out_row(db: Session, phone: str) -> SmsOptOut | None:
+    """`db` here is **Liner's own**, not the dealership's -- see `opted_out`."""
     key = digits(phone)
     if not key:
         return None
     return db.query(SmsOptOut).filter_by(phone_key=key).one_or_none()
 
 
-def opt_out(db: Session, phone: str, reason: str = "STOP") -> SmsOptOut | None:
-    """Record that this number wants nothing more. Idempotent."""
+def opt_out(phone: str, reason: str = "STOP") -> SmsOptOut | None:
+    """Record that this number wants nothing more. Idempotent.
+
+    Written to Liner's own database, and the event goes there too: the number
+    is ours and the consent is against it, so neither belongs in a store.
+    """
     key = digits(phone)
     if not key:
         return None
-    row = _opt_out_row(db, phone)
-    if row is None:
-        row = SmsOptOut(phone_key=key, phone=phone, reason=reason)
-        db.add(row)
-    else:
-        row.reason = reason
-        row.at = utcnow()
-    # A second STOP after a START is a fresh opt-out, not a no-op.
-    row.resumed_at = None
-    db.commit()
-    log.info("sms opt-out recorded for %s (%s)", key, reason)
-    emit(db, "sms.opt_out", {"phone": phone, "reason": reason})
-    return row
+    with ops_session() as ops:
+        row = _opt_out_row(ops, phone)
+        if row is None:
+            row = SmsOptOut(phone_key=key, phone=phone, reason=reason)
+            ops.add(row)
+        else:
+            row.reason = reason
+            row.at = utcnow()
+        # A second STOP after a START is a fresh opt-out, not a no-op.
+        row.resumed_at = None
+        ops.commit()
+        log.info("sms opt-out recorded for %s (%s)", key, reason)
+        emit_ops("sms.opt_out", {"phone": phone, "reason": reason})
+        ops.expunge(row)
+        return row
 
 
-def resume(db: Session, phone: str, reason: str = "START") -> SmsOptOut | None:
+def resume(phone: str, reason: str = "START") -> SmsOptOut | None:
     """They texted START. Kept as a row rather than deleted: the opt-out
     happened, and a consent record that erases its own history answers nothing
     when somebody asks about it later."""
-    row = _opt_out_row(db, phone)
-    if row is None:
-        return None
-    row.resumed_at = utcnow()
-    db.commit()
-    emit(db, "sms.resumed", {"phone": phone, "reason": reason})
-    return row
+    with ops_session() as ops:
+        row = _opt_out_row(ops, phone)
+        if row is None:
+            return None
+        row.resumed_at = utcnow()
+        ops.commit()
+        emit_ops("sms.resumed", {"phone": phone, "reason": reason})
+        ops.expunge(row)
+        return row
 
 
 def keyword(body: str) -> str:
@@ -132,13 +151,13 @@ def keyword(body: str) -> str:
 # Sending
 # --------------------------------------------------------------------------
 
-def blocked_reason(db: Session, to: str) -> str:
+def blocked_reason(to: str) -> str:
     """Why this text must not go out, or "" if it may.
 
     Both gates in one place, so a caller cannot check one and forget the
     other -- the same reason `outreach_send.blocked_reason` is one function.
     """
-    if opted_out(db, to):
+    if opted_out(to):
         return (
             f"Not sent: {to} texted STOP and has not texted START. "
             "Nothing further goes to that number until they do."
@@ -194,7 +213,7 @@ def send(
     db.commit()
     db.refresh(row)
 
-    refusal = blocked_reason(db, to)
+    refusal = blocked_reason(to)
     if refusal:
         row.status = "failed"
         row.error = refusal
@@ -212,7 +231,7 @@ def send(
         # on rather than only recording: without this the next send fails the
         # same way, and the one after that.
         if OPTED_OUT_CODE in detail:
-            opt_out(db, to, reason=f"Twilio {OPTED_OUT_CODE}")
+            opt_out(to, reason=f"Twilio {OPTED_OUT_CODE}")
         return row
 
     row.provider_message_id = str(result.get("sid") or "")
@@ -263,9 +282,9 @@ def receive(db: Session, params: dict[str, str]) -> Outreach | None:
     # one thing that must take effect even if every other step fails.
     word = keyword(body)
     if word == "stop":
-        opt_out(db, from_number, reason=(body or "STOP").strip()[:40])
+        opt_out(from_number, reason=(body or "STOP").strip()[:40])
     elif word == "start":
-        resume(db, from_number)
+        resume(from_number)
 
     lead = match_lead(db, "", from_number)
     row = Outreach(

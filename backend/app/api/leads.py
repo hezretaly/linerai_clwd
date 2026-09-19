@@ -496,8 +496,8 @@ def sms_state(
     return {
         "configured": sms_module.configured(),
         "to": to,
-        "opted_out": bool(to) and sms_module.opted_out(db, to),
-        "blocked": sms_module.blocked_reason(db, to) if to else "No number on file.",
+        "opted_out": bool(to) and sms_module.opted_out(to),
+        "blocked": sms_module.blocked_reason(to) if to else "No number on file.",
         "segment": twilio_sms.SEGMENT,
         "max_body": twilio_sms.MAX_BODY,
     }

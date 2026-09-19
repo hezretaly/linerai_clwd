@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app import profile
 from app.add_user import initials
 from app.config import settings
-from app.db import SessionLocal, create_all, utcnow
+from app.db import SessionLocal, create_all, create_ops_all, ops_session, utcnow
 from app.models import (
     Appointment,
     AssistantSettings,
@@ -515,19 +515,28 @@ def _seed_users(db: Session, raw: dict) -> tuple[list[User], list[tuple[User, st
     return users, minted
 
 
-def _seed_owners(db: Session) -> int:
-    """Ours, and idempotent -- `_clear` never touches `ops_users`.
+def _seed_owners(db: Session | None = None) -> int:
+    """Ours, and idempotent.
+
+    **Written to Liner's own database, never to a store's.** It used to take
+    the dealership's session, which with one file per store meant `founder@`
+    and `cto@` were created once per dealership -- three copies of two
+    accounts, and a demo landing in whichever file happened to be active. The
+    `db` argument is ignored and kept only so existing callers do not have to
+    change; there is one ops database and this writes to it.
 
     Re-hashing an existing row would undo a password somebody set with
     `make set-password`, and a reseed of the dealership's fixture is no reason
     to lock one of us out.
     """
+    create_ops_all()
     added = 0
-    for person in OWNERS:
-        if db.query(OpsUser).filter_by(email=person[1]).first() is None:
-            db.add(build_owner(*person))
-            added += 1
-    db.commit()
+    with ops_session() as ops:
+        for person in OWNERS:
+            if ops.query(OpsUser).filter_by(email=person[1]).first() is None:
+                ops.add(build_owner(*person))
+                added += 1
+        ops.commit()
     return added
 
 
@@ -987,6 +996,8 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
 
 def seed(db: Session | None = None) -> None:
     create_all()
+    # Ours, built once and never per store.
+    create_ops_all()
     owns_session = db is None
     db = db or SessionLocal()
     try:

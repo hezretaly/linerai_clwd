@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app import demo_slots, flags
 from app.config import settings
-from app.db import utcnow
+from app.db import ops_session, utcnow
 from app.models import DemoRequest, PhoneCall
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -289,9 +289,17 @@ def instructions() -> str:
 
 
 def demo_for(db: Session, call: PhoneCall) -> DemoRequest | None:
+    """The demo this call booked, from Liner's own database.
+
+    `db` is a dealership's and is ignored -- `ops_demo_requests` is not in it.
+    """
     if not call.demo_request_id:
         return None
-    return db.query(DemoRequest).filter_by(id=call.demo_request_id).one_or_none()
+    with ops_session() as ops:
+        row = ops.query(DemoRequest).filter_by(id=call.demo_request_id).one_or_none()
+        if row is not None:
+            ops.expunge(row)
+        return row
 
 
 #: Named here rather than imported from `flags` at every call site, so the two

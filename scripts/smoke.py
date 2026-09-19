@@ -1016,9 +1016,11 @@ def main() -> int:
     # Read straight from the row: what was shown and what was stored have to
     # be the same words, and the endpoint that would serve it is ours rather
     # than the dealership's, so this is the honest way to ask from here.
-    from app.db import SessionLocal as _S
+    # Liner's own database: `ops_demo_requests` moved out of the stores, so a
+    # dealership session no longer carries the table at all.
+    from app.db import ops_session as _ops
     from app.models import DemoRequest as _DR
-    with _S() as _db:
+    with _ops() as _db:
         stored = _db.query(_DR).filter_by(id=helped["id"]).one().consent_text
     check("and it is the wording stored on the row, not the demo one",
           stored == offer["support_consent_text"], stored[:70])
@@ -2460,10 +2462,14 @@ def main() -> int:
     # Our accounts are in `ops_users` now, not a role on the dealership's
     # table. That fixes a class of bug rather than three instances: an
     # unfiltered query(User) simply cannot reach one.
-    from app.db import SessionLocal as _Session
+    # Two databases, one assertion: ours are in `ops.db` and the dealership's
+    # staff are in the store's file. That is the point -- an unfiltered
+    # `query(User)` cannot reach one of us because the table is not there.
+    from app.db import SessionLocal as _Session, ops_session as _OpsSession
     from app.models import OpsUser as _OpsUser, User as _User
+    with _OpsSession() as _ops:
+        owner_id = _ops.query(_OpsUser).first().id
     with _Session() as _db:
-        owner_id = _db.query(_OpsUser).first().id
         strays = _db.query(_User).filter(_User.role.notin_(("manager", "rep"))).count()
     check("and `users` holds nobody but the dealership's own staff", strays == 0,
           f"{strays} stray row(s)")
@@ -3751,7 +3757,7 @@ def main() -> int:
     check("the worker declares the recipients it accepts", len(prefixes) >= 3, str(prefixes))
 
     from app.config import settings as _cfg
-    from app.db import SessionLocal as _Sess
+    from app.db import ops_session as _Sess
     from app.models import OpsUser as _Ops
     _db = _Sess()
     published = {_cfg.founder_email} | {
@@ -5224,7 +5230,7 @@ def main() -> int:
     from contextlib import contextmanager as _ctxmgr
 
     from app import sms as _sms
-    from app.db import SessionLocal as _SmsSession
+    from app.db import SessionLocal as _SmsSession, ops_session as _OptOutSession
     from app.matching import digits as _digits
     from app.models import Lead as _Lead, SmsOptOut as _OptOut
 
@@ -5295,7 +5301,7 @@ def main() -> int:
 
     print("\n== the brakes are the ones email already has ==")
     with _session() as _db:
-        _refusal = _sms.blocked_reason(_db, _texted)
+        _refusal = _sms.blocked_reason(_texted)
     check("OUTBOUND_ONLY_TO gates a text as it gates mail",
           "OUTBOUND_ONLY_TO" in _refusal, _refusal[:60])
 
@@ -5306,9 +5312,9 @@ def main() -> int:
                        _twilio.signature_for(_surl, _stop, _TOKEN)})
     with _session() as _db:
         check("STOP is recorded on our side, not only at Twilio",
-              _sms.opted_out(_db, _texted))
+              _sms.opted_out(_texted))
         check("and the refusal names it before any send is attempted",
-              "texted STOP" in _sms.blocked_reason(_db, _texted))
+              "texted STOP" in _sms.blocked_reason(_texted))
         # The row is kept even when the send never happens: a refused message
         # is the one a rep most needs to find again.
         _row = _sms.send(_db, _texted, "one more thing")
@@ -5320,12 +5326,13 @@ def main() -> int:
     status_of("POST", "/api/phone/sms", _start, form=True,
               headers={"X-Twilio-Signature":
                        _twilio.signature_for(_surl, _start, _TOKEN)})
-    with _session() as _db:
-        check("START lets them back in", not _sms.opted_out(_db, _texted))
-        # Kept rather than deleted: the opt-out happened, and a consent record
-        # that erases its own history answers nothing later.
+    check("START lets them back in", not _sms.opted_out(_texted))
+    # Kept rather than deleted: the opt-out happened, and a consent record
+    # that erases its own history answers nothing later. Read from Liner's own
+    # database -- one Twilio number, so one opt-out list, never per store.
+    with _OptOutSession() as _optout_db:
         check("and the opt-out is kept as history, not deleted",
-              _db.query(_OptOut).filter_by(
+              _optout_db.query(_OptOut).filter_by(
                   phone_key=_digits(_texted)).count() == 1)
 
     print("\n== a text from somebody we do not know yet ==")

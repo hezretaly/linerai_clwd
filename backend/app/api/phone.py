@@ -31,8 +31,8 @@ from sqlalchemy.orm import Session
 from app import flags, sms
 from app.api.deps import require_owner
 from app.config import settings
-from app.db import get_db, utcnow
-from app.events import emit
+from app.db import get_db, ops_session, utcnow
+from app.events import emit, emit_ops
 from app.integrations.voice import twilio_voice
 from app.models import OpsUser, Outreach, PhoneCall
 from app.schemas.serialize import stamp
@@ -120,22 +120,26 @@ async def incoming_call(request: Request, db: Session = Depends(get_db)) -> Resp
             "Please try again later."
         )
 
-    call = PhoneCall(
-        direction="in",
-        call_sid=params.get("CallSid", ""),
-        from_number=params.get("From", ""),
-        to_number=params.get("To", ""),
-        persona=persona,
-        status=params.get("CallStatus", "in-progress"),
-    )
-    db.add(call)
-    db.commit()
-    db.refresh(call)
-
-    emit(db, "phone.started", {
-        "call_id": call.id, "direction": "in",
-        "from": call.from_number, "persona": persona,
-    })
+    # The number is Liner's, so the call log is Liner's: `ops_phone_calls`
+    # lives in our own database and never in a dealership's. `db` above is
+    # still the store's, because the persona flag is a `runtime_flags` row.
+    with ops_session() as ops:
+        call = PhoneCall(
+            direction="in",
+            call_sid=params.get("CallSid", ""),
+            from_number=params.get("From", ""),
+            to_number=params.get("To", ""),
+            persona=persona,
+            status=params.get("CallStatus", "in-progress"),
+        )
+        ops.add(call)
+        ops.commit()
+        ops.refresh(call)
+        emit_ops("phone.started", {
+            "call_id": call.id, "direction": "in",
+            "from": call.from_number, "persona": persona,
+        })
+        call_id, from_number = call.id, call.from_number
 
     stream = twilio_voice.stream_url(_base(request))
     if "://" not in stream:
@@ -158,7 +162,7 @@ async def incoming_call(request: Request, db: Session = Depends(get_db)) -> Resp
     # The call id rides along as a custom parameter, so the socket knows which
     # row it belongs to without a second lookup by SID -- and without trusting
     # the socket to tell us who it is.
-    url = f"{stream}?call={call.id}"
+    url = f"{stream}?call={call_id}"
     return Response(
         twilio_voice.connect_stream(url, settings.phone_greeting),
         media_type=XML,
@@ -170,11 +174,13 @@ async def call_status(request: Request, db: Session = Depends(get_db)) -> Respon
     """Twilio's last word on a call. Only `completed` is subscribed to."""
     params = await _verified(request, "/api/phone/status")
     sid = params.get("CallSid", "")
+    ops = ops_session()
     call = (
-        db.query(PhoneCall).filter_by(call_sid=sid).order_by(PhoneCall.started_at.desc()).first()
+        ops.query(PhoneCall).filter_by(call_sid=sid).order_by(PhoneCall.started_at.desc()).first()
         if sid else None
     )
     if call is None:
+        ops.close()
         # Not an error. A status callback for a call this instance never
         # recorded is what a reseed or a second environment looks like, and
         # answering 404 makes Twilio retry something that will never resolve.
@@ -183,10 +189,11 @@ async def call_status(request: Request, db: Session = Depends(get_db)) -> Respon
     call.status = params.get("CallStatus", call.status)
     call.duration_sec = int(params.get("CallDuration") or call.duration_sec or 0)
     call.ended_at = call.ended_at or utcnow()
-    db.commit()
-    emit(db, "phone.ended", {
+    ops.commit()
+    emit_ops("phone.ended", {
         "call_id": call.id, "status": call.status, "seconds": call.duration_sec,
     })
+    ops.close()
     return Response("", media_type=XML)
 
 
@@ -261,7 +268,7 @@ async def sms_status(request: Request, db: Session = Depends(get_db)) -> Respons
         row.error = f"Twilio error {code}: {params.get('ErrorMessage') or 'no detail given'}"
         # The one error worth acting on rather than only recording.
         if code == sms.OPTED_OUT_CODE:
-            sms.opt_out(db, row.to_address, reason=f"Twilio {code}")
+            sms.opt_out(row.to_address, reason=f"Twilio {code}")
     db.commit()
     emit(db, "sms.status", {
         "outreach_id": row.id, "lead_id": row.lead_id, "status": row.status,
@@ -316,9 +323,14 @@ def phone_state(
         # request came in on" is not an answer that can be written down.
         absent = absent + ["PUBLIC_BASE_URL"]
 
-    calls = (
-        db.query(PhoneCall).order_by(PhoneCall.started_at.desc()).limit(50).all()
-    )
+    # `ops` is this module's router, so the session is `ops_db`. Named apart
+    # deliberately: `ops.query(...)` would reach the APIRouter and fail at
+    # runtime rather than at import.
+    with ops_session() as ops_db:
+        calls = (
+            ops_db.query(PhoneCall).order_by(PhoneCall.started_at.desc()).limit(50).all()
+        )
+        rows = [_call_out(c) for c in calls]
     persona = flags.get(db, "phone_persona")
     return {
         "configured": not absent,
@@ -361,7 +373,7 @@ def phone_state(
         # both work, and the difference only shows up on the day somebody has
         # to rotate one of them.
         "auth_source": twilio_voice.auth_source(),
-        "calls": [_call_out(row) for row in calls],
+        "calls": rows,
     }
 
 
@@ -427,6 +439,7 @@ def place_call(
     status = twilio_voice.webhook_url("/api/phone/status")
     result = twilio_voice.place_call(settings.twilio_ops_number, answer, status)
 
+    ops_db = ops_session()
     call = PhoneCall(
         direction="out",
         call_sid=str(result.get("sid") or ""),
@@ -440,10 +453,12 @@ def place_call(
         placed_by_user_id=user.id,
         demo_request_id=body.demo_request_id or None,
     )
-    db.add(call)
-    db.commit()
-    db.refresh(call)
-    emit(db, "phone.started", {
+    ops_db.add(call)
+    ops_db.commit()
+    ops_db.refresh(call)
+    emit_ops("phone.started", {
         "call_id": call.id, "direction": "out", "to": to, "by": user.id,
     })
-    return {"call": _call_out(call)}
+    out = _call_out(call)
+    ops_db.close()
+    return {"call": out}

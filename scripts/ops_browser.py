@@ -86,10 +86,12 @@ def _clear_run_mail() -> int:
     itself is a different act from a person binning their mail.
     """
     sys.path.insert(0, "backend")
-    from app.db import SessionLocal
+    # Liner's own database: `ops_messages` moved out of the stores, so a
+    # dealership session no longer carries the table.
+    from app.db import ops_session
     from app.models import OpsMessage
 
-    with SessionLocal() as db:
+    with ops_session() as db:
         rows = (
             db.query(OpsMessage)
             # Every address this script ever sends to. The reply in step 11

@@ -38,7 +38,7 @@ import sys
 
 from passlib.context import CryptContext
 
-from app.db import SessionLocal, create_all
+from app.db import SessionLocal, ops_session, create_all
 from app.models import OpsUser, User
 
 #: Its own context rather than importing the seed's. The dependency has to run
@@ -109,7 +109,12 @@ def add_user(email: str, name: str, role: str) -> int:
         # form and it has to identify exactly one account. An address that is
         # already one of ours would otherwise create a second row that the
         # dealership's login finds first.
-        if db.query(OpsUser).filter(OpsUser.email == email).one_or_none() is not None:
+        # Checked in Liner's own database: an address that is one of ours
+        # must not also become a dealership account, and `ops_users` is no
+        # longer in this file at all.
+        with ops_session() as ops:
+            clash = ops.query(OpsUser).filter(OpsUser.email == email).one_or_none()
+        if clash is not None:
             print(f"{email} is one of Liner's own accounts, in ops_users.", file=sys.stderr)
             print("Dealership staff and our staff are separate on purpose. Use a different "
                   "address, or `make set-password` to change that one.", file=sys.stderr)

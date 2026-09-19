@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import utcnow
-from app.events import emit
+from app.db import ops_session, utcnow
+from app.events import emit, emit_ops
 from app.models import DemoRequest
 from app.schemas.serialize import iso
 
@@ -37,21 +37,28 @@ PHONE_CONSENT = (
 )
 
 
-def open_slots(db: Session, days_ahead: int = 0) -> list[datetime]:
+def open_slots(db: Session | None = None, days_ahead: int = 0) -> list[datetime]:
     """Times a demo can actually be booked into.
 
     Built from a weekday window rather than a calendar we do not have, and the
     ones already taken are removed -- so nothing can offer a time that is not
     really free, which is the rule `check_availability` follows for a buyer
     looking at a dealership's week.
+
+    **It opens Liner's own database itself.** A demo request is ours whichever
+    door it arrived by -- the marketing form, or somebody on the phone -- and
+    a `db` argument would ask two callers to decide which database that is,
+    with a dealership's session being the plausible wrong answer. It is
+    accepted and ignored so existing calls keep working.
     """
     now = utcnow()
-    taken = {
-        row.slot_at
-        for row in db.query(DemoRequest)
-        .filter(DemoRequest.slot_at.isnot(None), DemoRequest.status != "cancelled")
-        .all()
-    }
+    with ops_session() as ops:
+        taken = {
+            row.slot_at
+            for row in ops.query(DemoRequest)
+            .filter(DemoRequest.slot_at.isnot(None), DemoRequest.status != "cancelled")
+            .all()
+        }
     hours = [int(h) for h in settings.demo_hours.split(",") if h.strip().isdigit()]
     out: list[datetime] = []
     day = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -66,7 +73,7 @@ def open_slots(db: Session, days_ahead: int = 0) -> list[datetime]:
 
 
 def create(
-    db: Session,
+    db: Session | None = None,
     *,
     fields: dict,
     slot: datetime | None,
@@ -80,6 +87,7 @@ def create(
     nobody clicked for. A second caller that wrote the row and forgot the emit
     would book a demo nobody was told about.
     """
+    ops = ops_session()
     row = DemoRequest(
         kind="demo" if slot is not None else "support",
         slot_at=slot,
@@ -87,10 +95,10 @@ def create(
         consent_text=consent_text,
         **fields,
     )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    emit(db, "demo.requested", {
+    ops.add(row)
+    ops.commit()
+    ops.refresh(row)
+    emit_ops("demo.requested", {
         "request_id": row.id,
         "kind": row.kind,
         "name": row.name,
@@ -101,4 +109,8 @@ def create(
         # which is a warmer thing than a form at two in the morning.
         "source": source,
     })
+    # Detached before the session closes: the caller reads columns off it to
+    # build a response, and every one of them is already loaded.
+    ops.expunge(row)
+    ops.close()
     return row

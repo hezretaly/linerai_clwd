@@ -45,7 +45,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app import flags, phone_persona
 from app.config import settings
-from app.db import SessionLocal, utcnow
+from app.db import SessionLocal, ops_session, utcnow
 from app.events import emit
 from app.models import Conversation, Message, PhoneCall
 
@@ -123,8 +123,10 @@ async def media_socket(websocket: WebSocket, call: str = Query("")) -> None:
     await websocket.accept()
 
     db = SessionLocal()
+    # `ops_phone_calls` is Liner's own: one number, one log, never per store.
+    ops = ops_session()
     try:
-        row = db.query(PhoneCall).filter_by(id=call).one_or_none() if call else None
+        row = ops.query(PhoneCall).filter_by(id=call).one_or_none() if call else None
         if row is None:
             log.warning("media socket opened for unknown call %r", call)
             await websocket.close(code=UNCONFIGURED, reason="Unknown call")
@@ -234,7 +236,7 @@ async def _pump(
     except Exception as exc:  # a refused key, a dropped provider, a bad model
         log.exception("phone bridge failed on call %s", call_id)
         with _session() as db:
-            row = db.query(PhoneCall).filter_by(id=call_id).one_or_none()
+            row = ops.query(PhoneCall).filter_by(id=call_id).one_or_none()
             if row is not None:
                 row.status = row.status if row.status == "completed" else "failed"
                 row.ended_at = row.ended_at or utcnow()
@@ -276,6 +278,7 @@ def _session():
     for the whole call. Each piece of work takes its own.
     """
     db = SessionLocal()
+    ops = ops_session()
     try:
         yield db
     finally:
@@ -414,7 +417,7 @@ def _execute(state: _Call, name: str, args: dict) -> dict:
             except agent_tools.ToolError as exc:
                 return {"error": str(exc)}
 
-        row = db.query(PhoneCall).filter_by(id=state.call_id).one_or_none()
+        row = ops.query(PhoneCall).filter_by(id=state.call_id).one_or_none()
         if row is None:
             return {"error": "This call is no longer on file."}
         try:
@@ -453,7 +456,7 @@ def _finish(call_id: str) -> None:
     as in progress for ever.
     """
     with _session() as db:
-        row = db.query(PhoneCall).filter_by(id=call_id).one_or_none()
+        row = ops.query(PhoneCall).filter_by(id=call_id).one_or_none()
         if row is None:
             return
         if row.ended_at is not None:

@@ -144,6 +144,28 @@ def _schedule(message: dict) -> None:
         asyncio.run_coroutine_threadsafe(manager.broadcast(message), loop)
 
 
+def emit_ops(type_: str, payload: dict | None = None) -> Event:
+    """Announce something that happened on Liner's own side.
+
+    **The event stream is deliberately not split, even though the rows are.**
+    `ops_*` tables moved to their own database; `events` did not, and must not:
+    `events.id` is the one autoincrement integer in this schema because the
+    socket replays with `?since=<id>`, and that cursor only means anything
+    against a single monotonic sequence. Two event tables would be two
+    sequences whose ids collide and interleave, and a dashboard reconnecting
+    with `?since=41` could not say which 41 it meant -- so it would either
+    replay events it has seen or skip ones it has not.
+
+    So an ops row is written to `ops.db` and the *announcement* of it goes
+    where every other announcement goes: the default store's `events`, which
+    is the table `/ws/dealer` already replays from for both realms.
+    """
+    from app.db import SessionLocal
+
+    with SessionLocal("") as db:
+        return emit(db, type_, payload)
+
+
 def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
     """Write the event row and push it to connected dashboards.
 

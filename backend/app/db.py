@@ -25,7 +25,23 @@ from app.config import settings
 
 
 class Base(DeclarativeBase):
-    pass
+    """The dealership's tables. One set of these per store."""
+
+
+class OpsBase(DeclarativeBase):
+    """Liner's own tables, in Liner's own database.
+
+    A *second* metadata rather than the same one pointed at a different
+    engine, and that is the part doing the work: `Base.metadata.create_all`
+    runs against every store, so anything sharing it is built into every
+    store's file -- empty, unread, and writable by anything that forgets which
+    session it is holding. With two metadatas a store's `create_all` cannot
+    build an ops table even by accident.
+
+    The cost is that no query can join across the line. That is acceptable
+    because nothing needs to: the only foreign keys among the `ops_` tables
+    point at each other, and nothing on the dealership's side points back.
+    """
 
 
 def utcnow() -> datetime:
@@ -137,6 +153,65 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------
+# Liner's own database
+#
+# One file, never per store. `/ops` is ours: the demos people booked with us,
+# the mail we wrote, who rang the number. None of it belongs to a dealership
+# and none of it should multiply when a second one is added.
+# --------------------------------------------------------------------------
+
+_ops_engine: Engine | None = None
+_ops_sessions: sessionmaker | None = None
+
+
+def ops_engine() -> Engine:
+    global _ops_engine
+    if _ops_engine is None:
+        url = settings.ops_database_url
+        if url.startswith("sqlite") and "///" in url:
+            Path(url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
+        args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        _ops_engine = create_engine(url, connect_args=args, future=True)
+    return _ops_engine
+
+
+def ops_session() -> Session:
+    """A session on Liner's own database.
+
+    Deliberately *not* a FastAPI dependency with a matching `get_db` shape.
+    An ops endpoint has to say which side it is reading, and a dependency
+    named like the other one is exactly how somebody wires up the wrong
+    database and gets a plausible empty list back.
+    """
+    global _ops_sessions
+    if _ops_sessions is None:
+        _ops_sessions = sessionmaker(
+            bind=ops_engine(), autoflush=False, expire_on_commit=False, future=True
+        )
+    return _ops_sessions()
+
+
+def get_ops_db() -> Iterator[Session]:
+    db = ops_session()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def create_ops_all() -> None:
+    """Build the six `ops_` tables, in one place, once."""
+    from app.models import ops  # noqa: F401  (registers the mappers)
+
+    try:
+        OpsBase.metadata.create_all(bind=ops_engine())
+    except OperationalError as exc:
+        if "readonly database" not in str(exc) and "unable to open" not in str(exc):
+            raise
+        raise RuntimeError(f"{exc.orig}{readonly_help()}") from None
 
 
 def sqlite_path(slug: str | None = None) -> Path | None:

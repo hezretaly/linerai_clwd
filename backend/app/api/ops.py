@@ -23,14 +23,14 @@ from sqlalchemy.orm import Session
 
 from app import outreach_send
 from app.config import settings
-from app.db import get_db, utcnow
+from app.db import get_ops_db, utcnow
 from app.api.deps import require_owner
-from app.events import emit
+from app.events import emit_ops
 from app.integrations.base import NotConfigured
 from app.integrations.registry import get_email_sender
+from app import ops_inbox
 from app.models import (
     DemoRequest,
-    InboundEmail,
     OpsMailState,
     OpsMessage,
     OpsUser,
@@ -92,7 +92,7 @@ def _identity(user: OpsUser):
 
 @router.get("/summary")
 def summary(
-    db: Session = Depends(get_db), user: OpsUser = Depends(require_owner)
+    db: Session = Depends(get_ops_db), user: OpsUser = Depends(require_owner)
 ) -> dict:
     """The three numbers the nav needs, in one call.
 
@@ -114,9 +114,9 @@ def summary(
     return {
         "unread": db.query(DemoRequest).filter(DemoRequest.status == "new").count(),
         "upcoming": upcoming,
-        "unmatched_mail": db.query(InboundEmail)
-        .filter(InboundEmail.outcome == "unresolved")
-        .count(),
+        # Across every store, not just the default -- `inbound_emails` stays
+        # on the dealership's side because it keys on leads and outreach.
+        "unmatched_mail": ops_inbox.unresolved_count(),
         "support_email": settings.support_email,
         "founder_email": settings.founder_email,
         # Computed here rather than in the page, by the same function the send
@@ -139,7 +139,7 @@ def summary(
 def list_demos(
     start: datetime | None = Query(None),
     end: datetime | None = Query(None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Every demo and support request, newest first.
@@ -163,7 +163,7 @@ def list_demos(
 @router.get("/demos/{request_id}")
 def get_demo(
     request_id: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     row = db.query(DemoRequest).filter_by(id=request_id).one_or_none()
@@ -180,7 +180,7 @@ class StatusBody(BaseModel):
 def set_status(
     request_id: str,
     body: StatusBody,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Mark one read, done, or cancelled.
@@ -199,7 +199,7 @@ def set_status(
     row.status = body.status
     db.commit()
     if was != row.status:
-        emit(db, "demo.updated", {
+        emit_ops("demo.updated", {
             "request_id": row.id, "status": row.status, "by": user.id,
         })
     return _entry(row)
@@ -264,32 +264,28 @@ def _inbound(db: Session) -> list[dict]:
             "dealership_url": request.dealership_url,
         })
 
-    for mail in (
-        db.query(InboundEmail)
-        .filter(InboundEmail.outcome == "unresolved")
-        .order_by(InboundEmail.created_at.desc())
-        .limit(300)
-        .all()
-    ):
-        mark = marks.get(("email", mail.id))
+    # Plain dicts from every store, because `inbound_emails` lives on the
+    # dealership's side of the split and this session is ours.
+    for mail in ops_inbox.unresolved(300):
+        mark = marks.get(("email", mail["id"]))
         rows.append({
-            "id": mail.id,
+            "id": mail["id"],
             "source": "email",
             "kind": "unmatched",
             "direction": "in",
             "from_name": "",
-            "from_address": mail.from_address,
-            "to_address": mail.to_address or "",
-            "subject": mail.subject or "(no subject)",
-            "body": mail.body or "",
-            "at": stamp(mail.created_at),
+            "from_address": mail["from_address"],
+            "to_address": mail["to_address"] or "",
+            "subject": mail["subject"] or "(no subject)",
+            "body": mail["body"] or "",
+            "at": stamp(mail["created_at"]),
             # Unread until somebody opens it. This was hardcoded False,
             # because `inbound_emails` has no column for it and there is no
             # Alembic here -- so every delivery arrived looking already read,
             # which is the opposite of what an inbox is for. The mark lives in
             # its own table, which a database that already exists does get.
             "unread": not (mark and mark.read_at),
-            "status": mail.outcome,
+            "status": mail["outcome"],
             "trashed": bool(mark and mark.trashed_at),
             "slot_at": None,
             "phone": "",
@@ -367,7 +363,7 @@ BOXES = {
 @router.get("/mail")
 def inbox(
     box: str = Query("all"),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """The whole mailbox: what arrived, what we wrote, and what was binned."""
@@ -394,12 +390,27 @@ class TrashBody(MarkBody):
 
 
 def _target(db: Session, body: MarkBody):
+    """The row a mark is about, or None when the mark needs no row.
+
+    Only `form` returns something the caller writes to -- a demo request
+    answers from its own `status`, because the notification bell reads that
+    and a second copy is how the two start disagreeing.
+
+    `email` deliberately returns None. An unresolved delivery lives in a
+    *dealership's* database, which this session is not, and the read or trash
+    mark belongs in `ops_mail_state`, which is ours. So the only thing wanted
+    from that side is whether the id exists at all -- a mark stored against
+    one that does not is a row pointing at nothing, which the inbox would then
+    count.
+    """
     if body.kind == "ours":
         row = db.query(OpsMessage).filter_by(id=body.id).one_or_none()
     elif body.kind == "form":
         row = db.query(DemoRequest).filter_by(id=body.id).one_or_none()
     elif body.kind == "email":
-        row = db.query(InboundEmail).filter_by(id=body.id).one_or_none()
+        if not ops_inbox.exists(body.id):
+            raise HTTPException(404, "No such message")
+        return None
     else:
         raise HTTPException(400, "kind must be form, email or ours")
     if row is None:
@@ -410,7 +421,7 @@ def _target(db: Session, body: MarkBody):
 @router.post("/mail/read")
 def mark_read(
     body: ReadBody,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Opening a message reads it; the button is for putting it back.
@@ -439,7 +450,7 @@ def mark_read(
 @router.post("/mail/trash")
 def mark_trashed(
     body: TrashBody,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Trash is a timestamp, and Restore is the same call with false.
@@ -471,7 +482,7 @@ class DraftBody(BaseModel):
 @router.post("/mail/draft")
 def save_draft(
     body: DraftBody,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Keep an unfinished message.
@@ -540,7 +551,7 @@ def _demo_body(request: DemoRequest) -> str:
 @router.post("/mail/send")
 def reply(
     body: ReplyBody,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_ops_db),
     user: OpsUser = Depends(require_owner),
 ) -> dict:
     """Write from the ops inbox -- an answer, or a first message.

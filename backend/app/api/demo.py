@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app import demo_slots
-from app.db import get_db
+from app.db import get_db, ops_session
 from app.models import DemoRequest, OpsUser
 from app.api.deps import require_owner
 from app.schemas.serialize import iso, stamp
@@ -155,12 +155,16 @@ def cancel_demo(
     also what stops `make smoke` eating one slot a run, which is the same
     self-reinforcing leak the appointment fixture had.
     """
-    row = db.query(DemoRequest).filter_by(id=request_id).one_or_none()
-    if row is None:
-        raise HTTPException(404, "No such request")
-    row.status = "cancelled"
-    db.commit()
-    return {"cancelled": True, "id": row.id}
+    # Liner's own database. `db` above is a dealership's and no longer holds
+    # `ops_demo_requests` at all -- committing there would have written
+    # nothing and reported success.
+    with ops_session() as ops:
+        row = ops.query(DemoRequest).filter_by(id=request_id).one_or_none()
+        if row is None:
+            raise HTTPException(404, "No such request")
+        row.status = "cancelled"
+        ops.commit()
+        return {"cancelled": True, "id": row.id}
 
 
 @router.get("/requests")
@@ -177,18 +181,17 @@ def list_requests(
     That it was ever a dealer session is exactly the confusion `ops_users`
     exists to end.
     """
-    rows = (
-        db.query(DemoRequest).order_by(DemoRequest.created_at.desc()).limit(200).all()
-    )
-    return {
-        "requests": [
-            {
-                "id": r.id, "kind": r.kind, "name": r.name, "dealership": r.dealership,
-                "email": r.email, "phone": r.phone, "dealership_url": r.dealership_url,
-                "message": r.message, "slot_at": iso(r.slot_at),
-                "consented_at": stamp(r.consent_at), "status": r.status,
-                "created_at": stamp(r.created_at),
-            }
-            for r in rows
-        ]
-    }
+    with ops_session() as ops:
+        rows = ops.query(DemoRequest).order_by(DemoRequest.created_at.desc()).limit(200).all()
+        return {
+            "requests": [
+                {
+                    "id": r.id, "kind": r.kind, "name": r.name,
+                    "dealership": r.dealership, "email": r.email, "phone": r.phone,
+                    "dealership_url": r.dealership_url, "message": r.message,
+                    "slot_at": iso(r.slot_at), "consented_at": stamp(r.consent_at),
+                    "status": r.status, "created_at": stamp(r.created_at),
+                }
+                for r in rows
+            ]
+        }

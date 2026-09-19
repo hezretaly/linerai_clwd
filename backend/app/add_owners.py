@@ -31,7 +31,7 @@ from datetime import datetime
 from sqlalchemy import inspect, text
 
 from app.config import DEV_SEED_PASSWORD, settings
-from app.db import SessionLocal, create_all, engine
+from app.db import SessionLocal, create_all, create_ops_all, engine, ops_session
 from app.models import DemoRequest, OpsUser, User
 from app.seed import OWNERS, build_owner
 
@@ -110,7 +110,11 @@ def _as_datetime(value):
 def add_owners() -> tuple[int, int]:
     """Returns (created, moved). `moved` counts rows of either kind."""
     create_all()
+    create_ops_all()
     db = SessionLocal()
+    # Two databases now: the legacy rows being rescued are in a dealership's
+    # `users`, and everything they become is in Liner's own `ops_users`.
+    ops = ops_session()
     created = moved = 0
     try:
         moved += migrate_demo_requests(db)
@@ -119,8 +123,8 @@ def add_owners() -> tuple[int, int]:
         # one wins the email uniqueness and the old password stops working
         # with nothing saying why.
         for legacy in db.query(User).filter(User.role.notin_(DEALERSHIP_ROLES)).all():
-            if db.query(OpsUser).filter_by(email=legacy.email).first() is None:
-                db.add(OpsUser(
+            if ops.query(OpsUser).filter_by(email=legacy.email).first() is None:
+                ops.add(OpsUser(
                     name=legacy.name, email=legacy.email,
                     password_hash=legacy.password_hash,
                     avatar_initials=legacy.avatar_initials, active=legacy.active,
@@ -135,20 +139,23 @@ def add_owners() -> tuple[int, int]:
         # Flush before the create pass. A moved row is pending, not written,
         # and `query(OpsUser)` below would not see it -- so both accounts got
         # inserted a second time and the run died on the email unique index
-        # with everything rolled back.
-        db.flush()
+        # with everything rolled back. Still true with the two sessions: the
+        # pending rows are in `ops`, which is the one being queried.
+        ops.flush()
 
         for person in OWNERS:
             name, email, env_key, _initials = person
-            if db.query(OpsUser).filter_by(email=email).first() is not None:
+            if ops.query(OpsUser).filter_by(email=email).first() is not None:
                 print(f"  already there  {email}  ({env_key})")
                 continue
-            db.add(build_owner(*person))
+            ops.add(build_owner(*person))
             created += 1
             print(f"  added          {email}  ({env_key})")
+        ops.commit()
         db.commit()
     finally:
         db.close()
+        ops.close()
     return created, moved
 
 

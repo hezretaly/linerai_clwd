@@ -17,7 +17,7 @@ from app.api.deps import (
     verify_password,
 )
 from app.config import settings
-from app.db import SessionLocal, current_store, get_db
+from app.db import SessionLocal, current_store, get_db, ops_session
 from app.models import OpsUser, User
 from app.ratelimit import SlidingWindow
 from app.stores import known_stores
@@ -88,10 +88,13 @@ def login(
 
     slug = locate_store(email)
 
-    with SessionLocal(slug) as store_db:
+    with SessionLocal(slug) as store_db, ops_session() as ops:
+        # Two databases, one form. The dealership's staff are in this store's
+        # file; we are in Liner's own, which is not per store -- so an owner
+        # signing in is found once however many dealerships exist.
         account = (
             store_db.query(User).filter_by(email=email, active=True).one_or_none()
-            or store_db.query(OpsUser).filter_by(email=email, active=True).one_or_none()
+            or ops.query(OpsUser).filter_by(email=email, active=True).one_or_none()
         )
         # Always verify against *something*. Short-circuiting on
         # `account is None` skips bcrypt, and the hundredfold difference in how
@@ -135,15 +138,22 @@ def locate_store(email: str) -> str:
     if named:
         return named
 
+    # Ours first, and once: `ops_users` is in Liner's own database rather than
+    # in any store, so an owner has no store to be found in. Answering with
+    # the default store is what `home_for` then turns into `/ops`.
+    try:
+        with ops_session() as ops:
+            if ops.query(OpsUser.id).filter_by(email=email, active=True).first():
+                return settings.dealership.strip()
+    except OperationalError:
+        pass
+
     default = settings.dealership.strip()
     order = [default] + [s for s in known_stores() if s != default]
     for slug in order:
         try:
             with SessionLocal(slug) as db:
-                found = (
-                    db.query(User.id).filter_by(email=email, active=True).first()
-                    or db.query(OpsUser.id).filter_by(email=email, active=True).first()
-                )
+                found = db.query(User.id).filter_by(email=email, active=True).first()
         except OperationalError:
             # A store with a profile but no database yet. Opening it *creates*
             # the file, so the next query fails with `no such table: users`

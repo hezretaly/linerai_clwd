@@ -11,7 +11,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import SessionLocal, active_store, get_db
+from app.db import SessionLocal, active_store, get_db, ops_session
 from app.models import Dealership, OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -129,7 +129,16 @@ def resolve_account(db: Session, data: dict) -> "User | OpsUser | None":
     if not uid:
         return None
     if data.get("realm", DEALER_REALM) == OPS_REALM:
-        return db.query(OpsUser).filter_by(id=uid, active=True).one_or_none()
+        # Ours, so ours to read: `ops_users` is in Liner's own database and
+        # `db` here is a dealership's. Opened and closed on the spot rather
+        # than taken as an argument, because every caller would otherwise have
+        # to know which of the two to hand over -- and the one that guesses
+        # wrong gets an empty result that reads as an expired session.
+        with ops_session() as ops:
+            account = ops.query(OpsUser).filter_by(id=uid, active=True).one_or_none()
+            if account is not None:
+                ops.expunge(account)
+            return account
     return db.query(User).filter_by(id=uid, active=True).one_or_none()
 
 
@@ -157,19 +166,32 @@ def current_account(request: Request) -> "User | OpsUser":
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
         # Detached on purpose: the session closes here and the caller only
         # ever reads already-loaded columns off it.
-        db.expunge(account)
+        #
+        # Guarded, because an ops account did not come from `db` at all --
+        # `resolve_account` reads those from Liner's own database and detaches
+        # them there. Expunging an object a session has never seen raises, so
+        # an unguarded call here would 500 every "who am I" for an owner.
+        if account in db:
+            db.expunge(account)
         return account
 
 
-def current_owner(request: Request, db: Session = Depends(get_db)) -> OpsUser:
-    """The signed-in Liner account, from our own table."""
+def current_owner(request: Request) -> OpsUser:
+    """The signed-in Liner account, from our own table in our own database.
+
+    No `Depends(get_db)` any more: that resolves to a *dealership's* database,
+    which no longer carries `ops_users` at all. Taking the session explicitly
+    is what stops this quietly becoming a lookup in the wrong file.
+    """
     data = _session(request)
     if data.get("realm", DEALER_REALM) != OPS_REALM:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Liner staff only")
-    user = db.query(OpsUser).filter_by(id=data.get("uid"), active=True).one_or_none()
-    if user is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
-    return user
+    with ops_session() as ops:
+        user = ops.query(OpsUser).filter_by(id=data.get("uid"), active=True).one_or_none()
+        if user is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+        ops.expunge(user)
+        return user
 
 
 def require_manager(user: User = Depends(current_user)) -> User:

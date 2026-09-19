@@ -306,7 +306,12 @@ def _demo_requests(db, rng, now) -> int:
     # record is only worth anything if it is the text the page really showed.
     from app.api.demo import CONSENT
     from app.config import settings as app_settings
+    from app.db import ops_session
     from app.models import DemoRequest
+
+    # Demo requests are Liner's own and live in Liner's own database -- `db`
+    # here is a dealership's and no longer carries the table at all.
+    db = ops_session()
 
     if db.query(DemoRequest).count():
         # Ran twice. More would be fine, but the fixed cast above would repeat
