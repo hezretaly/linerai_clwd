@@ -47,6 +47,17 @@ brand:
   # because their *whole page* is orange on near-black. Setting `dark` here
   # would produce a storefront that looks nothing like theirs.
   surface: light
+  # ...but the chrome IS dark, and it is the first thing anybody names about
+  # their site: a dark grey (#424242) contact strip over a black (#000000) nav
+  # with white text, and the same black again in the footer. `chrome: dark`
+  # says exactly that -- the header, the strip and the footer take the dark
+  # palette, the page between them stays white.
+  #
+  # Two words rather than the two hex values above, deliberately: this picks
+  # the palette already in `liner-theme.css` instead of carrying #000000 into
+  # a stylesheet, so their file cannot restyle the product into something
+  # unreadable. Only the accent family ever travels as a colour.
+  chrome: dark
   logo_url: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898223075480.webp"
 
 # Their front page, in their own words, copied from their About Us card.
@@ -57,11 +68,46 @@ brand:
 # pages we are not pretending to have rebuilt. The two dropdown items in
 # their nav (FINANCING, DEALER SERVICES) are `#` on their own site and so are
 # not links at all; they are left out rather than rendered as dead ones.
+#
+# THREE THINGS FROM THEIR PAGES ARE DELIBERATELY NOT HERE:
+#
+#   * Their footer's body-style shortcuts (`?bodystyle=SUV`, `SEDAN`,
+#     `CONVERTIBLE`, `WAGON`). Their export carries no body style, so every one
+#     of them would return an empty grid -- the same reason the By Type row is
+#     not drawn for this lot at all. Their *make* shortcuts are not here either,
+#     and for the opposite reason: the storefront counts makes from rows and
+#     offers them as real filters, which is better than a link that leaves.
+#   * "I WANT THIS CAR" and "GET PRE-APPROVED" on each card, and the Capital One
+#     pre-qualification widget beside them. Those are forms, and a form that
+#     posts nowhere is the one thing this codebase will not build. The assistant
+#     is what stands in their place: the card's button opens it asking about
+#     that exact car, which is the same intent answered now rather than on
+#     Monday. Pre-qualification stays a link to their own site, above.
+#   * A `font-family`. Their captured markup sets none -- it is in a stylesheet
+#     that was not in the dump -- so the storefront keeps the product's type
+#     rather than guessing at theirs. A wrong typeface is more obviously wrong
+#     to them than a neutral one.
 site:
   tagline: Quality Used Cars in Santa Ana, CA
   heading: Welcome to Alsbou Motors
-  # First of the five rotating banner images on their home page.
-  hero_image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222872312.webp"
+  # What they call the number on a card. Their word, not ours -- a dealer
+  # reading their own storefront notices the label before the layout.
+  price_label: Advertised price
+  # All five of the images their own banner rotates through, in the order their
+  # page lists them. The page cross-fades between whichever of them load: each
+  # is tried and a URL that fails is dropped from the rotation rather than
+  # taking the banner down with it, because these are hotlinked from their CDN
+  # and a torn-page icon across the top of their own front page is the failure
+  # to prevent. NONE of them has ever loaded on this machine -- the egress
+  # proxy refuses gmacrmprod.s3.us-west-2.amazonaws.com -- so what has been
+  # seen here is the fallback, and the rotation itself is unproven against
+  # their real images.
+  hero_images:
+    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222872312.webp"
+    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222830147.webp"
+    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222859470.webp"
+    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222842083.webp"
+    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222838840.webp"
   welcome:
     - >-
       At Alsbou Motors, located at 1223 W 17th St, Santa Ana, CA, we pride
@@ -82,10 +128,18 @@ site:
       Santa Ana, CA.
   links:
     - { label: Inventory,           href: "https://www.alsboucars.com/inventory" }
-    - { label: Get Pre-Qualified,   href: "https://www.alsboucars.com/prequalified" }
     - { label: Reviews,             href: "https://www.alsboucars.com/page/reviews" }
     - { label: Contact Us,          href: "https://www.alsboucars.com/contact" }
     - { label: Riverside Inventory, href: "https://www.alsboumotorsriverside.com/inventory" }
+  # The one nav item their own header draws as a gold button rather than as
+  # text, so it is named rather than left for the page to guess at. It is the
+  # same link with the same validation -- it has simply been moved out of the
+  # list above so it is not rendered twice.
+  #
+  # Their footer sells it harder still ("Bad Credit Car Loans"), and it is
+  # THEIR page, on their host: pre-qualification is a credit decision, so a
+  # button here that stayed inside this app would be a form posting nowhere.
+  cta: { label: Get Pre-Qualified, href: "https://www.alsboucars.com/prequalified" }
   # None found in their markup. Left empty rather than invented -- a social
   # link that goes nowhere is worse on their own storefront than none at all.
   social: []

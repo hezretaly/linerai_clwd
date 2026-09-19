@@ -137,12 +137,36 @@ def site() -> dict:
     honest storefront and is what Riverside gets.
     """
     raw = _section("site")
+    # Their rotating banner, and `hero_image` is the one-image spelling of the
+    # same thing. Both are read and the list is the union, so a profile written
+    # before this existed keeps its hero and a profile with five gets five --
+    # a second key that silently overrode the first would make the older
+    # spelling look broken rather than superseded.
+    heroes: list[str] = []
+    for value in [raw.get("hero_image"), *(raw.get("hero_images") or [])]:
+        url = _link(value)
+        if url and url not in heroes:
+            heroes.append(url)
     return {
         "tagline": str(raw.get("tagline") or "").strip()[:160],
         "heading": str(raw.get("heading") or "").strip()[:160],
-        "hero_image": _link(raw.get("hero_image")),
+        # The first one, kept so nothing that already reads a single hero has
+        # to learn about the list.
+        "hero_image": heroes[0] if heroes else "",
+        "hero_images": heroes[:6],
         "welcome": [str(p).strip() for p in (raw.get("welcome") or [])[:4] if str(p).strip()],
         "links": _links(raw.get("links"), 8),
+        # The one link their nav draws as a button rather than as text --
+        # "GET PRE-QUALIFIED" on Alsbou's, in the accent. It is a link like the
+        # others and goes through the same validation; what it buys is that the
+        # page does not have to guess which of eight nav items they emphasise,
+        # and a profile that names none simply gets no button.
+        "cta": (_links([raw.get("cta")], 1) or [None])[0],
+        # What they call the number on a card: "Advertised price" at Alsbou.
+        # Their word rather than ours, because a dealer reading their own
+        # storefront notices the label before they notice the layout -- and a
+        # profile that states none gets no label, not a guessed one.
+        "price_label": str(raw.get("price_label") or "").strip()[:40],
         "social": _links(raw.get("social"), 6),
     }
 
@@ -210,6 +234,8 @@ def staff() -> list[dict]:
 def brand() -> dict:
     """Accent, ink and logo for whichever profile this instance is running."""
     raw = _section("brand")
+    surface = "dark" if str(raw.get("surface") or "").strip().lower() == "dark" else "light"
+    chrome = str(raw.get("chrome") or "").strip().lower()
     return {
         "accent": _colour(raw.get("accent"), DEFAULT_ACCENT),
         "accent_ink": _colour(raw.get("accent_ink"), DEFAULT_INK),
@@ -221,7 +247,21 @@ def brand() -> dict:
         # reach the DOM. Read only by /showroom: a dealership whose own site
         # is dark should have a dark storefront, and their reps' dashboard
         # should not change colour because of it.
-        "surface": "dark" if str(raw.get("surface") or "").strip().lower() == "dark" else "light",
+        "surface": surface,
+        # The header, the contact strip above it and the footer, which a lot of
+        # dealers run dark over a white page -- Alsbou's are black (#000000)
+        # with a dark grey strip, and the body between them is white. That is
+        # not `surface: dark`, which would produce a storefront that looks
+        # nothing like theirs, and it is not `light` either: the chrome was the
+        # first thing anybody named about their site.
+        #
+        # Two words rather than two colours, for the reason `surface` is two
+        # words: it picks the palette already in the token layer instead of
+        # carrying #000000 into a stylesheet, so a prospect's file cannot
+        # restyle the product into something unreadable. It follows `surface`
+        # by default, so a wholly dark site needs one key rather than two that
+        # can disagree.
+        "chrome": chrome if chrome in ("light", "dark") else surface,
     }
 
 

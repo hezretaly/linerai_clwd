@@ -2068,8 +2068,73 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       guesses. What they share is tokenising on non-alphanumerics — `"BMW X5?"`
       split on whitespace gives `x5?` and matches nothing.
     - **There is no contact form, and that is the pitch.** Their real page has
-      one. Reproducing it would be a form that posts nowhere; the assistant
-      stands in its place and captures the same fields, answers, and books.
+      one, and their cards carry "I WANT THIS CAR", "GET PRE-APPROVED" and a
+      Capital One pre-qualification widget. Every one of those is a form, and
+      reproducing any of them would be a form that posts nowhere; the
+      assistant stands in their place and captures the same fields, answers,
+      and books. The card's one button opens it already asking about that car
+      — and it **types the question rather than sending it**, because a
+      sentence sent on the buyer's behalf is in the transcript as their own
+      words, which is the rule the rails follow and the one a chip broke by
+      telling Liner a real person was Jordan Reyes. Pre-qualification is a
+      credit decision and stays a link to their own host.
+    - **The chrome is a third answer, because `surface` only had two.** A
+      great many dealers run a black header and footer over a white body —
+      Alsbou's are `#000000` with a `#424242` contact strip — which is neither
+      `surface: dark` (their whole page, which would look nothing like theirs)
+      nor `light`. `brand.chrome` says it, in two words rather than two
+      colours for the reason `surface` is two words: it picks the dark palette
+      already in the token layer instead of carrying a hex into a stylesheet.
+      It follows `surface` unless stated, so a wholly dark site still sets one
+      key rather than two that can disagree.
+      - **`theme-buyer` has to be repeated on the nested wrapper.** A custom
+        property is *inherited*: the nearest ancestor declaring `--primary`
+        wins, and `.dark` declares one. On the root the two classes sit on one
+        element and `.theme-buyer` wins for coming later in the file — nested,
+        `.dark` is nearer, so the gold button on their black nav came out the
+        dark palette's near-white. Measured in a browser, not reasoned: the
+        button is white without that class.
+    - **The layout is their inventory page's layout**, and that is not
+      decoration. A filter sidebar, a results toolbar carrying the live count
+      and a sort control, a three-column grid. With 69 or 486 cars, chips
+      above the grid push the cars themselves below the fold, and "Sort by" is
+      the first control a person reaches for on somebody else's lot. The
+      sidebar collapses behind a toggle below `lg`, which is what their own
+      page does.
+      - **An unpriced car is not the cheapest car, in either direction.**
+        SQLite sorts NULL before every number, so a plain `price.asc()` puts
+        all 119 of Craig and Landreth's call-for-price cars at the top of
+        "Price: low to high" — a buyer asking for the cheapest thing on the
+        lot gets a screen of cars nobody can quote them. Measured by taking
+        the guard out: the first five come back `[None, None, None, None,
+        None]`. Same rule `search_inventory` already followed.
+      - **A-Z is the default and the VIN breaks every tie.** It is what their
+        toolbar defaults to, and "most expensive first" as the first
+        impression of somebody's lot is a choice nobody made on purpose.
+        Without a total order SQLite may hand back the same car on page one
+        and page two. The make is lowercased first, because one dealer's
+        export is all caps and another's is mixed.
+      - **An order nobody defined is a 400**, the same rule
+        `/api/overview/trends` follows for an unknown range: answering a typo
+        with the default shows the wrong grid under the right caption, and
+        nothing on the page contradicts it.
+    - **A car standing at the address on the page does not repeat it.**
+      Alsbou's export stamps their own city on all 69 of their cars, so every
+      card read "· Santa Ana" under an address strip already saying Santa Ana.
+      Noise on every row is how the one row that says *Riverside* stops being
+      read — the same comparison `tools.home_location` makes for the note the
+      assistant raises, so a card and a sentence about one car cannot disagree
+      about whether it is somewhere else.
+    - **Their footer's body-style shortcuts are the one group left out.**
+      `?bodystyle=SUV` returns nothing for a lot whose export carries no body
+      style, which is the same reason the By Type row is not drawn at all.
+      Their make shortcuts are answered better by the counted sidebar filters
+      than by a link that leaves the page.
+    - **Typography is left alone where their capture does not state it.**
+      Alsbou's markup sets no `font-family` — it is in a stylesheet that was
+      not in the dump — so the storefront keeps the product's type rather than
+      guessing at theirs. A wrong typeface is more obviously wrong to them
+      than a neutral one.
   - The whole setup, `.env` line by `.env` line, is
     **[`docs/DEMO.md`](./docs/DEMO.md)**.
 - **A listing page that already carries every field is crawled as one.**

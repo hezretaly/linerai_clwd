@@ -29,12 +29,12 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.agent.phrasing import cased
-from app.agent.tools import inquiry_url, offerable
+from app.agent.tools import home_location, inquiry_url, offerable
 from app.api.settings import live_settings
 from app.profile import brand, site
 from app.config import settings
@@ -69,9 +69,47 @@ def _words(text: str) -> list[str]:
     return WORD.findall((text or "").lower())[:6]
 
 
-def _car(v: Vehicle) -> dict:
-    """One card. Every field here is on the dealer's own public listing."""
+#: The orders their own results toolbar offers, keyed by what the page sends.
+#:
+#: **An unpriced car is not the cheapest car, in either direction.** SQLite
+#: sorts NULL before every number, so a plain `price.asc()` puts all 119 of
+#: Craig and Landreth's call-for-price cars at the top of "Price: low to high"
+#: -- a buyer asking for the cheapest thing on the lot gets a screen of cars
+#: nobody can quote them. `is_(None)` first in the key pushes them last in both
+#: price orders, which is the same rule `search_inventory` follows.
+#:
+#: Make/Model A-Z is the default because it is the one order that is *about the
+#: cars* rather than about the money: it is what their own page defaults to, and
+#: "most expensive first" as the first impression of somebody's lot is a choice
+#: nobody made on purpose. VIN breaks every tie, so paging is stable -- without
+#: a total order SQLite may return the same car on page one and page two.
+SORTS: dict[str, list] = {
+    # Lowercased, because SQLite compares text by byte: one dealer's export is
+    # all caps and another's is mixed, and `A-Z` that puts every SHOUTED make
+    # above every Title-cased one is not alphabetical to the person reading it.
+    "az": [func.lower(Vehicle.make).asc(), func.lower(Vehicle.model).asc(),
+           Vehicle.year.desc()],
+    "price_low": [Vehicle.price.is_(None).asc(), Vehicle.price.asc()],
+    "price_high": [Vehicle.price.is_(None).asc(), Vehicle.price.desc()],
+    "year_new": [Vehicle.year.desc()],
+    "year_old": [Vehicle.year.asc()],
+}
+DEFAULT_SORT = "az"
+
+
+def _car(v: Vehicle, home: str = "") -> dict:
+    """One card. Every field here is on the dealer's own public listing.
+
+    `home` is the dealership's own address, lowercased, and it is what decides
+    whether the card says where the car is standing. Alsbou's export stamps
+    "Santa Ana" on all 69 of their cars, which is the address at the top of the
+    page -- printed on every row it is noise, and noise is how the one row that
+    says *Riverside* stops being read. The same comparison `tools.home_location`
+    makes for the note the assistant raises, so a card and a sentence about the
+    same car cannot disagree about whether it is somewhere else.
+    """
     raw = loads(v.raw_json or "{}", {})
+    where = str(raw.get("location") or "")
     return {
         "vin": v.vin,
         "title": f"{v.year} {cased(v.make)} {cased(v.model)}".strip(),
@@ -85,10 +123,12 @@ def _car(v: Vehicle) -> dict:
         "features": loads(v.features_json, [])[:4],
         "photo_url": v.photo_url,
         "listing_url": v.listing_url or "",
-        # Which of the group's lots it is on. A dealership with three addresses
-        # lists them in one feed, and "Call for price" on a car 90 minutes away
-        # should say where the buyer would be driving.
-        "location": raw.get("location") or "",
+        # Which of the group's lots it is on, and only when that is not the one
+        # whose address is at the top of the page. A dealership with three
+        # addresses lists them in one feed, and a car 90 minutes away should
+        # say where the buyer would be driving; a car on the forecourt they
+        # are reading about should not.
+        "location": where if where and where.lower() not in home else "",
         # Derived, never stored: their own enquiry form is the listing URL with
         # `?mode=inquiry`, and it only exists where there is no price to show.
         "inquiry_url": inquiry_url(v),
@@ -170,6 +210,7 @@ def showroom(
     body_style: str = Query(""),
     min_price: int | None = Query(None, ge=0),
     max_price: int | None = Query(None, ge=0),
+    sort: str = Query(DEFAULT_SORT),
     db: Session = Depends(get_db),
 ) -> dict:
     """The page's whole payload: who they are, what is on the lot, what works.
@@ -216,12 +257,27 @@ def showroom(
     for word in _words(q):
         query = query.filter(hay.like(f"%{word}%"))
 
+    # A 400 rather than a fall back to A-Z, the same rule `/api/overview/trends`
+    # follows for an unknown range: answering a typo with the default order
+    # shows the wrong grid under the right caption on the toolbar, and nothing
+    # on the page contradicts it.
+    if sort not in SORTS:
+        raise HTTPException(400, f"Unknown sort: {sort}")
+
     total = query.count()
-    cars = query.order_by(Vehicle.price.desc()).offset(offset).limit(limit).all()
+    # Once per request, not once per card: a page is 24 rows and the
+    # dealership's address does not change between them.
+    home = home_location(db)
+    cars = (
+        query.order_by(*SORTS[sort], Vehicle.vin.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     return {
         "dealership": identity(db),
         "greeting": live_settings(db).greeting,
-        "vehicles": [_car(v) for v in cars],
+        "vehicles": [_car(v, home) for v in cars],
         "total": total,
         "offset": offset,
         "facets": _facets(db),

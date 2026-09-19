@@ -21,13 +21,31 @@ import type { Brand } from './brand'
  *  Every field is optional -- a profile without one renders a plain
  *  storefront carrying the name, address, phone and lot, which is what
  *  Riverside gets and is a perfectly honest page. */
+export interface Link {
+  label: string
+  href: string
+}
+
 export interface Site {
   tagline: string
   heading: string
+  /** The first of `hero_images`, kept so a surface wanting one image does not
+   *  have to know about the rotation. */
   hero_image: string
+  /** Their rotating banner, in their own order. Empty for a profile that
+   *  states none, and the page then draws no image at all rather than a grey
+   *  band where one should be. */
+  hero_images: string[]
   welcome: string[]
-  links: { label: string; href: string }[]
-  social: { label: string; href: string }[]
+  links: Link[]
+  /** The one nav item they draw as a button rather than as text -- "Get
+   *  Pre-Qualified" on Alsbou's. `null` for a profile that names none, and
+   *  the header then has no button, which is most dealers. */
+  cta: Link | null
+  /** What they call the number on a card: "Advertised price". Empty is the
+   *  common case and the price then simply stands on its own. */
+  price_label: string
+  social: Link[]
 }
 
 export interface Dealership {

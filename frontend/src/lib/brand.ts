@@ -20,6 +20,12 @@ export interface Brand {
    *  dealership's, and a rep's dashboard is a working tool that should not
    *  change colour because a prospect's marketing site is dark. */
   surface: 'light' | 'dark'
+  /** The header, the contact strip above it and the footer. A great many
+   *  dealers run those dark over a white page -- Alsbou's are black with a
+   *  white body -- which is neither `surface: dark` nor `light`. Follows
+   *  `surface` unless the profile says otherwise, so a wholly dark site sets
+   *  one key rather than two that can disagree. */
+  chrome: 'light' | 'dark'
 }
 
 /** The server validates these to a hex colour and drops anything else. This

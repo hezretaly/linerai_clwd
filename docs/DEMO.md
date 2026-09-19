@@ -35,9 +35,19 @@ earlier than Mon–Thu, which matters because `check_availability` builds the
 slots it offers a buyer straight out of these values.
 
 **Their front page is in the profile too** — the `site:` block carries their
-heading, welcome copy, hero image, nav and social links, all copied from their
-own home page. `/showroom` renders from it. A profile with no `site:` block
-gets a plain storefront, which is what Riverside gets and is perfectly honest.
+heading, welcome copy, banner images, nav and social links, all copied from
+their own home page. `/showroom` renders from it. A profile with no `site:`
+block gets a plain storefront, which is what Riverside gets and is perfectly
+honest.
+
+Four of its keys exist for things dealers do differently and are each optional:
+
+| Key | What it is |
+|---|---|
+| `hero_images` | Their rotating banner, in their order. `hero_image` is the one-image spelling and both are read. Each is tried and a broken one leaves the rotation, so one dead URL does not take the banner down. |
+| `cta` | The one nav item they draw as a *button* rather than as text — "Get Pre-Qualified" on Alsbou's. Move it out of `links:` or it renders twice. |
+| `price_label` | What they call the number on a card: "Advertised price". No key, no label — never a guessed one. |
+| `social` | Left empty where their markup has none. A social link that goes nowhere is worse on their own storefront than none at all. |
 
 **Their livery is in** — orange on near-black:
 
@@ -54,6 +64,22 @@ nothing could fetch either. If it is off, that one line is the fix.
 `surface: dark` is read **only by `/showroom`**. Their storefront should look
 like their site; their reps' dashboard is a working tool and does not change
 colour because a prospect's marketing site is dark.
+
+`chrome:` is the third answer for the dealer whose header and footer are dark
+over a white page — Alsbou's are black with a dark grey contact strip, which is
+neither of the two things `surface` could say:
+
+```yaml
+brand:
+  accent: "#bf933d"
+  surface: light      # the page between the chrome
+  chrome: dark        # the header, the contact strip and the footer
+```
+
+Both are two words rather than two colours, and deliberately: they pick a
+palette that is already in `liner-theme.css` instead of carrying a hex into a
+stylesheet, so only the accent family ever travels. `chrome:` follows
+`surface:` when it is not stated, so a wholly dark site still sets one key.
 
 Where the seed **refuses to run** is a missing `hours`. That is deliberate:
 opening times cannot be looked up from here, and an invented hour is an

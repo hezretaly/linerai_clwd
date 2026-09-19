@@ -84,11 +84,23 @@ export function Chat() {
    * already carrying it, and "Back" is a link to `/` that, followed inside an
    * iframe, replaces the chat with the landing page in a 24rem box. The
    * transcript, the rails and the composer are the same in both. */
-  const embedded = new URLSearchParams(window.location.search).get('embed') === '1'
+  const query = new URLSearchParams(window.location.search)
+  const embedded = query.get('embed') === '1'
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
   const [rails, setRails] = useState<Rail[]>([])
-  const [draft, setDraft] = useState('')
+  /* `?ask=` arrives from the storefront: the buyer pressed a button on one
+   * car's card, and this is the question that button is for.
+   *
+   * **It prefills the composer and does not send it.** Sending would put a
+   * sentence in the transcript as the buyer's own words, which is the rule the
+   * rails follow for exactly the same reason -- `save_captured_fields` reads a
+   * buyer's message as `typed` provenance, meaning *they said this*. Nothing
+   * here carries a name or a number, so the cost is smaller than the chip that
+   * once claimed a buyer was Jordan Reyes; the principle is the same one, and
+   * the buyer pressing Send over a sentence they can see and edit costs them
+   * one tap. */
+  const [draft, setDraft] = useState(() => (query.get('ask') || '').slice(0, 200))
   const [typing, setTyping] = useState(false)
   // What the server says is missing, rather than a vendor name written here.
   // This used to hardcode ANTHROPIC_API_KEY and went stale the day the default

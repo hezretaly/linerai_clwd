@@ -3611,6 +3611,144 @@ def main() -> int:
           "offerable" in pathlib.Path("backend/app/api/showroom.py").read_text()
           and "offerable" in pathlib.Path("backend/app/agent/tools.py").read_text())
 
+    # ---- the results toolbar --------------------------------------------
+    #
+    # Their inventory page sorts, and a sort is the first control anybody
+    # reaches for on somebody else's lot. Two halves that have to agree: the
+    # server refuses a key it does not know, so a label in the page's own list
+    # pointing at a key the server rejects is a menu item that 400s.
+    from app.api.showroom import DEFAULT_SORT, SORTS as SERVER_SORTS
+
+    page_sorts = re.findall(r"\{ key: '([a-z_]+)', label:", page)
+    check("every sort the toolbar offers is one the server will run",
+          page_sorts and set(page_sorts) <= set(SERVER_SORTS),
+          f"page {page_sorts} vs server {sorted(SERVER_SORTS)}")
+    check("and the one it opens on is the server's default",
+          bool(page_sorts) and page_sorts[0] == DEFAULT_SORT, DEFAULT_SORT)
+    # A 400 rather than a fall back, the same rule `/api/overview/trends`
+    # follows: answering a typo with the default order shows the wrong grid
+    # under the right caption, and nothing on the page contradicts it.
+    check("and an order nobody defined is refused rather than guessed at",
+          status_of("GET", "/api/showroom?sort=cheapest")[0] == 400)
+
+    # An unpriced car is not the cheapest car. SQLite sorts NULL before every
+    # number, so a plain `price.asc()` puts all 119 of Craig and Landreth's
+    # call-for-price cars at the top of "Price: low to high" -- a buyer asking
+    # for the cheapest thing on the lot gets a screen of cars nobody can quote
+    # them. Measured by taking the guard out: the first five come back
+    # `[None, None, None, None, None]`.
+    #
+    # **Asked of the lot that has one, and of the end of it.** Riverside's
+    # fourteen fixture cars are all priced, so running this against the default
+    # store passes while proving nothing -- and a page is capped at 100 rows, so
+    # even on a 486-car lot the unpriced ones are past the last one fetched. So
+    # it walks the seeded stores, reads each one's *tail*, and refuses to end
+    # without having seen a call-for-price car somewhere: a check that can only
+    # ever pass is not a check.
+    from app.config import settings as _cfg
+
+    # **Only a store that already has a file**, and asked before opening one.
+    # Requesting `/<slug>/api/...` *creates* that store's database, so the
+    # first version of this walk minted an empty `riverside.db` -- caught by
+    # the check further down that exists for exactly this, which is the second
+    # time in this codebase that a lookup created the thing it was looking for.
+    seeded = [
+        slug for slug in _cfg.store_slugs
+        if pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1]).exists()
+    ]
+    unpriced_seen = 0
+    for slug in ["", *seeded]:
+        prefix = f"/{slug}" if slug else ""
+        code, _ = status_of("GET", f"{prefix}/api/showroom?limit=1")
+        if code != 200:
+            continue
+        total = call("GET", f"{prefix}/api/showroom?limit=1")["total"]
+        for order in ("price_low", "price_high"):
+            tail = call(
+                "GET",
+                f"{prefix}/api/showroom?limit=100&offset={max(0, total - 100)}&sort={order}",
+            )["vehicles"]
+            prices = [v["price"] for v in tail]
+            named = [i for i, p in enumerate(prices) if p is not None]
+            blank = [i for i, p in enumerate(prices) if p is None]
+            if not blank:
+                continue
+            unpriced_seen += 1
+            check(f"a car with no price sorts last under {order}"
+                  f" on {slug or 'the default store'}",
+                  not named or min(blank) > max(named),
+                  f"{len(blank)} unpriced in the last {len(prices)}")
+    check("and a lot with call-for-price cars was reached, or that proved nothing",
+          unpriced_seen > 0, f"{unpriced_seen} lot/order pair(s) exercised it")
+
+    # Without a total order SQLite may hand back the same car on page one and
+    # page two, so a buyer scrolling a 486-car lot sees duplicates and misses
+    # rows. The VIN breaks every tie.
+    first = {v["vin"] for v in call("GET", "/api/showroom?limit=12&offset=0")["vehicles"]}
+    second = {v["vin"] for v in call("GET", "/api/showroom?limit=12&offset=12")["vehicles"]}
+    check("and paging it twice does not show the same car twice",
+          not (first & second), str(sorted(first & second))[:60])
+
+    # ---- their chrome, and what the card says ---------------------------
+    #
+    # A great many dealers run a black header and footer over a white body --
+    # neither of the two things `brand.surface` could say. It is two words
+    # rather than two colours for the reason `surface` is: it picks the palette
+    # already in the token layer instead of carrying #000000 into a stylesheet.
+    check("the storefront's chrome is one of the two palettes, never a colour",
+          shop["brand"]["chrome"] in ("light", "dark"), shop["brand"]["chrome"])
+    # Comments may name a hex -- `chrome: dark` exists *because* theirs is
+    # #000000, and that is where the story lives. What must not happen is one
+    # reaching the DOM: only the accent family travels, through a token, so a
+    # prospect's file cannot restyle the product into something unreadable.
+    drawn = "\n".join(line for line in page.splitlines()
+                      if not line.strip().startswith(("*", "//", "/*")))
+    check("and the page draws no dealer's colour of its own",
+          not re.search(r"#[0-9a-fA-F]{6}\b", drawn),
+          str(re.findall(r"#[0-9a-fA-F]{6}\b", drawn))[:60])
+
+    # The same rule as their heading, applied to the four design facts the
+    # brand extract added. A prospect's own words, their own banner URLs and
+    # the label they put over their own price are theirs; written into this
+    # component they are the "Riverside Auto" bug one level up, and the next
+    # dealership's storefront says "Advertised price" because Alsbou does.
+    alsbou = _yaml.safe_load(
+        pathlib.Path("backend/config/dealerships/alsbou.yaml").read_text())
+    theirs = alsbou.get("site") or {}
+    for label, value in (
+        ("the label over their price", theirs.get("price_label")),
+        ("the button their nav emphasises", (theirs.get("cta") or {}).get("label")),
+        ("their banner images", (theirs.get("hero_images") or [None])[0]),
+    ):
+        check(f"{label} is served rather than written into the component",
+              bool(value) and str(value) not in page, str(value)[:50])
+
+    # Alsbou's export stamps their own city on all 69 of their cars, and their
+    # dealership row carries that same city. Printed on every row it is noise,
+    # and noise is how the one row that says *Riverside* stops being read.
+    home = (shop["address"] or "").lower()
+    stamped = [v["location"] for v in call("GET", "/api/showroom?limit=100")["vehicles"]]
+    check("a car standing at the address on the page does not repeat it",
+          not any(w and w.lower() in home for w in stamped),
+          str(sorted({w for w in stamped if w}))[:70])
+
+    # Their cards carry "I WANT THIS CAR", "GET PRE-APPROVED" and a
+    # pre-qualification widget. All three are forms, and the assistant is what
+    # replaces them -- one button that opens it already asking about this car.
+    #
+    # **It types the question and does not send it.** Sent, that sentence would
+    # be in the transcript as the buyer's own words, and `save_captured_fields`
+    # reads a buyer's message as `typed` provenance meaning *they said this* --
+    # the rule the rails follow, and the one a chip broke by telling Liner a
+    # real person was Jordan Reyes. So `ask` may reach the composer's initial
+    # value and nothing else: a second use of it in that file is the auto-send
+    # this check exists to keep out.
+    chat = pathlib.Path("frontend/src/routes/Chat.tsx").read_text()
+    reads = [line for line in chat.splitlines()
+             if "'ask'" in line and not line.strip().startswith(("*", "//", "/*"))]
+    check("the storefront's question is typed into the composer, never sent",
+          len(reads) == 1 and "useState" in reads[0], "; ".join(reads)[:80])
+
     # The made-up showroom is Riverside's. Seeded into a prospect's instance
     # it is not a head start, it is wrong data: their buyer searches the lot
     # and is offered a Toyota Sienna from Cedar Falls, Iowa, then asks the doc
