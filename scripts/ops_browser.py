@@ -21,7 +21,7 @@ import sys
 import time
 
 import httpx
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 BASE = "http://localhost:5173"
 API = "http://localhost:8000"
@@ -135,7 +135,18 @@ def main() -> int:
             # The same door check, the dealership's side: a rep who opens the
             # login page again is already in, and gets their dashboard rather
             # than a form prefilled with somebody's address.
-            page.goto(f"{BASE}/login")
+            #
+            # `goto` is allowed to be *interrupted* here, because the
+            # interruption is the assertion. The `['me']` answer is already in
+            # the query cache by this point, so the redirect renders on the
+            # first paint rather than after a fetch, and Playwright reports
+            # "Navigation to /login is interrupted by another navigation to
+            # /app" -- which is the redirect working, arriving one tick sooner
+            # than it used to. `wait_for_url` below is what actually checks it.
+            try:
+                page.goto(f"{BASE}/login")
+            except PlaywrightError as exc:
+                assert "interrupted by another navigation" in str(exc), exc
             page.wait_for_url("**/app", timeout=10000)
             page.goto(f"{BASE}/ops")
             # The login form, not a dead end -- but a login form arriving

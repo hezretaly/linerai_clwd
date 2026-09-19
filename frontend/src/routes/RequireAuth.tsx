@@ -3,7 +3,17 @@ import { Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../lib/api'
+import { STORE, leaveTo } from '../lib/store'
 import type { User } from '../lib/types'
+
+/** "Who am I", plus which store this session belongs to and where its
+ *  dashboard lives. The store cannot be read in the browser -- the cookie is
+ *  httpOnly -- so the server has to say. */
+export interface Me {
+  user: User
+  store?: string
+  home?: string
+}
 
 export interface PublicDemo {
   available: boolean
@@ -29,7 +39,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     queryKey: ['me'],
     queryFn: async () => {
       try {
-        return await api.get<{ user: User }>('/api/auth/me')
+        return await api.get<Me>('/api/auth/me')
       } catch (err) {
         // No session. On a deployment that has opened the door, walking
         // through it *is* the expected path -- sending a visitor to a login
@@ -41,7 +51,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
         // so nothing downstream has a second notion of who is signed in.
         const demo = await api.get<PublicDemo>('/api/auth/public').catch(() => null)
         if (!demo?.available) throw err
-        return await api.post<{ user: User }>('/api/auth/public')
+        return await api.post<Me>('/api/auth/public')
       }
     },
     retry: false,
@@ -53,13 +63,25 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (isError || !data) {
     return <Navigate to="/login" replace />
   }
+  // Signed in, but looking at a different dealership's URL. Every panel here
+  // would 403 -- `current_user` refuses a session whose store is not the
+  // request's -- so the page would render broken rather than say whose it is.
+  // `home` comes from the server because the cookie is httpOnly: the page has
+  // no way to read which store it was minted against.
+  if (data.home && data.home !== '/ops' && data.store !== STORE) {
+    leaveTo(data.home)
+    return null
+  }
   // The mirror of `RequireOwner`. An ops session is refused by every
   // dealership endpoint, so without this the shell rendered and then every
   // panel in it 403'd -- a dashboard that looks broken rather than one that
   // says this is not yours. The session is untouched either way; /ops is
   // where this account's own dashboard is.
   if (data.user.role === 'owner') {
-    return <Navigate to="/ops" replace />
+    // Not <Navigate>: with a store basename that resolves to `/<store>/ops`,
+    // and /ops is deliberately never per-store.
+    leaveTo('/ops')
+    return null
   }
   return <>{children}</>
 }

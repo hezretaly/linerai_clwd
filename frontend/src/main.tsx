@@ -7,6 +7,7 @@ import './styles/liner-theme.css'
 
 import { AppShell } from './components/dashboard/AppShell'
 import { BuyerTheme } from './components/BuyerTheme'
+import { BASENAME } from './lib/store'
 import { RequireAuth } from './routes/RequireAuth'
 import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
@@ -47,7 +48,11 @@ function LeaveToLanding() {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      {/* `/alsbou/app` and `/app` are the same routes, one store apart. The
+          basename is what keeps every <Link> inside the dealership the page
+          was opened for -- without it the first navigation silently drops the
+          prefix and lands on the default store's data. */}
+      <BrowserRouter basename={BASENAME}>
         <Routes>
           {/* Buyer surfaces keep the brand blue. /login is a dealer screen and
               deliberately stays on classic. */}

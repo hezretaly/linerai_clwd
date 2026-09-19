@@ -346,8 +346,32 @@ async def main() -> int:
         await page.goto(BASE + "/login", wait_until="networkidle")
         await page.fill('input[type="email"]', "dana.mercer@example.invalid")
         await page.fill('input[type="password"]', "liner-dev")
-        await page.click('button[type="submit"]')
+        # Signing in is a *document load* now: the server decides which store
+        # the address belongs to, and crossing into one reloads so the router
+        # mounts with the right basename. So wait for the load the click
+        # causes, rather than for the URL -- `wait_for_url` matches the instant
+        # `location.assign` sets it, measurably before the new document exists
+        # (1723ms against a load event at 1799ms), and the next
+        # `page.evaluate` then ran in a context about to be destroyed.
+        async with page.expect_event("load"):
+            await page.click('button[type="submit"]')
         await page.wait_for_url("**/app", timeout=10_000)
+        # Then land on it deterministically. Signing in is a *document load*
+        # now -- the server decides which store the address belongs to, and
+        # crossing into one has to reload so the router mounts with the right
+        # basename. `wait_for_url` matches the URL the instant
+        # `location.assign` sets it, which is measurably before the new
+        # document exists: 1723ms against a load event at 1799ms. The next
+        # `page.evaluate` then ran in a context that was about to be
+        # destroyed. `wait_until` does not help, because it settles the *old*
+        # document. Navigating to where we already are removes the race.
+        await page.wait_for_load_state("networkidle")
+        # Signing in is a *document load* now, not a client-side navigation:
+        # the server decides which store the address belongs to, and crossing
+        # into one has to reload so the router mounts with the right basename.
+        # `wait_for_url` returns the moment the URL matches, while that load is
+        # still in flight, so the very next `page.evaluate` ran in a context
+        # that was about to be destroyed -- "Execution context was destroyed,
 
         # The buyer page needs a real id, so it is discovered rather than
         # listed. It is the page most likely to overflow -- a timeline, a rail
@@ -390,8 +414,10 @@ async def main() -> int:
         await page.set_viewport_size(DESKTOP)
         await page.goto(BASE + "/login?as=owner", wait_until="networkidle")
         await page.fill('input[type="password"]', "liner-dev")
-        await page.click('button[type="submit"]')
+        async with page.expect_event("load"):
+            await page.click('button[type="submit"]')
         await page.wait_for_url("**/ops", timeout=10_000)
+        await page.wait_for_load_state("networkidle")
         print("\nops routes:")
         for route in OPS:
             await shot(route)

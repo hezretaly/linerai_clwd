@@ -3,10 +3,11 @@ import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
+import { leaveTo } from '../lib/store'
 import { useDealership } from '../lib/dealership'
 import type { User } from '../lib/types'
 import { Button, Card, Field, Input } from '../components/ui'
-import { usePublicDemo } from './RequireAuth'
+import { usePublicDemo, type Me } from './RequireAuth'
 
 export function Login() {
   const navigate = useNavigate()
@@ -48,19 +49,34 @@ export function Login() {
   // sharing the one `['me']` entry so there is one answer to who is signed in.
   const { data: session, isLoading: checking } = useQuery({
     queryKey: ['me'],
-    queryFn: () => api.get<{ user: User }>('/api/auth/me'),
+    queryFn: () => api.get<Me>('/api/auth/me'),
     retry: false,
   })
 
   const login = useMutation({
-    mutationFn: () => api.post<{ user: User }>('/api/auth/login', { email, password }),
+    mutationFn: () =>
+      api.post<{ user: User; store?: string; redirect?: string }>(
+        '/api/auth/login', { email, password },
+      ),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['me'] })
       // Routed off the role that came back, not off the `?as=` that was asked
       // for. Signing in as an owner and landing on the dealership's overview
       // means every panel 403s; signing in as a rep and landing on /ops means
       // the same in the other direction.
-      navigate(data.user.role === 'owner' ? '/ops' : '/app')
+      const fallback = data.user.role === 'owner' ? '/ops' : '/app'
+      // The server decides which dealership this address belongs to -- the
+      // browser cannot know, and that is the whole point of one sign-in form
+      // serving every store.
+      //
+      // A document load rather than `navigate`, always. The router's basename
+      // is fixed when the app mounts, so a client-side navigation to another
+      // store resolves against the wrong one: from `/craigandlandreth`,
+      // `navigate('/alsbou/app')` produces `/craigandlandreth/alsbou/app`.
+      // Reloading also guarantees the new page starts with the right basename
+      // and an empty query cache, which is the honest thing when the next
+      // screen reads a different database. It costs one load, once.
+      leaveTo(data.redirect || fallback)
     },
   })
 
@@ -70,7 +86,14 @@ export function Login() {
     return <div className="p-10 text-sm text-muted-foreground">Loading...</div>
   }
   const role = session?.user.role
-  if (role === 'owner' && wantsOwner) return <Navigate to="/ops" replace />
+  // `/ops` is never prefixed, so it cannot be a router navigation: under a
+  // basename of `/alsbou`, <Navigate to="/ops"> resolves to `/alsbou/ops`,
+  // which is not an address. Leaving the bundle is also correct -- ops is a
+  // different realm reading a different table.
+  if (role === 'owner' && wantsOwner) {
+    leaveTo('/ops')
+    return null
+  }
   if (role && role !== 'owner' && !wantsOwner) return <Navigate to="/app" replace />
 
   return (

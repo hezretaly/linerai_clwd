@@ -45,6 +45,17 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/ws': { target: 'ws://127.0.0.1:8000', ws: true },
+      // A store-prefixed call -- `/alsbou/api/overview`, `/alsbou/ws/dealer`.
+      // Matched by regex because the slug is not known here: a literal list
+      // would be a third copy of the profile directory, and it would go stale
+      // the day somebody adds a dealership. Anything else under a prefix is
+      // left to Vite's history fallback, which serves index.html and is what
+      // makes `/alsbou/app` work in development at all.
+      '^/[^/]+/(api|ws)/': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })

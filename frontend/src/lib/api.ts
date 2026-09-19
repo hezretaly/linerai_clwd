@@ -1,3 +1,5 @@
+import { withStore } from './store'
+
 export class ApiError extends Error {
   status: number
   payload: unknown
@@ -26,7 +28,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  // One place, so no caller has to remember. A request that goes out
+  // unprefixed from a store's page reaches the *default* store's database and
+  // answers with somebody else's buyers -- which looks like working software.
+  const response = await fetch(withStore(path), {
     credentials: 'include',
     /* A multipart body must set its own Content-Type: only the browser knows
      * the boundary, and naming the type here strips it, which the server sees
