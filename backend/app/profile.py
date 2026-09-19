@@ -155,6 +155,33 @@ def site() -> dict:
         "hero_image": heroes[0] if heroes else "",
         "hero_images": heroes[:6],
         "welcome": [str(p).strip() for p in (raw.get("welcome") or [])[:4] if str(p).strip()],
+        # The subheadings under their About copy, each with its own paragraph.
+        # Alsbou's page runs "Your Trusted Source for Used Cars", "Quality and
+        # Affordability" and "Visit Us Today!" -- flattened into one column of
+        # undifferentiated prose, which is what `welcome` alone could hold,
+        # their About section stops looking like their About section. Separate
+        # from `welcome` rather than a shape it may also take: a list whose
+        # items are sometimes strings and sometimes objects is one every
+        # reader has to test before it can use.
+        "sections": [
+            {"heading": str(s.get("heading") or "").strip()[:120],
+             "body": str(s.get("body") or "").strip()}
+            for s in (raw.get("sections") or [])[:6]
+            if isinstance(s, dict) and str(s.get("body") or "").strip()
+        ],
+        # The strip of linked images across their front page -- five on
+        # Alsbou's, each going somewhere different (inventory, financing,
+        # trade-in, contact, their sister store). These are NOT hero slides
+        # and rotating them as one was wrong: a hero is one picture of the
+        # forecourt, and these are five separate calls to action that only
+        # mean anything next to each other.
+        "banners": [
+            {"image": _link(b.get("image")),
+             "href": _link(b.get("href")),
+             "label": str(b.get("label") or "").strip()[:60]}
+            for b in (raw.get("banners") or [])[:6]
+            if isinstance(b, dict) and _link(b.get("image")) and _link(b.get("href"))
+        ],
         "links": _links(raw.get("links"), 8),
         # The one link their nav draws as a button rather than as text --
         # "GET PRE-QUALIFIED" on Alsbou's, in the accent. It is a link like the
@@ -167,6 +194,13 @@ def site() -> dict:
         # storefront notices the label before they notice the layout -- and a
         # profile that states none gets no label, not a guessed one.
         "price_label": str(raw.get("price_label") or "").strip()[:40],
+        # What that number already includes, in the dealer's own words. Alsbou
+        # headline a total and disclose the four fees inside it, and which of
+        # them applies varies per car -- their four electric vehicles pay no
+        # smog fee. So this is a sentence they wrote, shown beside the two
+        # figures the export actually states, and nothing here subtracts one
+        # number from another to arrive at a third.
+        "price_note": str(raw.get("price_note") or "").strip()[:240],
         "social": _links(raw.get("social"), 6),
     }
 

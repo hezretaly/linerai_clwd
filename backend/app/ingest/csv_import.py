@@ -32,6 +32,27 @@ ALIASES = {
     "dealer_phone": ("dealer_phone", "phone", "store_phone"),
     "doc_fee": ("doc_fee", "documentation_fee", "docfee"),
     "stock_number": ("stock_number", "stock", "stock_no", "stock #"),
+    # The six a used-car listing prints under the photo, and the number above
+    # them. Every DMS export carries these; ours did not read them, so a card
+    # could say a car was a 2018 Audi Q7 and nothing else -- while the
+    # dealer's own page said 64,342 miles, gasoline, AWD, white over black.
+    # They go to `raw_json` rather than columns, because `create_all` adds a
+    # table to an existing database and never a column.
+    "fuel_type": ("fuel_type", "fuel", "fueltype"),
+    "drivetrain": ("drivetrain", "drive_train", "drive", "drivetype"),
+    "transmission": ("transmission", "trans", "transmission_type"),
+    "exterior_color": ("exterior_color", "exterior_colour", "color", "colour", "ext_color"),
+    "interior_color": ("interior_color", "interior_colour", "int_color"),
+    "engine": ("engine", "engine_description"),
+    # What the dealer advertises before their own fees, where the price above
+    # already includes them. Stated by the source, never derived here: which
+    # fees apply is the dealer's rule and varies per car -- four of Alsbou's
+    # are electric and pay no smog fee, so subtracting a fixed schedule would
+    # be wrong on exactly the cars nobody would check.
+    "advertised_price": ("advertised_price", "advertised", "base_price"),
+    # The dealer's own vehicle-history report for this car. A link to their
+    # provider, never a claim about what is in it.
+    "vehicle_history_url": ("vehicle_history_url", "carfax_url", "history_url"),
     "price": ("price", "list_price", "asking_price", "selling_price"),
     "mileage": ("mileage", "odometer", "miles"),
     "body_style": ("body_style", "bodystyle", "body", "vehicle_type"),
@@ -160,7 +181,12 @@ def import_csv(db: Session, raw: str) -> IngestRun:
             # also exactly what that field is for: what the source said.
             "raw": {
                 key: pick(row, key)
-                for key in ("location", "dealer_phone", "doc_fee", "stock_number")
+                for key in (
+                    "location", "dealer_phone", "doc_fee", "stock_number",
+                    "advertised_price", "fuel_type", "drivetrain", "transmission",
+                    "exterior_color", "interior_color", "engine",
+                    "vehicle_history_url",
+                )
                 if pick(row, key)
             },
         }

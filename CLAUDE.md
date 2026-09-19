@@ -2062,6 +2062,69 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       all return nothing. The logo, hero and every car photo fall back on
       `onError`: they are hotlinked from the dealer's CDN, and a torn-page
       icon next to their own name mid-demo is the failure to prevent.
+      - **A count that disagrees with its own grid is the thing being
+        prevented, so the gate presses every facet.** Two ways it did.
+        `GROUP BY` is case-sensitive and both filters matched loosely, so
+        Riverside's lot — written `SUV` by the curated seed and `suv` by the
+        CSV importer, two writers of one column — offered *two* SUV filters,
+        at 50 and 5, either of which returned 55. And `ilike("%van%")` also
+        matches *Mini*van, so "van (1)" showed two cars: the substring
+        failure `search_inventory` was fixed for when "do" inside "Dodge"
+        ranked a Hornet above every Corvette. A value counted from rows and
+        pressed is matched exactly; `_fold` merges the spellings a database
+        already holds, keeping the commonest, because grouping on `lower()`
+        would hand `MERCEDES-BENZ` back as `mercedes-benz` and `cased` cannot
+        restore a capital it never saw.
+    - **The chrome is two bars, and that was the whole of "it looks nothing
+      like our site".** A dealer's header is a black identity bar — logo,
+      address, phone, and their own search box — over a separate flat nav
+      strip, not one row with the logo left and the nav right. And their hero
+      is a *photograph*: it was drawn behind a `via-background/85` scrim,
+      which at 85% hid the picture entirely and rendered as a plain band of
+      page colour with a heading on it.
+      - **Five images that each link somewhere are not a rotation.** All five
+        of Alsbou's banner tiles were listed as `hero_images` and cross-faded
+        as hero slides, which showed one of their five calls to action at a
+        time and none of them as a link. `site.banners` is the strip and
+        `site.hero_image` is the photograph; the gate fails if a hero is also
+        a tile.
+      - **Their About copy has subheadings, and flattening them loses the
+        section.** `site.sections` carries the heading/paragraph blocks beside
+        the lead `welcome` — kept separate rather than letting `welcome`'s
+        items be either strings or objects, because a list whose shape varies
+        is one every reader has to test before it can use it. The map beside
+        it is derived from the address rather than stored: one fact, one
+        answer, and no key to configure.
+    - **The card carries what their card carries, and the fields are the
+      point.** A listing prints the stock number, the price under its own
+      label, what that price includes, and six specifications in a bordered
+      grid; this printed mileage in small grey text and nothing else — because
+      the importer read four columns out of an export that had twelve. Fuel,
+      drivetrain, transmission, both colours, the engine, the stock number and
+      the history link go to `raw_json`, which is what that field is for, and
+      `_specs` composes the cells server-side so a card and a sentence about
+      the same car cannot disagree about a value's casing.
+      - **A field the export did not state draws no cell, and the grid
+        narrows to fit.** An empty cell under a label reads as a page that
+        failed to load rather than as a dealer who did not publish the field —
+        the same rule By Type follows by not being drawn at all. Fixed at
+        three columns, Riverside's mileage-only lot drew one cell and two
+        empty thirds beside it, which is that same failure reintroduced by
+        the grid rather than by the data.
+      - **The pricing disclosure states; it does not compute.** Both figures
+        come from the export and the sentence between them is the dealer's
+        own. Nothing subtracts one from the other, and this is why: the gap
+        between what Alsbou advertise and what they headline is *not* a
+        constant — four of their 69 are electric and pay no smog fee, so a
+        fixed schedule taken off the total would be wrong by $58.25 on exactly
+        the four nobody would think to check. `make smoke` pins that the gap
+        varies, because a constant is what would make the shortcut look safe.
+      - **A dealer's own page is an export.** Their CSV carried no mileage and
+        no body style and the profile said so, asking them for a fuller one.
+        They did not need to send it: their inventory page publishes both, and
+        every other field, in the payload behind it. Reading that turned "2018
+        Audi Q7" over a price into their card, and gave the lot seven real
+        body styles, so By Type is drawn for them at all.
     - **The search box is a keyword box, not the chat.** Every word must hit,
       because "silverado 4wd" means both; `search_inventory` *scores* the same
       words instead, because it is answering a sentence and keeps its best

@@ -114,6 +114,14 @@ const PATHS = {
       <path d="M22 6l-10 7L2 6" />
     </>
   ),
+  // Not from the mockups: a dealer's own header puts a marker beside its
+  // address and a handset beside its number, and `phone` was already here.
+  pin: (
+    <>
+      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0116 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </>
+  ),
   globe: (
     <>
       <circle cx="12" cy="12" r="9" />

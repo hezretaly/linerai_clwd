@@ -29,22 +29,35 @@ export interface Link {
 export interface Site {
   tagline: string
   heading: string
-  /** The first of `hero_images`, kept so a surface wanting one image does not
-   *  have to know about the rotation. */
+  /** The photograph across the top of their front page. One image: a dealer's
+   *  hero is a picture of the forecourt, not a rotation. */
   hero_image: string
-  /** Their rotating banner, in their own order. Empty for a profile that
-   *  states none, and the page then draws no image at all rather than a grey
-   *  band where one should be. */
+  /** Kept for a profile written before `hero_image` was the spelling. The
+   *  page reads `hero_image`, which is the first of these. */
   hero_images: string[]
+  /** The lead paragraph of their About copy. */
   welcome: string[]
+  /** The subheaded blocks that follow it. Separate from `welcome` rather than
+   *  a shape it may also take: a list whose items are sometimes strings and
+   *  sometimes objects is one every reader has to test before using. */
+  sections: { heading: string; body: string }[]
+  /** The strip of linked images across their front page, each going somewhere
+   *  different. Not hero slides -- five calls to action that only mean
+   *  anything next to each other. */
+  banners: { image: string; href: string; label: string }[]
   links: Link[]
-  /** The one nav item they draw as a button rather than as text -- "Get
-   *  Pre-Qualified" on Alsbou's. `null` for a profile that names none, and
-   *  the header then has no button, which is most dealers. */
+  /** The one nav item they emphasise -- "Get Pre-Qualified" on Alsbou's. It
+   *  is also in `links`, and this only says which one to draw in the accent,
+   *  so it keeps its own position in their nav. `null` for a profile that
+   *  names none, which is most dealers. */
   cta: Link | null
   /** What they call the number on a card: "Advertised price". Empty is the
    *  common case and the price then simply stands on its own. */
   price_label: string
+  /** What that number already includes, in the dealer's own words. Shown in
+   *  the card's pricing disclosure beside the two figures the export states;
+   *  nothing on the page subtracts one from the other. */
+  price_note: string
   social: Link[]
 }
 

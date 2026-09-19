@@ -97,6 +97,58 @@ SORTS: dict[str, list] = {
 DEFAULT_SORT = "az"
 
 
+def _int(value: object) -> int | None:
+    """A number the export stated, or nothing. Never a guess at a missing one."""
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _https(value: object) -> str:
+    """A URL from a profile or an export, only where it is one.
+
+    The same rule the accent is validated by and for the same reason: this
+    lands in an `href` in somebody's browser, and an export is a file a dealer
+    edits. `javascript:` is the obvious one; a relative path is the quiet one,
+    because it resolves against *our* host and 404s mid-demo.
+    """
+    url = str(value or "").strip()
+    return url if url.startswith("https://") else ""
+
+
+# The six a listing card prints, in the order Alsbou's own page prints them:
+# mileage, fuel and exterior on the top row, interior, drivetrain and
+# transmission below. `mileage` is a column; the rest were read into
+# `raw_json` by the importer, which is what that field is for.
+SPECS = (
+    ("Fuel", "fuel_type"),
+    ("Exterior", "exterior_color"),
+    ("Interior", "interior_color"),
+    ("Drivetrain", "drivetrain"),
+    ("Transmission", "transmission"),
+)
+
+
+def _specs(v: Vehicle, raw: dict) -> list[dict]:
+    """The card's feature cells, dropping every one the export did not state.
+
+    An empty cell under a label is worse than no cell: it reads as a page that
+    failed to load rather than as a dealer who did not publish the field. So a
+    lot with no colours draws four cells, not six with two holes -- the same
+    rule the By Type filter follows, which is not drawn at all for a lot whose
+    export carries no body style.
+    """
+    cells = []
+    if v.mileage is not None:
+        cells.append({"label": "Mileage", "value": f"{v.mileage:,}"})
+    for label, key in SPECS:
+        value = cased(str(raw.get(key) or "").strip())
+        if value:
+            cells.append({"label": label, "value": value})
+    return cells
+
+
 def _car(v: Vehicle, home: str = "") -> dict:
     """One card. Every field here is on the dealer's own public listing.
 
@@ -111,6 +163,32 @@ def _car(v: Vehicle, home: str = "") -> dict:
     raw = loads(v.raw_json or "{}", {})
     where = str(raw.get("location") or "")
     return {
+        # The six cells a used-car card prints under the photo, in the order
+        # the dealer's own page prints them, already cased and formatted.
+        #
+        # **Composed here rather than in the card**, for the reason
+        # `app/recap.py` gives: two places deciding what a listing says is how
+        # one of them starts shouting AUTOMATIC while the other says Automatic.
+        # It is a list rather than six named fields because the card lays it
+        # out as a grid and an export that carries four of them should draw
+        # four cells, not four cells and two holes.
+        #
+        # Mileage is in here *and* still a typed field above. That is not two
+        # answers to one question -- both are `v.mileage`, read once, in one
+        # function -- it is the same number formatted for a grid cell beside
+        # the ones that only ever existed as text.
+        "specs": _specs(v, raw),
+        # Their own stock number, which is how a dealer refers to a car on the
+        # phone. `raw` because the source said it and there is no column.
+        "stock_number": str(raw.get("stock_number") or ""),
+        # What the dealer advertises before their own fees, where the price
+        # above already includes them. Stated by the export, never derived:
+        # see the note beside `advertised_price` in `ingest/csv_import.py`.
+        "advertised_price": _int(raw.get("advertised_price")),
+        # Their vehicle-history provider's report for this car. A link to what
+        # the dealer published, and this page makes no claim about what is in
+        # it -- a badge asserting "no accidents" would be us saying so.
+        "history_url": _https(raw.get("vehicle_history_url")),
         "vin": v.vin,
         "title": f"{v.year} {cased(v.make)} {cased(v.model)}".strip(),
         "trim": cased(v.trim or ""),
@@ -156,6 +234,32 @@ def identity(db: Session) -> dict:
     return {**out, "brand": brand(), "site": site()}
 
 
+def _fold(rows: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    """One row per value, whatever case the lot happens to spell it in.
+
+    **The count has to agree with what pressing it returns.** Both filters
+    match with `ilike`, so "SUV" selects every SUV on the lot -- while `GROUP
+    BY` is case-sensitive in SQLite, so the sidebar counted them separately.
+    Riverside's fixture writes `SUV` from its curated list and `suv` through
+    the CSV importer, and the result was a lot of 112 cars offering *two* SUV
+    filters, at 50 and 5, either of which returned 55. A browse filter that
+    promises a number and shows another is worse than no filter at all, which
+    is the rule this whole function exists for.
+
+    **Folded here rather than lowercased in the query**, because the spelling
+    is the dealer's: grouping on `lower()` would hand `MERCEDES-BENZ` back as
+    `mercedes-benz`, and `cased` cannot restore a capital it never saw. The
+    most common spelling wins, so a lot that is overwhelmingly one way reads
+    that way.
+    """
+    merged: dict[str, tuple[str, int]] = {}
+    for name, count in sorted(rows, key=lambda r: -r[1]):
+        key = (name or "").lower()
+        spelling, running = merged.get(key, (name, 0))
+        merged[key] = (spelling, running + count)
+    return sorted(merged.values(), key=lambda r: -r[1])
+
+
 def _facets(db: Session) -> dict:
     """What the lot actually contains, counted.
 
@@ -168,18 +272,16 @@ def _facets(db: Session) -> dict:
     do-not-discuss car does not appear at all rather than appearing and
     leading to an empty page.
     """
-    makes = (
+    makes = _fold(
         offerable(db.query(Vehicle.make, func.count(Vehicle.id)))
         .filter(Vehicle.make != "")
         .group_by(Vehicle.make)
-        .order_by(func.count(Vehicle.id).desc())
         .all()
     )
-    styles = (
+    styles = _fold(
         offerable(db.query(Vehicle.body_style, func.count(Vehicle.id)))
         .filter(Vehicle.body_style != "")
         .group_by(Vehicle.body_style)
-        .order_by(func.count(Vehicle.id).desc())
         .all()
     )
     bands = []
@@ -230,7 +332,13 @@ def showroom(
     if make.strip():
         query = query.filter(func.lower(Vehicle.make) == make.strip().lower())
     if body_style.strip():
-        query = query.filter(Vehicle.body_style.ilike(f"%{body_style.strip()}%"))
+        # **Exact, not a substring**, which is what the make filter beside it
+        # already does. `ilike("%van%")` also matches *Mini*van, so the
+        # sidebar's "van (1)" returned two cars -- the same failure
+        # `search_inventory` was fixed for when "do" inside "Dodge" ranked a
+        # Hornet above every Corvette. These values are counted from rows and
+        # pressed, not typed, so there is nothing a looser match could buy.
+        query = query.filter(func.lower(Vehicle.body_style) == body_style.strip().lower())
     if min_price is not None:
         query = query.filter(Vehicle.price >= min_price)
     if max_price is not None:

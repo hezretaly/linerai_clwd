@@ -3717,11 +3717,83 @@ def main() -> int:
     theirs = alsbou.get("site") or {}
     for label, value in (
         ("the label over their price", theirs.get("price_label")),
+        ("what that price includes", theirs.get("price_note")),
         ("the button their nav emphasises", (theirs.get("cta") or {}).get("label")),
-        ("their banner images", (theirs.get("hero_images") or [None])[0]),
+        ("their hero photograph", theirs.get("hero_image")),
+        ("their banner strip", (theirs.get("banners") or [{}])[0].get("image")),
+        ("the banner strip's destinations", (theirs.get("banners") or [{}])[0].get("href")),
+        ("their About subheadings", (theirs.get("sections") or [{}])[0].get("heading")),
     ):
         check(f"{label} is served rather than written into the component",
               bool(value) and str(value) not in page, str(value)[:50])
+
+    # **The hero is one photograph and the strip is five links, and they are
+    # not the same images.** They were: all five of their banner tiles were
+    # listed as `hero_images` and cross-faded behind the caption, which showed
+    # one of their five calls to action at a time and none of them as a link.
+    # The two keys sharing a URL is what that mistake looks like from here.
+    hero = theirs.get("hero_image")
+    tiles = [b.get("image") for b in (theirs.get("banners") or [])]
+    check("their hero is not one of their banner tiles",
+          bool(hero) and hero not in tiles, f"{len(tiles)} tile(s)")
+    check("and every banner tile goes somewhere of its own",
+          len({b.get("href") for b in (theirs.get("banners") or [])}) == len(tiles),
+          str([b.get("label") for b in (theirs.get("banners") or [])])[:70])
+
+    # **The card carries what their card carries.** Their listing prints six
+    # specifications under the photo and this one printed mileage alone,
+    # because the importer read four columns out of an export that had twelve.
+    # A card reading "2018 Audi Q7" over a price is a placeholder beside the
+    # page it is meant to look like.
+    #
+    # **Asked of their lot, not of the default one.** Riverside's fourteen
+    # invented cars state none of these fields, so running this unprefixed
+    # would pass on an empty question -- the same trap the price-order walk
+    # above had to be pulled out of. It is skipped rather than failed where
+    # their store has no file, and `has_database` is asked *before* the
+    # request, because requesting `/alsbou/api/...` would create one.
+    if pathlib.Path(
+        _cfg.database_url_for("alsbou").split("///", 1)[-1]
+    ).exists() and "alsbou" in _cfg.store_slugs:
+        lot = call("GET", "/alsbou/api/showroom?limit=100")["vehicles"]
+        labelled = [c for c in lot if len(c.get("specs") or []) >= 5]
+        check("their cards carry the specifications their own listing prints",
+              bool(lot) and len(labelled) > len(lot) * 0.9,
+              f"{len(labelled)}/{len(lot)} with five or more")
+        check("and a field the export did not state draws no empty cell",
+              all(s.get("value") for c in lot for s in c["specs"]),
+              str([s for c in lot for s in c["specs"] if not s.get("value")])[:60])
+
+        # **The pricing disclosure states; it does not compute.** Both figures
+        # come from the export and the sentence between them is the dealer's.
+        # Nothing subtracts one from the other, and this is why: the gap
+        # between what they advertise and what they headline is NOT a
+        # constant. Four of Alsbou's 69 are electric and pay no smog fee, so a
+        # fixed schedule taken off the total would be wrong by $58.25 on
+        # exactly the four nobody would think to check.
+        gaps = {c["price"] - c["advertised_price"]
+                for c in lot if c.get("price") and c.get("advertised_price") is not None}
+        check("the fees inside their price are not one number for the whole lot",
+              len(gaps) > 1, f"{len(gaps)} distinct: {sorted(gaps)}")
+
+    # **A browse filter's count has to be what pressing it returns.** Both
+    # filters match with `ilike` and `GROUP BY` is case-sensitive, so a lot
+    # spelling one body style two ways offered two filters that returned the
+    # same cars -- Riverside's 112 had `SUV` at 5 and `suv` at 50, and either
+    # gave back 55. Driven rather than reasoned: every facet is pressed and
+    # its promise compared with the grid it produces.
+    facets = call("GET", "/api/showroom?limit=1")["facets"]
+    for group, param in (("makes", "make"), ("body_styles", "body_style")):
+        wrong = []
+        for facet in facets[group]:
+            got = call("GET", f"/api/showroom?limit=1&{param}={quote(facet['name'])}")["total"]
+            if got != facet["count"]:
+                wrong.append(f"{facet['name']}: says {facet['count']}, shows {got}")
+        check(f"every {group.replace('_', ' ')} filter shows what it promised",
+              not wrong, str(wrong[:3])[:90])
+        check(f"and no {group.replace('_', ' ')} is offered twice in two cases",
+              len({f["name"].lower() for f in facets[group]}) == len(facets[group]),
+              str([f["name"] for f in facets[group]])[:70])
 
     # Alsbou's export stamps their own city on all 69 of their cars, and their
     # dealership row carries that same city. Printed on every row it is noise,

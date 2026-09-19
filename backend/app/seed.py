@@ -547,7 +547,15 @@ def _seed_vehicles(db: Session) -> list[Vehicle]:
         vehicles.append(
             Vehicle(
                 vin=vin, year=year, make=make, model=model, trim=trim, price=price,
-                mileage=mileage, body_style=body, seats=seats, keywords=keywords,
+                # Lowercased, because `import_csv` lowercases and this is the
+                # other writer of the same column. Two writers with two
+                # conventions gave the fixture both `SUV` and `suv`, which
+                # `GROUP BY` counts as two body styles and `ilike` selects as
+                # one -- so the storefront offered two SUV filters that
+                # returned the same 55 cars. `_fold` in `api/showroom.py`
+                # repairs the databases that already have it; this stops new
+                # ones being written.
+                mileage=mileage, body_style=(body or "").lower(), seats=seats, keywords=keywords,
                 features_json=json.dumps(features),
                 photo_url=f"/api/photos/{vin}.svg",
                 listing_url=f"/inventory/{vin}",

@@ -93,21 +93,42 @@ site:
   # What they call the number on a card. Their word, not ours -- a dealer
   # reading their own storefront notices the label before the layout.
   price_label: Advertised price
-  # All five of the images their own banner rotates through, in the order their
-  # page lists them. The page cross-fades between whichever of them load: each
-  # is tried and a URL that fails is dropped from the rotation rather than
-  # taking the banner down with it, because these are hotlinked from their CDN
-  # and a torn-page icon across the top of their own front page is the failure
-  # to prevent. NONE of them has ever loaded on this machine -- the egress
-  # proxy refuses gmacrmprod.s3.us-west-2.amazonaws.com -- so what has been
-  # seen here is the fallback, and the rotation itself is unproven against
-  # their real images.
-  hero_images:
-    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222872312.webp"
-    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222830147.webp"
-    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222859470.webp"
-    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222842083.webp"
-    - "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222838840.webp"
+  # Their card headlines a total and discloses what is inside it. WHICH fees
+  # apply varies per car -- their four electric vehicles pay no smog fee, so
+  # those four are $100 over the advertised price where the other 65 are
+  # $158.25 -- which is why this is a sentence they wrote rather than a
+  # schedule this app adds up. The two figures on the card are both stated by
+  # their export; nothing subtracts one from the other to invent a third.
+  price_note: >-
+    Advertised price plus DOC $85, Transfer Charge $15, and Smog $50 with a
+    $8.25 certificate where the vehicle needs one.
+  # The photograph across the top of their front page. ONE image, not five --
+  # the five below are a different thing entirely and were wrongly rotated
+  # here before, which put their financing advert where a picture of the
+  # forecourt belongs.
+  hero_image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222720193.webp"
+  # The strip of five linked images under it, in their page's order, each
+  # going somewhere different. Every one is hotlinked from their CDN and each
+  # falls back on its own: an image host that refuses an off-site referrer, a
+  # URL that has moved and a venue firewall all look identical and all happen
+  # on somebody else's laptop, and a row of torn-page icons across their own
+  # front page is the failure to prevent. NONE of these has ever loaded on
+  # this machine -- the egress proxy refuses
+  # gmacrmprod.s3.us-west-2.amazonaws.com -- so what has been seen here is the
+  # fallback, and the images themselves are unproven.
+  #
+  # The labels are ours, because their images carry the words and a blank
+  # `alt` on five links is five links a screen reader cannot tell apart.
+  banners:
+    - { label: Browse the inventory, href: "https://www.alsboucars.com/inventory",              image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222872312.webp" }
+    - { label: Financing,            href: "https://www.alsboucars.com/financing",              image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222830147.webp" }
+    - { label: Trade in or sell,     href: "https://www.alsboucars.com/page/trade-sell",        image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222859470.webp" }
+    - { label: Contact us,           href: "https://www.alsboucars.com/contact",                image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222842083.webp" }
+    - { label: Riverside inventory,  href: "https://www.alsboumotorsriverside.com/inventory",   image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222838840.webp" }
+  # The lead paragraph of their About card. The three subheaded blocks that
+  # follow it are `sections:` below -- run together as four plain paragraphs,
+  # which is how this read before, their About section stops looking like
+  # theirs and reads as one undifferentiated column.
   welcome:
     - >-
       At Alsbou Motors, located at 1223 W 17th St, Santa Ana, CA, we pride
@@ -115,26 +136,47 @@ site:
       dealership specializes in offering a diverse selection of the best used
       cars in Santa Ana, CA, ensuring that every customer finds the perfect
       vehicle to meet their needs.
-    - >-
-      With years of experience in the automotive industry, Alsbou Motors is
-      committed to providing exceptional service and a seamless car-buying
-      experience.
-    - >-
-      We understand that purchasing a vehicle is a significant investment.
-      That's why we focus on offering the best used cars in Santa Ana, CA, at
-      competitive prices.
-    - >-
-      Discover why Alsbou Motors is the go-to dealership for used cars in
-      Santa Ana, CA.
+  # The three subheaded blocks that follow it, word for word off their page.
+  # They were previously here as bare paragraphs with their second halves cut
+  # off, which lost both the headings and about a third of each sentence --
+  # this is the dealership's own copy, and an abridged version of it is
+  # something they did not write.
+  sections:
+    - heading: Your Trusted Source for Used Cars
+      body: >-
+        With years of experience in the automotive industry, Alsbou Motors is
+        committed to providing exceptional service and a seamless car-buying
+        experience. Our knowledgeable staff is here to guide you through our
+        extensive inventory of used cars for sale in Santa Ana, CA, helping
+        you make an informed decision.
+    - heading: Quality and Affordability
+      body: >-
+        We understand that purchasing a vehicle is a significant investment.
+        That's why we focus on offering the best used cars in Santa Ana, CA,
+        at competitive prices. Each vehicle undergoes a thorough inspection to
+        ensure it meets our high standards of quality and reliability.
+    - heading: Visit Us Today!
+      body: >-
+        Discover why Alsbou Motors is the go-to dealership for used cars in
+        Santa Ana, CA. Visit us today and let us help you find your next
+        vehicle!
+  # Their nav, in their order. DEALER SERVICES is the one item left out: on
+  # their own site it is `href="#"` opening a dropdown, so there is no page to
+  # send anybody to and a dead link on their storefront is worse than one item
+  # fewer. FINANCING is `#` in the nav too, but their footer and their banner
+  # strip both point at /financing, so that is a real page and it is used.
   links:
+    - { label: Home,                href: "https://www.alsboucars.com/" }
     - { label: Inventory,           href: "https://www.alsboucars.com/inventory" }
+    - { label: Financing,           href: "https://www.alsboucars.com/financing" }
+    - { label: Get Pre-Qualified,   href: "https://www.alsboucars.com/prequalified" }
     - { label: Reviews,             href: "https://www.alsboucars.com/page/reviews" }
     - { label: Contact Us,          href: "https://www.alsboucars.com/contact" }
     - { label: Riverside Inventory, href: "https://www.alsboumotorsriverside.com/inventory" }
-  # The one nav item their own header draws as a gold button rather than as
-  # text, so it is named rather than left for the page to guess at. It is the
-  # same link with the same validation -- it has simply been moved out of the
-  # list above so it is not rendered twice.
+  # The one nav item they emphasise. It is in `links` above like every other,
+  # and this names it so the page can draw it in the accent *in its own
+  # position* -- moved out of the list to be appended at the end, it rendered
+  # sixth where their nav has it third, which is a different nav.
   #
   # Their footer sells it harder still ("Bad Credit Car Loans"), and it is
   # THEIR page, on their host: pre-qualification is a credit decision, so a
@@ -148,13 +190,20 @@ site:
 # network at all -- which is the only option here, since their site refuses
 # this machine.
 #
-# WHAT THEIR EXPORT DOES NOT CARRY: mileage, body style and seat count. Those
-# columns are present and empty rather than derived, so the two
-# `search_inventory` filters that read body style and seats simply narrow
-# nothing for this dealership, and mileage is absent from every card. A
-# missing field is a smaller error than an invented one, and the keyword
-# search still matches on year, make, model and trim. Worth asking them for a
-# fuller export -- mileage is the second thing a used-car buyer asks.
+# WHERE THE COLUMNS CAME FROM. The first version of this file was built from
+# a CSV that carried no mileage and no body style, and said so -- "worth
+# asking them for a fuller export". They did not need to send one: their own
+# inventory page already publishes both, along with fuel, drivetrain,
+# transmission, the two colours, the engine, the stock number, the advertised
+# price before fees and a link to each car's history report. Every one of
+# those is now in the file below, read from the page rather than guessed at,
+# which is the difference between a card that says "2018 Audi Q7" and the
+# card their own site draws.
+#
+# STILL EMPTY, AND DELIBERATELY: `seats` and `features`. Their page states
+# neither. Door count is not seat count and an engine description is not a
+# feature list, so the two `search_inventory` filters that read those narrow
+# nothing here -- a missing field is a smaller error than an invented one.
 #
 # One car is call-for-price (a 2020 Nissan Pathfinder). That is a listing
 # state, not a gap: it sorts last rather than first, and the buyer gets an
