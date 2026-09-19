@@ -11,7 +11,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import active_store, get_db
+from app.db import SessionLocal, active_store, get_db
 from app.models import Dealership, OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -133,12 +133,32 @@ def resolve_account(db: Session, data: dict) -> "User | OpsUser | None":
     return db.query(User).filter_by(id=uid, active=True).one_or_none()
 
 
-def current_account(request: Request, db: Session = Depends(get_db)) -> "User | OpsUser":
-    """Either realm. Only for "who am I" -- never for reading anybody's data."""
-    account = resolve_account(db, _session(request))
-    if account is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
-    return account
+def current_account(request: Request) -> "User | OpsUser":
+    """Either realm, and **the store the session was minted against**.
+
+    Only for "who am I" -- never for reading anybody's data.
+
+    Resolved against the cookie's store rather than the request's, which is
+    the one place those two should differ. Signing in unprefixed puts a Craig
+    session on the browser; the very next call is `/api/auth/me` to find out
+    where to go, and looking that up in the *default* store answers "Unknown
+    user" -- a 401 that reads as a broken login when the sign-in had in fact
+    just succeeded. Measured exactly that way before this was fixed.
+
+    It stays safe because of what it returns: an identity and nothing else.
+    Every endpoint that reads a dealership's rows goes through `current_user`,
+    which checks the store matches and refuses when it does not.
+    """
+    data = _session(request)
+    slug = session_store(data) if "store" in data else active_store()
+    with SessionLocal(slug) as db:
+        account = resolve_account(db, data)
+        if account is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
+        # Detached on purpose: the session closes here and the caller only
+        # ever reads already-loaded columns off it.
+        db.expunge(account)
+        return account
 
 
 def current_owner(request: Request, db: Session = Depends(get_db)) -> OpsUser:

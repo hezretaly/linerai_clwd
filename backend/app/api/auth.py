@@ -5,6 +5,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -16,9 +17,10 @@ from app.api.deps import (
     verify_password,
 )
 from app.config import settings
-from app.db import get_db
+from app.db import SessionLocal, current_store, get_db
 from app.models import OpsUser, User
 from app.ratelimit import SlidingWindow
+from app.stores import known_stores
 from app.schemas.serialize import user_out
 
 log = logging.getLogger("liner.auth")
@@ -84,22 +86,89 @@ def login(
             headers={"Retry-After": str(wait)},
         )
 
-    account = (
-        db.query(User).filter_by(email=email, active=True).one_or_none()
-        or db.query(OpsUser).filter_by(email=email, active=True).one_or_none()
-    )
-    # Always verify against *something*. Short-circuiting on `account is None`
-    # skips bcrypt, and the hundredfold difference in how long that takes is a
-    # perfectly good answer to "does this account exist" -- one a rate limit
-    # and an identical error message do nothing about.
-    ok = verify_password(body.password, account.password_hash if account else _ABSENT_HASH)
-    if account is None or not ok:
-        attempts.record(email)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+    slug = locate_store(email)
 
-    attempts.clear(email)
-    set_session(response, account)
-    return {"user": user_out(account)}
+    with SessionLocal(slug) as store_db:
+        account = (
+            store_db.query(User).filter_by(email=email, active=True).one_or_none()
+            or store_db.query(OpsUser).filter_by(email=email, active=True).one_or_none()
+        )
+        # Always verify against *something*. Short-circuiting on
+        # `account is None` skips bcrypt, and the hundredfold difference in how
+        # long that takes is a perfectly good answer to "does this account
+        # exist" -- one a rate limit and an identical error message do nothing
+        # about. `locate_store` returns "" for an address it never found, so
+        # this path is reached with no account and still pays the hash.
+        ok = verify_password(body.password, account.password_hash if account else _ABSENT_HASH)
+        if account is None or not ok:
+            attempts.record(email)
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong email or password")
+
+        attempts.clear(email)
+        set_session(response, account, store=slug)
+        payload = user_out(account)
+        # Where the browser should go next. The client cannot work this out --
+        # it does not know which store holds the address it just typed, which
+        # is the whole reason one sign-in form can serve every dealership.
+        return {"user": payload, "store": slug, "redirect": home_for(account, slug)}
+
+
+def locate_store(email: str) -> str:
+    """Which store holds this address, or "" when nothing does.
+
+    **A URL that names a store settles it.** Signing in at
+    `/alsbou/api/auth/login` searches Alsbou and nowhere else, so a Craig
+    address typed there fails rather than quietly signing somebody into a
+    dealership they did not ask for.
+
+    Only an *unprefixed* sign-in searches, and then the configured default
+    goes first so a single-store deployment does exactly one query and
+    behaves as it always did. Two stores holding the same address would
+    resolve to the first, which is a real ambiguity -- and the honest place to
+    fix it is the roster, not here: one person, one dealership.
+
+    Nothing about this is a secret channel. It reports where an account lives
+    only to somebody who then has to produce its password, and a wrong address
+    and a wrong password are still the same message and the same bcrypt cost.
+    """
+    named = current_store.get()
+    if named:
+        return named
+
+    default = settings.dealership.strip()
+    order = [default] + [s for s in known_stores() if s != default]
+    for slug in order:
+        try:
+            with SessionLocal(slug) as db:
+                found = (
+                    db.query(User.id).filter_by(email=email, active=True).first()
+                    or db.query(OpsUser.id).filter_by(email=email, active=True).first()
+                )
+        except OperationalError:
+            # A store with a profile but no database yet. Opening it *creates*
+            # the file, so the next query fails with `no such table: users`
+            # rather than returning nothing -- which came back as a 500 on
+            # every sign-in, and took the constant-time guard with it: the
+            # unknown-address path raised before it reached bcrypt, so an
+            # unknown address answered in 6ms against a real one's 250ms.
+            # That is precisely the stopwatch oracle `_ABSENT_HASH` exists to
+            # close, reopened by a lookup that ran too early.
+            continue
+        if found:
+            return slug
+    return ""
+
+
+def home_for(account: "User | OpsUser", slug: str) -> str:
+    """The page this account's dashboard lives on.
+
+    Ops is never prefixed: `/ops` is Liner's own and is deliberately not
+    per-store, so an owner goes there whichever store's file their row was
+    read from.
+    """
+    if isinstance(account, OpsUser):
+        return "/ops"
+    return f"/{slug}/app" if slug else "/app"
 
 
 def demo_rep(db: Session) -> User | None:
@@ -157,10 +226,32 @@ def logout(response: Response) -> dict:
 
 
 @router.get("/me")
-def me(account=Depends(current_account)) -> dict:
+def me(request: Request, account=Depends(current_account)) -> dict:
     """Either realm -- this is the one question that has to answer for both.
 
     The dashboards branch on the role that comes back, so a 403 here would
     mean an ops session could not even discover it was signed in.
+
+    It also reports the store and where this account's dashboard lives, which
+    is what lets the browser send a signed-in Alsbou manager to `/alsbou/app`
+    from anywhere else. The client cannot derive it: the cookie is httpOnly,
+    so the page has no way to read which dealership it was minted against.
     """
-    return {"user": user_out(account)}
+    store = session_store_of(request)
+    return {
+        "user": user_out(account),
+        "store": store,
+        "home": home_for(account, store),
+    }
+
+
+def session_store_of(request: Request) -> str:
+    """The store on this request's cookie, or the active one for a legacy cookie."""
+    from app.api.deps import _session, session_store
+    from app.db import active_store
+
+    try:
+        data = _session(request)
+    except HTTPException:
+        return active_store()
+    return session_store(data) if "store" in data else active_store()
