@@ -68,14 +68,17 @@ seed: ## Wipe and rebuild the Riverside Auto fixture
 seed-demo: ## Add N demo buyers on top of the fixture (N=50)
 	$(PY) scripts/seed_demo.py $(N)
 
-reset-db: ## Delete the database and reseed (fixture only -- see demo-db)
-	rm -f backend/liner.db backend/liner.db-wal backend/liner.db-shm
+reset-db: ## Delete this store's database and reseed (fixture only -- see demo-db)
+	$(PY) scripts/drop_db.py
 	cd backend && ../$(PY) -m app.seed
 
-demo-db: ## Delete the database and rebuild it with the demo population (N=50)
-	rm -f backend/liner.db backend/liner.db-wal backend/liner.db-shm
+demo-db: ## Delete this store's database and rebuild it with demo buyers (N=50)
+	$(PY) scripts/drop_db.py
 	cd backend && ../$(PY) -m app.seed
 	$(PY) scripts/seed_demo.py $(N)
+
+stores: ## List the stores this deployment can serve, and whether each is seeded
+	$(PY) scripts/drop_db.py --list
 
 agent-ping: ## One real turn against the configured model, errors printed in full
 	$(PY) scripts/agent_ping.py

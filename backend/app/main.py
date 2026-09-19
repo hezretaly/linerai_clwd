@@ -135,6 +135,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Outermost, so the store is decided before anything routes or reads a
+    # session. `/alsbou/api/overview` arrives at `/api/overview` with the
+    # store already set; an unprefixed path is untouched and means whichever
+    # dealership `DEALERSHIP=` names, exactly as before.
+    from app.stores import StorePrefix
+
+    app.add_middleware(StorePrefix)
+
     @app.exception_handler(NotConfigured)
     async def _not_configured(request: Request, exc: NotConfigured) -> JSONResponse:
         # 503, not 500: the feature exists, the credential does not.

@@ -30,6 +30,7 @@ product into something that no longer reads.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import yaml
 
@@ -55,6 +56,23 @@ def _colour(value, fallback: str) -> str:
     return text if HEX.match(text) else fallback
 
 
+def _path() -> Path:
+    """The profile file for whichever store this request is for.
+
+    Read through `active_store()` rather than `settings.dealership`, which is
+    fixed at startup. The two agree in a single-store deployment -- the
+    ContextVar is empty and falls back to the configured name -- so nothing
+    changes for an instance that serves one dealership. Where they differ is
+    the whole point: `/alsbou/showroom` has to answer with Alsbou's brand and
+    Alsbou's copy, and reading the startup value there would serve their cars
+    wearing somebody else's livery, which is the "Riverside Auto" bug with a
+    second dealership's name on it.
+    """
+    from app.db import active_store
+
+    return settings.config_for(active_store())
+
+
 def _section(key: str) -> dict:
     """One top-level block of the running profile, or an empty one.
 
@@ -63,7 +81,7 @@ def _section(key: str) -> dict:
     somebody will conclude does not work. A malformed file gives defaults
     rather than a 500 -- a YAML typo should make the page plain, not break it.
     """
-    path = settings.dealership_config
+    path = _path()
     if not path.is_file():
         return {}
     try:
@@ -74,7 +92,7 @@ def _section(key: str) -> dict:
 
 def _section_list(key: str) -> list:
     """A top-level block that is a list rather than a mapping."""
-    path = settings.dealership_config
+    path = _path()
     if not path.is_file():
         return []
     try:
