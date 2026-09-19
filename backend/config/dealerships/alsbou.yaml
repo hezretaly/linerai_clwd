@@ -5,17 +5,9 @@
 # answers 403 to CONNECT for www.alsboucars.com:443, so nothing on this
 # machine has ever read their pages.
 #
-# ONE FIELD IS STILL MISSING AND THE SEED WILL REFUSE UNTIL IT IS FILLED:
+# Their hours came from the dealership directly; everything else below is
+# from the capture. This profile seeds.
 #
-#   make seed DEALERSHIP=alsbou
-#     -> "alsbou.yaml is not filled in yet. Missing: hours (every day is
-#         null, so the calendar has no slots)"
-#
-# Their opening hours were not in the capture. They are not guessed here
-# because `check_availability` builds the slots Liner offers a buyer straight
-# out of these values -- an invented Saturday is an appointment nobody is
-# there for, and an invented closing time is a buyer turning up to a locked
-# door. Fill `hours:` in and this seeds.
 
 name: Alsbou Motors
 
@@ -28,18 +20,19 @@ address: 1223 W 17th St, Santa Ana, CA 92706
 phone: (951) 366-4755
 website_url: "https://www.alsboucars.com/"
 
-# TO FILL -- the only thing standing between this file and a working demo.
-# `null` means closed. Keep it exact rather than rounding to one range: a
-# dealership that closes earlier on a Saturday and a profile that says
-# otherwise produces a booking nobody is there for.
+# Mon-Sat 10-8, Sun 10-6. Open seven days, so there is no `null` here -- and
+# Sunday's earlier close is kept exact rather than rounded into the others,
+# because `check_availability` builds the slots Liner offers a buyer straight
+# out of these values. Flattened to one range, a buyer would be offered 7:30
+# on a Sunday and arrive at a locked door.
 hours:
-  monday:    null   # { open: "09:00", close: "19:00" }
-  tuesday:   null
-  wednesday: null
-  thursday:  null
-  friday:    null
-  saturday:  null
-  sunday:    null
+  monday:    { open: "10:00", close: "20:00" }
+  tuesday:   { open: "10:00", close: "20:00" }
+  wednesday: { open: "10:00", close: "20:00" }
+  thursday:  { open: "10:00", close: "20:00" }
+  friday:    { open: "10:00", close: "20:00" }
+  saturday:  { open: "10:00", close: "20:00" }
+  sunday:    { open: "10:00", close: "18:00" }
 
 # Their livery, read from the theme config embedded in their own pages rather
 # than sampled off a screenshot -- so unlike Craig and Landreth's accent,
@@ -128,15 +121,6 @@ inventory:
 # fixture for a dealership that does not exist; seeded here they would put a
 # Toyota Sienna from Cedar Falls, Iowa in front of a Santa Ana buyer.
 
-# TO FILL -- their real people. These are placeholders and the addresses say
-# so: `@placeholder.invalid` cannot resolve or receive mail, so nothing here
-# can reach anyone, and a name that turns out to be wrong is visibly wrong
-# rather than quietly plausible.
-#
-# A roster of one has nobody to hand a buyer to, so assignment, the per-rep
-# queues and the team page would have nothing to show -- which is half the
-# product a manager cares about. Replace these before this is in front of
-# them and delete any that are left over.
 # `manager` is the senior role a dealership has, and it is deliberately not
 # `owner`. `owner` exists, but it means *us* -- it lives in `ops_users`, signs
 # in at /login?as=owner and opens /ops, which is Liner's own demo calendar and
