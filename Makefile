@@ -77,6 +77,9 @@ demo-db: ## Delete this store's database and rebuild it with demo buyers (N=50)
 	cd backend && ../$(PY) -m app.seed
 	$(PY) scripts/seed_demo.py $(N)
 
+dump-ops: ## Save every ops_ row to JSON before a migration: ARGS=--files for the file copy
+	$(PY) scripts/dump_ops.py $(ARGS) $(OUT)
+
 stores: ## List the stores this deployment can serve, and whether each is seeded
 	$(PY) scripts/drop_db.py --list
 
