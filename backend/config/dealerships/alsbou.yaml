@@ -137,8 +137,35 @@ inventory:
 # queues and the team page would have nothing to show -- which is half the
 # product a manager cares about. Replace these before this is in front of
 # them and delete any that are left over.
+# `manager` is the senior role a dealership has, and it is deliberately not
+# `owner`. `owner` exists, but it means *us* -- it lives in `ops_users`, signs
+# in at /login?as=owner and opens /ops, which is Liner's own demo calendar and
+# our mail. Putting a dealership's address there would hand an outside company
+# the inside of our company, which is the whole reason the two tables are
+# separate. `profile.staff()` drops the role rather than honouring it, so this
+# cannot be done by accident from a profile file either.
+#
+# A manager gets what their owner actually wants: the team page, the
+# assignment roster, the Liner setup page and publishing the assistant's
+# instructions. A rep gets none of those.
+#
+# NOTE the address is `alsbou.com`, while their site is `alsboucars.com`. Kept
+# as given -- for a sign-in it is an identifier and a demo account does not
+# need a reachable mailbox, and `OUTBOUND_ONLY_TO` refuses mail to it anyway.
+# Worth correcting before they use it for real, since a rep's signature and
+# any Reply-To would carry it.
+#
+# The password is generated and printed once by the seed, like every profile's
+# own people -- an environment variable per person is one somebody has to add
+# to the deployment. To choose one instead:
+#   make set-password EMAIL=owner@alsbou.com
 staff:
-  - { name: Sales Manager, email: manager@placeholder.invalid, role: manager }
+  - { name: Alsbou Owner, email: owner@alsbou.com, role: manager }
+  # TO FILL -- their real reps. Placeholders so the floor has a shape: a
+  # roster of one has nobody to hand a buyer to, so assignment, the per-rep
+  # queues and the team page have nothing to show. `@placeholder.invalid`
+  # cannot resolve or receive mail, so a wrong name is visibly wrong rather
+  # than quietly plausible.
   - { name: Sales Rep One, email: rep1@placeholder.invalid, role: rep }
   - { name: Sales Rep Two, email: rep2@placeholder.invalid, role: rep }
   - { name: Sales Rep Three, email: rep3@placeholder.invalid, role: rep }
