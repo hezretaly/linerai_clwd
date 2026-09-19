@@ -3661,6 +3661,79 @@ def main() -> int:
           "_unplace_inbound" in source and "InboundEmail" not in
           source.split("def _clear")[1].split("db.commit()")[0])
 
+    print("\n== Liner's tables are in Liner's database ==")
+    # The split is a property of the *metadata*, and that is what makes it a
+    # guarantee rather than a rule. `Base.metadata.create_all` runs against
+    # every store's file, so an ops model rebased onto `Base` is built into all
+    # of them again -- empty, unread, and writable by anything holding the
+    # wrong session, which is exactly the state this split was undone from.
+    from app.db import OpsBase as _OpsBase
+    from app.models.ops import OPS_TABLES as _OPS_TABLES
+
+    strayed = sorted(n for n in _Base.metadata.tables if n.startswith("ops_"))
+    check("no ops_ table is on the dealership's metadata", not strayed, str(strayed))
+    # And the reverse, which fails differently and worse: a dealership table on
+    # the ops metadata is built into no store at all, so the first read of it
+    # is `no such table` on whichever screen happens to need it.
+    theirs = sorted(n for n in _OpsBase.metadata.tables if not n.startswith("ops_"))
+    check("and nothing but ops_ tables are on ours", not theirs, str(theirs))
+    # `OPS_TABLES` is hand-written and three things read it -- `dump_ops`,
+    # `restore_ops` and the `_clear` exclusion above. A seventh ops model added
+    # without being added to the tuple is silently left out of the backup, and
+    # nothing would say so until a restore came back short. Same lesson as
+    # `SPA_PREFIXES` and `EVENT_TYPES`: a hand-written list needs a reader.
+    check("and OPS_TABLES names every one of them, no more and no less",
+          set(_OPS_TABLES) == set(_OpsBase.metadata.tables),
+          str(sorted(set(_OPS_TABLES) ^ set(_OpsBase.metadata.tables))))
+
+    # Measured against a real file rather than reasoned from the metadata,
+    # because what a store's `create_all` actually builds is the thing that
+    # matters. A scratch database, so this says nothing about the files on this
+    # box -- the two seeded before the split still carry the orphans, and those
+    # rows are real: `make dump-ops` is what finds them.
+    import tempfile as _tempfile
+
+    from sqlalchemy import create_engine as _create_engine, inspect as _sa_inspect
+
+    with _tempfile.TemporaryDirectory() as _tmp:
+        _probe = _create_engine(f"sqlite:///{_tmp}/probe.db", future=True)
+        _Base.metadata.create_all(bind=_probe)
+        built = set(_sa_inspect(_probe).get_table_names())
+        _probe.dispose()
+    check("a freshly built store file carries no ops_ table at all",
+          not (built & set(_OPS_TABLES)), str(sorted(built & set(_OPS_TABLES))))
+    check("and it is a real schema, not an empty file that passes vacuously",
+          len(built) > 20, f"{len(built)} tables")
+
+    # The restore's own hand-written list, checked the same way. A table
+    # missing from `ORDER` is not restored and the run still reports success,
+    # which is the failure mode a backup tool must not have.
+    restore_src = pathlib.Path("scripts/restore_ops.py").read_text()
+    ordered = [
+        cls.__tablename__
+        for name in re.findall(r"\b([A-Z][A-Za-z]+)\.__tablename__", restore_src)
+        for cls in _OpsBase.__subclasses__()
+        if cls.__name__ == name
+    ]
+    check("make restore-ops reads back every ops table",
+          set(ordered) == set(_OPS_TABLES),
+          str(sorted(set(ordered) ^ set(_OPS_TABLES))))
+    # Parents first here, the opposite of `_clear` -- that one deletes and this
+    # one inserts. SQLite runs with `foreign_keys=ON`, so an author inserted
+    # after the message that points at them fails the constraint.
+    _pos = {name: i for i, name in enumerate(ordered)}
+    backwards = sorted(
+        f"{child} before {parent}"
+        for child, i in _pos.items()
+        for parent in {
+            fk.column.table.name
+            for fk in _OpsBase.metadata.tables[child].foreign_keys
+        }
+        if parent in _pos and parent != child and _pos[parent] > i
+    )
+    check("and inserts them parent-first, so no row trips a foreign key",
+          not backwards, str(backwards))
+
     # Their livery. `surface` picks a stylesheet class rather than carrying a
     # value into one, so an unknown word must never reach the DOM -- and it is
     # read only by /showroom: a rep's dashboard is a working tool and should

@@ -23,9 +23,11 @@ feature reports itself as unavailable rather than simulating a result.
 | `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
 | `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
 | `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
-| `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it) — **loses the `ops_` tables too** |
+| `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it). `ops.db` is a separate file and survives it; the store's **delivery receipts do not** |
 | `make stores` | Every dealership this deployment can serve, and which are seeded |
-| `make reset-dealership` | Rebuild the showroom fixture in place, keeping `ops_users` and `ops_demo_requests` |
+| `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
+| `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
+| `make reset-dealership` | Rebuild the showroom fixture in place, keeping the store's `inbound_emails` receipts — it detaches them rather than deleting them |
 | `make add-owners` | Put `founder@`/`cto@` in `ops_users` on an **existing** database — no reseed, no data loss |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
@@ -1433,10 +1435,39 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     pickers and behind the public demo door. Each was fixed with a predicate
     and the next missing one would have brought them all back. A separate
     table cannot be queried by accident, which is the whole argument.
-    - **Still one database.** Two would mean two connections, two backups, two
-      `create_all`s and no way to read both sides in a request — and `events`,
-      which the socket replays from, sits on the other side of that line.
-      These are the only tables that would move if it ever changes.
+    - **And their own database, which one dealership did not need and
+      several do.** This said *still one database* for a long time and the
+      reasoning was sound while `DEALERSHIP=` named the only store there was.
+      One file per store broke it: `create_all` builds a whole metadata, so
+      the six `ops_` tables were built into *every* store's file — `founder@`
+      once per dealership, and a demo somebody booked with us landing in
+      whichever file happened to be active. A predicate cannot fix that; the
+      rows are in different files.
+      - **`OpsBase` is a second metadata, not the same one pointed at another
+        engine.** That is the part doing the work: a store's `create_all` then
+        cannot build an ops table even by accident, rather than by a rule
+        somebody has to keep remembering. `make smoke` asserts both
+        directions and builds a scratch store file to check what actually
+        lands in one.
+      - **The objections were real and each got an answer rather than a
+        wave.** Two `create_all`s is `create_ops_all`, called beside the other
+        one. Reading both sides in a request is `ops_session()` next to the
+        request's `db`, which is what every `/ops` endpoint now holds. Two
+        backups is `make dump-ops`, which walks `ops.db` *and* every store —
+        it has to, because the pre-split files still carry those tables with
+        real rows in them, and nothing else will ever find them.
+      - **`events` stays on the dealership's side, so `emit_ops` exists.**
+        The socket replays with `?since=<id>` and that cursor only means
+        anything against a single monotonic sequence, so there is one events
+        table and ops writes into it. Emitting on an ops session is
+        `no such table: events`.
+      - **The old files are not cleaned up at startup.** Dropping a table
+        that might hold the only copy of a demo request is not a migration to
+        run silently on boot. `make dump-ops` finds those rows and
+        `make restore-ops` reads them into `ops.db`, de-duplicating the
+        `founder@` and `cto@` copies on the address — three stores each seeded
+        their own with a different id, so the id says nothing about whether it
+        is the same person.
     - **The session names its realm.** Two tables mean a bare `uid` is
       ambiguous, and an ambiguous id is one that can be looked up in the wrong
       table. The cookie carries `realm`; a cookie without one predates the
@@ -1477,7 +1508,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         anywhere else is a real break and still fails. Verified by pointing the
         excuse at another route, which fails `/login` again.
     - **`_clear` never touches an `ops_` table**, so rebuilding the showroom
-      fixture cannot throw away demos real people booked with us. Its list
+      fixture cannot throw away demos real people booked with us. That is now
+      belt *and* braces — the tables are in another database and `_clear` holds
+      a dealership's session, so it could not reach them if it tried — and the
+      rule is kept because a reader of `seed.py` should not have to know where
+      each table lives to see that the omission is deliberate. Its list
       also has to stay **complete**: four call tables and `inbound_emails`
       were added long after it was written and none was added to it, so on any
       database that had taken a call or received a reply — every box a demo
@@ -1789,12 +1824,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     would be a second copy of the profile directory, stale the day a store is
     added, which is the failure `SPA_PREFIXES` is a standing lesson in. Vite's
     proxy matches the prefixed form by regex for the same reason.
-  - **`/ops` is never per-store**, so it is in `RESERVED` and always reads the
-    default. **Its tables are still duplicated into every store's file**,
-    because `create_all` builds the whole metadata — a known cost, taken
-    deliberately, and the thing to fix the day a second store is live in
-    earnest. Named in `create_all`'s docstring, because a duplicated table
-    nobody has looked at is invisible until a demo request goes missing.
+  - **`/ops` is never per-store**, so it is in `RESERVED` — and it reads
+    `ops.db` rather than the default store. Its tables *were* duplicated into
+    every store's file, because `create_all` builds a whole metadata: a known
+    cost taken deliberately, with "the day a second store is live in earnest"
+    named as when to fix it. That day arrived with the second profile, so
+    `OpsBase` is now its own metadata and its own database. The duplicates in
+    the older files are left where they are and `make dump-ops` is what finds
+    them — a table nobody has looked at is invisible until a demo request goes
+    missing, which is why it was written down rather than left implicit.
   - `make stores` lists them and says which are seeded; `make reset-db` takes
     a `DEALERSHIP=` and deletes only that store's file. It goes through
     `scripts/drop_db.py`, which computes the path the way the application

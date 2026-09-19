@@ -272,17 +272,21 @@ def readonly_help() -> str:
 
 
 def create_all(slug: str | None = None) -> None:
-    """Build the schema in one store's file.
+    """Build the dealership's schema in one store's file.
 
-    Every store gets the *whole* metadata, `ops_` tables included. That is a
-    known cost of one file per store and it was taken deliberately: those six
-    tables are Liner's own, so a copy per store means `founder@` exists once
-    per dealership and a demo somebody booked with us lands in whichever file
-    happened to be active. `app/ops_store.py` pins every `/ops` read and write
-    to one store so the duplicates stay empty and unread, but they are still
-    there -- and the day a second store is live in earnest, that is the thing
-    to fix. It is written down here because a duplicated table nobody has
-    looked at is invisible until somebody's demo request goes missing.
+    `Base.metadata` and nothing else, which is the whole reason `OpsBase` is a
+    second metadata. This used to build the *whole* thing into every store --
+    `ops_` tables included -- so `founder@` existed once per dealership and a
+    demo somebody booked with us landed in whichever file happened to be
+    active. Two metadatas mean a store's `create_all` cannot build an ops
+    table even by accident, rather than a rule somebody has to remember.
+
+    The files seeded before the split still carry those six tables, with real
+    rows in them. They are not cleaned up here: deleting a table that might
+    hold the only copy of a demo request is not a migration to run silently at
+    startup. `make dump-ops` walks every store and finds them, and
+    `make restore-ops` reads them into `ops.db`, de-duplicating the `founder@`
+    copies on the address.
     """
     from app import models  # noqa: F401  (registers the mappers)
 

@@ -39,11 +39,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend
 from sqlalchemy import MetaData, Table, select  # noqa: E402
 
 from app.config import settings  # noqa: E402
-from app.db import engine_for  # noqa: E402
+from app.db import engine_for, ops_engine  # noqa: E402
 from app.models.ops import OPS_TABLES  # noqa: E402
 
 
 def _files_for(slug: str) -> list[pathlib.Path]:
+    if slug == "(ops)":
+        return _ops_files()
     url = settings.database_url_for(slug)
     if not url.startswith("sqlite") or "///" not in url:
         return []
@@ -59,9 +61,36 @@ def _jsonable(value):
     return value
 
 
+#: The name this script uses for Liner's own database in its output and in the
+#: dump. Not a store slug -- no profile is ever called this -- so it cannot
+#: collide with a dealership.
+OPS = "(ops)"
+
+
+def _ops_files() -> list[pathlib.Path]:
+    url = settings.ops_database_url
+    if not url.startswith("sqlite") or "///" not in url:
+        return []
+    path = pathlib.Path(url.split("///", 1)[-1])
+    return [path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")]
+
+
 def stores() -> list[str]:
-    """The default first, then every profile with a database on disk."""
-    found = [""] if _files_for("")[0].exists() else []
+    """**`ops.db` first**, then the default store, then every other profile.
+
+    Liner's own database has to be in this list or the tool misses the very
+    rows it exists to protect: the `ops_` tables moved there, and a dump that
+    only walked the stores came back with four rows and looked like a quiet
+    week rather than a broken backup.
+
+    The stores are still walked, and that is not vestigial. Every file seeded
+    before the split carries orphaned `ops_` tables -- `founder@` once per
+    dealership, and any demo request written while that store was the default.
+    Those rows are real and this is the only thing that will ever find them.
+    """
+    found = [OPS] if _ops_files() and _ops_files()[0].exists() else []
+    if _files_for("")[0].exists():
+        found.append("")
     for slug in settings.store_slugs:
         if _files_for(slug)[0].exists():
             found.append(slug)
@@ -69,8 +98,8 @@ def stores() -> list[str]:
 
 
 def dump_store(slug: str) -> dict:
-    """Every ops table in one store's file, by table name."""
-    engine = engine_for(slug)
+    """Every ops table in one database, by table name."""
+    engine = ops_engine() if slug == OPS else engine_for(slug)
     meta = MetaData()
     out: dict[str, list[dict]] = {}
     with engine.connect() as conn:
@@ -124,7 +153,7 @@ def main() -> int:
         grand += total
         payload["stores"][slug or "(default)"] = data
         counts = ", ".join(f"{k.removeprefix('ops_')}={len(v)}" for k, v in data.items() if v)
-        label = slug or "(default)"
+        label = slug if slug else "(default)"
         print(f"  {label:22} {total:5} rows   {counts or 'nothing'}")
 
     target.parent.mkdir(parents=True, exist_ok=True)

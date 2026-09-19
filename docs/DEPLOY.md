@@ -687,9 +687,12 @@ Do **not** run `make reset-db` on an update — it wipes the database.
 
 ## What this setup does not do
 
-- **No backups.** The database is `backend/liner.db`. It is SQLite in WAL mode,
-  so copy it with `sqlite3 liner.db ".backup out.db"`, not `cp` — a plain copy
-  taken mid-write can be torn.
+- **No backups.** There is a database per store under `backend/var/stores/`
+  plus Liner's own `backend/var/ops.db` — `make stores` lists them and
+  `make dump-ops ARGS=--files` prints the exact paths including sidecars. Copy
+  each with `sqlite3 <file> ".backup out.db"`, not `cp`: these run in WAL mode
+  and a plain copy taken mid-write can be torn, or miss writes still sitting
+  in `-wal`.
 - **No migrations.** `create_all` only. A schema change against a database with
   data in it needs Alembic introduced first.
 - **No rate limiting.** `/api/chat/sessions` is public and creates a row per
@@ -742,10 +745,43 @@ who opens another dealership's URL is sent back to their own. A session is
 refused outright at a store it was not minted against, so a cookie cannot be
 carried from one dealership to another.
 
-**`/ops` is deliberately not per-store** and always reads the default
-database. Its tables are still created in every store's file, empty and
-unread — a known cost of one file per store. The day a second dealership is
-live in earnest, move the `ops_` tables to a database of their own.
+**`/ops` is deliberately not per-store** and reads `backend/var/ops.db`, which
+is Liner's own database and not any dealership's. It used to read the default
+store, with the six `ops_` tables also created — empty and unread — in every
+other store's file. That is what one file per store made untenable: the copies
+were not empty for long, so `founder@` existed once per dealership and a demo
+somebody booked with us landed in whichever file happened to be active.
+
+`OpsBase` is a second SQLAlchemy metadata rather than the same one pointed at
+another engine, so a store's `create_all` cannot build an ops table by
+accident. The tables in files seeded before the split are **left alone** —
+deleting something that might be the only copy of a demo request is not a
+migration to run on boot. Two commands cover them:
+
+```bash
+make dump-ops                 # every ops_ row, from ops.db AND every store
+make dump-ops ARGS=--files    # prints the cp commands for the files themselves
+make restore-ops FILE=backend/var/ops-dump-<stamp>.json
+```
+
+`dump-ops` walks every store because that is where the strays are. `restore-ops`
+reads it all into `ops.db`: rows already present by primary key are skipped, so
+running it twice is safe, and `ops_users` is de-duplicated on the **address** —
+three stores each seeded `founder@` with a different id, so the id says nothing
+about whether it is the same person. Add `ARGS=--dry-run` to see what it would
+do without writing.
+
+**Stop the service before you replace a database file.** The engine is cached
+for the life of the process, so a running uvicorn that had already opened
+`ops.db` keeps writing to the old inode after the file is unlinked — the writes
+succeed, the API answers 200, and nothing reads them back. Measured here: a
+demo request was created over HTTP and `NoResultFound` came straight back on
+the row that had just been written. `systemctl restart liner` after any restore.
+
+**Back up `ops.db` separately.** It is outside `backend/var/stores/`, so a
+backup script that globs the stores directory misses it — and it holds the
+demo requests and support mail real people sent, which is the one thing here
+that cannot be rebuilt from a seed.
 
 **`make reset-db` only ever deletes the store `DEALERSHIP=` names**, sidecars
 included. `rm -f backend/liner.db*` is no longer the right command and will

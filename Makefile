@@ -80,6 +80,10 @@ demo-db: ## Delete this store's database and rebuild it with demo buyers (N=50)
 dump-ops: ## Save every ops_ row to JSON before a migration: ARGS=--files for the file copy
 	$(PY) scripts/dump_ops.py $(ARGS) $(OUT)
 
+restore-ops: ## Read a dump-ops file back into ops.db: FILE=... [ARGS=--dry-run]
+	@test -n "$(FILE)" || (echo 'Usage: make restore-ops FILE=backend/var/ops-dump-<stamp>.json'; exit 1)
+	$(PY) scripts/restore_ops.py $(FILE) $(ARGS)
+
 stores: ## List the stores this deployment can serve, and whether each is seeded
 	$(PY) scripts/drop_db.py --list
 
