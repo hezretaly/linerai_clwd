@@ -11,7 +11,7 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import get_db
+from app.db import active_store, get_db
 from app.models import Dealership, OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -30,16 +30,52 @@ DEALER_REALM = "dealer"
 OPS_REALM = "ops"
 
 
-def set_session(response: Response, user: "User | OpsUser") -> None:
+def set_session(response: Response, user: "User | OpsUser", store: str | None = None) -> None:
+    """Sign somebody in, naming which store they signed in to.
+
+    The store matters for the same reason the realm does, one level further
+    down. With a database per dealership the cookie's `uid` is only meaningful
+    in the file it was minted against -- and the signing secret is shared
+    across all of them, so a cookie from Craig is *cryptographically valid* at
+    `/alsbou`. Ids are UUIDs, so a lookup there would almost certainly miss
+    and read as an expired session; "almost certainly" is not a guarantee
+    worth resting a buyer list on, and a miss is the wrong error anyway.
+    """
     response.set_cookie(
         settings.session_cookie,
-        serializer.dumps({"uid": user.id, "realm": realm_of(user)}),
+        serializer.dumps({
+            "uid": user.id,
+            "realm": realm_of(user),
+            "store": active_store() if store is None else store,
+        }),
         httponly=True,
         samesite="lax",
         secure=settings.is_production,
         max_age=60 * 60 * 24 * 14,
         path="/",
     )
+
+
+def session_store(data: dict) -> str:
+    """Which dealership this session was minted against."""
+    return str(data.get("store") or "")
+
+
+def check_store(data: dict) -> None:
+    """Refuse a session that belongs to a different store than this request.
+
+    A cookie with **no** `store` key predates the split and is let through, in
+    the same way a cookie with no `realm` reads as the dealership's: it can
+    only have come from a deployment that served one store, and every session
+    minted from now on carries the name. The window is one cookie lifetime.
+    """
+    if "store" not in data:
+        return
+    if session_store(data) != active_store():
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "That session belongs to a different dealership. Sign in again here.",
+        )
 
 
 def clear_session(response: Response) -> None:
@@ -74,6 +110,7 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
             status.HTTP_403_FORBIDDEN,
             "That account is Liner staff. The dealership's dashboard is a separate sign-in.",
         )
+    check_store(data)
     user = db.query(User).filter_by(id=data.get("uid"), active=True).one_or_none()
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unknown user")
