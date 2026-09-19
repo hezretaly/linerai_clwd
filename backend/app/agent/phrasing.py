@@ -36,6 +36,63 @@ def priced(value: int | None) -> str:
     return f"is ${value:,}" if value else "is priced on request"
 
 
+#: The two makes the rule below gets wrong, and nothing else — `KIA` is short
+#: enough to read as an initialism and is not one, `MINI` is long enough to
+#: read as a word and the brand writes it in caps. `BMW`, `GMC` and `RAM` need
+#: no entry: the length rule already leaves them alone. Curated for the reason
+#: `ORIGIN_BY_MAKE` and `MAKE_NICKNAMES` are — there is no column for it, and
+#: a list that restated what the rule already does is one more thing to keep
+#: in step with it.
+_CASED = {"KIA": "Kia", "MINI": "MINI"}
+
+#: Short enough to be an initialism rather than a word. `BMW`, `GMC`, `SL`,
+#: `XC`, `GT`, `RS` all stay as they are; `AUDI` and `CLASS` do not.
+_INITIALISM = 3
+
+
+def cased(value: str) -> str:
+    """A SHOUTED name, in the case a person would write it.
+
+    **A dealer's export is not a style guide.** Alsbou Motors' carries
+    `AUDI`, `3 SERIES`, `MERCEDES-BENZ`, `3.0T QUATTRO PRESTIGE` — all caps,
+    every row — while Craig and Landreth's crawl carries `Dodge` and
+    `Challenger`. So one storefront shouted and the other did not, and Liner
+    read `a 2018 AUDI Q7` out loud on a call.
+
+    `str.title()` is not the fix and would be worse than the shouting:
+    `XC60` becomes `Xc60` and `SL-CLASS` becomes `Sl-Class`, which are wrong
+    names for real cars. So the rule is narrow — **only an all-caps token, and
+    only one that is alphabetic and long enough not to be an initialism**:
+
+        AUDI            -> Audi          3 SERIES   -> 3 Series
+        MERCEDES-BENZ   -> Mercedes-Benz SL-CLASS   -> SL-Class
+        XC60            -> XC60          330I       -> 330I
+        BMW             -> BMW           3.0T       -> 3.0T
+
+    Anything already mixed-case is returned untouched, so a crawled lot is not
+    restyled and this only ever bites on an export that was shouting.
+
+    It is **display only** — the row keeps what the dealer sent, and
+    `search_inventory` lowercases before it matches, so nothing about what a
+    buyer can find changes. And it is imperfect by design rather than by
+    accident: `XDRIVE` comes back `Xdrive` where BMW writes `xDrive`. A trim
+    is free text and there is no table of every one; a rule that guessed
+    harder would invent names, which is the more expensive error.
+    """
+    if not value or not value.isupper():
+        return value
+    if value in _CASED:
+        return _CASED[value]
+    out = []
+    for run in value.split(" "):
+        parts = run.split("-")
+        out.append("-".join(
+            p.capitalize() if p.isalpha() and len(p) > _INITIALISM else p
+            for p in parts
+        ))
+    return " ".join(out)
+
+
 def title(vehicle: dict) -> str:
     """`2020 Honda Accord Sport`, with no double spaces where a trim is blank."""
     parts = (vehicle.get("year"), vehicle.get("make"), vehicle.get("model"), vehicle.get("trim"))

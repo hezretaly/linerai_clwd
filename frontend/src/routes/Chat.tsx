@@ -10,6 +10,7 @@ import { DetailsCard } from '../components/DetailsCard'
 import type { DetailsCardData } from '../components/DetailsCard'
 import { money } from '../lib/format'
 import type { IntegrationsPayload, Rail } from '../lib/types'
+import { CarPhoto } from '../components/CarPhoto'
 
 interface VehicleCardData {
   vin: string
@@ -355,9 +356,9 @@ export function Chat() {
                     key={vehicle.vin}
                     className="flex gap-3 rounded-2xl border border-border bg-card p-3 animate-fade-up"
                   >
-                    <img
-                      src={vehicle.photo_url}
-                      alt=""
+                    <CarPhoto
+                      vin={vehicle.vin}
+                      photoUrl={vehicle.photo_url}
                       className="h-20 w-28 shrink-0 rounded-lg object-cover"
                     />
                     <div className="min-w-0">

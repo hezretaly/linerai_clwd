@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.agent.phrasing import cased
 from app.models import (
     Appointment,
     AssistantSettings,
@@ -114,10 +115,12 @@ def vehicle_out(v: Vehicle, *, mentions: int = 0) -> dict:
         "id": v.id,
         "vin": v.vin,
         "year": v.year,
-        "make": v.make,
-        "model": v.model,
-        "trim": v.trim,
-        "title": f"{v.year} {v.make} {v.model}".strip(),
+        # Shown to a person, so `cased` — a dealer's export may be SHOUTING
+        # and the row keeps exactly what they sent. See `phrasing.cased`.
+        "make": cased(v.make),
+        "model": cased(v.model),
+        "trim": cased(v.trim),
+        "title": f"{v.year} {cased(v.make)} {cased(v.model)}".strip(),
         "price": v.price,
         "mileage": v.mileage,
         "body_style": v.body_style,

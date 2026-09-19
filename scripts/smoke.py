@@ -5696,6 +5696,41 @@ def _stores_section(before: set[str]) -> None:
     check("and its own lot, from its own database file",
           cars_one != cars_two, f"{cars_one} vs {cars_two} vehicles")
 
+    # **A drawn placeholder has to be fetched from the car's own store.** The
+    # seeded `photo_url` is a *path*, `/api/photos/<VIN>.svg`, and the browser
+    # requested it unprefixed -- so it reached the default store, which does
+    # not hold that VIN, and the endpoint drew its "no such vehicle" fallback.
+    # Every card on a prefixed storefront read `0 Unknown vehicle` over a
+    # drawing of a car, with the real title printed directly underneath.
+    # Driven both ways here because only the pair shows it: the unprefixed
+    # request is the bug and the prefixed one is the fix, and a check that
+    # asked for one alone would pass whichever way round it was wired.
+    plate = call("GET", f"/{second}/api/showroom?limit=1")["vehicles"][0]
+    drawn = f"/api/photos/{plate['vin']}.svg"
+    _, mine = status_of("GET", f"/{second}{drawn}")
+    _, theirs = status_of("GET", drawn)
+    check("a car's drawn placeholder is fetched from its own store",
+          plate["title"] in mine, plate["title"])
+    check("and the same VIN is a stranger in another store, which is the bug",
+          "Unknown vehicle" in theirs and plate["title"] not in theirs)
+    # Which means **the browser has to send the prefix**, and that is the half
+    # this endpoint check cannot see: the API was always right when asked
+    # correctly, and the bug was six `<img src={photo_url}>` that asked without
+    # it. Read out of the source for the reason `SPA_PREFIXES` and
+    # `EVENT_TYPES` are -- nothing else here can tell a path that carries the
+    # store from one that does not, short of a browser on a prefixed route.
+    raw = [
+        f"{path.name}:{n}"
+        for path in pathlib.Path("frontend/src").rglob("*.tsx")
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if ("photo_url" in line or "/api/photos" in line)
+        and "src=" in line
+        and "withStore" not in line
+        and "CarPhoto" not in path.name
+    ]
+    check("and every car picture in the app goes through CarPhoto",
+          not raw, f"raw <img src>: {raw}")
+
     # `status_of` returns (status, body), so compare the first element -- the
     # tuple is truthy and never equals an int, which made this read as a real
     # failure against a route that was answering correctly all along.

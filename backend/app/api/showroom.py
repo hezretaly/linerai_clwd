@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.agent.phrasing import cased
 from app.agent.tools import inquiry_url, offerable
 from app.api.settings import live_settings
 from app.profile import brand, site
@@ -73,11 +74,11 @@ def _car(v: Vehicle) -> dict:
     raw = loads(v.raw_json or "{}", {})
     return {
         "vin": v.vin,
-        "title": f"{v.year} {v.make} {v.model}".strip(),
-        "trim": v.trim or "",
+        "title": f"{v.year} {cased(v.make)} {cased(v.model)}".strip(),
+        "trim": cased(v.trim or ""),
         "year": v.year,
-        "make": v.make,
-        "model": v.model,
+        "make": cased(v.make),
+        "model": cased(v.model),
         "price": v.price,
         "mileage": v.mileage,
         "body_style": v.body_style or "",
@@ -150,7 +151,7 @@ def _facets(db: Session) -> dict:
             query = query.filter(Vehicle.price < high)
         bands.append({"label": label, "min": low, "max": high, "count": query.count()})
     return {
-        "makes": [{"name": name, "count": count} for name, count in makes],
+        "makes": [{"name": cased(name), "count": count} for name, count in makes],
         # Empty for a Dealer Car Search lot, and that is a real answer rather
         # than a gap: body style lives only in their sidebar filters, so the
         # adapter leaves it empty rather than deriving it. The page draws no

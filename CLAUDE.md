@@ -1993,6 +1993,42 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       root set `bg-background` and never `text-foreground`, which is invisible
       in light mode and black-on-black in dark — the dealership's own name,
       every card title and the whole footer disappeared.
+    - **A car's picture is `CarPhoto`, and the store prefix is why.** A seeded
+      `photo_url` is a *path* — `/api/photos/<VIN>.svg` — and six surfaces
+      rendered it straight into an `<img>`. Unprefixed it reaches the *default*
+      store, which does not hold that VIN, so the endpoint drew its "no such
+      vehicle" fallback: **every card on a prefixed storefront read `0 Unknown
+      vehicle`**, over a drawing of a car, with the real title printed directly
+      underneath. One component rather than `withStore()` at six call sites,
+      because the seventh is the one somebody forgets — and it spread the
+      showroom's `onError` fallback to the other five, which had none.
+      `withStore` leaves an absolute `https://` URL alone, so a crawled row
+      that hotlinks the dealer's CDN is untouched. `make smoke` drives the
+      endpoint both ways *and* reads the frontend for a raw `<img src>`,
+      because the API was always right when asked correctly and the bug was
+      entirely in what the browser asked for.
+    - **A dealer's export is not a style guide, and `str.title()` is not the
+      fix.** Alsbou's CSV is all caps in every row — `AUDI`, `3 SERIES`,
+      `MERCEDES-BENZ`, `3.0T QUATTRO PRESTIGE` — while Craig's crawl is mixed
+      case, so one storefront shouted and the other did not, and Liner read
+      "a 2018 AUDI Q7" out loud. Title-casing would be worse than the
+      shouting: `XC60` becomes `Xc60` and `SL-CLASS` becomes `Sl-Class`, which
+      are wrong names for real cars. `phrasing.cased` is narrow on purpose —
+      **only an all-caps token, and only one alphabetic and longer than an
+      initialism** — so `AUDI` becomes `Audi`, `SL-CLASS` becomes `SL-Class`,
+      and `XC60`, `330I`, `BMW` and anything already mixed-case are returned
+      untouched. Display only: the row keeps what the dealer sent and
+      `search_inventory` lowercases before matching, so nothing a buyer can
+      find changes. It is imperfect by design and says so — `XDRIVE` comes
+      back `Xdrive` where BMW writes `xDrive`, and a rule that guessed harder
+      would invent names, which is the more expensive error.
+      - **The drawing has to know the rule too.** `placeholder_svg` is where
+        it is applied rather than at the call site, because the card read
+        "2023 Mercedes-Benz SL-Class" over a picture captioned "2023
+        MERCEDES-BENZ SL-CLASS" — the serializer had been taught and the
+        drawing had not. Its title is also **shrunk to fit** rather than
+        allowed to run off the canvas: it is drawn at a fixed x with nothing
+        to wrap into, so "2020 Land Rover Range Rover Sport" was cut mid-word.
     - **The browse filters are counted, and every image has a fallback.**
       "Chevrolet (74)" and the four price bands come from rows, because a
       filter promising 74 cars and showing 9 is worse than no filter. By Type

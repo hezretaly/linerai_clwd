@@ -13,6 +13,14 @@ from __future__ import annotations
 import hashlib
 from xml.sax.saxutils import escape
 
+from app.agent.phrasing import cased
+
+
+#: The title's full size, and the gutter it is drawn in. Named because the
+#: fit calculation below reads both.
+TITLE_SIZE = 42
+MARGIN = 56
+
 
 def hue_for(vin: str) -> int:
     digest = hashlib.sha256(vin.encode()).hexdigest()
@@ -25,8 +33,21 @@ def placeholder_svg(vin: str, year: int, make: str, model: str, trim: str = "") 
     mid = f"hsl({hue}, 38%, 76%)"
     body = f"hsl({hue}, 34%, 46%)"
     ink = f"hsl({hue}, 30%, 24%)"
-    title = escape(f"{year} {make} {model}")
-    sub = escape(trim or vin)
+    # Cased here rather than at the call site, so the drawing and the caption
+    # under it agree. They did not: the card read "2023 Mercedes-Benz SL-Class"
+    # over a picture captioned "2023 MERCEDES-BENZ SL-CLASS", because the
+    # serializer had been taught the rule and this had not.
+    text = f"{year} {cased(make)} {cased(model)}".strip()
+    title = escape(text)
+    sub = escape(cased(trim) or vin)
+    # **Shrunk to fit rather than allowed to run off the canvas.** The title is
+    # drawn at a fixed x with no width to wrap into, so a long one simply left
+    # the 800px viewBox -- "2020 Land Rover Range Rover Sport" was cut mid-word
+    # on the lot's own storefront. 0.55em per character is a rough advance for
+    # a sans-serif at this weight, and rough is the right kind of wrong here:
+    # it only ever makes the text smaller, so it cannot overflow, and a title
+    # short enough to fit keeps the full size.
+    size = min(TITLE_SIZE, int((800 - MARGIN * 2) / (0.55 * max(len(text), 1))))
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" \
 width="800" height="600" role="img" aria-label="{title}">
@@ -52,9 +73,9 @@ a54 54 0 0 0 -108 0 h-48 q-14 0 -14 -14 z"/>
   <g fill="{bg}">
     <circle cx="322" cy="436" r="20"/><circle cx="630" cy="436" r="20"/>
   </g>
-  <text x="56" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" \
-font-size="42" font-weight="600" fill="{ink}">{title}</text>
-  <text x="56" y="126" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" \
+  <text x="{MARGIN}" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" \
+font-size="{size}" font-weight="600" fill="{ink}">{title}</text>
+  <text x="{MARGIN}" y="126" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" \
 font-size="26" fill="{ink}" opacity="0.7">{sub}</text>
   <text x="744" y="566" text-anchor="end" \
 font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" \

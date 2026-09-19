@@ -8,6 +8,7 @@ import { dateTime, miles, money } from '../lib/format'
 import type { Vehicle } from '../lib/types'
 import { Badge, Button, Card, Empty, Field, Input, Sheet, Spinner, Switch, Tabs } from '../components/ui'
 import { PageHeader } from '../components/dashboard/AppShell'
+import { CarPhoto } from '../components/CarPhoto'
 
 export function InventoryPage() {
   const [tab, setTab] = useState('all')
@@ -119,9 +120,9 @@ export function InventoryPage() {
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-3">
-                        <img
-                          src={vehicle.photo_url}
-                          alt=""
+                        <CarPhoto
+                          vin={vehicle.vin}
+                          photoUrl={vehicle.photo_url}
                           className="h-10 w-14 rounded border border-border object-cover"
                         />
                         <div>
@@ -212,9 +213,9 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
         <Spinner />
       ) : (
         <div className="space-y-6">
-          <img
-            src={vehicle.photo_url}
-            alt=""
+          <CarPhoto
+            vin={vehicle.vin}
+            photoUrl={vehicle.photo_url}
             className="w-full rounded-lg border border-border"
           />
 

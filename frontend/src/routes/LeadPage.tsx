@@ -16,6 +16,7 @@ import { EmailReader } from '../components/dashboard/EmailReader'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
 import { LeadComposers } from '../components/dashboard/LeadDrawer'
 import { AssignTo } from '../components/dashboard/AssignTo'
+import { CarPhoto } from '../components/CarPhoto'
 
 /* One buyer, one page.
  *
@@ -546,9 +547,9 @@ function LeadRail({
         <div className="border-b border-border p-5">
           <div className="mb-3 text-xs font-medium text-muted-foreground">Vehicle of interest</div>
           <div className="flex gap-3">
-            <img
-              src={lead.vehicle_of_interest.photo_url}
-              alt=""
+            <CarPhoto
+              vin={lead.vehicle_of_interest.vin}
+              photoUrl={lead.vehicle_of_interest.photo_url}
               className="h-12 w-16 shrink-0 rounded-md border border-border object-cover"
             />
             <div className="min-w-0">

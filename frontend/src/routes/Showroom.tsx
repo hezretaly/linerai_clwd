@@ -7,6 +7,7 @@ import { applyBrand } from '../lib/brand'
 import { possessive, type Dealership } from '../lib/dealership'
 import { money } from '../lib/format'
 import { Icon } from '../components/Icon'
+import { CarPhoto } from '../components/CarPhoto'
 
 /**
  * The dealership's own front page, with Liner sitting on it.
@@ -133,25 +134,14 @@ function openingHours(hours: Dealership['hours']): { days: string; text: string 
   return out
 }
 
-/** The last rung of `ingest/pipeline.py:_photo_for`, reached from the browser.
- *
- *  That ladder picks a stored copy, then the dealer's own URL, then a drawn
- *  placeholder -- but it runs at publish time, when a hotlinked URL is only
- *  known to be *written*, not to still resolve. A car that sells and has its
- *  photo pulled, or an image host that refuses an off-site referrer, both
- *  surface here as a torn-page icon in the middle of the grid. Falling through
- *  to the same placeholder the ladder would have ended on keeps the card. */
 function CarCard({ car }: { car: Car }) {
-  const [broke, setBroke] = useState(false)
-  const drawn = `/api/photos/${car.vin}.svg`
   return (
     <article className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
       <div className="aspect-[4/3] w-full overflow-hidden bg-muted">
-        <img
-          src={broke ? drawn : car.photo_url || drawn}
+        <CarPhoto
+          vin={car.vin}
+          photoUrl={car.photo_url}
           alt={car.title}
-          loading="lazy"
-          onError={() => setBroke(true)}
           className="h-full w-full object-cover"
         />
       </div>

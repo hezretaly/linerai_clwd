@@ -8,6 +8,7 @@ import { useNow, zonedParts } from '../lib/clock'
 import type { Appointment, Overview, TeamMember } from '../lib/types'
 import { Badge, Button, Card, Empty, Field, Input, Sheet, Spinner } from '../components/ui'
 import { PageHeader } from '../components/dashboard/AppShell'
+import { CarPhoto } from '../components/CarPhoto'
 
 const HOUR_PX = 56
 
@@ -645,9 +646,9 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
 
           {appointment.vehicle && (
             <div className="flex gap-3">
-              <img
-                src={appointment.vehicle.photo_url}
-                alt=""
+              <CarPhoto
+                vin={appointment.vehicle.vin}
+                photoUrl={appointment.vehicle.photo_url}
                 className="h-20 w-28 rounded-lg border border-border object-cover"
               />
               <div>
