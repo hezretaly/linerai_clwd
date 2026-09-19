@@ -696,3 +696,57 @@ Do **not** run `make reset-db` on an update — it wipes the database.
   call. Fine for a demo you share deliberately; add an nginx `limit_req` before
   the URL goes anywhere wide.
 - **No log rotation** beyond journald's defaults.
+
+## Several dealerships on one host
+
+One process can serve more than one, told apart by the first path segment:
+
+```
+https://linerai.us/craigandlandreth/app     Craig's dashboard
+https://linerai.us/alsbou/app               Alsbou's dashboard
+https://linerai.us/alsbou/showroom          the link you send Alsbou
+https://linerai.us/ops                      ours, never prefixed
+https://linerai.us/app                      whichever store DEALERSHIP= names
+```
+
+Nothing extra goes in `.env` and nginx needs no new rule — it is still one
+`proxy_pass`, because the prefix is stripped inside the application rather
+than by the proxy.
+
+**Each store has its own SQLite file** at `backend/var/stores/<slug>.db`. That
+is the isolation: no table carries a dealership id, and `create_all` adds a
+table to an existing database but never a column, so a shared file could not
+keep two dealerships' buyers apart. The file boundary is enforced by the OS.
+
+Add one:
+
+```bash
+# 1. Write the profile: backend/config/dealerships/<slug>.yaml
+#    (copy an existing one; it refuses to seed until the real address,
+#    phone and hours are filled in)
+
+# 2. Seed that store, and only that store
+DEALERSHIP=<slug> make reset-db
+
+# 3. Check it
+make stores
+```
+
+The seed prints each account's generated password once. Nothing needs a
+restart to become routable — the store list is read off the profile directory
+per request.
+
+**Signing in is one form for every store.** `/login` looks the address up
+across the seeded stores and redirects to whichever holds it; a signed-in user
+who opens another dealership's URL is sent back to their own. A session is
+refused outright at a store it was not minted against, so a cookie cannot be
+carried from one dealership to another.
+
+**`/ops` is deliberately not per-store** and always reads the default
+database. Its tables are still created in every store's file, empty and
+unread — a known cost of one file per store. The day a second dealership is
+live in earnest, move the `ops_` tables to a database of their own.
+
+**`make reset-db` only ever deletes the store `DEALERSHIP=` names**, sidecars
+included. `rm -f backend/liner.db*` is no longer the right command and will
+destroy the wrong file.

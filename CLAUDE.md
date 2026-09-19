@@ -23,7 +23,8 @@ feature reports itself as unavailable rather than simulating a result.
 | `make seed` | Rebuild the Riverside Auto fixture (14 curated + `dash/cars.csv`) |
 | `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
 | `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
-| `make reset-db` | Delete the database and reseed — **loses the `ops_` tables too** |
+| `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it) — **loses the `ops_` tables too** |
+| `make stores` | Every dealership this deployment can serve, and which are seeded |
 | `make reset-dealership` | Rebuild the showroom fixture in place, keeping `ops_users` and `ops_demo_requests` |
 | `make add-owners` | Put `founder@`/`cto@` in `ops_users` on an **existing** database — no reseed, no data loss |
 | `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
@@ -1737,6 +1738,71 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     no cookie is still a 401; the visitor is signed in only by asking to be.
     That keeps one notion of who is signed in for the whole system, and it is
     what `make smoke` checks in both configurations.
+- **Several dealerships from one process, told apart by the first path
+  segment.** `/craigandlandreth/app` and `/alsbou/app` are the same routes
+  reading different databases; unprefixed still means whichever store
+  `DEALERSHIP=` names, which is what keeps every existing deployment, script
+  and smoke assertion working untouched. The prefix is additive.
+  - **A store gets its own SQLite file, because nothing else can keep two
+    dealerships apart here.** No table carries a dealership id, and
+    `create_all` adds a table to an existing database but never a column, so a
+    shared file would put Craig's `leads` and Alsbou's in one table with no
+    predicate able to separate them. `backend/var/stores/<slug>.db`, and the
+    file boundary is the isolation — enforced by the OS rather than by
+    somebody remembering a `WHERE` clause.
+  - **The prefix is stripped before routing, not added to every route.**
+    `app/stores.py` sets the active store and rewrites `scope["path"]`, so
+    `/alsbou/api/overview` arrives at the existing `/api/overview` handler.
+    The SPA catch-all, the `/assets` mount and the WebSocket routes come along
+    for free because none of them ever sees the prefix. Pure ASGI rather than
+    `@app.middleware("http")`, or `/ws/` would point at the wrong store.
+  - **`current_store` is a ContextVar, and it is reset in a `finally`.** The
+    alternative is threading an argument through everything that touches the
+    database, and the one call site that gets missed is the one that reads the
+    wrong dealership's buyers. Left set, a worker thread inheriting it from a
+    previous request is that same failure one layer up.
+  - **The session names its store, and a cookie from elsewhere is refused.**
+    The signing secret is shared across stores, so a Craig cookie is
+    *cryptographically valid* at `/alsbou`; ids are UUIDs so the lookup would
+    almost certainly miss, and "almost certainly" is not a guarantee worth
+    resting a buyer list on. A cookie with no `store` predates the split and
+    is let through, exactly as one with no `realm` reads as the dealership's.
+  - **`current_account` is the one place that reads the cookie's store rather
+    than the request's.** Signing in unprefixed puts a Craig session on the
+    browser and the next call is `/api/auth/me` to ask where to go — resolving
+    that in the default store answered "Unknown user", a 401 immediately after
+    a successful login. It returns an identity and nothing else; everything
+    that reads rows goes through `current_user`, which refuses a mismatch.
+  - **One sign-in form finds the store.** The browser cannot know which
+    dealership holds the address somebody typed, so login returns `store` and
+    `redirect`. A URL that *names* a store settles it and searches nowhere
+    else. An unseeded store is skipped: opening it creates the file, and the
+    query then failed with `no such table: users` — a 500 on every sign-in
+    that also reopened the timing oracle, because the unknown-address path
+    raised before reaching bcrypt (6ms against 250ms).
+  - **Crossing a store is a document load, never `navigate`.** The router
+    basename is fixed at mount, so from `/craigandlandreth` a client-side
+    `navigate('/alsbou/app')` resolves to `/craigandlandreth/alsbou/app`. Both
+    `/ops` redirects had the same bug in miniature.
+  - **What a prefix *is*, in the browser, is decided by exclusion** — a first
+    segment that is not one of the app's own roots. A hardcoded list of slugs
+    would be a second copy of the profile directory, stale the day a store is
+    added, which is the failure `SPA_PREFIXES` is a standing lesson in. Vite's
+    proxy matches the prefixed form by regex for the same reason.
+  - **`/ops` is never per-store**, so it is in `RESERVED` and always reads the
+    default. **Its tables are still duplicated into every store's file**,
+    because `create_all` builds the whole metadata — a known cost, taken
+    deliberately, and the thing to fix the day a second store is live in
+    earnest. Named in `create_all`'s docstring, because a duplicated table
+    nobody has looked at is invisible until a demo request goes missing.
+  - `make stores` lists them and says which are seeded; `make reset-db` takes
+    a `DEALERSHIP=` and deletes only that store's file. It goes through
+    `scripts/drop_db.py`, which computes the path the way the application
+    does — a hardcoded `rm -f backend/liner.db*` in the Makefile drifts, and
+    the direction it drifts in is "deleted the database you were not working
+    on". It removes the `-wal` and `-shm` sidecars too, or SQLite replays
+    committed transactions into the fresh file and the clean reseed comes back
+    carrying rows.
 - **One dealership at a time, one profile per prospect.**
   `backend/config/dealerships/<name>.yaml`, chosen with `DEALERSHIP=<name>`.
   There is still no dealership id on any table and multi-tenancy is still out

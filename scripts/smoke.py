@@ -5408,6 +5408,8 @@ def main() -> int:
     check("the brief never invents a price, because it has none to read",
           "Never quote a number of any kind" in _persona.instructions())
 
+    _stores_section()
+
     print("\n== the run gives back the slots it took ==")
     # Every booking above holds a time that book_appointment will refuse to
     # double-book. Without releasing them each run eats into the fixture's
@@ -5430,6 +5432,70 @@ def main() -> int:
           bool(call("GET", "/api/appointments")) and after["range"] == "today")
 
     return report()
+
+
+def _stores_section() -> None:
+    """One process, several dealerships, told apart by the URL.
+
+    Every check here is against a store that is **seeded**, and the section
+    skips itself when there is only one. A deployment with a single store is
+    the normal case and none of this applies to it -- but where two exist,
+    getting any of it wrong means one dealership reading another's buyers,
+    which looks exactly like working software.
+    """
+    import pathlib as _pl
+    import sys as _sys
+
+    _sys.path.insert(0, "backend")
+    from app.config import settings as _settings
+    from app.stores import RESERVED as _RESERVED, split as _split
+
+    print("\n== one process, several dealerships ==")
+
+    # What is and is not a store, decided in one place. `/ops` is the one that
+    # matters: it is Liner's own dashboard and must never be read as a
+    # dealership, or our demo calendar starts following whichever URL somebody
+    # happened to open.
+    check("a store prefix is stripped before anything routes",
+          _split("/alsbou/api/overview") == ("alsbou", "/api/overview")
+          if "alsbou" in _settings.store_slugs else True)
+    check("and /ops is never a store, whatever a profile is called",
+          "ops" in _RESERVED and _split("/ops/mail") == ("", "/ops/mail"))
+    check("nor are the app's own top-level paths",
+          all(_split(f"/{name}/x") == ("", f"/{name}/x") for name in ("api", "ws", "assets")))
+
+    seeded = [
+        slug for slug in _settings.store_slugs
+        if _pl.Path(_settings.database_url_for(slug).split("///", 1)[-1]).exists()
+    ]
+    if len(seeded) < 2:
+        print(f"      (only {len(seeded)} store seeded, so the rest of this "
+              f"section has nothing to compare -- seed a second with "
+              f"`DEALERSHIP=<name> make reset-db`)")
+        return
+
+    first, second = seeded[0], seeded[1]
+    one = call("GET", f"/{first}/api/showroom/dealership")
+    two = call("GET", f"/{second}/api/showroom/dealership")
+    check("two prefixes answer as two different dealerships",
+          one["name"] != two["name"], f"{one['name']} vs {two['name']}")
+    check("and each wears its own brand, read per request rather than at boot",
+          one["brand"]["accent"] != two["brand"]["accent"],
+          f"{one['brand']['accent']} vs {two['brand']['accent']}")
+
+    # The lots have to differ too, or the prefix is only changing the livery
+    # while every row still comes out of one file.
+    cars_one = call("GET", f"/{first}/api/showroom?limit=1")["total"]
+    cars_two = call("GET", f"/{second}/api/showroom?limit=1")["total"]
+    check("and its own lot, from its own database file",
+          cars_one != cars_two, f"{cars_one} vs {cars_two} vehicles")
+
+    # `status_of` returns (status, body), so compare the first element -- the
+    # tuple is truthy and never equals an int, which made this read as a real
+    # failure against a route that was answering correctly all along.
+    unknown = status_of("GET", "/nosuchdealership/api/showroom")[0]
+    check("an unknown prefix is not a store and does not answer as one",
+          unknown == 404, str(unknown))
 
 
 def report() -> int:
