@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app import email_replies, events
 from app.config import settings
-from app.db import SessionLocal, create_all
+from app.db import SessionLocal, create_all, create_ops_all
 from app.integrations.base import NotConfigured
 from app.integrations.registry import registry_payload
 
@@ -50,6 +50,14 @@ def _report_dealership() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_all()
+    # And Liner's own database, which is a *second* metadata and so is not
+    # built by the line above. Only `seed.py` called this at first, which meant
+    # an existing deployment that upgraded and restarted without reseeding had
+    # an `ops.db` with no tables in it -- and the symptom was a **500 on the
+    # owner login**, because resolving the account reads `ops_users`. The
+    # dealership's own login carried on answering 200, so it read as "/ops is
+    # broken" rather than as a step missed. Measured by deleting the file.
+    create_ops_all()
 
     # Sync endpoints run in a threadpool; events.emit needs a handle on the
     # main loop to reach connected sockets from there.

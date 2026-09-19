@@ -721,6 +721,95 @@ is the isolation: no table carries a dealership id, and `create_all` adds a
 table to an existing database but never a column, so a shared file could not
 keep two dealerships' buyers apart. The file boundary is enforced by the OS.
 
+### How many databases, and where
+
+Four kinds of file, and `make stores` prints the real paths on any given box:
+
+| File | Holds | When it exists |
+|---|---|---|
+| `backend/liner.db` | the **default store** — whatever `DEALERSHIP=` names when it names nothing | always; this is the original single database |
+| `backend/var/stores/<slug>.db` | one named dealership | one per profile you have seeded |
+| `backend/var/ops.db` | Liner's own six `ops_` tables | always, built at boot |
+| `backend/var/` (not a database) | call recordings, crawl snapshots, photos | as they are written |
+
+So a single-dealership install is **two** databases: `liner.db` and `ops.db`.
+Each prospect you add is one more. Every one of them is SQLite in WAL mode, so
+each is really three files — `.db`, `.db-wal`, `.db-shm` — and a backup that
+takes only the `.db` can lose recent writes.
+
+Two asymmetries worth knowing before you write any script against this:
+
+- **The default store is not under `var/stores/`.** It stayed at
+  `backend/liner.db` deliberately, so an existing deployment keeps working
+  untouched — but it means `cp backend/var/stores/*.db` backs up your prospects
+  and misses your actual dealership.
+- **`ops.db` is not under `var/stores/` either**, and it is the one file here
+  that cannot be rebuilt from a seed: it holds the demo requests and support
+  mail real people sent you. `make dump-ops ARGS=--files` prints the correct
+  `cp` line for every file including both of these.
+
+### Moving from one database to many
+
+Going from a single-database install to this layout. **The dealership's own data
+does not move** — `liner.db` carries on being the default store, which is why
+`/app` and every existing URL keep working. Only the `ops_` tables relocate.
+
+```bash
+# 0. Back up first. Both commands: the JSON is re-importable, the file copy is
+#    the real backup. Do this before touching anything.
+make dump-ops ARGS=--files     # prints the cp commands; run them
+make dump-ops                  # -> backend/var/ops-dump-<stamp>.json
+
+# 1. Deploy the new code and restart. Boot creates backend/var/ops.db with the
+#    six tables in it, empty.
+git pull && make install && make build
+sudo systemctl restart liner
+
+# 2. Move the ops rows into it. Existing rows win, so this is safe to re-run,
+#    and ops_users de-duplicates on the address.
+make restore-ops FILE=backend/var/ops-dump-<stamp>.json
+
+# 3. Restart again, because the process caches its engine per database and is
+#    still holding the file as it was at step 1.
+sudo systemctl restart liner
+
+# 4. Check /ops in a browser: sign in at /login?as=owner and confirm the demo
+#    requests and mail are there. THEN drop the old copies.
+make prune-ops                 # reports what it would remove
+make prune-ops ARGS=--apply
+```
+
+Step 4 is last on purpose: `prune-ops` refuses a store holding a row `ops.db`
+does not have, but "the rows are present" and "the dashboard reads them" are
+two different facts and only a browser settles the second.
+
+**To add a prospect** after that, write the profile and seed it — nothing about
+the existing store changes:
+
+```bash
+DEALERSHIP=<slug> make reset-db          # creates var/stores/<slug>.db
+DEALERSHIP=<slug> make seed-demo         # optional demo buyers
+```
+
+**To make the default store a named one** (so every dealership is symmetric
+under `var/stores/` and `liner.db` goes away), it is a file copy plus one `.env`
+line. Stop the service first — replacing a database under a running process
+leaves it writing to the unlinked inode, and the writes are lost silently:
+
+```bash
+sudo systemctl stop liner
+cp backend/liner.db     backend/var/stores/<slug>.db
+cp backend/liner.db-wal backend/var/stores/<slug>.db-wal   # if present
+cp backend/liner.db-shm backend/var/stores/<slug>.db-shm   # if present
+# add DEALERSHIP=<slug> to .env
+sudo systemctl start liner
+```
+
+Every URL gains the prefix when you do that: `/app` becomes `/<slug>/app`.
+Keep `liner.db` until you have signed in and looked — then remove it, or a
+later run with `DEALERSHIP` unset quietly reads a stale copy of the dealership
+you thought you had moved.
+
 Add one:
 
 ```bash

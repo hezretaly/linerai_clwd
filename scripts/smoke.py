@@ -3765,6 +3765,20 @@ def main() -> int:
     check("and ops.db itself is never a table it would drop",
           "!= OPS" in prune_src)
 
+    # **Boot builds both schemas.** `OpsBase` being a second metadata means
+    # `create_all()` does not touch it, and at first only `seed.py` called
+    # `create_ops_all` -- so an existing deployment that upgraded and restarted
+    # without reseeding had an `ops.db` with no tables in it. The symptom was a
+    # **500 on the owner login**, because resolving that account reads
+    # `ops_users`, while the dealership's own login carried on answering 200:
+    # it reads as "/ops is broken", not as a step missed. Measured by deleting
+    # the file, and this is what a browser gate cannot see, because every box
+    # one runs on has been seeded.
+    main_src = pathlib.Path("backend/app/main.py").read_text()
+    lifespan = main_src.split("async def lifespan")[1].split("yield")[0]
+    check("boot builds Liner's schema as well as the dealership's",
+          "create_ops_all()" in lifespan and "create_all()" in lifespan)
+
     # Their livery. `surface` picks a stylesheet class rather than carrying a
     # value into one, so an unknown word must never reach the DOM -- and it is
     # read only by /showroom: a rep's dashboard is a working tool and should

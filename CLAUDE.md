@@ -1457,6 +1457,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         backups is `make dump-ops`, which walks `ops.db` *and* every store —
         it has to, because the pre-split files still carry those tables with
         real rows in them, and nothing else will ever find them.
+      - **Boot builds both schemas, which is a line that was missing.** A
+        second metadata is not built by `create_all()`, and at first only
+        `seed.py` called `create_ops_all` — so an existing deployment that
+        upgraded and restarted *without reseeding* had an `ops.db` with no
+        tables in it. The symptom was a **500 on the owner login**, because
+        resolving that account reads `ops_users`, while the dealership's own
+        login carried on answering 200: it reads as "/ops is broken" rather
+        than as a step missed. Measured by deleting the file. No browser gate
+        could have caught it, because every box one runs on has been seeded —
+        so `make smoke` reads the lifespan for both calls.
       - **`events` stays on the dealership's side, so `emit_ops` exists.**
         The socket replays with `?since=<id>` and that cursor only means
         anything against a single monotonic sequence, so there is one events
