@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
-import { leaveTo } from '../lib/store'
+import { leaveTo, withStore } from '../lib/store'
 import { useDealership } from '../lib/dealership'
 import type { User } from '../lib/types'
 import { Button, Card, Field, Input } from '../components/ui'
@@ -119,7 +119,7 @@ export function Login() {
             You are still signed in to the dealership&rsquo;s dashboard &mdash; that session
             has not gone anywhere. <code className="font-mono">/ops</code> is a separate
             account.{' '}
-            <a href="/app" className="font-medium text-primary hover:underline">
+            <a href={withStore('/app')} className="font-medium text-primary hover:underline">
               Back to the dashboard
             </a>
           </p>

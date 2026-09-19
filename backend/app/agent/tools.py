@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.db import utcnow
 from app.agent import details
+from app.agent.phrasing import cased
 from app.escalations import claim_for_owner
 from app.events import emit
 from app import conversation_once, matching
@@ -400,9 +401,14 @@ def _vehicle_payload(v: Vehicle, home: str = "") -> dict:
     payload = {
         "vin": v.vin,
         "year": v.year,
-        "make": v.make,
-        "model": v.model,
-        "trim": v.trim,
+        # Cased for the same reason the two serializers are, and this is the
+        # one that matters most: these values are what the *assistant* reads,
+        # so they reach the buyer in prose and out loud on a call. Alsbou's
+        # export is all caps, so Liner said "a 2012 NISSAN VERSA". `origin_of`
+        # below still gets a lowercase match either way.
+        "make": cased(v.make),
+        "model": cased(v.model),
+        "trim": cased(v.trim),
         "price": v.price,
         "mileage": v.mileage,
         "body_style": v.body_style,

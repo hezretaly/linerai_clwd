@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { dateTime, money, time } from '../../lib/format'
 import type { Vehicle, User } from '../../lib/types'
 import { Icon } from '../Icon'
+import { withStore } from '../../lib/store'
 
 /* One buyer, every channel, in the order it happened.
  *
@@ -358,7 +359,7 @@ function CallEntry({ e }: { e: TimelineEntry }) {
           <audio
             controls
             preload="none"
-            src={`/api/voice/recording/${e.conversation_id}`}
+            src={withStore(`/api/voice/recording/${e.conversation_id}`)}
             className="mt-2 w-full"
           />
           {e.recording_complete === false && (

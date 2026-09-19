@@ -1865,6 +1865,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     basename is fixed at mount, so from `/craigandlandreth` a client-side
     `navigate('/alsbou/app')` resolves to `/craigandlandreth/alsbou/app`. Both
     `/ops` redirects had the same bug in miniature.
+  - **A raw `href` or `src` does not go through the router, so it never gets
+    the basename.** Which makes every hardcoded `/chat`, `/call`, `/app` or
+    `/api/…` a document load into the **default** store. The showroom's chat
+    widget was exactly that — `<iframe src="/chat?embed=1">` — so a buyer on
+    `/alsbou/showroom` opened Craig's assistant and was answered out of
+    Craig's inventory, on Alsbou's own page. Reported from a real deployment
+    rather than found here, because with one store the bug is invisible: the
+    default store *is* the right store. The Call button, the timeline's
+    recording player and two more had it too. `withStore` on each, and
+    `make smoke` reads every `.tsx` for one that does not — `/login`, `/ops`
+    and `/` are app-level and excluded, because `/ops` is never per-store and
+    the login form is what finds the store in the first place.
   - **What a prefix *is*, in the browser, is decided by exclusion** — a first
     segment that is not one of the app's own roots. A hardcoded list of slugs
     would be a second copy of the profile directory, stale the day a store is
@@ -1905,6 +1917,19 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     Which store to keep is read **per crawl** (`ListAdapter.for_dealer`) and
     not baked into the registered adapter at import, where it was whoever the
     process started as.
+  - **Two dealerships edit their assistants independently, and it is two
+    mechanisms rather than one.** What a *manager* changes on the Liner setup
+    page — tone, push level, price mode, the greeting — is an
+    `assistant_settings` row, draft and live, in **that store's own file**.
+    What an *operator* writes — the `assistant:` block, their knowledge table,
+    their site copy and brand — is in their profile, read through
+    `active_store()` and never through the `DEALERSHIP=` fixed at startup.
+    Only `BRIEF` and `OPERATING_RULES` are shared, and those are product code.
+    `make smoke` builds both stores' prompts and fails if they come out the
+    same or if one carries the other's name: "they are separate" is exactly
+    the claim that is cheap to assert and easy to get wrong, and a single
+    `settings.dealership` left in `profile._path()` would hand both stores
+    whichever prompt the process happened to boot as.
   - **Two halves, refreshed differently, and they must not disagree
     silently.** The name, address, hours and staff are rows and need
     `make reset-db`; the brand, the storefront copy and the crawl source are

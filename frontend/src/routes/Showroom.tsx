@@ -8,6 +8,7 @@ import { possessive, type Dealership } from '../lib/dealership'
 import { money } from '../lib/format'
 import { Icon } from '../components/Icon'
 import { CarPhoto } from '../components/CarPhoto'
+import { withStore } from '../lib/store'
 
 /**
  * The dealership's own front page, with Liner sitting on it.
@@ -347,7 +348,7 @@ export function Showroom() {
                 phone to answer, and a button opening a page that says so is
                 worse than no button. */}
             {data?.channels.voice && (
-              <a href="/call" className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium">
+              <a href={withStore('/call')} className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium">
                 Call us
               </a>
             )}
@@ -564,7 +565,7 @@ export function Showroom() {
               </button>
               {data?.channels.voice && (
                 <a
-                  href="/call"
+                  href={withStore('/call')}
                   className="rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium"
                 >
                   Call us
@@ -608,7 +609,11 @@ export function Showroom() {
           {/* Mounted only while open. An iframe that exists from first paint
               starts a conversation for every visitor who never clicked. */}
           {open && (
-            <iframe src="/chat?embed=1" title="Chat" className="min-h-0 flex-1 border-0" />
+            <iframe
+              src={withStore('/chat?embed=1')}
+              title="Chat"
+              className="min-h-0 flex-1 border-0"
+            />
           )}
         </div>
 

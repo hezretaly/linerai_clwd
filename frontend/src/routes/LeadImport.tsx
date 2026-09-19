@@ -9,6 +9,7 @@ import type { AdfPreview, Lead, Prospect } from '../lib/types'
 import { Badge, Button, Card, Empty, Field, Input } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
+import { withStore } from '../lib/store'
 
 /**
  * ADF/XML lead import.
@@ -147,7 +148,7 @@ export function LeadImportPage() {
               {upload.isPending ? 'Reading...' : 'Choose a file'}
             </Button>
             <a
-              href="/api/leads/import/adf/sample"
+              href={withStore('/api/leads/import/adf/sample')}
               className="text-sm text-primary hover:underline"
               download
             >

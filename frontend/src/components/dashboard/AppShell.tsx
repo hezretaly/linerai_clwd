@@ -12,6 +12,7 @@ import { Button } from '../ui'
 import { SignatureSheet } from './SignatureSheet'
 import { Icon, type IconName } from '../Icon'
 import { usePublicDemo } from '../../routes/RequireAuth'
+import { withStore } from '../../lib/store'
 
 /**
  * Two groups, as the mockups have it: what is happening right now, and the
@@ -403,7 +404,7 @@ export function IntegrationBanner() {
         <span className="opacity-80">
           Those features report themselves as unavailable rather than simulating a result.
         </span>{' '}
-        <a href="/api/integrations" className="underline" target="_blank" rel="noreferrer">
+        <a href={withStore('/api/integrations')} className="underline" target="_blank" rel="noreferrer">
           Details
         </a>
       </p>

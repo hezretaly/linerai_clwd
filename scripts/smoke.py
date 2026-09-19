@@ -5731,6 +5731,62 @@ def _stores_section(before: set[str]) -> None:
     check("and every car picture in the app goes through CarPhoto",
           not raw, f"raw <img src>: {raw}")
 
+    # **A raw `href` or `src` does not go through the router, so it does not
+    # get the basename.** Which makes every hardcoded `/chat`, `/call`, `/app`
+    # or `/api/...` in a dealership-scoped component a document load into the
+    # *default* store. The showroom's chat widget was exactly that --
+    # `<iframe src="/chat?embed=1">` on `/alsbou/showroom` opened Craig's
+    # assistant, so a buyer on one dealership's page was answered out of
+    # another's inventory. Reported from a real deployment, not found here,
+    # because with one store the bug is invisible.
+    #
+    # `/login`, `/ops` and `/` are app-level and deliberately excluded: `/ops`
+    # is never per-store, and the login form is what finds the store in the
+    # first place.
+    leaks = [
+        f"{path.relative_to('frontend/src')}:{n}"
+        for path in sorted(pathlib.Path("frontend/src").rglob("*.tsx"))
+        if "routes/ops/" not in str(path)
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if re.search(r"""(src|href)=["{`']*/(chat|call|app|showroom|api)\b""", line)
+        and "withStore" not in line
+    ]
+    check("and no raw href or src leaves its store",
+          not leaks, f"unprefixed: {leaks}")
+
+    # **Each dealership's assistant is its own, and that is two mechanisms.**
+    # What a manager edits on the Liner setup page is an `assistant_settings`
+    # row in *their* store's file; what an operator writes in the profile —
+    # the `assistant:` block, their knowledge table, their greeting — is read
+    # through `active_store()`, not through the `DEALERSHIP=` fixed at
+    # startup. Built here for both and compared, because "they are separate"
+    # is exactly the claim that is cheap to assert and easy to get wrong: one
+    # `settings.dealership` left in `profile._path()` would give both stores
+    # whichever prompt the process booted as, with nothing on any screen
+    # saying so.
+    from app.agent.prompts import build_system_prompt as _prompt
+    from app.db import SessionLocal as _Store, current_store as _ctx
+    from app.models import AssistantSettings as _Settings, Dealership as _Shop
+
+    made = {}
+    for slug in (first, second):
+        token = _ctx.set(slug)
+        try:
+            with _Store(slug) as sdb:
+                made[slug] = _prompt(
+                    sdb,
+                    sdb.query(_Shop).first(),
+                    sdb.query(_Settings).filter_by(status="live").first()
+                    or sdb.query(_Settings).first(),
+                )
+        finally:
+            _ctx.reset(token)
+    names = [call("GET", f"/{s}/api/showroom/dealership")["name"] for s in (first, second)]
+    check("each dealership's prompt is built from its own rows and profile",
+          made[first] != made[second]
+          and names[0] in made[first] and names[0] not in made[second],
+          f"{len(made[first])} vs {len(made[second])} chars")
+
     # `status_of` returns (status, body), so compare the first element -- the
     # tuple is truthy and never equals an int, which made this read as a real
     # failure against a route that was answering correctly all along.
