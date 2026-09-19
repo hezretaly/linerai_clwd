@@ -413,9 +413,51 @@ class Settings(BaseSettings):
 
     @property
     def dealership_config(self) -> Path:
-        if not self.dealership.strip():
+        return self.config_for(self.dealership)
+
+    def config_for(self, slug: str) -> Path:
+        """The profile file for one store, or the single-file default."""
+        slug = (slug or "").strip()
+        if not slug:
             return self.dealership_config_default
-        return self.dealership_dir / f"{self.dealership.strip()}.yaml"
+        return self.dealership_dir / f"{slug}.yaml"
+
+    #: Every store this deployment can serve, newest naming wins: the stem of
+    #: each profile in `dealership_dir`. Read from disk rather than listed in
+    #: `.env`, for the reason `SPA_PREFIXES` is read out of `main.tsx` -- a
+    #: hand-written list of things that already exist somewhere else is a list
+    #: that goes stale, and the failure is a URL that 404s with nothing saying
+    #: why.
+    @property
+    def store_slugs(self) -> list[str]:
+        if not self.dealership_dir.is_dir():
+            return []
+        return sorted(p.stem for p in self.dealership_dir.glob("*.yaml"))
+
+    #: One SQLite file per store, beside the call recordings and the crawl
+    #: snapshots -- files a deployment accumulates rather than source, all
+    #: gitignored under `var/`.
+    #:
+    #: **A store gets its own database because nothing else can keep two
+    #: dealerships apart here.** No table carries a dealership id and
+    #: `create_all` adds a table to an existing database but never a column,
+    #: so a shared file would mean Craig's buyer list and Alsbou's in one
+    #: `leads` table with no predicate able to separate them. The file
+    #: boundary is the isolation, and it is enforced by the OS rather than by
+    #: remembering a `WHERE` clause.
+    stores_dir: Path = BACKEND_DIR / "var" / "stores"
+
+    def database_url_for(self, slug: str) -> str:
+        """Where one store's rows live.
+
+        The empty slug keeps `database_url` exactly as it was, so a deployment
+        that never names a store carries on using `backend/liner.db` and
+        nothing about it changes.
+        """
+        slug = (slug or "").strip()
+        if not slug:
+            return self.database_url
+        return f"sqlite:///{self.stores_dir / f'{slug}.db'}"
 
     # A sample lot, loaded on top of the curated fixtures by `make seed`. One
     # copy, read from where it lives, rather than duplicated into the backend.

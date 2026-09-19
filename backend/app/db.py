@@ -12,6 +12,7 @@ import grp
 import os
 import pwd
 from collections.abc import Iterator
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,22 +33,102 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
+# --------------------------------------------------------------------------
+# One database per store
+#
+# `current_store` names whichever dealership this request is for. It is a
+# ContextVar rather than an argument threaded through every call because the
+# alternative is changing the signature of everything that touches the
+# database -- and the one that gets missed is the one that reads the wrong
+# dealership's buyers, silently, which is the whole failure this split exists
+# to prevent.
+#
+# The default is `settings.dealership`, so a process that serves one store
+# behaves exactly as it did: an unprefixed `/api/...` request is that store's.
+# --------------------------------------------------------------------------
+
+current_store: ContextVar[str] = ContextVar("current_store", default="")
+
+_engines: dict[str, Engine] = {}
+_sessions: dict[str, sessionmaker] = {}
+
+
+def active_store() -> str:
+    """The store this request is for, falling back to the configured one."""
+    return current_store.get() or settings.dealership.strip()
+
+
+def engine_for(slug: str = "") -> Engine:
+    """The engine for one store, made once and kept.
+
+    Cached per slug: SQLite opens are cheap but a connection pool per request
+    is not, and WAL mode wants a stable pool rather than a new file handle on
+    every call.
+    """
+    slug = (slug or "").strip()
+    if slug not in _engines:
+        url = settings.database_url_for(slug)
+        if url.startswith("sqlite"):
+            # The directory has to exist before SQLite will create the file,
+            # and WAL writes two sidecars beside it.
+            path = Path(url.split("///", 1)[-1])
+            path.parent.mkdir(parents=True, exist_ok=True)
+        args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        _engines[slug] = create_engine(url, connect_args=args, future=True)
+    return _engines[slug]
+
+
+def session_factory(slug: str = "") -> sessionmaker:
+    slug = (slug or "").strip()
+    if slug not in _sessions:
+        _sessions[slug] = sessionmaker(
+            bind=engine_for(slug), autoflush=False, expire_on_commit=False, future=True
+        )
+    return _sessions[slug]
+
+
+#: The default store's engine, kept under its old name so every script,
+#: migration helper and `create_all()` caller that imported it still works.
+engine = engine_for(settings.dealership.strip())
 
 
 @event.listens_for(Engine, "connect")
 def _sqlite_pragmas(dbapi_connection, connection_record) -> None:  # noqa: ANN001
-    if not settings.database_url.startswith("sqlite"):
-        return
+    """Applied to every engine, not only the first.
+
+    Listening on the `Engine` class rather than one instance is what makes
+    that true -- registered against a single engine, a second store would run
+    without WAL, without foreign keys and without a busy timeout, and the
+    missing `foreign_keys=ON` is the one that turns a bad delete into silent
+    orphan rows rather than an error.
+    """
     cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.close()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=5000")
+    except Exception:
+        # Not SQLite. Nothing to set, and a Postgres connection must not fail
+        # because of a pragma that does not exist there.
+        pass
+    finally:
+        cursor.close()
 
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
+class _StoreSession:
+    """`SessionLocal()` that opens against whichever store is active.
+
+    Kept callable under the old name because roughly forty call sites do
+    `with SessionLocal() as db:` -- scripts, the seed, the tickers. Renaming
+    them all would be a large diff whose only purpose is to say the same thing
+    differently.
+    """
+
+    def __call__(self, slug: str | None = None) -> Session:
+        return session_factory(active_store() if slug is None else slug)()
+
+
+SessionLocal = _StoreSession()
 
 
 def get_db() -> Iterator[Session]:
@@ -58,9 +139,9 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
-def sqlite_path() -> Path | None:
-    """The database file, when this deployment is on SQLite."""
-    url = settings.database_url
+def sqlite_path(slug: str | None = None) -> Path | None:
+    """The database file for one store, when this deployment is on SQLite."""
+    url = settings.database_url_for(active_store() if slug is None else slug)
     if not url.startswith("sqlite"):
         return None
     return Path(url.split("///", 1)[-1]) if "///" in url else None
@@ -115,11 +196,23 @@ def readonly_help() -> str:
     )
 
 
-def create_all() -> None:
+def create_all(slug: str | None = None) -> None:
+    """Build the schema in one store's file.
+
+    Every store gets the *whole* metadata, `ops_` tables included. That is a
+    known cost of one file per store and it was taken deliberately: those six
+    tables are Liner's own, so a copy per store means `founder@` exists once
+    per dealership and a demo somebody booked with us lands in whichever file
+    happened to be active. `app/ops_store.py` pins every `/ops` read and write
+    to one store so the duplicates stay empty and unread, but they are still
+    there -- and the day a second store is live in earnest, that is the thing
+    to fix. It is written down here because a duplicated table nobody has
+    looked at is invisible until somebody's demo request goes missing.
+    """
     from app import models  # noqa: F401  (registers the mappers)
 
     try:
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=engine_for(active_store() if slug is None else slug))
     except OperationalError as exc:
         if "readonly database" not in str(exc) and "unable to open" not in str(exc):
             raise
