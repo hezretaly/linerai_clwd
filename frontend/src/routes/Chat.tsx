@@ -434,11 +434,11 @@ export function Chat() {
                         {vehicle.mileage ? ` -- ${vehicle.mileage.toLocaleString()} mi` : ''}
                         {vehicle.location ? ` -- ${vehicle.location}` : ''}
                       </p>
-                      {vehicle.features?.length ? (
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {vehicle.features.slice(0, 3).join(' - ')}
-                        </p>
-                      ) : null}
+                      {/* No options line. The card is the car's name, price,
+                          mileage and where it is -- three lines of the
+                          dealer's hundred-line options block under every
+                          card crowded the thread out, and the assistant
+                          reads the whole list anyway when asked. */}
                     </div>
                   </article>
                 ))}

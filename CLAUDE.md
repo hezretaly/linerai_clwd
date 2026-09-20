@@ -2578,6 +2578,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     per car.** Five cars times a hundred lines is the prompt the model reads
     on every later turn, so the search result says it is cut and the prompt
     says to call `get_vehicle` before answering an equipment question.
+  - **The chat card does not print them.** It carried the first three lines
+    under every car, and with a real options block that was three lines of
+    "Engine Auto Stop-Start Feature" crowding a thread on a phone. The card
+    is the name, the price, the mileage and where the car is; the list is
+    for the assistant to read when asked, on request.
   - **Absent from the list is a question for a colleague, never a guess.**
     The prompt's rule: answer from the list if it names the thing; if it
     does not, or the car has none, that is the unanswerable case below.
