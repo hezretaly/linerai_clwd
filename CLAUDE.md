@@ -1992,11 +1992,34 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     answer the question a dealer actually has, which is what this looks like
     on their site. Their logo, colour, address, phone, hours and real lot,
     with the assistant in the corner. Two pages because their site is two
-    pages: a front page — hero, banner strip, body-style pictures, the newest
-    of the lot, promo bands, About beside a map — and the list their
-    INVENTORY nav item leads to. `components/storefront/` is what they share
-    (`Shell` for the chrome, footer and widget; `CarCard`; `Media`;
-    `useStorefront`), so the header cannot drift between them.
+    pages: a front page and the list their INVENTORY nav item leads to.
+    - **A dealership's storefront is its own folder, and its design is
+      free.** `frontend/src/storefronts/<slug>/` is that dealership's two
+      pages, laid out however *their* site is laid out, with their own
+      components and their own stylesheet if they want one — dealer sites
+      are anything but alike, and a shared page rendering every one of them
+      from a profile could only ever draw the shape it was written for. That
+      was tried, and it drew Alsbou's shape for everybody. `default/` is the
+      plain page a dealership gets until theirs is built; `index.ts` maps a
+      slug to its folder and a profile with no folder gets the default — a
+      copied profile has a new slug, so it never inherits another
+      dealership's design. Each design is its own chunk.
+      - **What is not free is `_shared/`, and it is four things.** Cars come
+        only through `useStorefront` (so a page can only show what
+        `offerable` returns); pictures through `CarPhoto`; the assistant
+        through `ChatFrame` (the real `/chat` in an iframe, never a second
+        client); the list's filters through `_shared/filters` (so any
+        landing can link into any list). `make smoke` reads every folder for
+        those four and for a form that posts anywhere, and for nothing else
+        about layout. The dashboard is untouched by any of this: it is one
+        set of pages for every dealership, named for whichever store the
+        signed-in user belongs to.
+      - **A dealership's own words belong in its own folder.** The "Riverside
+        Auto" bug was a dealer's name in code every dealership renders, and
+        the gate still refuses one in `_shared/` or `default/`. Inside
+        `storefronts/alsbou/`, Alsbou's sentences are exactly where they
+        should be — the profile's `site:` block is still served and a folder
+        may read it or not.
     - **A store's root is the store's page, and only the bare root is ours.**
       `StorePrefix` strips `/alsbou` to `/`, and `static.py` served
       `landing.html` — Liner's marketing page — for `/` unconditionally. So
@@ -2034,15 +2057,19 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     composed rather than filtered from `vehicle_out`, which carries
     `rule_note` and `mention_count`, and a serializer that has to remember to
     drop a field will eventually forget; and the widget is an iframe of the
-    real `/chat` (`?embed=1`), never a second chat client. It is not a copy of
-    their marketing site and does not pretend to be one — a near-miss of
-    somebody's own homepage looks worse than a clean page that is honestly
-    ours.
-    - **Their copy lives in the profile's `site:` block, not in the
-      component.** Headings, welcome text, hero, nav and social links are the
-      dealership's own sentences; hardcoded in `Showroom.tsx` they are the
-      "Riverside Auto" bug one level up, and the next instance greets somebody
-      in Craig and Landreth's words. Every URL is validated to `https://` or
+    real `/chat` (`?embed=1`), never a second chat client. **It should look
+    like their site**, section for section where their site has sections —
+    that is the demo, and it is the reason each dealership has a folder. The
+    older line here, that a near-miss of somebody's homepage looks worse than
+    a clean page that is honestly ours, still holds for the *default* design
+    a dealership gets before theirs is built: plain and ours, not a guess at
+    theirs.
+    - **Their copy lives in the profile's `site:` block or in their own
+      folder — never in shared code.** Headings, welcome text, hero, nav and
+      social links are the dealership's own sentences; hardcoded in
+      `default/` or `_shared/` they are the "Riverside Auto" bug one level
+      up, and the next instance greets somebody in Craig and Landreth's
+      words. Every URL is validated to `https://` or
       `/` before it reaches an `href`, for the reason the accent is validated
       to a hex: it comes from a file an operator edits and lands in a browser.
     - **`brand.surface: dark` is read only here.** A dealership whose own

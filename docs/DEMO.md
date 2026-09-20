@@ -15,8 +15,8 @@ with a simulated result.
 
 | Surface | URL | What it is |
 |---|---|---|
-| Their front page | `/<store>` — `linerai.us/alsbou` | Their home page's shape: hero with the search over it, their banner strip, body-style pictures, the newest of the lot, their promo bands, their About copy beside a map, their footer. Chat widget in the corner. **The link you send them.** |
-| Their inventory | `/<store>/showroom` | The list their INVENTORY nav item leads to: heading, counted filter sidebar, results toolbar, card grid. The front page's search box and body-style tiles land here already narrowed (`?q=`, `?body_style=`). |
+| Their front page | `/<store>` — `linerai.us/alsbou` | Their home page, in their own design: `frontend/src/storefronts/<store>/Landing.tsx`. A dealership with no folder yet gets the plain `default/` page. Chat widget in the corner. **The link you send them.** |
+| Their inventory | `/<store>/showroom` | Their list, `storefronts/<store>/Showroom.tsx`. The front page's search and any tile land here already narrowed (`?q=`, `?body_style=`) — that query string is the one contract every design shares. |
 | The chat | `/chat` | The same assistant, full screen. The widget is an iframe of this. |
 | The call | `/call` | Real WebRTC to OpenAI Realtime. Only appears when voice is on. |
 | The dashboard | `/app` | What their reps and manager would use. |

@@ -3620,21 +3620,51 @@ def main() -> int:
     # prospect's own sentences is the "Riverside Auto" bug one level up.
     craig = _yaml.safe_load(
         pathlib.Path("backend/config/dealerships/craigandlandreth.yaml").read_text())
-    # **The whole storefront tree, not one file.** The storefront was one
-    # component and every check below read it; it is now two routes over a
-    # shared `components/storefront/`, and a dealer's sentence hardcoded in
-    # the shell would pass a check that only read the list page. Everything
-    # that asks "is their word written into the component" asks it of every
-    # file the storefront is made of.
-    STOREFRONT = [
-        pathlib.Path("frontend/src/routes/Showroom.tsx"),
-        pathlib.Path("frontend/src/routes/Storefront.tsx"),
-        *sorted(pathlib.Path("frontend/src/components/storefront").glob("*.ts*")),
-    ]
-    check("the storefront is two routes over a shared component tree",
-          len(STOREFRONT) >= 6 and all(p.is_file() for p in STOREFRONT),
-          str([p.name for p in STOREFRONT]))
-    page = "\n".join(p.read_text() for p in STOREFRONT)
+    # **A dealership's storefront is its own folder, and its design is free.**
+    # `storefronts/<slug>/` is that dealership's front page and list, laid
+    # out however their site is; `default/` is what a dealership with no
+    # folder gets; `_shared/` is the four guarantees every folder must go
+    # through and nothing about layout. So the checks below split in two:
+    #
+    #   * "their words are not written into the component" is asked of the
+    #     *shared* and *default* code only. In Alsbou's own folder, Alsbou's
+    #     sentences are exactly where they belong -- the "Riverside Auto" bug
+    #     was a dealer's name in code every dealership renders.
+    #   * The guarantees are asked of *every* folder: cars only through
+    #     `useStorefront`, the assistant only through `ChatFrame`, the list's
+    #     filters through `_shared/filters`, no form that posts anywhere.
+    ROOT = pathlib.Path("frontend/src/storefronts")
+    SHARED = sorted((ROOT / "_shared").glob("*.ts*")) + sorted((ROOT / "default").glob("*.ts*"))
+    DESIGNS = sorted(p for p in ROOT.iterdir() if p.is_dir() and not p.name.startswith("_") and p.name != "default")
+    check("the storefront is a folder per dealership over a small shared core",
+          (ROOT / "index.ts").is_file() and len(SHARED) >= 6 and DESIGNS,
+          f"shared {[p.name for p in SHARED]} designs {[p.name for p in DESIGNS]}")
+    page = "\n".join(p.read_text() for p in SHARED)
+
+    registry = (ROOT / "index.ts").read_text()
+    from app.config import settings as _cfg_sf
+    for design in DESIGNS:
+        check(f"storefronts/{design.name} is a profile this deployment serves",
+              design.name in _cfg_sf.store_slugs, str(_cfg_sf.store_slugs))
+        check(f"and is registered, so it is used rather than sitting unwired",
+              f"./{design.name}/Landing" in registry and f"./{design.name}/Showroom" in registry)
+        check(f"and has both of a dealership's pages",
+              (design / "Landing.tsx").is_file() and (design / "Showroom.tsx").is_file())
+        src = "\n".join(p.read_text() for p in design.rglob("*.ts*"))
+        # The four guarantees. A folder is free to draw anything; it is not
+        # free to fetch its own cars (which would walk around `offerable`),
+        # embed its own chat client, invent its own filter query string, or
+        # ship a form that posts nowhere.
+        check(f"{design.name}: cars come only through useStorefront",
+              "useStorefront" in src and "api.get(" not in src and "fetch(" not in src)
+        # A map embed is an iframe too and is fine; what a folder may not do
+        # is embed a chat of its own.
+        check(f"{design.name}: the assistant is the real /chat through ChatFrame",
+              "ChatFrame" in src and not re.search(r"<iframe[^>]*chat", src, re.I))
+        check(f"{design.name}: the list's filters are the shared URL contract",
+              "_shared/filters" in src and "params.get('body_style')" not in src)
+        check(f"{design.name}: no form posts anywhere",
+              not re.search(r"<form[^>]*\baction=", src))
     check("the prospect's profile carries their front page, not the component",
           bool((craig.get("site") or {}).get("heading"))
           and (craig["site"]["heading"] not in page),

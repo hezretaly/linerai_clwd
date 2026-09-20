@@ -133,34 +133,55 @@ page with nowhere else to live, and each is validated and bounded in
 *content*, the component decides *layout*, and nothing in the components
 names a dealership.
 
-The risk is the next dealership whose page has a section this vocabulary
-cannot say. The wrong answer is a `sections: [{type: …}]` block builder in
-YAML, which is a page layout language nobody asked for. **The rule to hold:**
-a new key is added when a second dealership needs it, or when the first one's
-page cannot be told without it; a key that serves one dealership's one
-section is a sign the component should be more general, not that the schema
-should be. `banners` and `promos` are the same shape twice, deliberately —
-a strip and a band are different things on a page and the reader should not
-have to test a `placement` field to know which it has.
+With a folder per dealership (§6) the pressure on this schema is gone: a
+section only Alsbou's page has is drawn by Alsbou's folder, and needs no key.
+**The rule to hold now:** `site:` carries what is *data about the dealership*
+that more than one page or channel reads — name, address, hours, brand,
+links, the price label the assistant also uses — and a folder is free to
+read it or to carry its own copy inline. A key that exists only so one
+folder can render one section belongs in that folder, not in the schema.
+`banners`, `promos`, `body_style_tiles` and `sections` were added under the
+old model and are kept because Alsbou's folder reads them; they should not
+be taken as precedent for the next dealership.
 
-### 6. The storefront was one component
+### 6. The storefront is a folder per dealership — decided
 
 `Showroom.tsx` reached 1,100 lines doing the chrome, the hero, the banner
 strip, the About copy, the filter sidebar, the results toolbar, the card, the
-footer and the chat widget. It is now `components/storefront/` — `Shell`
-(chrome, footer, widget, and a context for opening the assistant), `CarCard`,
-`Media` (hero, tile, promo, style tile, each with its own fallback),
-`useStorefront` (one request for everything), `types` — and two routes,
-`Storefront.tsx` and `Showroom.tsx`, each under 300 lines. The split was
-forced by the root fix, since a front page and a list are two routes, and it
-is the right one regardless: the header cannot drift between the two pages
-because there is one header.
+footer and the chat widget, and rendered every dealership from one profile
+schema. The first split kept one shared design over two routes. **That was
+the wrong assumption**: it treated dealer sites as one shape with different
+data, and they are not — one is a black header over a white grid, the next is
+orange on near-black, the one after that is a single long page. A shared page
+could only ever draw the shape it was written for, and it drew Alsbou's for
+everybody.
 
-What the split did *not* do, on purpose: it did not introduce a layout engine
-or a section registry. Each page composes its sections in order, in code.
-The front page's order is Alsbou's order; if a second dealership's page runs
-its About above its specials, that is a second composition, and two short
-compositions are cheaper than one configurable one.
+So the storefront is now `frontend/src/storefronts/`:
+
+```
+_shared/     the guarantees, and nothing about layout:
+             useStorefront (cars only through offerable), assistant.tsx
+             (the real /chat through ChatFrame), filters.ts (the list's URL
+             contract), types.ts
+default/     the plain design a dealership gets until theirs is built
+alsbou/      Alsbou's design: their pages, their components, free
+index.ts     slug -> design; a profile with no folder gets default
+```
+
+A folder is free in layout, copy placement, colour and components. It is not
+free to fetch its own cars, embed its own chat client, invent its own filter
+query string or ship a form that posts nowhere — `make smoke` reads every
+folder for exactly those four and for nothing else. The "their words are not
+in the component" check now applies to `_shared/` and `default/` only: in a
+dealership's own folder, their sentences are where they belong.
+
+The dashboard is unaffected. It is one set of pages for every dealership,
+named for the store the signed-in user belongs to, and that was already so.
+
+What this costs, stated plainly: a fix to a *design* concern in Alsbou's
+folder does not reach anybody else's, by design. A fix to a *guarantee*
+reaches everybody, because the guarantee lives in `_shared/`. The line
+between the two is the thing to hold, and §5 below is where it is tested.
 
 ## What is right and should stay
 

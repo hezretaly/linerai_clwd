@@ -1,17 +1,20 @@
-import { createContext, useContext, useState, type FormEvent, type ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 
-import { Icon } from '../Icon'
+import { Icon } from '../../components/Icon'
 import { possessive } from '../../lib/dealership'
 import { withStore } from '../../lib/store'
+import { AssistantContext, ChatFrame, askAboutText, useAssistant, type Assistant } from '../_shared/assistant'
+
+/** Re-exported so this folder's pages import it from their own shell. */
+export { useAssistant }
 import {
   chromeClass,
   telHref,
   SEARCH_PLACEHOLDER,
-  type Car,
   type Dealership,
   type Site,
-} from './types'
+} from '../_shared/types'
 
 /**
  * Everything a storefront page has around its content: the dealership's
@@ -43,21 +46,6 @@ import {
  * transcript.
  */
 
-interface Assistant {
-  /** Open the widget with nothing typed. */
-  open: () => void
-  /** Open it already asking about one car. The VIN is in the sentence because
-   *  a lot with three 2019 Silverados has three cards that would otherwise
-   *  send the same words, and `search_inventory` matches a VIN exactly. */
-  askAbout: (car: Car) => void
-}
-
-const AssistantContext = createContext<Assistant>({ open: () => {}, askAbout: () => {} })
-
-/** The widget's controls, for anything inside the shell that opens it. */
-export function useAssistant(): Assistant {
-  return useContext(AssistantContext)
-}
 
 export function StorefrontShell({
   shop,
@@ -87,7 +75,7 @@ export function StorefrontShell({
       setOpen(true)
     },
     askAbout: (car) => {
-      setAsk(`Tell me about the ${car.title}${car.trim ? ` ${car.trim}` : ''} (VIN ${car.vin}).`)
+      setAsk(askAboutText(car))
       setOpen(true)
     },
   }
@@ -485,14 +473,7 @@ function Widget({
             the question so pressing a second card's button reloads the frame
             with that car's sentence in the box -- the transcript comes back
             from localStorage, so nothing said is lost. */}
-        {open && (
-          <iframe
-            key={ask}
-            src={withStore(`/chat?embed=1${ask ? `&ask=${encodeURIComponent(ask)}` : ''}`)}
-            title="Chat"
-            className="min-h-0 flex-1 border-0"
-          />
-        )}
+        {open && <ChatFrame ask={ask} className="min-h-0 flex-1 border-0" />}
       </div>
 
       <button

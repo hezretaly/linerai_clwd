@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 
-import { CarCard } from '../components/storefront/CarCard'
-import { StorefrontShell, useAssistant } from '../components/storefront/Shell'
-import { useStorefront } from '../components/storefront/useStorefront'
-import { chromeClass, cityOf, SORTS, type Car, type Site } from '../components/storefront/types'
+import { CarCard } from './CarCard'
+import { StorefrontShell, useAssistant } from './Shell'
+import { isFiltered, readFilters, showroomQuery, writeFilters, type Filters } from '../_shared/filters'
+import { useStorefront } from '../_shared/useStorefront'
+import { chromeClass, cityOf, SORTS, type Car, type Site } from '../_shared/types'
 
 /**
  * The dealership's inventory list, with Liner on it. `/showroom`, or
@@ -46,14 +47,6 @@ import { chromeClass, cityOf, SORTS, type Car, type Site } from '../components/s
  * chat window refusing to discuss it.
  */
 
-interface Filters {
-  q: string
-  make: string
-  bodyStyle: string
-  min: number | null
-  max: number | null
-}
-
 const PAGE = 24
 
 /** One row of a sidebar filter: a label, the count, and whether it is on.
@@ -88,21 +81,9 @@ function FilterRow({
   )
 }
 
-function num(value: string | null): number | null {
-  if (value == null || value === '') return null
-  const n = Number(value)
-  return Number.isFinite(n) ? n : null
-}
-
 export function Showroom() {
   const [params, setParams] = useSearchParams()
-  const filters: Filters = {
-    q: params.get('q') ?? '',
-    make: params.get('make') ?? '',
-    bodyStyle: params.get('body_style') ?? '',
-    min: num(params.get('min_price')),
-    max: num(params.get('max_price')),
-  }
+  const filters = readFilters(params)
   const [shown, setShown] = useState(PAGE)
   const [sort, setSort] = useState(SORTS[0].key)
   /* The header box's text, seeded from the URL so a search carried here from
@@ -114,35 +95,23 @@ export function Showroom() {
    * whole first screen spent on controls. */
   const [showFilters, setShowFilters] = useState(false)
 
-  const query = useMemo(() => {
-    const p = new URLSearchParams({ limit: String(shown), sort })
-    if (filters.q) p.set('q', filters.q)
-    if (filters.make) p.set('make', filters.make)
-    if (filters.bodyStyle) p.set('body_style', filters.bodyStyle)
-    if (filters.min != null) p.set('min_price', String(filters.min))
-    if (filters.max != null) p.set('max_price', String(filters.max))
-    return p.toString()
-  }, [shown, sort, filters.q, filters.make, filters.bodyStyle, filters.min, filters.max])
+  const query = useMemo(
+    () => showroomQuery(filters, shown, sort),
+    [shown, sort, filters.q, filters.make, filters.bodyStyle, filters.min, filters.max],
+  )
 
   const { data } = useStorefront(query)
   const shop = data?.dealership
   const site: Site | undefined = shop?.site
   const facets = data?.facets
-  const filtered = Boolean(filters.q || filters.make || filters.bodyStyle || filters.max || filters.min)
+  const filtered = isFiltered(filters)
   const chrome = chromeClass(shop)
 
   /** Change one filter, in the URL, and start the grid from the top again.
    *  Empty values are removed rather than written as `?make=`, so a cleared
    *  filter leaves a clean link behind. */
   const narrow = (next: Partial<Filters>) => {
-    const merged = { ...filters, ...next }
-    const p = new URLSearchParams()
-    if (merged.q) p.set('q', merged.q)
-    if (merged.make) p.set('make', merged.make)
-    if (merged.bodyStyle) p.set('body_style', merged.bodyStyle)
-    if (merged.min != null) p.set('min_price', String(merged.min))
-    if (merged.max != null) p.set('max_price', String(merged.max))
-    setParams(p)
+    setParams(writeFilters({ ...filters, ...next }))
     setShown(PAGE)
     setShowFilters(false)
   }

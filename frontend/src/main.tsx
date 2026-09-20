@@ -11,8 +11,7 @@ import { BASENAME } from './lib/store'
 import { RequireAuth } from './routes/RequireAuth'
 import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
-import { Showroom } from './routes/Showroom'
-import { Storefront } from './routes/Storefront'
+import { StorefrontPage } from './routes/StorefrontPage'
 import { Call } from './routes/Call'
 import { OverviewPage } from './routes/Overview'
 import { ConversationListPage } from './routes/ConversationList'
@@ -57,18 +56,20 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           {/* Buyer surfaces keep the brand blue. /login is a dealer screen and
               deliberately stays on classic. */}
-          {/* The dealership's own front page and their inventory list, for a
-              demo: their brand, their real lot, and the chat widget where it
-              would really sit. Both scope .theme-buyer themselves, since the
-              whole page is a buyer surface rather than a route wrapped in one.
+          {/* The dealership's own front page and their inventory list, in
+              that dealership's own design: `storefronts/<slug>/`, resolved
+              from the store in the URL, with a plain default for a dealership
+              that has no folder yet. Each scopes .theme-buyer itself, since
+              the whole page is a buyer surface rather than a route wrapped in
+              one.
 
               `/` here is only ever reached *with a store prefix*. Unprefixed,
               `/` is Liner's own marketing document -- Vite rewrites it to
               landing.html before the SPA sees it, and `static.py` serves the
               file directly in production -- so this route is the dealership's
               root and never ours. `make smoke` asserts both. */}
-          <Route path="/" element={<Storefront />} />
-          <Route path="/showroom" element={<Showroom />} />
+          <Route path="/" element={<StorefrontPage kind="landing" />} />
+          <Route path="/showroom" element={<StorefrontPage kind="showroom" />} />
           <Route path="/chat" element={<BuyerTheme><Chat /></BuyerTheme>} />
           <Route path="/call" element={<BuyerTheme><Call /></BuyerTheme>} />
           <Route path="/login" element={<Login />} />

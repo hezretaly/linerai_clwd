@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { CarCard } from '../components/storefront/CarCard'
-import { BannerTile, Hero, Promo, StyleTile } from '../components/storefront/Media'
-import { StorefrontShell, useAssistant } from '../components/storefront/Shell'
-import { useStorefront } from '../components/storefront/useStorefront'
-import { SEARCH_PLACEHOLDER, type Car, type Dealership, type Facets, type Site } from '../components/storefront/types'
-import { Icon } from '../components/Icon'
+import { CarCard } from './CarCard'
+import { BannerTile, Hero, Promo, StyleTile } from './Media'
+import { StorefrontShell, useAssistant } from './Shell'
+import { useStorefront } from '../_shared/useStorefront'
+import { SEARCH_PLACEHOLDER, type Car, type Dealership, type Facets, type Site } from '../_shared/types'
+import { Icon } from '../../components/Icon'
 
 /**
  * The dealership's own front page, with Liner on it. `/<store>`.
@@ -42,7 +42,7 @@ import { Icon } from '../components/Icon'
 
 const FEATURED = 6
 
-export function Storefront() {
+export function Landing() {
   const navigate = useNavigate()
   const [draft, setDraft] = useState('')
   const { data } = useStorefront(`limit=${FEATURED}&sort=year_new`)

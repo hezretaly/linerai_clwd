@@ -2,8 +2,8 @@ import { useState } from 'react'
 import clsx from 'clsx'
 
 import { money } from '../../lib/format'
-import { CarPhoto } from '../CarPhoto'
-import type { Car } from './types'
+import { CarPhoto } from '../../components/CarPhoto'
+import type { Car } from '../_shared/types'
 
 /** How many columns the card's specification grid gets, by how many cells it
  *  has to put in it. Written out because Tailwind reads the source rather than
