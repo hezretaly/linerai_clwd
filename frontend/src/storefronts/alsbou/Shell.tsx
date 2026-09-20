@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { Icon } from '../../components/Icon'
 import { possessive } from '../../lib/dealership'
 import { withStore } from '../../lib/store'
+import { rebuiltHere } from '../_shared/links'
 import { AssistantContext, ChatFrame, askAboutText, useAssistant, type Assistant } from '../_shared/assistant'
 
 /** Re-exported so this folder's pages import it from their own shell. */
@@ -248,30 +249,6 @@ function Chrome({
       </div>
     </div>
   )
-}
-
-/** The two pages of theirs this demo has rebuilt, by URL, or '' for one it
- *  has not.
- *
- *  Decided against the dealership's own `website_url`, never against a name
- *  written in here: a hostname in this component is the "Riverside Auto" bug
- *  one level up, and a sister store on another host -- Alsbou's Riverside lot
- *  -- is exactly the link that must keep leaving. Their home is our store
- *  root and their inventory is our `/showroom`; everything else on their site
- *  is a page we have not built and the link honestly leaves. */
-function rebuiltHere(href: string, site: string | undefined): string {
-  try {
-    if (!site) return ''
-    const theirs = new URL(site)
-    const link = new URL(href)
-    if (link.host !== theirs.host) return ''
-    const path = link.pathname.replace(/\/+$/, '')
-    if (path === '') return withStore('/')
-    if (path === '/inventory') return withStore('/showroom')
-    return ''
-  } catch {
-    return ''
-  }
 }
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']

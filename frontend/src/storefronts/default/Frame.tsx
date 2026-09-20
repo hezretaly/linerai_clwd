@@ -5,6 +5,7 @@ import { Icon } from '../../components/Icon'
 import { possessive } from '../../lib/dealership'
 import { withStore } from '../../lib/store'
 import { AssistantContext, ChatFrame, askAboutText, type Assistant } from '../_shared/assistant'
+import { rebuiltHere } from '../_shared/links'
 import { telHref, type Dealership } from '../_shared/types'
 
 /**
@@ -71,11 +72,16 @@ export function Frame({
               <a href={withStore('/showroom')} className="hover:text-primary">
                 Inventory
               </a>
-              {links.map((l) => (
-                <a key={l.href} href={l.href} rel="noreferrer" target="_blank" className="hover:text-primary">
-                  {l.label}
-                </a>
-              ))}
+              {/* Their links, minus the two pages this storefront already is:
+                  a profile's "Home" and "Inventory" would sit beside the
+                  ones above pointing at the same place. */}
+              {links
+                .filter((l) => !rebuiltHere(l.href, shop?.website_url))
+                .map((l) => (
+                  <a key={l.href} href={l.href} rel="noreferrer" target="_blank" className="hover:text-primary">
+                    {l.label}
+                  </a>
+                ))}
               {tel && (
                 <a href={`tel:${tel}`} className="flex items-center gap-1.5 hover:text-primary">
                   <Icon name="phone" className="h-4 w-4 text-primary" />
