@@ -498,9 +498,35 @@ and `/api/integrations` (or `make placeholders`) is the live list.
 
 ---
 
-## Switching back
+## Switching back: Riverside on the bare domain
 
-`DEALERSHIP=riverside` in `.env`, then `make reset-db`. The fixture comes
-back. `make reset-dealership` rebuilds the showroom **keeping** the `ops_`
+On a demo host serving several dealerships by prefix, the bare domain —
+`/`, `/app`, `/chat`, `/api/…` with no store in the path — should be the
+Riverside fixture and nobody's real lot. That is what an *unset*
+`DEALERSHIP=` means, so **delete the line** rather than pointing it at
+another store:
+
+```bash
+# in .env: remove the DEALERSHIP=... line entirely
+make demo-db                 # the default store: Riverside + 50 demo buyers
+make build
+sudo systemctl restart liner
+```
+
+`make demo-db` with no `DEALERSHIP` acts on `backend/liner.db`, the default
+store's file, and touches no `var/stores/<slug>.db`. Every prefixed store —
+`/alsbou/…`, `/craigandlandreth/…` — keeps its own database and its own
+people exactly as they were; only what the bare domain answers changes. The
+fixture logins (`dana.mercer@` / `marcus.vale@`, password `liner-dev` in
+development) sign in at `/login` and land on `/app`.
+
+`DEALERSHIP=riverside` would also work, but it reads a *second* file,
+`var/stores/riverside.db`, and puts the fixture under `/riverside/…` as well
+— two copies of the same showroom for no reason. `make reset-all` seeds that
+file too, since it walks every profile; on a host where the bare domain is
+already Riverside, `make reset-all ARGS=--only alsbou,craigandlandreth`
+leaves it out.
+
+`make reset-dealership` rebuilds the showroom **keeping** the `ops_`
 tables, so demos people booked with us are not thrown away — `make reset-db`
-deletes the file and does lose them.
+and `make demo-db` delete the file and do lose them.

@@ -83,7 +83,12 @@ export async function streamMessages(
   body: { content?: string; rail_id?: string },
   onEvent: (event: string, data: Record<string, unknown>) => void,
 ): Promise<void> {
-  const response = await fetch(`/api/chat/sessions/${conversationId}/messages`, {
+  // Through `withStore` like every other request. This one was a raw `fetch`
+  // and so the one call the chat makes that skipped the store prefix: from
+  // `/alsbou/chat` the buyer's message went to the *default* store, which
+  // has no such session and answered 404 -- and the page showed nothing, not
+  // even the typing dot, because the stream had failed before it started.
+  const response = await fetch(withStore(`/api/chat/sessions/${conversationId}/messages`), {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

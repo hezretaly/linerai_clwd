@@ -421,13 +421,32 @@ def main() -> int:
     listener.start()
 
     print("\n== buyer books an appointment (rails only, no typing) ==")
+    # **Opening the widget is not a conversation, on the badge as well as in
+    # the list.** The list has always hidden a session the buyer never typed
+    # in; the sidebar badge counted every `active` row, so a dashboard read 1
+    # on the Conversations icon over a list with nothing in it. One predicate
+    # now (`app/threads.py`), asserted from both ends: an empty session moves
+    # neither, the first buyer message moves both.
+    badge_before = call("GET", "/api/overview")["badges"]["conversations"]
+    listed_before = len(call("GET", "/api/conversations")["conversations"])
     session = call("POST", "/api/chat/sessions")
     convo = session["conversation_id"]
     rails = session["rails"]
     check("openers offered", len(rails) >= 3, f"{len(rails)} chips")
+    badge_empty = call("GET", "/api/overview")["badges"]["conversations"]
+    listed_empty = [c["id"] for c in call("GET", "/api/conversations")["conversations"]]
+    check("a session nobody has typed in is not on the badge",
+          badge_empty == badge_before, f"{badge_before} -> {badge_empty}")
+    check("nor in the list",
+          convo not in listed_empty and len(listed_empty) == listed_before)
 
     reply, state, _ = say(convo, rail_id=pick(rails, "third row"))
     check("liner answered with inventory", bool(reply and reply["content"]))
+    badge_after = call("GET", "/api/overview")["badges"]["conversations"]
+    listed_after = [c["id"] for c in call("GET", "/api/conversations")["conversations"]]
+    check("the first buyer message puts it on the badge and in the list together",
+          badge_after == badge_before + 1 and convo in listed_after,
+          f"badge {badge_before} -> {badge_after}, listed: {convo in listed_after}")
     check("a tool actually ran", bool(reply and reply["tool_calls"]),
           ", ".join(c["name"] for c in reply["tool_calls"]) if reply else "")
     check("stage advanced to browsing", state["stage"] == "browsing", state["stage"])
@@ -6091,6 +6110,30 @@ def _stores_section(before: set[str]) -> None:
     ]
     check("and no raw href or src leaves its store",
           not leaks, f"unprefixed: {leaks}")
+
+    # **And neither does a raw request.** `api.request` prefixes every call,
+    # but a `fetch(`, a `sendBeacon(` or a `new WebSocket(` written with a
+    # literal path does not go through it -- and the check above reads
+    # `src=`/`href=` in `.tsx` only, so all three shipped unprefixed. The
+    # chat's own message request was one: from `/alsbou/chat` the buyer's
+    # words went to the default store, which had no such session and answered
+    # 404, and the page showed nothing at all. The dealer socket was another,
+    # so a prefixed dashboard reconnected forever and never got a live event.
+    # Read across `.ts` as well as `.tsx`, because that is where the first one
+    # lived.
+    raw_calls = [
+        f"{path.relative_to('frontend/src')}:{n}"
+        for path in sorted(pathlib.Path("frontend/src").rglob("*.ts*"))
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        # A literal that starts at the root, or carries `/api/` or `/ws/`
+        # anywhere in it (the socket URL is built from `location.host`).
+        # A vendor URL the server handed over -- the WebRTC offer goes to
+        # `session.calls_url` -- is not a store path and is left alone.
+        if re.search(r"""(fetch|sendBeacon|new WebSocket)\(\s*[`'"](/|[^`'"]*/(api|ws)/)""", line)
+        and "withStore" not in line
+    ]
+    check("and no raw fetch, beacon or socket URL leaves its store",
+          not raw_calls, f"unprefixed: {raw_calls}")
 
     # **Each dealership's assistant is its own, and that is two mechanisms.**
     # What a manager edits on the Liner setup page is an `assistant_settings`

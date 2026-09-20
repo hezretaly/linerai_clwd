@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app import threads
 from app.api.deps import current_user, get_dealership
 from app.api.settings import live_settings
 from app.db import get_db, utcnow
@@ -53,10 +54,17 @@ def overview(
     now = utcnow()
     since = now - timedelta(hours=24)
 
+    # Only conversations the buyer spoke in -- the same rule the list applies,
+    # from `app/threads.py`. A chat widget opened and closed again is a row,
+    # and counting it makes a quiet afternoon read as fourteen chats.
     def convos_on(channel: str) -> int:
         return (
             db.query(Conversation)
-            .filter(Conversation.started_at >= since, Conversation.channel == channel)
+            .filter(
+                Conversation.started_at >= since,
+                Conversation.channel == channel,
+                threads.started(db),
+            )
             .count()
         )
 
@@ -144,9 +152,12 @@ def overview(
         .all()
     )
     unassigned = [a for a in unconfirmed if a.assigned_user_id is None]
+    # The sidebar badge. Same predicate as `/api/conversations`, or the icon
+    # says 1 over a list with nothing in it -- which is what a widget opened
+    # and never typed in produced on a real host.
     active_conversations = (
         db.query(Conversation)
-        .filter(Conversation.status.in_(["active", "handoff"]))
+        .filter(Conversation.status.in_(["active", "handoff"]), threads.started(db))
         .order_by(Conversation.started_at.desc())
         .all()
     )
@@ -159,7 +170,7 @@ def overview(
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today = (
         db.query(Conversation)
-        .filter(Conversation.started_at >= start_of_day)
+        .filter(Conversation.started_at >= start_of_day, threads.started(db))
         .all()
     )
     last_activity = dict(

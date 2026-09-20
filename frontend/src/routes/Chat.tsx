@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 
 import { applyBrand } from '../lib/brand'
-import { api, streamMessages } from '../lib/api'
+import { api, ApiError, streamMessages } from '../lib/api'
 import { useDealership } from '../lib/dealership'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
@@ -282,6 +282,26 @@ export function Chat() {
           setRails(data.rails as Rail[])
         }
       })
+    } catch (err) {
+      // The request itself failed, before any stream began -- a 404 from a
+      // request that reached the wrong store, a proxy that gave up, a server
+      // that is down. The `held`/`error` branch above cannot see this: it
+      // handles a turn that failed *after* the response had started. Left
+      // uncaught, `finally` cleared the typing dot and the buyer's line sat
+      // there answered by nothing, with no sign that anything had gone wrong
+      // -- which is how a real host reported it: "the chat did not reply".
+      clearTimeout(timer)
+      setTyping(false)
+      const status = err instanceof ApiError ? ` (HTTP ${err.status})` : ''
+      setItems((prev) => [
+        ...prev,
+        {
+          kind: 'text',
+          id: `failed-${Date.now()}`,
+          role: 'rep',
+          content: `Sorry, that message did not get through${status}. Please try again in a moment.`,
+        },
+      ])
     } finally {
       clearTimeout(timer)
       setTyping(false)

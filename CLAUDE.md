@@ -1878,6 +1878,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     `make smoke` reads every `.tsx` for one that does not — `/login`, `/ops`
     and `/` are app-level and excluded, because `/ops` is never per-store and
     the login form is what finds the store in the first place.
+    - **A raw `fetch`, `sendBeacon` or `new WebSocket` is the same hole one
+      layer down, and the `.tsx` check could not see it.** `api.request`
+      prefixes every call, but three requests were written past it with a
+      literal path, and one was the chat's own message stream: from
+      `/alsbou/chat` the buyer's words went to the *default* store, which
+      had no such session and answered 404 — and the page showed nothing,
+      not even the typing dot, because the stream had failed before it
+      started and `send` had no `catch`. The dealer socket was the second:
+      the handler opened the default store, could not find an Alsbou user
+      in it and closed with 4401, so a prefixed dashboard reconnected for
+      ever and never received a live event. The call's recording beacons
+      were the third. `withStore` on each, the gate now reads `.ts` as well
+      as `.tsx` for those three calls, and a failed stream puts a line in
+      the thread saying so — a fault that looks like being ignored is the
+      worst way for a chat to fail.
   - **What a prefix *is*, in the browser, is decided by exclusion** — a first
     segment that is not one of the app's own roots. A hardcoded list of slugs
     would be a second copy of the profile directory, stale the day a store is
@@ -2401,6 +2416,19 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   does not contain is a page arguing with itself — so an open thread gone
   quiet reads *Gone quiet*, which is a third thing and not Closed: it still
   has an owner and still takes a reply.
+- **Opening the widget is not a conversation, on the badge as well as in the
+  list.** A chat session is minted before anybody types, because the greeting
+  needs a row to hang off, and a visitor who clicks "Chat with us" and closes
+  it leaves that row `active` for ever — only the buyer closes a thread, and
+  this one never started. `/app/conversations` has always hidden those; the
+  sidebar badge counted every `active` row, so a dashboard read **1** on the
+  icon over a list with nothing in it. Reported from a real host, where the
+  chat's own request had failed and left exactly one such row. The rule is
+  in `app/threads.py` and nowhere else — a conversation has *started* once
+  the buyer has said something in it — and the badge, the list, the Chats
+  KPI and the overview's today panel all read it. `make smoke` opens a session
+  and asserts nothing moves, then sends one message and asserts everything
+  moves together.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the
   cross-channel Conversations list all read it. They were three copies of the

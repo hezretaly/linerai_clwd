@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from datetime import datetime
 
-from app import timeline
+from app import threads, timeline
 from app.recap import conversation_recap
 from app.agent import tools
 from app.agent.tools import when_label
@@ -37,14 +37,10 @@ def list_conversations(
     user: User = Depends(current_user),
 ) -> dict:
     # A session where the buyer never said anything is not a conversation --
-    # opening the chat widget and closing it should not reach the dealer.
-    started = (
-        db.query(Message.conversation_id)
-        .filter(Message.role == "buyer")
-        .distinct()
-        .subquery()
-    )
-    query = db.query(Conversation).filter(Conversation.id.in_(select(started)))
+    # opening the chat widget and closing it should not reach the dealer. The
+    # rule lives in `app/threads.py` because the sidebar badge has to agree
+    # with this list, and for a while it did not.
+    query = db.query(Conversation).filter(threads.started(db))
     if status:
         query = query.filter(Conversation.status == status)
     if channel:

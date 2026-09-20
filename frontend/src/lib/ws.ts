@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { withStore } from './store'
 
 export interface DealerEvent {
   id: number
@@ -68,8 +69,13 @@ export function useDealerEvents(onEvent?: (event: DealerEvent) => void): void {
     const connect = () => {
       if (closed) return
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      // The store prefix goes on the socket too. `/alsbou/ws/dealer` is
+      // rewritten by the same middleware as `/alsbou/api/...`; unprefixed, the
+      // handler opened the *default* store, could not find this user in it,
+      // and closed with 4401 -- so a prefixed dashboard reconnected forever
+      // and never received a live event.
       socket = new WebSocket(
-        `${protocol}://${window.location.host}/ws/dealer?since=${lastId.current}`,
+        `${protocol}://${window.location.host}${withStore('/ws/dealer')}?since=${lastId.current}`,
       )
       // The server sends the backlog first and `ready` after it, so this flips
       // exactly once per connection and is the only thing that can tell a

@@ -4,6 +4,7 @@ import clsx from 'clsx'
 
 import { applyBrand, type Brand } from '../lib/brand'
 import { api, ApiError } from '../lib/api'
+import { withStore } from '../lib/store'
 import { useDealership } from '../lib/dealership'
 import { Button, Card } from '../components/ui'
 
@@ -357,15 +358,22 @@ export function Call() {
       const form = new FormData()
       const type = tape.rec.mimeType.split(';')[0]
       form.append('file', new File(left, 'call', { type }), 'call')
+      // A beacon is a raw request and gets no store prefix from `api`, so
+      // it carries its own -- otherwise the last slice of a call on a
+      // prefixed store lands in the default store's file under a recording
+      // id that store does not hold.
       navigator.sendBeacon(
-        `/api/voice/recording/${id}/chunk?seq=${tape.seq++}&track=${tape.track}`, form,
+        withStore(`/api/voice/recording/${id}/chunk?seq=${tape.seq++}&track=${tape.track}`),
+        form,
       )
     }
     // And the end marker, so a tab that closed is not mistaken for a call
     // still being written.
     navigator.sendBeacon(
-      `/api/voice/recording/${id}/complete` +
-      `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
+      withStore(
+        `/api/voice/recording/${id}/complete` +
+        `?duration_ms=${Math.max(Date.now() - startedAt.current, 0)}`,
+      ),
     )
   }
 
