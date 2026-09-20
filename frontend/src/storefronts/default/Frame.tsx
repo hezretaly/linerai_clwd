@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 
 import { Icon } from '../../components/Icon'
@@ -31,6 +31,14 @@ export function Frame({
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  // The frame is mounted on the first open and kept through closes: a
+  // reopen used to reload its document and rebuild the thread every time.
+  // Never from first paint -- that would start a conversation for every
+  // visitor who never clicks.
+  const [everOpened, setEverOpened] = useState(false)
+  useEffect(() => {
+    if (open) setEverOpened(true)
+  }, [open])
   const [ask, setAsk] = useState('')
   const [logoBroke, setLogoBroke] = useState(false)
   const tel = telHref(shop?.phone)
@@ -171,7 +179,7 @@ export function Frame({
                 &times;
               </button>
             </div>
-            {open && <ChatFrame ask={ask} className="min-h-0 flex-1 border-0" />}
+            {everOpened && <ChatFrame ask={ask} className="min-h-0 flex-1 border-0" />}
           </div>
           <button
             onClick={() => setOpen(!open)}

@@ -305,6 +305,19 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   route here is a named export), under one `Suspense`; the main chunk is
   260 KB and the buyer surfaces stay in it because they are the page. The
   overview's 420 KB of charts loads when somebody opens the overview.
+  - **The widget's iframe is mounted on the first open and kept.** It was
+    unmounted on close, so every reopen reloaded the frame's document,
+    re-read the session and rebuilt the thread -- a pause each time for a
+    conversation that had not changed. Not from first paint, because an
+    iframe that exists before anybody clicks starts a conversation for every
+    visitor who never does. The storefront hides the widget; it does not
+    unmount it.
+  - **The conversation id is kept per store.** It lives in `localStorage`
+    (no cookie: the buyer has no session, and the thread is theirs to pick
+    up on the same browser). One key for every dealership meant a buyer who
+    tried Alsbou's chat, then Craig's, came back to Alsbou carrying Craig's
+    id -- a 404 in Alsbou's store, so their Alsbou thread was dropped and a
+    fresh one minted.
 - **Mobile is a supported surface, not an afterthought.** Reps work from
   phones. Two rules keep it that way: a `<table>` never reflows, so any table
   either scrolls inside its own `overflow-x-auto` card or has a card layout

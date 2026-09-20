@@ -47,8 +47,10 @@ export function askAboutText(car: Car): string {
 /** The real `/chat`, embedded. Keyed on the question so pressing a second
  *  card's button reloads the frame with that car's sentence in the box -- the
  *  transcript comes back from localStorage, so nothing said is lost. Mount it
- *  only while the widget is open: an iframe that exists from first paint
- *  starts a conversation for every visitor who never clicked. */
+ *  on the first open and keep it: an iframe that exists from first paint
+ *  starts a conversation for every visitor who never clicked, and one that
+ *  is torn down on close reloads its document and rebuilds the thread on
+ *  every reopen. The storefront hides the widget; it does not unmount it. */
 export function ChatFrame({ ask, className }: { ask: string; className?: string }) {
   return (
     <iframe

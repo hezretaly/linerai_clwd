@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 
 import { Icon } from '../../components/Icon'
@@ -424,6 +424,15 @@ function Widget({
   ask: string
   setOpen: (v: boolean) => void
 }) {
+  // Mounted on the first open and kept. Unmounting on close meant every
+  // reopen reloaded the frame's document, re-read the session and rebuilt
+  // the thread -- a visible pause each time, for a conversation that had
+  // not changed. Not from first paint, though: an iframe that exists before
+  // anybody clicks starts a conversation for every visitor who never does.
+  const [everOpened, setEverOpened] = useState(false)
+  useEffect(() => {
+    if (open) setEverOpened(true)
+  }, [open])
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
       <div
@@ -445,12 +454,10 @@ function Widget({
             &times;
           </button>
         </div>
-        {/* Mounted only while open. An iframe that exists from first paint
-            starts a conversation for every visitor who never clicked. Keyed on
-            the question so pressing a second card's button reloads the frame
-            with that car's sentence in the box -- the transcript comes back
-            from localStorage, so nothing said is lost. */}
-        {open && <ChatFrame ask={ask} className="min-h-0 flex-1 border-0" />}
+        {/* Keyed on the question so pressing a second card's button reloads
+            the frame with that car's sentence in the box -- the transcript
+            comes back from localStorage, so nothing said is lost. */}
+        {everOpened && <ChatFrame ask={ask} className="min-h-0 flex-1 border-0" />}
       </div>
 
       <button

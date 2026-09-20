@@ -3,6 +3,7 @@ import clsx from 'clsx'
 
 import { applyBrand } from '../lib/brand'
 import { api, ApiError, streamMessages } from '../lib/api'
+import { STORE } from '../lib/store'
 import { useDealership } from '../lib/dealership'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
@@ -59,7 +60,11 @@ interface ChatMessage {
 
 /** Survives a refresh. The conversation itself has always been on the server;
  *  only this id was lost, and losing it started a new one from scratch. */
-const STORAGE_KEY = 'liner.chat.conversation'
+/** Where the buyer's conversation id lives between visits -- per store.
+ *  One key for every dealership meant a buyer who opened Alsbou's chat, then
+ *  Craig's, came back to Alsbou with Craig's id: a 404 in Alsbou's store, so
+ *  the thread they had there was dropped and a fresh one minted. */
+const STORAGE_KEY = STORE ? `liner.chat.conversation.${STORE}` : 'liner.chat.conversation'
 
 const SEARCH_TOOLS = new Set(['search_inventory', 'get_vehicle'])
 
