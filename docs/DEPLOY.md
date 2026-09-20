@@ -791,6 +791,13 @@ DEALERSHIP=<slug> make reset-db          # creates var/stores/<slug>.db
 DEALERSHIP=<slug> make seed-demo         # optional demo buyers
 ```
 
+And give their mailbox to the Cloudflare Worker, or their mail is dropped at
+the edge before it reaches us: add `<mailbox>@` (the profile's `mailbox:`,
+e.g. `alsboucars@`) to `ALLOWED_RECIPIENTS` in
+`backend/app/integrations/email/worker/wrangler.jsonc` and run
+`wrangler deploy`. `make smoke` fails on a profile whose mailbox is missing
+from that list.
+
 **To make the default store a named one** (so every dealership is symmetric
 under `var/stores/` and `liner.db` goes away), it is a file copy plus one `.env`
 line. Stop the service first — replacing a database under a running process

@@ -90,23 +90,56 @@ EVENT_TYPES = {
 
 
 class ConnectionManager:
-    def __init__(self) -> None:
-        self._sockets: set[Any] = set()
+    """Every open dashboard socket, tagged with the store it was opened for.
 
-    async def connect(self, websocket: Any) -> None:
+    **A live event only reaches the dashboards of the store it happened
+    in.** `replay` was always store-scoped -- it reads that store's `events`
+    table -- but the live push went to every socket in the process, so once
+    one intake URL could file a delivery into Alsbou's store, Craig's
+    dashboard received `email.received` naming a lead id that exists only in
+    Alsbou's file, refetched it, and 404ed. The tag is the store the socket
+    connected under (`/alsbou/ws/dealer` is Alsbou's; an unprefixed socket is
+    the default store's, which is also where `/ops` listens and where
+    `emit_ops` announces).
+    """
+
+    def __init__(self) -> None:
+        self._sockets: dict[Any, str] = {}
+
+    @staticmethod
+    def key(store: str = "") -> str:
+        """What tells two stores apart: the database they open, not the slug.
+
+        With `DEALERSHIP=alsbou` the unprefixed dashboard and `/alsbou/app`
+        read one file, and an event raised through either has to reach both.
+        Keyed on the slug they would be two audiences for one store.
+        """
+        from app.db import engine_for
+
+        return str(engine_for((store or "").strip()).url)
+
+    async def connect(self, websocket: Any, store: str = "") -> None:
         await websocket.accept()
-        self._sockets.add(websocket)
+        self._sockets[websocket] = self.key(store)
 
     def disconnect(self, websocket: Any) -> None:
-        self._sockets.discard(websocket)
+        self._sockets.pop(websocket, None)
 
     @property
     def count(self) -> int:
         return len(self._sockets)
 
-    async def broadcast(self, message: dict) -> None:
+    def listening(self, store: str = "") -> int:
+        """How many sockets an event in this store would reach."""
+        wanted = self.key(store)
+        return sum(1 for s in self._sockets.values() if s == wanted)
+
+    async def broadcast(self, message: dict, store: str = "") -> None:
+        wanted = self.key(store)
         dead = []
-        for socket in list(self._sockets):
+        for socket, tag in list(self._sockets.items()):
+            if tag != wanted:
+                continue
             try:
                 await socket.send_json(message)
             except Exception:
@@ -129,7 +162,7 @@ def bind_loop(loop: asyncio.AbstractEventLoop) -> None:
     _loop = loop
 
 
-def _schedule(message: dict) -> None:
+def _schedule(message: dict, store: str = "") -> None:
     loop = _loop
     if loop is None or loop.is_closed():
         return
@@ -139,9 +172,9 @@ def _schedule(message: dict) -> None:
         running = None
 
     if running is loop:
-        loop.create_task(manager.broadcast(message))
+        loop.create_task(manager.broadcast(message, store))
     else:
-        asyncio.run_coroutine_threadsafe(manager.broadcast(message), loop)
+        asyncio.run_coroutine_threadsafe(manager.broadcast(message, store), loop)
 
 
 def emit_ops(type_: str, payload: dict | None = None) -> Event:
@@ -187,8 +220,24 @@ def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
         "payload": payload or {},
         "created_at": stamp(event.created_at),
     }
-    _schedule(message)
+    # Pushed to the dashboards of the store the row was written in. The
+    # session says which -- its engine is one store's file -- so an event
+    # written through `emit_ops`' explicit default-store session, or through
+    # a routed intake session, goes to that store's audience and not to
+    # whichever store the request happened to arrive for.
+    _schedule(message, _store_of(db))
     return event
+
+
+def _store_of(db: Session) -> str:
+    """The slug whose file this session is on, as `ConnectionManager.key`
+    understands it -- "" for the default store."""
+    from app.db import active_store, engine_for
+
+    bind = db.get_bind()
+    if bind is engine_for(""):
+        return ""
+    return active_store()
 
 
 def replay(db: Session, since: int = 0, limit: int = 200) -> list[dict]:

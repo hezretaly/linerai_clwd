@@ -537,6 +537,8 @@ and `/api/integrations` (or `make placeholders`) is the live list.
 |---|---|
 | `OPENAI_API_KEY` | The assistant is scripted. Same tools, same guards, canned wording — and a banner in the chat saying so. |
 | `VOICE_PROVIDER` | No Call button anywhere, and `/call` says voice is off. |
+| `CALLING=false` | Same as above with the provider left configured: the button goes, `/call` refuses, and `/api/integrations` says *switched off* rather than *not configured*. |
+| `TEXTING=false` | No "Text them" on the buyer page and every send refused, naming the setting. Texts that arrive are still recorded. |
 | `RESEND_API_KEY` | Every send writes a real outreach row and delivers nothing. The composer says *Not delivered* and quotes the provider. |
 | The Cloudflare Worker | Replies never arrive. `/app/email` is how you tell that apart from silence. |
 | `SCRAPER_BASE_URL` | The import screen offers CSV only. |

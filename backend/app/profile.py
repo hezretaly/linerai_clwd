@@ -291,9 +291,10 @@ def staff_domain() -> str:
 
     A dealership's people have addresses at the dealership's own site, so the
     seed builds the fixture roster's addresses from `website_url` -- `dana
-    .mercer@craigandlandrethcars.com` on Craig's instance, not `@example
-    .invalid`, which is what a real manager reads as a test account. A profile
-    with its own `staff:` list never reaches this: those addresses are typed.
+    .mercer@craigandlandrethcars.com` on Craig's instance. They used to be
+    `@example.invalid`, which is what a real manager reads as a test account.
+    A profile with its own `staff:` list never reaches this: those addresses
+    are typed.
 
     Only the host, with `www.` dropped. A profile with no website -- the
     fixture is the one -- gets the fixture's own invented domain.
@@ -306,7 +307,9 @@ def staff_domain() -> str:
 
 #: What a mailbox local part may look like. It lands in a From header and in
 #: the Worker's recipient list, so it is validated to what an address takes.
-_MAILBOX_RE = re.compile(r"^[a-z0-9][a-z0-9._+-]{0,63}$")
+#: No `+`: `reply+<token>@` is read off the envelope before any mailbox is,
+#: so a mailbox with a plus in it could never be routed to.
+_MAILBOX_RE = re.compile(r"^(?!reply$)[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 def mailbox() -> str:

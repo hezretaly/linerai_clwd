@@ -23,7 +23,6 @@ without one is skipped, for the reason `ops_inbox._each` skips it.
 
 from __future__ import annotations
 
-import re
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -34,9 +33,10 @@ from app import profile
 from app.db import SessionLocal, current_store, has_database
 from app.stores import known_stores
 
-#: The shape `reply+<token>@` takes in an envelope. Kept in step with
-#: `email_intake.REPLY_RE`, which reads the same address for the token.
-REPLY_RE = re.compile(r"^reply\+([A-Za-z0-9_-]+)@", re.IGNORECASE)
+#: The one reading of `reply+<token>@`, shared with the intake rather than
+#: copied: two patterns for one address is how a token routes on one side
+#: and fails to on the other.
+from app.email_intake import REPLY_RE  # noqa: E402
 
 
 @contextmanager
@@ -48,7 +48,17 @@ def using(slug: str) -> Iterator[None]:
     means saying, for a moment, that this is Alsbou. Reset in a `finally`,
     because a ContextVar left set is a later request reading the wrong
     dealership's rows.
+
+    **An empty slug leaves the store alone.** It does not mean "the default
+    store": `claim_unresolved` runs under whichever store the buyer was
+    minted in and re-places their earlier mail with no slug of its own, and
+    setting "" there switched it to the default store mid-pass -- so the
+    receipts it had just marked `received` were looked for in a file that
+    did not hold them, and stayed `received` for ever.
     """
+    if not slug:
+        yield
+        return
     token = current_store.set(slug)
     try:
         yield

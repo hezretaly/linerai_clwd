@@ -23,9 +23,12 @@ RESEND_API_KEY=re_...
 # goes out fine and every reply bounces, and nothing in the app looks wrong.
 SENDING_DOMAIN=linerai.us
 
-# Optional. Defaults to support@$SENDING_DOMAIN. A display name is worth
-# setting: it is what a buyer sees in their inbox.
-SENDING_FROM=Riverside Auto <support@linerai.us>
+# Optional, and an address rather than a header -- a display name written
+# here is dropped, because the name is served per realm (the dealership's own
+# for its buyers, "Liner" for /ops). It is the fallback for a dealership with
+# no `mailbox:` in its profile; one that has (alsboucars@) sends from that.
+# Never support@: `is_ours` routes anything addressed there into /ops.
+SENDING_FROM=sales@linerai.us
 
 # --- Receiving ---------------------------------------------------------------
 # Must equal the Worker's WEBHOOK_SECRET exactly. This is the only thing in
@@ -53,9 +56,12 @@ development default.
    `support@` / `sales@` rules to the same Worker are fine alongside it.
 3. **A rule, or the catch-all, for every address you publish.** The Worker
    filters recipients before it posts anything, because a catch-all sweeps up
-   spam to random addresses. It accepts `support@`, `sales@`, `founder@`,
-   `cto@` and `reply+` — override with an `ALLOWED_RECIPIENTS` var
-   (comma-separated local parts) rather than editing the source. **A dropped
+   spam to random addresses. `wrangler.jsonc` sets `ALLOWED_RECIPIENTS`
+   (comma-separated local parts): Liner's own `support@`, `sales@`,
+   `founder@`, `cto@` and `reply+`, **plus one mailbox per dealership** --
+   the `mailbox:` in each profile under `backend/config/dealerships/`. A new
+   dealership is an entry there and a `wrangler deploy`, and `make smoke`
+   fails on a profile whose mailbox is missing from the list. **A dropped
    recipient leaves no trace anywhere in the app**: no receipt, no row, no
    error, indistinguishable from nobody having written. `founder@` was missing
    from that list while the landing page published it as the way to reach a

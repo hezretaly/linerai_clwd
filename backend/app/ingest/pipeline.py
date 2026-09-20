@@ -24,6 +24,7 @@ from app import profile
 from app.config import settings
 from app.db import utcnow
 from app.ingest import snapshot
+from app.ingest.csv_import import stored_value
 from app.ingest.extract import Listing, extract, list_adapter_for
 # Imported for the side effect: each module registers itself onto the ladder.
 import app.ingest.sites  # noqa: F401,E402
@@ -224,8 +225,9 @@ def build_diff(db: Session, listings: list[Listing]) -> dict:
                 continue
             if key in manual:
                 continue  # a rep edited this; the scrape does not get to win
-            if getattr(current, key, None) != value:
-                changes[key] = {"from": getattr(current, key, None), "to": value}
+            before = stored_value(current, key)
+            if before != value:
+                changes[key] = {"from": before, "to": value}
         if changes or current.status != "available":
             updated.append({"vin": listing.vin, "changes": changes,
                             "protected": sorted(manual & set(payload)),
@@ -393,7 +395,17 @@ def publish(db: Session, run: IngestRun) -> dict:
             if key in manual:
                 applied["protected"] += 1
                 continue
-            setattr(vehicle, key, change["to"])
+            # Two keys are not columns. `features` and `raw` are stored as
+            # JSON text under other names, and `setattr` on the payload's
+            # name wrote an attribute nothing reads -- so a re-import never
+            # updated an existing car's options list or its store and stock
+            # data, silently, while reporting the change applied.
+            if key == "features":
+                vehicle.features_json = json.dumps(list(change["to"] or []))
+            elif key == "raw":
+                vehicle.raw_json = json.dumps(change["to"] or {})
+            else:
+                setattr(vehicle, key, change["to"])
         # A vehicle back in the feed is available again -- unless a rep said
         # otherwise. Marking a car sold is the one edit that has to outlive the
         # next import: the dealership's own website will still be listing it

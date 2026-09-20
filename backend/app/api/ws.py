@@ -17,7 +17,7 @@ from itsdangerous import BadSignature
 
 from app.api.deps import resolve_account, serializer
 from app.config import settings
-from app.db import SessionLocal
+from app.db import SessionLocal, active_store
 from app.events import manager, replay
 
 log = logging.getLogger("liner.ws")
@@ -46,7 +46,11 @@ async def dealer_socket(websocket: WebSocket, since: int = Query(0)) -> None:
             await websocket.close(code=4401, reason="Not signed in")
             return
 
-        await manager.connect(websocket)
+        # Tagged with the store this socket was opened for, so a live event
+        # in Alsbou's store reaches Alsbou's dashboards and nobody else's.
+        # `/alsbou/ws/dealer` arrives here with the store set by the prefix
+        # middleware; an unprefixed socket is the default store's.
+        await manager.connect(websocket, active_store())
         for event in replay(db, since):
             await websocket.send_json(event)
         await websocket.send_json({"type": "ready", "id": since, "payload": {"user": user.name}})

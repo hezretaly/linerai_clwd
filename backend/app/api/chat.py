@@ -26,6 +26,7 @@ from app.agent.runner import (
     run_agent_turn,
     run_nudge_turn,
 )
+from app.agent.rail_actions import SHOWN
 from app.agent.tools import when_label
 from app.api.settings import live_settings
 from app.config import settings
@@ -33,11 +34,10 @@ from app.db import SessionLocal, get_db
 from app.profile import brand
 from app.events import emit
 from app.integrations.base import NotConfigured
-from app.models import Appointment, Conversation, Dealership, Rail
+from app.models import Appointment, Conversation, Dealership, Message, Rail
 from app.schemas.serialize import (
     appointment_out,
     booking_card,
-    conversation_out,
     message_out,
     rail_out,
 )
@@ -106,8 +106,31 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     re-offering one is how a buyer picks a time that no longer exists.
     """
     convo = _conversation(db, conversation_id)
-    out = conversation_out(convo, db, detail=True)
-    out["rails"] = [rail_out(r) for r in rails_for(db, convo)]
+    # **Buyer-shaped, not the rep's view of the thread.** This endpoint has
+    # no session in front of it -- the buyer's browser holds the id -- and
+    # `conversation_out(detail=True)` is what the dashboard reads: it carried
+    # the open escalation (why a person was called in), the rep-facing
+    # recap, the focus car's rules, and every tool result whole, which is
+    # where `internal_note` ("no discount without Dana's approval") and the
+    # model's guidance live. None of that is the buyer's to read. What the
+    # page rebuilds from is the message text and the cards, so that is what
+    # goes out.
+    rows = (
+        db.query(Message)
+        .filter_by(conversation_id=convo.id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+    out: dict = {
+        "id": convo.id,
+        "status": convo.status,
+        "stage": convo.stage,
+        "messages": [
+            {**message_out(m), "tool_calls": buyer_tool_calls(message_out(m)["tool_calls"])}
+            for m in rows
+        ],
+        "rails": [rail_out(r) for r in rails_for(db, convo)],
+    }
     # The opening line is client-side only -- it is never a message row -- so a
     # rehydrated thread would start abruptly at the buyer's first question.
     out["greeting"] = live_settings(db).greeting
@@ -140,6 +163,53 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
                 out["details"] = call.get("result") or None
             elif call.get("name") == "save_details":
                 out["details"] = None
+    return out
+
+
+#: What a car looks like on the buyer's screen. The tool result is the
+#: model's view -- rules, notes, guidance -- and the card is the buyer's.
+BUYER_CAR_KEYS = (
+    "vin", "year", "make", "model", "trim", "price", "mileage", "photo_url",
+    "location", "inquiry_url",
+)
+
+
+def buyer_vehicles(vehicles: list[dict]) -> list[dict]:
+    """Cars as the buyer may see them: the card's fields and nothing else.
+
+    `_vehicle_payload` carries `internal_note` (the rep's own note on the
+    car), `price_note`, `location_note` and the rest of what the *model* is
+    told about a row. The stream used to send the whole result to the
+    browser, and the rehydrate did too -- readable by anyone holding a
+    conversation id, on an endpoint with no session in front of it.
+    """
+    return [{k: v.get(k) for k in BUYER_CAR_KEYS if k in v} for v in vehicles]
+
+
+def buyer_tool_calls(calls: list[dict]) -> list[dict]:
+    """A message's tool calls as the buyer's browser needs them.
+
+    The page rebuilds two things from a reply's tool calls: the row of cars
+    (from `search_inventory` and `get_vehicle`) and whether a details card
+    is still owed (`request_details` before any `save_details`). It reads
+    the *name* of everything else -- `check_availability` decides whether to
+    look times up again. So every call keeps its name, the two car tools
+    keep the card fields, the details card keeps its boxes, and no other
+    result travels: an escalation's reason, a knowledge lookup's miss and
+    the model's guidance are the dealership's, not the buyer's.
+    """
+    out = []
+    for call in calls:
+        name = call.get("name", "")
+        result = call.get("result") or {}
+        kept: dict = {}
+        if name == "search_inventory" and isinstance(result.get("vehicles"), list):
+            kept = {"vehicles": buyer_vehicles(result["vehicles"])}
+        elif name == "get_vehicle" and result.get("vin"):
+            kept = buyer_vehicles([result])[0]
+        elif name == "request_details":
+            kept = {k: result.get(k) for k in ("fields", "reason") if k in result}
+        out.append({"name": name, "result": kept})
     return out
 
 
@@ -252,7 +322,7 @@ async def send_message(
                 for v in _vehicles_from(call.get("result", {}))
             ]
             if vehicles:
-                yield _sse("vehicles", {"vehicles": vehicles[:3]})
+                yield _sse("vehicles", {"vehicles": buyer_vehicles(vehicles[:SHOWN])})
 
             # A booking card, built from what check_availability actually
             # returned. Two flat chips used to go out here and the buyer had to

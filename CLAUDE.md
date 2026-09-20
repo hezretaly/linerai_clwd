@@ -537,6 +537,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the reply carries the `tool_calls` that produced them. Availability is the
   exception: it is looked up again, never replayed, since a slot list from ten
   minutes ago is a list of times that may be gone.
+  - **And it is buyer-shaped, not the rep's view of the thread.** That
+    endpoint has no session in front of it -- the buyer's browser holds the
+    id -- and it answered with `conversation_out(detail=True)`, the
+    dashboard's own serializer: the open escalation and why a person was
+    called in, the recap, the focus car's rules, and every tool result whole,
+    which is where `internal_note` ("no discount without Dana's approval")
+    and the model's guidance live. Anyone with a conversation id could read
+    all of it. The page rebuilds from the message text and the cards, so
+    `buyer_tool_calls` keeps the cars' card fields and the details card's
+    boxes and drops the rest; the live stream's `vehicles` event goes
+    through the same cut, and `make smoke` reads the rehydrate for anything
+    rep-only.
 - **The guard's retry note is not the buyer talking.** It goes back as a user
   turn because that is the only role every vendor takes mid-conversation, so it
   has to say so in its own text. Without that a model opened its next reply with
@@ -1057,7 +1069,10 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     the day somebody rotates a secret, and it is invisible otherwise.
 - **A channel can be switched off without touching its credentials.**
   `CALLING=false` takes the Call button off every storefront and makes
-  `/call` refuse with the typed error the page already shows; `TEXTING=false`
+  `/call` refuse with the typed error the page already shows -- the buyer's
+  browser call, that is; Liner's own telephone line on `/ops/phone` has its
+  own switch, `phone_persona`, and is not a dealership's to turn off;
+  `TEXTING=false`
   takes "Text them" off the buyer page and refuses a send with the line that
   names the setting. Receiving is never gated by either -- a call or a text
   that arrives is still recorded. They exist because "the provider is
@@ -1127,6 +1142,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `email.agent`) plus the ones the phone work had just added. Same lesson as
   `SPA_PREFIXES`: a hand-written list is exactly what development cannot check,
   so something has to read it.
+- **A live event reaches the dashboards of its own store and no other.**
+  `replay` was always store-scoped -- it reads that store's `events` table --
+  but the live push went to every socket in the process, so once one intake
+  URL could file a delivery into Alsbou's store, Craig's dashboard received
+  `email.received` naming a lead id that exists only in Alsbou's file,
+  refetched it and 404ed. `ConnectionManager` tags each socket with the store
+  it connected under and `emit` reads the store off the session it was given
+  -- the session's engine is one store's file, so an event written through a
+  routed intake session or `emit_ops`' explicit default-store session goes to
+  that store's audience rather than to whichever store the request arrived
+  for. **Keyed on the file, not the slug**: with `DEALERSHIP=alsbou` the
+  unprefixed dashboard and `/alsbou/app` read one database and an event
+  raised through either has to reach both. Driven in `make smoke` on the
+  manager class with recording sockets, because the audience is the part
+  checkable without two browsers.
 - **The timeline's outreach card had email baked into it.** It drew a mail icon
   and labelled every inbound row "Email reply", which is correct for the only
   thing that could be there until a text could. A rep skimming a timeline
@@ -1724,6 +1754,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       `ALLOWED_RECIPIENTS`, a new dealership is an entry there plus a
       `wrangler deploy`, and `make smoke` fails on a profile whose mailbox
       is missing from that list.
+    - **Whatever a routed delivery reaches is per store too.** Three things
+      followed the envelope's store and one did not: the queued reply
+      (`email_replies_due` is a row in the store the mail landed in, and a
+      drainer that opened only the default store's file left every other
+      dealership's replies due for ever -- `drain` now walks the default
+      store and every seeded one under `mailboxes.using`), the socket push
+      (above), and the routed session itself, which is opened in a `with` so
+      the one path that raises between the open and the return does not
+      leak a connection per delivery.
+    - **`mailboxes.using("")` leaves the store alone; it does not mean the
+      default store.** `claim_unresolved` runs under whichever store the
+      buyer was minted in and re-places their earlier mail with no slug of
+      its own, and setting "" there switched it to the default store
+      mid-pass -- so the receipts it had just marked `received` were looked
+      for in a file that did not hold them, and stayed `received` for ever.
   - **`SENDING_FROM` is an address; the display name is served.** It used to
     be a whole header, and `.env.example` illustrated it with `Riverside Auto
     <support@linerai.us>` — the one line in that file people copy verbatim. So
@@ -1740,10 +1785,11 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     `/ops` — so a buyer who composed a *fresh* message to the address printed
     on their booking confirmation reached Liner rather than the dealership,
     silently. Pressing Reply worked, because that goes to `reply+<token>@`,
-    which is exactly why it stayed invisible. `SENDING_FROM` is the
-    dealership's address and overrides the derived `sales@<SENDING_DOMAIN>`;
-    ops reads `SUPPORT_EMAIL`, the setting `is_ours` already reads, rather
-    than a third copy. There is deliberately **no address picker** in the
+    which is exactly why it stayed invisible. A dealership's address is its
+    profile's `mailbox:` on `SENDING_DOMAIN`, then `SENDING_FROM`, then the
+    derived `sales@<SENDING_DOMAIN>`, in that order; ops reads
+    `SUPPORT_EMAIL`, the setting `is_ours` already reads, rather than a
+    third copy. There is deliberately **no address picker** in the
     dashboard: which mailbox a send leaves from follows from whose mail it is,
     and a chooser is one more way to send from something the provider has not
     verified.
@@ -1776,9 +1822,9 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Their addresses are on the dealership's own domain.** `STAFF` holds
     local parts, and `seed.staff_address` puts them on the host of the
     profile's `website_url` — or on `riversideauto.example` for the fixture,
-    which has no site. A manager reading `dana.mercer@example.invalid` on
-    their own login sheet reads a test account, the same failure as being
-    greeted as somebody else's showroom. `.example` is RFC 2606 like
+    which has no site. They were `@example.invalid`, and a manager reading
+    that on their own login sheet reads a test account, the same failure as
+    being greeted as somebody else's showroom. `.example` is RFC 2606 like
     `.invalid`, so mail to it still cannot leave the building. A profile
     with its own `staff:` list never reaches this; those addresses are
     typed.
@@ -2623,6 +2669,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   drawer on `/app/inventory` (PATCH `features`, marked manual so a crawl
   does not blank it), and the crawl — which needs a real capture of a detail
   page before a rung can be written for it, per the `Adapter` rule.
+  - **`features` and `raw` are not columns, and the import has to know.**
+    They are JSON text under `features_json` and `raw_json`, and both the
+    diff and the publish read and wrote them by the payload's name: the diff
+    read `None` for every car, so every re-import reported an options change
+    on every existing row, and the publish `setattr` an attribute nothing
+    reads, so none of those changes ever landed -- a review that cried wolf
+    on everything and applied nothing, each half hiding the other.
+    `csv_import.stored_value` is the one reader, for the CSV and the crawl
+    diffs both, and `publish` maps the two keys onto their columns.
   - **`get_vehicle` carries the whole list; a search carries eight lines
     per car.** Five cars times a hundred lines is the prompt the model reads
     on every later turn, so the search result says it is cut and the prompt

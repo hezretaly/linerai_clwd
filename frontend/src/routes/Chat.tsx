@@ -22,7 +22,6 @@ interface VehicleCardData {
   price: number | null
   mileage: number | null
   photo_url: string
-  features?: string[]
   /** Which of the group's lots it is on. Empty for a single-site dealership. */
   location?: string
   /** The dealer's own enquiry form, only for a car they do not price online.
@@ -586,7 +585,7 @@ async function resume(
     return false
   }
 
-  const rebuilt: Item[] = [
+  let rebuilt: Item[] = [
     { kind: 'text', id: 'greeting', role: 'assistant', content: payload.greeting },
   ]
   for (const message of payload.messages) {
@@ -604,7 +603,7 @@ async function resume(
       .filter((c) => SEARCH_TOOLS.has(c.name))
       .flatMap((c) => vehiclesFrom(c.result))
     if (shown.length > 0) {
-      rebuilt.splice(0, rebuilt.length, ...withVehicles(rebuilt, `cars-${message.id}`, shown.slice(0, 3)))
+      rebuilt = withVehicles(rebuilt, `cars-${message.id}`, shown.slice(0, 3))
     }
   }
   // Times are not replayed from the transcript -- the server looked them up

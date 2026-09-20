@@ -72,9 +72,11 @@ OPS_SENDER_NAME = "Liner"
 def dealership_from(db: Session, sender: EmailSender) -> str:
     """The From header for mail from the dealership to one of its buyers.
 
-    The address is the deployment's verified one and the name is the
-    dealership's own, read from the row -- `Craig and Landreth Cars
-    <sales@linerai.us>`, the shape every product's transactional mail uses.
+    The address is the dealership's own mailbox on the deployment's verified
+    domain and the name is the dealership's own, read from the row -- `Craig
+    and Landreth Cars <craigsbestcars@linerai.us>`, the shape every product's
+    transactional mail uses. A dealership with no mailbox in its profile
+    (the fixture) sends from `SENDING_FROM`, or `sales@` on the domain.
 
     **`sales@`, not `support@`.** They shared one mailbox, and `is_ours` routes
     anything addressed to `support@` into `/ops` -- so a buyer who composed a

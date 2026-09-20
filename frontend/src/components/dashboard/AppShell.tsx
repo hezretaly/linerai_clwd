@@ -391,7 +391,10 @@ export function IntegrationBanner() {
     staleTime: 30_000,
   })
 
-  const missing = data?.integrations.filter((i) => !i.configured) ?? []
+  // A channel switched off on purpose (CALLING=false, TEXTING=false) is a
+  // decision, not a gap: it has its own row on /api/integrations and stays
+  // out of a banner that would otherwise nag about it for ever.
+  const missing = data?.integrations.filter((i) => !i.configured && !i.switched_off) ?? []
   if (!missing.length) return null
 
   return (

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.agent import phrasing, tools
 from app.agent import details
+from app.agent.rail_actions import SHOWN
 from app.models import Conversation, Rail, Vehicle
 
 # Anchored on word characters at both ends so sentence punctuation ("...my
@@ -278,7 +279,7 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
                 calls,
             )
 
-        shown = vehicles[:3]
+        shown = vehicles[:SHOWN]
         # The buyer reads this list top to bottom, so "the first one" has to
         # mean the first row here -- record the order they actually saw.
         convo.last_results_json = json.dumps([v["vin"] for v in shown])

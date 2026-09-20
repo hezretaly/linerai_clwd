@@ -595,6 +595,19 @@ def main() -> int:
     ]
     check("with the search results still attached to the reply", bool(shown),
           f"{len(shown)} vehicles recoverable")
+    # **And nothing that is the rep's.** This endpoint has no session in front
+    # of it -- the buyer's browser holds the id -- and it used to answer with
+    # the dashboard's own serializer: the open escalation, the recap, the
+    # focus car's rules and every tool result whole, `internal_note` ("no
+    # discount without Dana's approval") included. The page rebuilds from the
+    # message text and the cards, so that is all that may go out.
+    leaked = [
+        key for key in ("internal_note", "guidance", "open_escalation",
+                        "recap", "lead", "rule_note", "mention_count")
+        if f'"{key}"' in json.dumps(again)
+    ]
+    check("and nothing rep-only rides along -- no note, guidance, escalation or recap",
+          not leaked, ", ".join(leaked) or "clean")
     check("and a booking card, looked up again rather than replayed",
           bool(again.get("booking")))
     replayed = {
@@ -2217,6 +2230,44 @@ def main() -> int:
           "alsboucars" in boxes and boxes["alsboucars"] == "alsbou", str(boxes))
     check("the fixture, which has no website, declares none",
           "" not in boxes and _boxes.mailbox_for("") == "", str(boxes))
+    # Two profiles naming one mailbox would route by slug order, silently.
+    # Read from every profile rather than from `mailboxes()`, which already
+    # de-duplicates first-wins -- the collision is the thing being checked.
+    from app.stores import known_stores as _known
+    declared = [(box, s) for s in _known() for box in [_boxes.mailbox_for(s)] if box]
+    clashes = sorted({box for box, _ in declared if sum(1 for b, _ in declared if b == box) > 1})
+    check("no two dealerships declare the same mailbox", not clashes, str(clashes))
+    check("and a mailbox can never look like a reply token",
+          all("+" not in box and box != "reply" for box, _ in declared), str(declared))
+
+    # **A live event reaches the dashboards of its own store and no other.**
+    # `replay` was always store-scoped; the live push went to every socket
+    # in the process, so Craig's dashboard received `email.received` naming
+    # a lead id that exists only in Alsbou's file. Driven on the manager
+    # class with recording sockets: the audience is the part that can be
+    # checked without two browsers.
+    import asyncio as _aio
+    from app.config import settings as _cfg_ev
+    from app.events import ConnectionManager as _Mgr
+
+    class _Sock:
+        def __init__(self): self.got = []
+        async def accept(self): pass
+        async def send_json(self, m): self.got.append(m)
+
+    _m = _Mgr(); _a, _b, _d = _Sock(), _Sock(), _Sock()
+    async def _drive():
+        await _m.connect(_a, "alsbou"); await _m.connect(_b, "craigandlandreth"); await _m.connect(_d, "")
+        await _m.broadcast({"type": "email.received"}, "alsbou")
+        await _m.broadcast({"type": "demo.requested"}, "")
+    _aio.run(_drive())
+    check("an event in one store reaches only that store's sockets",
+          [x["type"] for x in _a.got] == ["email.received"] and _b.got == [],
+          f"alsbou={_a.got} craig={_b.got}")
+    check("and the default store's audience gets the default store's events",
+          [x["type"] for x in _d.got] == ["demo.requested"], str(_d.got))
+    check("the unprefixed socket and the store DEALERSHIP= names are one audience",
+          _Mgr.key("") == _Mgr.key(_cfg_ev.dealership) and _Mgr.key("alsbou") != _Mgr.key(""))
 
     routed_id = f"<worker-{run}-routed@outlook.com>"
     routed_from = f"alsbou.buyer.{run}@example.invalid"
@@ -5101,6 +5152,71 @@ def main() -> int:
             # deployment pays one indexed query and nothing else.
             check("the wait is the one setting, not a second number",
                   _s.email_reply_cooldown_minutes == 5)
+
+            # **And it drains every store, not only the default one.** A
+            # reply is queued in the store the envelope routed to, so a
+            # ticker that opened one file left every other dealership's
+            # replies due for ever -- with the receipt saying a reply was
+            # coming. Same rows, Alsbou's file, and the drain has to report
+            # which store it answered in.
+            from sqlalchemy import text as _sql2
+            with _WaitSession("alsbou") as _adb:
+                _f.set(_adb, "email_agent", "on", reason="smoke")
+                theirs_buyer = _Buyer(name="", email=f"alsbou.waits.{stamp}@example.invalid",
+                                      phone="", source="email")
+                _adb.add(theirs_buyer)
+                _adb.commit()
+                their_envelope = _In(
+                    outcome="accepted", message_id=f"<alsbou-waits-{stamp}@mail>",
+                    from_address=theirs_buyer.email, to_address="alsboucars@linerai.us",
+                    subject="Q7", body="Is it still there?", lead_id=theirs_buyer.id,
+                )
+                their_note = _Sent(
+                    lead_id=theirs_buyer.id, channel="email", direction="in", kind="reply",
+                    to_address=theirs_buyer.email, subject="Q7",
+                    body="Is it still there?", provider="inbound",
+                    status="sent", sent_at=utcnow_local(),
+                )
+                _adb.add_all([their_envelope, their_note])
+                _adb.commit()
+                their_queue = _replier.schedule(_adb, their_envelope, theirs_buyer, their_note)
+                check("a reply is queued in the store the mail routed to",
+                      their_queue["queued"], str(their_queue.get("reason")))
+                their_row = _adb.query(_Due).filter_by(lead_id=theirs_buyer.id).one()
+                their_row.due_at = utcnow_local() - _delta(seconds=1)
+                _adb.commit()
+                their_lead_id = theirs_buyer.id
+            try:
+                fired = _ticker.drain(
+                    provider=FakeProvider([scripted("Yes -- when would you like to see it?")]))
+                theirs_fired = [f for f in fired if f.get("store") == "alsbou"]
+                check("and the ticker drains that store's queue, naming the store",
+                      len(theirs_fired) == 1 and theirs_fired[0].get("sent"), str(fired))
+                with _WaitSession("alsbou") as _adb:
+                    check("so the reply went out of Alsbou's file, not the default store's",
+                          _adb.query(_Sent).filter_by(
+                              lead_id=their_lead_id, direction="out").count() == 1)
+                with _WaitSession("") as _ddb:
+                    check("and the default store holds no trace of it",
+                          _ddb.query(_Buyer).filter_by(email=f"alsbou.waits.{stamp}@example.invalid").count() == 0)
+            finally:
+                # Given back, children first, or the foreign keys refuse. A
+                # buyer left in Alsbou's store per run is the `Smoke
+                # Stranger` leak in somebody else's file.
+                with _WaitSession("alsbou") as _adb:
+                    _f.set(_adb, "email_agent", "off", reason="smoke reset")
+                    for cid, in _adb.execute(
+                        _sql2("SELECT id FROM conversations WHERE lead_id = :l"), {"l": their_lead_id}
+                    ).all():
+                        for table in ("conversation_once", "escalations", "messages",
+                                      "vehicle_mentions"):
+                            _adb.execute(_sql2(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": cid})
+                    _adb.execute(_sql2("DELETE FROM email_replies_due WHERE lead_id = :l"), {"l": their_lead_id})
+                    for table in ("inbound_emails", "appointments", "captured_fields",
+                                  "lead_addresses", "outreach", "conversations"):
+                        _adb.execute(_sql2(f"DELETE FROM {table} WHERE lead_id = :l"), {"l": their_lead_id})
+                    _adb.execute(_sql2("DELETE FROM leads WHERE id = :l"), {"l": their_lead_id})
+                    _adb.commit()
         finally:
             (_s.email_agent, _s.email_reply_cooldown_minutes,
              _s.email_replies_per_hour) = keep

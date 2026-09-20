@@ -86,8 +86,10 @@ class EmailSender:
         """The bare address this deployment sends from, for one realm.
 
         **Two realms, two mailboxes, and the split is not cosmetic.** A
-        dealership's buyer mail goes out from `sales@`; Liner's own support
-        replies go out from `support@`. It was `support@` for both, and the
+        dealership's buyer mail goes out from its own mailbox on the sending
+        domain -- `alsboucars@`, from its profile -- or from `sales@` when
+        it has none; Liner's own support replies go out from `support@`. It
+        was `support@` for both, and the
         cost was a real misroute rather than an odd-looking header: `is_ours`
         sends anything addressed to `support@` to `/ops`, so a buyer who
         composed a *fresh* message to the address on the mail they were

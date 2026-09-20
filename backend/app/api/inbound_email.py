@@ -20,8 +20,7 @@ send mail on its own and cannot be stopped.
 from __future__ import annotations
 
 import hmac
-import re
-from email.utils import parseaddr
+from contextlib import nullcontext
 from hashlib import sha256
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
@@ -31,7 +30,6 @@ from sqlalchemy.orm import Session
 
 from app import email_reply, mailboxes, matching
 from app.config import settings
-from app.api.deps import current_user
 from app.db import SessionLocal, get_db, utcnow
 from app.escalations import owner_of
 from app.events import emit
@@ -46,7 +44,6 @@ from app.email_intake import (
     sender_address,
     signature_name,
 )
-from app.schemas.serialize import iso
 from app.models import (
     Appointment,
     CapturedField,
@@ -55,7 +52,6 @@ from app.models import (
     InboundEmail,
     Lead,
     Outreach,
-    User,
 )
 
 router = APIRouter(tags=["email"])
@@ -246,14 +242,23 @@ async def receive(
     # and hands the slug to the background pass, which sets it for itself --
     # the middleware's ContextVar is gone by the time that runs.
     slug = mailboxes.store_for(to)
-    if slug:
-        db = SessionLocal(slug)
-
     envelope = {
         "message_id": message_id, "from_address": sender, "to_address": to,
         "subject": subject, "body": body, "in_reply_to": in_reply_to,
     }
+    # The routed store's session is closed however this ends -- a `with`, not
+    # a close on the two happy returns, because the one path that raises
+    # between the open and the return is the one that leaks a connection per
+    # delivery. The request's own session is left to its dependency.
+    with (SessionLocal(slug) if slug else nullcontext(db)) as store_db:
+        return _claim(store_db, slug, background, proved_by, envelope,
+                      automated_reason(sender, data.get("headers"), body))
 
+
+def _claim(db: Session, slug: str, background: BackgroundTasks, proved_by: str,
+           envelope: dict, refused: str) -> dict:
+    """Dedupe, claim, and hand the delivery to the background pass."""
+    message_id = envelope["message_id"]
     # Idempotent on the message id -- the sender's when there is one, the
     # digest of the bytes when there is not. Cloudflare retries, and a retry
     # must not give a buyer two replies on their timeline.
@@ -272,8 +277,6 @@ async def receive(
         if seen is not None:
             _receipt(db, outcome="duplicate", detail=f"Already accepted as {seen.id}.",
                      **envelope)
-            if slug:
-                db.close()
             return {"ok": True, "outcome": "duplicate"}
 
     # Claim the message before answering, then do the work after. Returning
@@ -287,17 +290,13 @@ async def receive(
     # the background pass fills in what it resolved to.
     claim = _receipt(db, outcome="received", detail=f"Authenticated by {proved_by}.",
                      **envelope)
-    # Decided here, not in the background pass, because this is where the
-    # headers still exist -- `extra="allow"` keeps whatever the Worker sent,
-    # and a header is a sender declaring itself a machine, which is the only
-    # loop-breaker that stops a vacation responder on its first turn. It is
-    # handed over as an argument rather than stored: `create_all` adds a table
-    # to a database that already exists and never a column.
-    background.add_task(
-        _place, claim.id, automated_reason(sender, data.get("headers"), body), slug
-    )
-    if slug:
-        db.close()
+    # `refused` was decided back in the request, where the headers still
+    # exist -- `extra="allow"` keeps whatever the Worker sent, and a header is
+    # a sender declaring itself a machine, which is the only loop-breaker that
+    # stops a vacation responder on its first turn. It is handed over as an
+    # argument rather than stored: `create_all` adds a table to a database
+    # that already exists and never a column.
+    background.add_task(_place, claim.id, refused, slug)
     return {"ok": True, "outcome": "received", "receipt_id": claim.id, "store": slug}
 
 

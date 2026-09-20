@@ -105,6 +105,22 @@ IMPOSSIBLE = {
 }
 
 
+def stored_value(vehicle, key: str):
+    """What the row holds for one payload key, in the payload's shape.
+
+    `features` and `raw` are JSON text under other column names, so reading
+    them by the payload's name gave `None` for every car -- and every import
+    then reported a features change on every existing row, a review diff
+    that cried wolf on all of them. One reader for the CSV and crawl diffs,
+    so the two cannot disagree about what "unchanged" means.
+    """
+    if key == "features":
+        return json.loads(vehicle.features_json or "[]")
+    if key == "raw":
+        return json.loads(vehicle.raw_json or "{}")
+    return getattr(vehicle, key, None)
+
+
 def plausible_features(features: list[str], body_style: str) -> tuple[list[str], list[str]]:
     """Returns (kept, dropped) for one vehicle."""
     body = (body_style or "").strip().lower()
@@ -209,10 +225,10 @@ def import_csv(db: Session, raw: str) -> IngestRun:
             current = existing[vin]
             manual = set(json.loads(current.manual_fields_json or "[]"))
             changes = {
-                key: {"from": getattr(current, key, None), "to": value}
+                key: {"from": stored_value(current, key), "to": value}
                 for key, value in payload.items()
                 if key != "vin" and value not in (None, "") and key not in manual
-                and getattr(current, key, None) != value
+                and stored_value(current, key) != value
             }
             if changes:
                 updated.append({"vin": vin, "changes": changes,

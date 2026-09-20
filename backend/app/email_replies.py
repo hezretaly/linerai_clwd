@@ -40,27 +40,40 @@ def drain(*, provider=None) -> list[dict]:
     wait exists so a person can get there first, and a decision taken when the
     message arrived would defeat it.
     """
-    from app import email_reply
+    from app import email_reply, mailboxes
+    from app.db import has_database
+    from app.stores import known_stores
 
     done: list[dict] = []
-    with SessionLocal() as db:
-        for row in email_reply.due_now(db):
-            # Claimed before it is answered, not after. Two processes draining
-            # this queue is a misconfiguration -- the event bus already
-            # requires one worker -- but the failure it produces is a buyer
-            # getting the same reply twice, which is the one worth spending a
-            # write to prevent.
-            row.state = "sending"
-            db.commit()
-            try:
-                done.append({"id": row.id, **email_reply.send_due(db, row, provider=provider)})
-            except Exception as exc:  # a bad reply must not stop the queue
-                row.state = "failed"
-                row.detail = str(exc)[:500]
-                row.resolved_at = utcnow()
+    # **Every store, not only the default one.** A reply is queued in the
+    # store the envelope routed to -- `alsboucars@` fills Alsbou's queue --
+    # and a drainer that opened only the default store's file left every
+    # other dealership's replies due for ever. The default store is walked
+    # first and by its own name, because `known_stores()` lists the profiles
+    # and the unprefixed store is whichever one `DEALERSHIP=` names, or the
+    # fixture's file when nothing is.
+    for slug in [""] + [s for s in known_stores() if has_database(s)]:
+        with mailboxes.using(slug), SessionLocal(slug) as db:
+            for row in email_reply.due_now(db):
+                # Claimed before it is answered, not after. Two processes
+                # draining this queue is a misconfiguration -- the event bus
+                # already requires one worker -- but the failure it produces
+                # is a buyer getting the same reply twice, which is the one
+                # worth spending a write to prevent.
+                row.state = "sending"
                 db.commit()
-                log.exception("email reply %s failed", row.id)
-                done.append({"id": row.id, "sent": False, "reason": "error"})
+                try:
+                    done.append({
+                        "id": row.id, "store": slug,
+                        **email_reply.send_due(db, row, provider=provider),
+                    })
+                except Exception as exc:  # a bad reply must not stop the queue
+                    row.state = "failed"
+                    row.detail = str(exc)[:500]
+                    row.resolved_at = utcnow()
+                    db.commit()
+                    log.exception("email reply %s failed", row.id)
+                    done.append({"id": row.id, "store": slug, "sent": False, "reason": "error"})
     return done
 
 

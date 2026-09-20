@@ -494,7 +494,9 @@ def sms_state(
     lead = _get(db, lead_id)
     to = (lead.phone or "").strip()
     return {
-        "configured": sms_module.configured(),
+        # Configured and switched on -- `TEXTING=false` reads as not offered
+        # here too, or this endpoint and /api/integrations disagree.
+        "configured": sms_module.offered(),
         "to": to,
         "opted_out": bool(to) and sms_module.opted_out(to),
         "blocked": sms_module.blocked_reason(to) if to else "No number on file.",

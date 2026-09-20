@@ -375,3 +375,10 @@ def unresolved(db: Session, limit: int = 50) -> list[Outreach]:
 def configured() -> bool:
     """SMS needs exactly what the phone line needs -- one account, one number."""
     return account.configured()
+
+
+def offered() -> bool:
+    """Configured *and* switched on. What a composer should ask, because a
+    Twilio account behind `TEXTING=false` is a button that opens onto a
+    refusal -- and the registry row the buyer page reads says the same."""
+    return settings.texting and configured()

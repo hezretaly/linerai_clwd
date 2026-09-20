@@ -26,7 +26,9 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 # `status` is deliberately absent: it has its own endpoint, because taking a
 # car off the lot is not the same kind of act as correcting its mileage. A
 # second way to set it is how one of them quietly stops emitting the event the
-# dashboard listens for.
+# dashboard listens for. `features` is absent too, but patchable: it is a
+# list stored as JSON text under `features_json`, so `update_vehicle` handles
+# it by name rather than through `setattr` on a column that does not exist.
 EDITABLE = {
     "year", "make", "model", "trim", "price", "mileage", "body_style", "seats",
     "title_status", "keywords", "rule_discuss", "rule_hold_price",

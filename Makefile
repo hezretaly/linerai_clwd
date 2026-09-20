@@ -49,7 +49,7 @@ dev: stop ## Run both servers in the background, logging to .logs/
 	@sleep 3 && echo "http://localhost:$(FRONTEND_PORT)"
 
 set-password: ## Change one account's password in place: make set-password EMAIL=someone@...
-	@test -n "$(EMAIL)" || (echo "Usage: make set-password EMAIL=dana.mercer@example.invalid" && exit 1)
+	@test -n "$(EMAIL)" || (echo "Usage: make set-password EMAIL=dana.mercer@riversideauto.example" && exit 1)
 	cd backend && ../$(PY) -m app.set_password $(EMAIL) $(ARGS)
 
 add-owners: ## Move/create Liner's own rows in the ops_ tables -- safe on a live box

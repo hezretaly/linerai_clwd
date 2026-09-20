@@ -26,6 +26,13 @@ class IntegrationStatus:
     impl: str
     missing: list[str]
     detail: str
+    #: True when the deployment switched this channel off on purpose
+    #: (`CALLING=false`, `TEXTING=false`). Not configured and switched off are
+    #: different facts with different fixes: the first goes in the amber
+    #: banner and the boot warning, the second is a decision and goes in
+    #: neither -- a banner nagging about a choice somebody made is one people
+    #: learn to ignore, and then it stops working for the case it exists for.
+    switched_off: bool = False
 
 
 def get_email_sender() -> EmailSender:
@@ -164,7 +171,6 @@ def _inbound_status() -> IntegrationStatus:
 
 
 def _voice_status() -> IntegrationStatus:
-    provider = get_voice_provider()
     # The deployment's switch is reported as itself, never folded into "not
     # configured": a key that is present and a line that is switched off are
     # different facts with different fixes, and one boolean over both sends
@@ -181,7 +187,9 @@ def _voice_status() -> IntegrationStatus:
                 "storefront shows a Call button and /call refuses to start a call. "
                 "Set CALLING=true and restart to offer it again."
             ),
+            switched_off=True,
         )
+    provider = get_voice_provider()
     try:
         provider.check()
         return IntegrationStatus(
@@ -229,6 +237,7 @@ def _sms_status() -> IntegrationStatus:
                 "buyer page shows no Text button and a send is refused; a text that "
                 "arrives is still recorded. Set TEXTING=true and restart to offer it."
             ),
+            switched_off=True,
         )
     missing = account.missing()
     return IntegrationStatus(
@@ -294,7 +303,9 @@ def registry_payload() -> dict:
     statuses = all_statuses()
     return {
         "integrations": [asdict(s) for s in statuses],
-        "unconfigured": [s.key for s in statuses if not s.configured],
+        # A channel switched off on purpose is not unconfigured: it stays out
+        # of the banner and the boot warning, and says so on its own row.
+        "unconfigured": [s.key for s in statuses if not s.configured and not s.switched_off],
         "demo_mode": settings.demo_mode,
         # Named, counted and spelled out, because "who can we actually email?"
         # is a question the answer to which used to require reading two

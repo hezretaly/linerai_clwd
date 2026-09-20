@@ -333,6 +333,9 @@ export interface Integration {
   impl: string
   missing: string[]
   detail: string
+  /** Off on purpose (CALLING=false, TEXTING=false): a decision, not a gap,
+   *  so it stays out of the not-configured banner. */
+  switched_off?: boolean
 }
 
 export interface IntegrationsPayload {

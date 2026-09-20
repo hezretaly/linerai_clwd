@@ -300,8 +300,8 @@ function ChannelStrip({
 }) {
   const keys = Object.keys(channels).sort()
   // One channel is not a choice. The strip appears when there is something to
-  // choose between, and never lists a channel this system cannot do -- there
-  // is no SMS provider, so there is no SMS tab sitting permanently at zero.
+  // choose between, and only ever lists what this buyer actually used: a
+  // channel with no entries has no tab, so nothing sits permanently at zero.
   if (keys.length < 2) return null
 
   const chip = (key: string, label: string, count: number) => (
@@ -359,7 +359,7 @@ function Header({
   const { data: health } = useQuery({
     queryKey: ['integrations'],
     queryFn: () => api.get<IntegrationsPayload>('/api/integrations'),
-    staleTime: 60_000,
+    staleTime: 30_000,
   })
   const texting_offered = health?.integrations.some((i) => i.key === 'sms' && i.configured) ?? false
 

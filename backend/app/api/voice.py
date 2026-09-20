@@ -56,7 +56,7 @@ from app.models import (
     User,
     Vehicle,
 )
-from app.schemas.serialize import iso, message_out, stamp
+from app.schemas.serialize import message_out, stamp
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
