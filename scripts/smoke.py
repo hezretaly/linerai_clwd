@@ -18,6 +18,7 @@ import pathlib
 import shutil
 import secrets
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -3838,6 +3839,32 @@ def main() -> int:
               status_of("GET", f"/{slug}/api/showroom/dealership")[0] == 503
               and status_of("GET", f"/{slug}")[0] in (200, 404),
               "the document is Vite's or the build's; only the API is refused")
+        # **A file with no tables is not a database either.** The stray 4 KB
+        # files the old code minted are still sitting on real hosts, and
+        # "does the file exist" said yes to one -- so the store opened and
+        # the first query 500ed, which is the exact page this refusal was
+        # written to replace. An empty file is planted at the unseeded
+        # store's path, asked about, and removed; it must read as unseeded.
+        stray = pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1])
+        stray.parent.mkdir(parents=True, exist_ok=True)
+        stray.write_bytes(b"")
+        try:
+            code, body = status_of("GET", f"/{slug}/api/showroom?limit=1")
+            check("and a stray empty file at a store's path still reads as unseeded",
+                  code == 503 and "reset-db" in body, f"{code} {body[:80]}")
+            listed = subprocess.run(
+                [sys.executable, "scripts/drop_db.py", "--list"], capture_output=True, text=True
+            ).stdout
+            check("and `make stores` calls it what it is rather than a seeded store",
+                  re.search(rf"{slug}\s+.*no tables", listed) is not None,
+                  next((l.strip() for l in listed.splitlines() if slug in l), "")[:80])
+        finally:
+            for side in ("", "-wal", "-shm"):
+                p = pathlib.Path(str(stray) + side)
+                if p.exists():
+                    p.unlink()
+        check("and asking about the stray did not leave a database behind",
+              not stray.exists())
     else:
         print("  (every profile is seeded here, so the unseeded-store refusal is not exercised)")
 

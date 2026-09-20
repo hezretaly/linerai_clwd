@@ -24,7 +24,8 @@ feature reports itself as unavailable rather than simulating a result.
 | `make seed-demo` | Add 50 demo buyers **on top of** the fixture (`N=200` for more) |
 | `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
 | `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it). `ops.db` is a separate file and survives it; the store's **delivery receipts do not** |
-| `make stores` | Every dealership this deployment can serve, and which are seeded |
+| `make reset-all` | **Every dealership at once**, each seeded from its own profile with its own manager and reps, passwords printed per store. `make reset-db` is one store — whichever `DEALERSHIP=` names — which on a host serving several left the others with no database. `ARGS=--only a,b` narrows it |
+| `make stores` | Every dealership this deployment can serve, and which are seeded. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
 | `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
 | `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
 | `make prune-ops` | Drop the pre-split `ops_` tables out of the store files. Reports by default, `ARGS=--apply` removes them, and it refuses any store holding a row `ops.db` does not |

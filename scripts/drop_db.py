@@ -17,6 +17,7 @@ there is exactly the pair that drifts, and the direction it drifts in is
 from __future__ import annotations
 
 import pathlib
+import sqlite3
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend"))
@@ -53,7 +54,21 @@ def rows(slug: str) -> str:
         return "not SQLite"
     if not paths[0].exists():
         return "not seeded"
+    # A file with no tables in it is the stray a pre-fix 500 left behind, not
+    # a store: listed as what it is, so the operator reaches for `reset-db`
+    # rather than wondering why a "seeded" dealership answers nothing. Asked
+    # read-only, which creates nothing -- the same probe `db.has_database`
+    # makes, for the same reason.
+    try:
+        with sqlite3.connect(f"file:{paths[0]}?mode=ro", uri=True) as conn:
+            seeded = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dealership'"
+            ).fetchone() is not None
+    except sqlite3.Error:
+        seeded = False
     total = sum(p.stat().st_size for p in paths if p.exists())
+    if not seeded:
+        return f"{total // 1024} KB file with no tables -- not seeded; run: DEALERSHIP={slug} make reset-db"
     return f"{total // 1024} KB"
 
 

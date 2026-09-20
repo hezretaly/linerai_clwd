@@ -72,6 +72,9 @@ reset-db: ## Delete this store's database and reseed (fixture only -- see demo-d
 	$(PY) scripts/drop_db.py
 	cd backend && ../$(PY) -m app.seed
 
+reset-all: ## Delete and reseed EVERY dealership's database, each with its own staff (ARGS=--only a,b)
+	$(PY) scripts/reset_all.py $(ARGS)
+
 demo-db: ## Delete this store's database and rebuild it with demo buyers (N=50)
 	$(PY) scripts/drop_db.py
 	cd backend && ../$(PY) -m app.seed

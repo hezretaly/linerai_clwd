@@ -330,10 +330,24 @@ with real bookings on it; `make reset-db` is not.
 
 ### Several dealerships on one box: a manager and a rep on each
 
-Every account-writing command acts on **one store — whichever `DEALERSHIP=`
-names** — so to put people on two dealerships you run it twice with the
-variable set each time. Nothing is copied between stores; a person exists in
-exactly one dealership's `users` table and can sign in to exactly that one.
+**One command seeds every dealership, each with its own people:**
+
+```bash
+make reset-all          # every profile: drop, seed, print that store's logins
+sudo systemctl restart liner
+```
+
+Each store's block prints its own manager and reps — the profile's `staff:`
+— with passwords shown once. `make reset-db` is **one store**, whichever
+`DEALERSHIP=` names; on a host serving several it seeded the one in `.env`
+and left the others with no database, which is what a storefront reading
+*"not set up on this host yet"* means.
+
+Every account-writing command below acts on **one store — whichever
+`DEALERSHIP=` names** — so to put extra people on two dealerships you run it
+twice with the variable set each time. Nothing is copied between stores; a
+person exists in exactly one dealership's `users` table and can sign in to
+exactly that one.
 
 ```bash
 # Alsbou Motors

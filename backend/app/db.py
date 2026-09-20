@@ -11,6 +11,7 @@ import getpass
 import grp
 import os
 import pwd
+import sqlite3
 from collections.abc import Iterator
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -240,9 +241,29 @@ def has_database(slug: str | None = None) -> bool:
 
     A deployment that is not on SQLite has no file to test, so it answers True
     and the caller's error handling stays the path that covers it.
+
+    **A file with no tables in it is not a database.** The stray 4 KB files
+    this function exists to stop being created were, for a while, created
+    anyway -- and on a host that has one, "does the file exist" says yes,
+    the store is opened, and the first query fails `no such table`: a 500 on
+    the storefront that the 503 for a missing file was written to prevent.
+    So the question is whether the `dealership` table is there, asked
+    **read-only** -- `mode=ro` on an existing file creates nothing and caches
+    no engine, which is the property the rest of this docstring is about.
     """
     path = sqlite_path(slug)
-    return True if path is None else path.exists()
+    if path is None:
+        return True
+    if not path.exists():
+        return False
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dealership'"
+            ).fetchone()
+        return row is not None
+    except sqlite3.Error:
+        return False
 
 
 def readonly_help() -> str:
