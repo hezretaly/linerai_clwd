@@ -45,6 +45,11 @@ export interface Site {
    *  different. Not hero slides -- five calls to action that only mean
    *  anything next to each other. */
   banners: { image: string; href: string; label: string }[]
+  /** Their body-style pictures, each naming the `body_style` it narrows the
+   *  inventory to. Drawn only where the lot holds that style. */
+  body_style_tiles: { image: string; label: string; style: string }[]
+  /** Full-width promotional bands, each an image that is a link. */
+  promos: { image: string; href: string; label: string }[]
   links: Link[]
   /** The one nav item they emphasise -- "Get Pre-Qualified" on Alsbou's. It
    *  is also in `links`, and this only says which one to draw in the accent,

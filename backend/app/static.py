@@ -21,6 +21,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.db import current_store
+
 DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 # Paths the SPA owns. Anything else that is not a real file is a 404, rather
@@ -52,7 +54,19 @@ def mount_frontend(app: FastAPI) -> bool:
 
     @app.get("/", include_in_schema=False)
     def root() -> FileResponse:
-        # Byte-for-byte the supplied marketing page, as at /
+        # **A store's root is the store's page, and only the bare root is
+        # ours.** `StorePrefix` strips `/alsbou` to `/` before this runs, and
+        # this handler served `landing.html` for `/` unconditionally -- so
+        # `linerai.us/alsbou` answered with Liner's own marketing page under
+        # Alsbou's URL, on the link a prospect is sent. The prefix survives in
+        # `current_store`, which is what the middleware exists to set, and
+        # that is the only thing here that can tell the two apart.
+        #
+        # Unprefixed `/` stays the marketing document byte for byte, which
+        # `make smoke` asserts; the prefixed one is the SPA, whose `/` route
+        # is the dealership's front page.
+        if current_store.get():
+            return FileResponse(index)
         return FileResponse(landing)
 
     @app.get("/{full_path:path}", include_in_schema=False)

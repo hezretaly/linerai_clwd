@@ -3036,6 +3036,10 @@ def main() -> int:
     from app.static import DIST, RESERVED, SPA_PREFIXES
 
     routes = re.findall(r'<Route\s+path="(/[^"*]*)"', TSX.read_text())
+    # `/` is the one route both sides serve on purpose and differently: the
+    # marketing document unprefixed, the SPA's store front page prefixed. It
+    # is asserted on its own below rather than listed in SPA_PREFIXES, where a
+    # bare "/" would match every path and turn the 404 into a page.
     top = sorted({"/" + r.strip("/").split("/")[0] for r in routes if r.strip("/")})
     check("main.tsx has the top-level routes this expects", len(top) >= 5, str(top))
     missing = [r for r in top if r not in SPA_PREFIXES]
@@ -3054,6 +3058,32 @@ def main() -> int:
                   status == 200 and "<div id=" in body, f"{status} {body[:40]}")
         check("the landing page is still what / serves",
               "<!doctype html" in status_of("GET", "/")[1].lower())
+        # **A store's root is the store's page, not ours.** The prefix
+        # middleware strips `/alsbou` to `/`, and the root handler served
+        # `landing.html` for `/` unconditionally -- so `linerai.us/alsbou`
+        # answered with Liner's marketing page under Alsbou's URL, on the link
+        # a prospect is sent. The two documents are told apart by what only
+        # the built bundle has: the SPA mounts `<div id="root">`, the marketing
+        # page never does. Asked of a store that has a file, and asked before
+        # opening one, because requesting `/<slug>/` creates the database.
+        from app.config import settings as _cfg_spa
+        with_file = [
+            slug for slug in _cfg_spa.store_slugs
+            if pathlib.Path(_cfg_spa.database_url_for(slug).split("///", 1)[-1]).exists()
+        ]
+        marketing = re.search(r"<title>([^<]*)", pathlib.Path("frontend/landing.html").read_text())
+        ours = marketing.group(1) if marketing else "Liner AI"
+        for slug in with_file:
+            status, body = status_of("GET", f"/{slug}")
+            is_app, is_ours = 'id="root"' in body, ours in body
+            check(f"/{slug} serves the dealership's page, not Liner's landing document",
+                  status == 200 and is_app and not is_ours,
+                  f"{status} app={is_app} marketing={is_ours}")
+            check(f"and /{slug}/showroom serves the app too",
+                  status_of("GET", f"/{slug}/showroom")[0] == 200)
+        bare = status_of("GET", "/")[1]
+        check("while the bare root is still the marketing page and not the app",
+              ours in bare and 'id="root"' not in bare)
         for reserved in RESERVED:
             check(f"/{reserved} is still reserved, not swallowed by the catch-all",
                   status_of("GET", f"/{reserved}/nothing-here")[0] == 404)
@@ -3590,7 +3620,21 @@ def main() -> int:
     # prospect's own sentences is the "Riverside Auto" bug one level up.
     craig = _yaml.safe_load(
         pathlib.Path("backend/config/dealerships/craigandlandreth.yaml").read_text())
-    page = pathlib.Path("frontend/src/routes/Showroom.tsx").read_text()
+    # **The whole storefront tree, not one file.** The storefront was one
+    # component and every check below read it; it is now two routes over a
+    # shared `components/storefront/`, and a dealer's sentence hardcoded in
+    # the shell would pass a check that only read the list page. Everything
+    # that asks "is their word written into the component" asks it of every
+    # file the storefront is made of.
+    STOREFRONT = [
+        pathlib.Path("frontend/src/routes/Showroom.tsx"),
+        pathlib.Path("frontend/src/routes/Storefront.tsx"),
+        *sorted(pathlib.Path("frontend/src/components/storefront").glob("*.ts*")),
+    ]
+    check("the storefront is two routes over a shared component tree",
+          len(STOREFRONT) >= 6 and all(p.is_file() for p in STOREFRONT),
+          str([p.name for p in STOREFRONT]))
+    page = "\n".join(p.read_text() for p in STOREFRONT)
     check("the prospect's profile carries their front page, not the component",
           bool((craig.get("site") or {}).get("heading"))
           and (craig["site"]["heading"] not in page),

@@ -43,10 +43,24 @@ PUBLIC = ["/", "/chat", "/call", "/login", "/showroom"]
 # are reported rather than failing the run; remove each one as it arrives.
 PENDING_ASSETS: list[str] = []
 
-# Hosts the page legitimately reaches that this sandbox's headless browser
-# cannot. `curl` gets 200 from Google Fonts through the agent proxy, but
-# Chromium does not inherit it -- so a failure here says nothing about the page.
-UNREACHABLE_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"]
+# A request to any host but our own is excused, and named. This began as a
+# list -- Google Fonts, which `curl` reaches through the agent proxy and
+# Chromium does not -- and the storefronts made a list wrong: they hotlink
+# the dealer's logo, banners and every car photo from *their* CDN, and the
+# next dealership's CDN is a host this file has never heard of. Naming a
+# dealer's host here would be their name written into product tooling. What
+# this check exists to catch is a request to *us* that failed -- an API
+# path that 404s, a route the server does not serve -- and those all go to
+# BASE. An off-origin failure in a sandbox with no egress says nothing about
+# the page, so it is reported as a NOTE rather than hidden, and never fails
+# the run.
+OWN_HOST = BASE.split("//", 1)[-1]
+
+
+def off_origin(url: str) -> str:
+    """The host, when it is not ours; '' for a request to this app."""
+    host = url.split("/")[2] if "//" in url else ""
+    return "" if (not host or host == OWN_HOST or host.startswith("127.0.0.1") or host.startswith("localhost")) else host
 DEALER = [
     "/app",
     "/app/conversations",
@@ -69,6 +83,20 @@ OPS = ["/ops", "/ops/mail", "/ops/phone"]
 # Reps and managers work from phones, so a route that overflows there is a real
 # break, not a cosmetic one. 390x844 is an iPhone 13/14/15 logical viewport --
 # the narrowest width worth designing for in 2026.
+def stores_with_a_file() -> list[str]:
+    """Every store slug whose database exists -- asked of the file, never by
+    opening it. Same guard `make smoke` uses, for the same reason: connecting
+    to SQLite creates the file, and a screenshot run that minted an empty
+    `riverside.db` would trip the gate that exists for exactly that."""
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend"))
+    from app.config import settings
+
+    return [
+        slug for slug in settings.store_slugs
+        if pathlib.Path(settings.database_url_for(slug).split("///", 1)[-1]).exists()
+    ]
+
+
 PHONE = {"width": 390, "height": 844}
 DESKTOP = {"width": 1440, "height": 900}
 
@@ -312,8 +340,8 @@ async def main() -> int:
             for url in dict.fromkeys(bad_urls):
                 if any(a in url for a in PENDING_ASSETS):
                     excused.append(f"asset not supplied yet: {url.rsplit('/', 1)[-1]}")
-                elif any(h in url for h in UNREACHABLE_HOSTS):
-                    excused.append(f"blocked in this sandbox: {url.split('/')[2]}")
+                elif off_origin(url):
+                    excused.append(f"blocked in this sandbox: {off_origin(url)}")
                 else:
                     unexplained.append(url)
             if signed_out_probe:
@@ -341,6 +369,18 @@ async def main() -> int:
         print("public routes:")
         for route in PUBLIC:
             await shot(route)
+
+        # **A dealership's own two pages, under its prefix.** `/` unprefixed is
+        # Liner's marketing document and `/showroom` unprefixed is the default
+        # store's list, so neither exercises the front page a prospect is
+        # actually sent -- `/alsbou` -- which is a React route reached only
+        # with a store in the URL. Shot for every store that has a file, and
+        # asked before opening one, because requesting `/<slug>/` creates the
+        # database (the lesson `db.has_database` exists for).
+        print("\nstore pages:")
+        for slug in stores_with_a_file():
+            await shot(f"/{slug}")
+            await shot(f"/{slug}/showroom")
 
         print("\nsigning in...")
         await page.goto(BASE + "/login", wait_until="networkidle")
@@ -405,7 +445,8 @@ async def main() -> int:
         phone = True
         await page.set_viewport_size(PHONE)
         print(f"\nmobile ({PHONE['width']}px):")
-        for route in ["/chat", "/showroom", *routes]:
+        store_pages = [p for slug in stores_with_a_file() for p in (f"/{slug}", f"/{slug}/showroom")]
+        for route in ["/chat", "/showroom", *store_pages, *routes]:
             await shot(route)
 
         # Ours. A second sign-in because `owner` is a third role and a

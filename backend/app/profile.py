@@ -182,6 +182,30 @@ def site() -> dict:
             for b in (raw.get("banners") or [])[:6]
             if isinstance(b, dict) and _link(b.get("image")) and _link(b.get("href"))
         ],
+        # Their front page's body-style pictures -- "Explore Vehicles By Body
+        # Style" on Alsbou's -- each naming the `body_style` value it narrows
+        # the inventory to. The page draws a tile only where the lot actually
+        # holds that style, counted, so a picture of a pickup never leads to an
+        # empty grid: same rule the sidebar's By Type group follows.
+        "body_style_tiles": [
+            {"image": _link(t.get("image")),
+             "label": str(t.get("label") or "").strip()[:40],
+             "style": str(t.get("style") or "").strip().lower()[:40]}
+            for t in (raw.get("body_style_tiles") or [])[:8]
+            if isinstance(t, dict) and _link(t.get("image")) and str(t.get("style") or "").strip()
+        ],
+        # Their full-width promotional bands -- a financing banner, a trade-in
+        # banner -- each an image that is a link, drawn between the front
+        # page's sections in the order given here. Same shape as a banner tile
+        # and a separate key because it is a different thing on the page: a
+        # strip is a row of five, a promo runs the whole width on its own.
+        "promos": [
+            {"image": _link(b.get("image")),
+             "href": _link(b.get("href")),
+             "label": str(b.get("label") or "").strip()[:60]}
+            for b in (raw.get("promos") or [])[:4]
+            if isinstance(b, dict) and _link(b.get("image")) and _link(b.get("href"))
+        ],
         "links": _links(raw.get("links"), 8),
         # The one link their nav draws as a button rather than as text --
         # "GET PRE-QUALIFIED" on Alsbou's, in the accent. It is a link like the

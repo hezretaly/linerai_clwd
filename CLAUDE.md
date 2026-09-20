@@ -1987,10 +1987,47 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     returns before, so a refresh dropped the accent back to the product blue;
     and the call applied its own on connect, so the page a buyer decides on
     was still wearing ours.
-  - **`/showroom` is the link you send a prospect.** `/chat` is a chat window
-    floating on nothing and cannot answer the question a dealer actually has,
-    which is what this looks like on their site. Their logo, colour, address,
-    phone, hours and real lot, with the assistant in the corner. Three rules:
+  - **`/<store>` is the link you send a prospect, and `/<store>/showroom` is
+    their inventory.** `/chat` is a chat window floating on nothing and cannot
+    answer the question a dealer actually has, which is what this looks like
+    on their site. Their logo, colour, address, phone, hours and real lot,
+    with the assistant in the corner. Two pages because their site is two
+    pages: a front page — hero, banner strip, body-style pictures, the newest
+    of the lot, promo bands, About beside a map — and the list their
+    INVENTORY nav item leads to. `components/storefront/` is what they share
+    (`Shell` for the chrome, footer and widget; `CarCard`; `Media`;
+    `useStorefront`), so the header cannot drift between them.
+    - **A store's root is the store's page, and only the bare root is ours.**
+      `StorePrefix` strips `/alsbou` to `/`, and `static.py` served
+      `landing.html` — Liner's marketing page — for `/` unconditionally. So
+      `linerai.us/alsbou`, the link a prospect is sent, answered with *our*
+      homepage under *their* URL. Every other prefixed route worked, which is
+      what kept it invisible, and it worked in development too: Vite's plugin
+      matches only the exact path `/`, so `/alsbou` fell through to the SPA
+      on :5173 while production served the wrong document. The prefix
+      survives only in `current_store`, and the root handler now reads it;
+      `make smoke` fetches `/<slug>` and `/` from a real build and tells the
+      two documents apart by `id="root"` and the marketing page's title.
+      `docs/ARCHITECTURE.md` is the wider review this came out of.
+    - **The list's filters live in the URL.** `?q=`, `?body_style=`, `?make=`
+      and the price bounds are the state, which is what lets the front page's
+      search box and its body-style tiles land on the list already narrowed,
+      lets the back button undo a filter, and makes a filtered grid a link
+      somebody can send. Sort and page depth stay local.
+    - **A body-style tile is drawn only where the lot has that style**,
+      counted from the facets — a picture of a pickup on a lot with no trucks
+      is a link to an empty grid. Their PICKUP tile narrows to `truck`,
+      because that is what their export says, and the profile's `style:` is
+      that mapping rather than a guess at it.
+    - **The featured row is the newest of the lot, not "specials".** Their
+      page runs five auto-rotating carousels of specials; no export carries a
+      specials flag, so nothing here claims one. Six of the newest, held
+      still, through the same `offerable` predicate the assistant searches.
+    - **Their nav's home and inventory links point at ours; everything else
+      leaves.** Decided against the dealership's own `website_url`, never
+      against a hostname written in the component — a sister store on another
+      host (Alsbou's Riverside lot) is exactly the link that must keep leaving.
+    Three rules:
     the cars come through `tools.offerable` — extracted rather than copied,
     because a car Liner refuses to discuss sitting on the page beside the chat
     window refusing to discuss it is the whole failure; the payload is

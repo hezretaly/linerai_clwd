@@ -15,7 +15,8 @@ with a simulated result.
 
 | Surface | URL | What it is |
 |---|---|---|
-| Their front page | `/showroom` | Their logo, colour, address, phone, hours, real lot, chat widget, Call button. **The link you send them.** |
+| Their front page | `/<store>` — `linerai.us/alsbou` | Their home page's shape: hero with the search over it, their banner strip, body-style pictures, the newest of the lot, their promo bands, their About copy beside a map, their footer. Chat widget in the corner. **The link you send them.** |
+| Their inventory | `/<store>/showroom` | The list their INVENTORY nav item leads to: heading, counted filter sidebar, results toolbar, card grid. The front page's search box and body-style tiles land here already narrowed (`?q=`, `?body_style=`). |
 | The chat | `/chat` | The same assistant, full screen. The widget is an iframe of this. |
 | The call | `/call` | Real WebRTC to OpenAI Realtime. Only appears when voice is on. |
 | The dashboard | `/app` | What their reps and manager would use. |

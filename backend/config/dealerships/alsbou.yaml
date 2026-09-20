@@ -125,6 +125,26 @@ site:
     - { label: Trade in or sell,     href: "https://www.alsboucars.com/page/trade-sell",        image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222859470.webp" }
     - { label: Contact us,           href: "https://www.alsboucars.com/contact",                image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222842083.webp" }
     - { label: Riverside inventory,  href: "https://www.alsboumotorsriverside.com/inventory",   image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222838840.webp" }
+  # "Explore Vehicles By Body Style": four pictures on their front page, each
+  # leading to their inventory narrowed to that style. The images are on an
+  # Elfsight CDN rather than theirs, and every one falls back to its word.
+  # `style` names the value in the export's `bodyType` column -- their PICKUP
+  # tile narrows to `truck`, which is what they export -- and a tile is drawn
+  # only where the lot holds that style, counted.
+  body_style_tiles:
+    - { label: Coupe,  style: coupe, image: "https://files.elfsightcdn.com/eafe4a4d-3436-495d-b748-5bdce62d911d/9e1b9247-3a3d-42f2-b751-001e4eccec2f/coupe.webp" }
+    - { label: Sedan,  style: sedan, image: "https://files.elfsightcdn.com/eafe4a4d-3436-495d-b748-5bdce62d911d/2c237929-8a19-4ff7-8ab4-93fc8ad51369/sedan-1-.webp" }
+    - { label: SUV,    style: suv,   image: "https://files.elfsightcdn.com/eafe4a4d-3436-495d-b748-5bdce62d911d/2cb90799-7cba-4aa3-b024-3ff3fcdd8109/suv-1-.webp" }
+    - { label: Pickup, style: truck, image: "https://files.elfsightcdn.com/eafe4a4d-3436-495d-b748-5bdce62d911d/7b311738-83a1-4e13-97e3-58d7bfd8b179/pickup-1-.webp" }
+  # The two full-width bands their front page runs between its sections:
+  # financing above the About copy, trade-in below it. Their pages, on their
+  # host, for the reason the nav links are. Each carries the desktop image;
+  # their page swaps a portrait one in under 768px, and a single picture
+  # scaling is the honest version of that rather than a second URL to keep
+  # in step.
+  promos:
+    - { label: Financing at Alsbou Motors, href: "https://www.alsboucars.com/financing",       image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222852898.webp" }
+    - { label: Trade in or sell your car,  href: "https://www.alsboucars.com/page/trade-sell", image: "https://gmacrmprod.s3.us-west-2.amazonaws.com/media/ey/website/178898222913549.webp" }
   # The lead paragraph of their About card. The three subheaded blocks that
   # follow it are `sections:` below -- run together as four plain paragraphs,
   # which is how this read before, their About section stops looking like
