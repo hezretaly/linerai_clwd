@@ -3814,6 +3814,33 @@ def main() -> int:
           len({b.get("href") for b in (theirs.get("banners") or [])}) == len(tiles),
           str([b.get("label") for b in (theirs.get("banners") or [])])[:70])
 
+    # **A store with no database is refused before anything opens it, and the
+    # refusal names the fix.** On a host where a dealership was never seeded,
+    # `/alsbou/api/showroom` minted an empty `alsbou.db` (connecting to SQLite
+    # creates the file) and then failed `no such table` -- a 500 the page
+    # showed as "Loading the lot" for ever, and a 4 KB file that afterwards
+    # made `make stores` show a dealership that was not there. Driven against
+    # whichever profile has no file here; skipped with a note if every one is
+    # seeded, because the check needs a store that is genuinely absent.
+    unseeded = [
+        slug for slug in _cfg.store_slugs
+        if not pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1]).exists()
+    ]
+    if unseeded:
+        slug = unseeded[0]
+        code, body = status_of("GET", f"/{slug}/api/showroom?limit=1")
+        check(f"an unseeded store's API answers 503 rather than 500 (/{slug})",
+              code == 503 and "reset-db" in body and f"DEALERSHIP={slug}" in body,
+              f"{code} {body[:90]}")
+        check("and asking did not create its database",
+              not pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1]).exists())
+        check("while its front page document still serves, so the page can say so",
+              status_of("GET", f"/{slug}/api/showroom/dealership")[0] == 503
+              and status_of("GET", f"/{slug}")[0] in (200, 404),
+              "the document is Vite's or the build's; only the API is refused")
+    else:
+        print("  (every profile is seeded here, so the unseeded-store refusal is not exercised)")
+
     # **The card carries what their card carries.** Their listing prints six
     # specifications under the photo and this one printed mileage alone,
     # because the importer read four columns out of an export that had twelve.

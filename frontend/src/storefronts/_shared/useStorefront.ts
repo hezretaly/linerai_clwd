@@ -23,6 +23,15 @@ export function useStorefront(params: string) {
     queryKey: ['showroom', params],
     queryFn: () => api.get<ShowroomPayload>(`/api/showroom?${params}`),
     placeholderData: keepPreviousData,
+    // **A failed request is thrown, never swallowed into "Loading the lot".**
+    // On a host where a dealership was never seeded the API answered 500 and
+    // this hook simply never resolved -- so the page sat on its loading
+    // copy for ever, over a header with no name in it, and nothing anywhere
+    // said why. Thrown, it reaches the boundary in `StorefrontPage`, which
+    // prints the server's own words (the 503 names the command to run).
+    // Every design gets this without writing an error state, because it is
+    // a guarantee rather than a layout.
+    throwOnError: true,
   })
 
   useEffect(() => {

@@ -24,10 +24,11 @@ drops the store.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from app.config import settings
-from app.db import current_store
+from app.db import current_store, has_database
 
 log = logging.getLogger("liner.stores")
 
@@ -62,6 +63,28 @@ def split(path: str) -> tuple[str, str]:
     return head, "/" + rest
 
 
+async def _not_seeded(scope, receive, send, slug: str) -> None:  # noqa: ANN001
+    """503 with the fix in it, for a store whose database does not exist yet."""
+    detail = (
+        f"The dealership '{slug}' has not been set up on this host yet. "
+        f"Run: DEALERSHIP={slug} make reset-db  (then restart), and check `make stores`."
+    )
+    if scope["type"] == "websocket":
+        await send({"type": "websocket.close", "code": 1013})
+        return
+    body = json.dumps({"detail": detail, "store": slug, "seeded": False}).encode()
+    await send({
+        "type": "http.response.start",
+        "status": 503,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"cache-control", b"no-store"),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 class StorePrefix:
     """Sets the active store from the URL, then hands on the stripped path."""
 
@@ -75,6 +98,23 @@ class StorePrefix:
         slug, rest = split(scope.get("path", "/"))
         if not slug:
             return await self.app(scope, receive, send)
+
+        # **A store with no database is refused before anything opens it.**
+        # Connecting to SQLite creates the file, so the first request to
+        # `/alsbou/api/...` on a host where Alsbou was never seeded minted an
+        # empty `alsbou.db`, then failed with `no such table: dealership` --
+        # a 500 the page rendered as "Loading the lot" for ever, over a header
+        # with no name in it, and a 4 KB file that afterwards made `make
+        # stores` show a dealership that was not there. The same rule
+        # `has_database` already enforces for the login walk and `/ops`,
+        # arriving through the storefront.
+        #
+        # Only the API and the socket are refused. The SPA document still
+        # serves, so the page can render the reason rather than a blank --
+        # serving `index.html` opens no database. The answer names the
+        # command, because the person reading it is the one who has to run it.
+        if not has_database(slug) and (rest.startswith("/api/") or rest.startswith("/ws/")):
+            return await _not_seeded(scope, receive, send, slug)
 
         scope = dict(scope)
         scope["path"] = rest

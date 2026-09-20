@@ -351,6 +351,15 @@ lists every store and whether it has a database yet; a store that has none
 needs `DEALERSHIP=<slug> make reset-db` first (which also creates whoever is
 in the profile's `staff:` and prints their passwords).
 
+**If a storefront says "This dealership is not set up on this host yet"**,
+that is exactly what happened: `/<slug>` is being served but that store's
+database was never created there. `make stores` shows which are seeded;
+`DEALERSHIP=<slug> make reset-db` creates it (and prints that profile's
+staff logins), then restart. The API answers 503 with the same sentence
+rather than opening the store, because connecting to SQLite creates the
+file, and a request that minted an empty database used to leave `make
+stores` reporting a dealership that was not there.
+
 **Where they sign in.** One form, `/login`, and the server finds the store
 that holds the address: an Alsbou manager lands on `/alsbou/app`, Craig's on
 `/craigandlandreth/app`. A URL that names a store — `/alsbou/login` —
