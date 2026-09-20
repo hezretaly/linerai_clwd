@@ -19,6 +19,11 @@ timezone: America/Los_Angeles
 address: 1223 W 17th St, Santa Ana, CA 92706
 phone: (951) 366-4755
 website_url: "https://www.alsboucars.com/"
+# Their mailbox on Liner's sending domain -- the local part of the
+# address their buyers write to and their mail goes out from:
+# `alsboucars@<SENDING_DOMAIN>`. Mail arriving for it is filed in this store.
+# Left out, it is derived from the website's host without its last label.
+mailbox: alsboucars
 
 # Mon-Sat 10-8, Sun 10-6. Open seven days, so there is no `null` here -- and
 # Sunday's earlier close is kept exact rather than rounded into the others,

@@ -156,7 +156,19 @@ def blocked_reason(to: str) -> str:
 
     Both gates in one place, so a caller cannot check one and forget the
     other -- the same reason `outreach_send.blocked_reason` is one function.
+
+    **The deployment's own switch comes first.** `TEXTING=false` is the
+    dealership saying texting is not offered here yet; the button is not
+    drawn and a send that reaches this anyway is refused with the line that
+    names the setting. Receiving is never gated -- a text that arrives is
+    stored, because a reply nobody can see is the failure the receipts exist
+    to prevent.
     """
+    if not settings.texting:
+        return (
+            "Not sent: texting is switched off for this deployment "
+            "(TEXTING=false in .env). Set TEXTING=true and restart to offer it."
+        )
     if opted_out(to):
         return (
             f"Not sent: {to} texted STOP and has not texted START. "

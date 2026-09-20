@@ -172,6 +172,19 @@ class Settings(BaseSettings):
     #: `ENV=production` refuses to boot with this false.
     twilio_validate_signature: bool = True
 
+    # --- Channels a deployment offers ---------------------------------------
+    # Two switches, one per channel a buyer or a rep can be offered. Both are
+    # about what is *shown*: `CALLING=false` takes the Call button off every
+    # storefront and refuses a browser call; `TEXTING=false` takes "Text them"
+    # off the buyer page and refuses a send. Receiving is never gated by
+    # either -- a call or a text that arrives is still recorded. They exist
+    # because "the provider is configured" and "we offer this to buyers yet"
+    # are different facts: a line half set up is one to take off the screen
+    # rather than leave failing in front of a buyer, without touching the
+    # credentials it will need when it is turned back on.
+    calling: bool = True
+    texting: bool = True
+
     # --- Voice -------------------------------------------------------------
     # `openai` is the only implementation. Empty means voice is off, and the
     # call page says so rather than failing on a button press.

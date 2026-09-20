@@ -1055,6 +1055,19 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **`/ops/phone` reports which one is in use, never the value.** Both work,
     so it is not a warning; it is the one fact that decides what happens on
     the day somebody rotates a secret, and it is invisible otherwise.
+- **A channel can be switched off without touching its credentials.**
+  `CALLING=false` takes the Call button off every storefront and makes
+  `/call` refuse with the typed error the page already shows; `TEXTING=false`
+  takes "Text them" off the buyer page and refuses a send with the line that
+  names the setting. Receiving is never gated by either -- a call or a text
+  that arrives is still recorded. They exist because "the provider is
+  configured" and "we offer this to buyers yet" are different facts: a line
+  half set up is one to take off the screen rather than leave failing in
+  front of a buyer, with its credentials left in place for the day it is
+  turned back on. `/api/integrations` reports a switched-off channel as
+  *switched off*, never as *not configured* -- one boolean over the two
+  sends whoever reads it to the wrong line of `.env` -- and texting has its
+  own row there now, because the buyer page's button reads it.
 - **A rep can text a buyer, and no assistant can.** SMS runs on the same
   Twilio number, the same credentials and the same signature check as the
   phone line — there is nothing extra in `.env` and one more webhook in the
@@ -1688,6 +1701,29 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       than from a person, and its `Reply-To` is the `reply+<token>@` address
       that routes an answer back into the buyer's timeline — not a header a
       rep's own address may take over.
+  - **One mailbox per dealership on the shared domain, and the envelope
+    routes the mail.** `alsboucars@linerai.us` is Alsbou's and
+    `craigsbestcars@linerai.us` is Craig and Landreth's: the `mailbox:` in
+    each profile (derived from the website's host when it is not written
+    in; the fixture, with no site, has none and keeps `sales@`). The
+    provider verifies the domain, so every mailbox on it sends on one key
+    and a new dealership is a line in its profile rather than a credential.
+    The Worker posts to one URL with no store in the path, so on a host
+    serving several dealerships `app/mailboxes.py` reads the envelope:
+    `reply+<token>@` is looked up in every seeded store's `outreach`, a
+    mailbox names the store whose profile declares it, and everything else
+    -- `sales@`, `support@`, a stranger -- stays with the default store.
+    The intake opens that store's session for the claim and hands the slug
+    to the background pass, which sets it for itself: the middleware's
+    ContextVar is gone by the time that runs. Without this every
+    dealership's mail landed in whichever store `DEALERSHIP=` named, and a
+    buyer of one dealership became a lead of another.
+    - **The Worker has to know the mailboxes too**, or Cloudflare throws
+      their mail away with a `console.log` -- the `founder@` failure one
+      dealership at a time. They are in `wrangler.jsonc`'s
+      `ALLOWED_RECIPIENTS`, a new dealership is an entry there plus a
+      `wrangler deploy`, and `make smoke` fails on a profile whose mailbox
+      is missing from that list.
   - **`SENDING_FROM` is an address; the display name is served.** It used to
     be a whole header, and `.env.example` illustrated it with `Riverside Auto
     <support@linerai.us>` — the one line in that file people copy verbatim. So

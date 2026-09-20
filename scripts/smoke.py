@@ -2203,6 +2203,139 @@ def main() -> int:
     check("and the fields the worker sends that we do not read are tolerated",
           landed.get("matched_by") == "reply_token", str(landed.get("matched_by")))
 
+    print("\n== one mailbox per dealership, and mail to it lands in that store ==")
+    # `alsboucars@linerai.us` is Alsbou's, declared in its profile, and the
+    # Worker posts to one URL with no store in the path -- so the envelope is
+    # what routes a delivery on a host serving several dealerships. Without
+    # this every dealership's mail landed in whichever store `DEALERSHIP=`
+    # named, and a buyer of one dealership became a lead of another.
+    from app import mailboxes as _boxes
+    from app.db import SessionLocal as _Store2
+    from app.models import InboundEmail as _Inbound, Lead as _Lead2, Outreach as _Sent
+    boxes = _boxes.mailboxes()
+    check("every seeded dealership with a website declares a mailbox",
+          "alsboucars" in boxes and boxes["alsboucars"] == "alsbou", str(boxes))
+    check("the fixture, which has no website, declares none",
+          "" not in boxes and _boxes.mailbox_for("") == "", str(boxes))
+
+    routed_id = f"<worker-{run}-routed@outlook.com>"
+    routed_from = f"alsbou.buyer.{run}@example.invalid"
+    inbound(worker_payload(
+        messageId=routed_id, to="alsboucars@linerai.us", conversationId="",
+        subject="Is the Q7 still available?", **{"from": routed_from, "fromAddress": routed_from},
+    ), path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
+    filed = None
+    for _ in range(40):
+        with _Store2("alsbou") as _adb:
+            row = _adb.query(_Inbound).filter_by(message_id=routed_id).one_or_none()
+            if row is not None and row.outcome != "received":
+                filed = (row.outcome, row.lead_id)
+                break
+        time.sleep(0.25)
+    check("mail to a dealership's mailbox is filed in that dealership's store",
+          filed is not None and filed[0] == "accepted", str(filed))
+    with _Store2("alsbou") as _adb:
+        minted = _adb.query(_Lead2).filter(_Lead2.email == routed_from).one_or_none()
+        check("and the stranger who wrote in became that dealership's buyer, not the default store's",
+              minted is not None, routed_from)
+        # A reply token is the other route: the send was minted in one store,
+        # and the token finds it wherever the Worker posted.
+        their_send = _Sent(
+            lead_id=minted.id if minted else None, channel="email", direction="out",
+            kind="follow_up", to_address=routed_from, subject="x", body="x",
+            status="sent", reply_token=f"smk{run}alsbou".lower(),
+        )
+        _adb.add(their_send); _adb.commit()
+        their_token = their_send.reply_token
+    check("a reply token is looked up across every store",
+          _boxes.store_for(f"reply+{their_token}@linerai.us") == "alsbou")
+    check("and an address that is nobody's mailbox stays with the default store",
+          _boxes.store_for("sales@linerai.us") == "" and _boxes.store_for("support@linerai.us") == "")
+    # The default store's inbox must not have seen it: filed once, in one
+    # place, or a rep at the wrong dealership reads somebody else's buyer.
+    with _Store2("") as _ddb:
+        check("the default store never saw the routed delivery",
+              _ddb.query(_Inbound).filter_by(message_id=routed_id).count() == 0)
+    # Given back: the buyer this run minted in Alsbou's store, with
+    # everything that hangs off them -- the conversation the first delivery
+    # opened, its messages, the receipts, the send. Children first, or the
+    # foreign keys refuse; a buyer left behind per run is the `Smoke Stranger`
+    # leak in another store.
+    from sqlalchemy import text as _sql
+    with _Store2("alsbou") as _adb:
+        if minted is not None:
+            lid = minted.id
+            convo_ids = [r[0] for r in _adb.execute(
+                _sql("SELECT id FROM conversations WHERE lead_id = :l"), {"l": lid}
+            ).all()]
+            for cid in convo_ids:
+                for table in ("call_buyer_tracks", "call_recordings", "call_segments",
+                              "call_usage", "conversation_once", "escalations",
+                              "messages", "vehicle_mentions"):
+                    _adb.execute(_sql(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": cid})
+            _adb.execute(_sql("DELETE FROM email_replies_due WHERE lead_id = :l"), {"l": lid})
+            for table in ("inbound_emails", "appointments", "captured_fields",
+                          "lead_addresses", "outreach", "conversations"):
+                _adb.execute(_sql(f"DELETE FROM {table} WHERE lead_id = :l"), {"l": lid})
+            _adb.execute(_sql("DELETE FROM leads WHERE id = :l"), {"l": lid})
+        _adb.execute(_sql("DELETE FROM inbound_emails WHERE message_id = :m"), {"m": routed_id})
+        _adb.execute(_sql("DELETE FROM outreach WHERE reply_token = :t"), {"t": their_token})
+        _adb.commit()
+    with _Store2("alsbou") as _adb:
+        check("and the routed buyer is given back to Alsbou's store",
+              minted is None or _adb.query(_Lead2).filter_by(id=minted.id).count() == 0)
+
+    # And the other direction: what a dealership's mail goes out *from*. The
+    # From carries the dealership's name and its own mailbox on the shared
+    # domain, so a reply -- or a fresh message to the address on the mail --
+    # comes back to the right store.
+    from app import outreach_send as _out
+    from app.config import settings as _cfg2
+    from app.integrations.email.outbox import OutboxSender as _Outbox
+    kept_domain = _cfg2.sending_domain
+    _cfg2.sending_domain = "linerai.us"
+    try:
+        with _boxes.using("alsbou"), _Store2("alsbou") as _adb:
+            alsbou_from = _out.dealership_from(_adb, _Outbox())
+        with _boxes.using(""), _Store2("") as _ddb:
+            default_from = _out.dealership_from(_ddb, _Outbox())
+    finally:
+        _cfg2.sending_domain = kept_domain
+    check("a dealership's mail goes out from its own mailbox on the shared domain",
+          "<alsboucars@linerai.us>" in alsbou_from and "Alsbou" in alsbou_from, alsbou_from)
+    check("and the fixture, with no mailbox, keeps the deployment's sales@",
+          "<sales@linerai.us>" in default_from, default_from)
+
+    print("\n== a channel can be switched off without touching its credentials ==")
+    # CALLING=false and TEXTING=false are about what is *shown*: the Call
+    # button leaves every storefront, the Text button leaves the buyer page,
+    # and a send or a browser call that reaches the server anyway is refused
+    # with the line that names the setting. Both reported as themselves on
+    # /api/integrations -- "switched off" is not "not configured", and one
+    # boolean over the two sends whoever reads it to the wrong line of .env.
+    # Flipped in this process only, and put back in a finally.
+    from app import sms as _sms
+    from app.integrations import registry as _reg
+    kept_calling, kept_texting = _cfg2.calling, _cfg2.texting
+    try:
+        _cfg2.texting = False
+        refused_text = _sms.blocked_reason("+15025550142")
+        sms_row = _reg._sms_status()
+        _cfg2.calling = False
+        voice_row = _reg._voice_status()
+    finally:
+        _cfg2.calling, _cfg2.texting = kept_calling, kept_texting
+    check("TEXTING=false refuses a send and names the setting",
+          "TEXTING" in refused_text, refused_text[:80])
+    check("and /api/integrations reports texting as switched off, not unconfigured",
+          sms_row.configured is False and sms_row.impl == "switched off"
+          and sms_row.missing == ["TEXTING"], f"{sms_row.impl} {sms_row.missing}")
+    check("CALLING=false reports voice as switched off the same way",
+          voice_row.configured is False and voice_row.impl == "switched off"
+          and voice_row.missing == ["CALLING"], f"{voice_row.impl} {voice_row.missing}")
+    check("with both back on, the report is what the credentials say",
+          _reg._voice_status().impl != "switched off" and _reg._sms_status().impl != "switched off")
+
     # The Worker retries a 5xx or a dropped connection. Re-posting the same
     # bytes must cost a buyer nothing.
     twice = worker_payload(messageId=f"<worker-{run}-2@outlook.com>")
@@ -4356,6 +4489,21 @@ def main() -> int:
           not unroutable, f"dropped in Cloudflare, silently: {unroutable}")
     check("and a reply token still routes, which is most inbound mail",
           any(p == "reply+" for p in prefixes), str(prefixes))
+    # **Every dealership's mailbox too.** The Worker's default list is Liner's
+    # own addresses; the dealerships' are in wrangler.jsonc's
+    # ALLOWED_RECIPIENTS, because a profile added on this side without an
+    # entry there is a mailbox whose mail Cloudflare throws away -- the
+    # founder@ failure, one dealership at a time.
+    wrangler = pathlib.Path("backend/app/integrations/email/worker/wrangler.jsonc").read_text()
+    found = re.search(r'"ALLOWED_RECIPIENTS":\s*"([^"]*)"', wrangler)
+    deployed = {p.strip().lower() for p in (found.group(1) if found else "").split(",") if p.strip()}
+    from app import mailboxes as _mb
+    missing_boxes = sorted(f"{box}@" for box in _mb.mailboxes() if f"{box}@" not in deployed)
+    check("every dealership's mailbox is in the Worker's deployed recipient list",
+          found is not None and not missing_boxes,
+          f"missing from wrangler.jsonc ALLOWED_RECIPIENTS: {missing_boxes}")
+    check("and that list still carries everything the default list does",
+          all(p in deployed for p in prefixes), f"{sorted(deployed)} vs {prefixes}")
 
     print("\n== a real dealer platform, parsed from its own markup ==")
     # The first adapter written against a real site rather than the JSON-LD

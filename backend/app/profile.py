@@ -304,6 +304,33 @@ def staff_domain() -> str:
     return host if "." in host else FIXTURE_DOMAIN
 
 
+#: What a mailbox local part may look like. It lands in a From header and in
+#: the Worker's recipient list, so it is validated to what an address takes.
+_MAILBOX_RE = re.compile(r"^[a-z0-9][a-z0-9._+-]{0,63}$")
+
+
+def mailbox() -> str:
+    """The dealership's own mailbox on the shared sending domain -- the local
+    part only. `alsboucars` for `alsboucars@linerai.us`.
+
+    From the profile's `mailbox:` when it says, else the host of their
+    `website_url` with `www.` and the last label dropped: `alsboucars.com`
+    becomes `alsboucars`. A dealership can be given a different name
+    (`craigsbestcars` for craigandlandrethcars.com) by writing it in. A
+    profile with neither -- the fixture -- gets "", and the deployment's
+    `SENDING_FROM` / `sales@` stands in, exactly as before.
+    """
+    stated = str(_top("mailbox") or "").strip().lower()
+    if stated:
+        return stated if _MAILBOX_RE.match(stated) else ""
+    host = staff_domain()
+    if host == FIXTURE_DOMAIN:
+        return ""
+    local = host.rsplit(".", 1)[0] if "." in host else host
+    local = local.replace(".", "-")
+    return local if _MAILBOX_RE.match(local) else ""
+
+
 def staff() -> list[dict]:
     """The dealership's own people, so a reseed rebuilds them.
 

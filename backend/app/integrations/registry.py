@@ -165,6 +165,23 @@ def _inbound_status() -> IntegrationStatus:
 
 def _voice_status() -> IntegrationStatus:
     provider = get_voice_provider()
+    # The deployment's switch is reported as itself, never folded into "not
+    # configured": a key that is present and a line that is switched off are
+    # different facts with different fixes, and one boolean over both sends
+    # whoever reads it to the wrong line of `.env`.
+    if not settings.calling:
+        return IntegrationStatus(
+            key="voice",
+            label="Voice",
+            configured=False,
+            impl="switched off",
+            missing=["CALLING"],
+            detail=(
+                "Calling is switched off for this deployment (CALLING=false). No "
+                "storefront shows a Call button and /call refuses to start a call. "
+                "Set CALLING=true and restart to offer it again."
+            ),
+        )
     try:
         provider.check()
         return IntegrationStatus(
@@ -191,6 +208,42 @@ def _voice_status() -> IntegrationStatus:
             missing=getattr(exc, "missing", []),
             detail=getattr(exc, "detail", str(exc)),
         )
+
+
+def _sms_status() -> IntegrationStatus:
+    """Texting a buyer: the same Twilio account as the phone line, plus the
+    deployment's own switch. Reported as its own row because a rep's "Text
+    them" button reads it -- a button drawn for a channel that refuses every
+    send is the failure `/api/integrations` exists to prevent."""
+    from app.integrations import twilio_account as account
+
+    if not settings.texting:
+        return IntegrationStatus(
+            key="sms",
+            label="Texting",
+            configured=False,
+            impl="switched off",
+            missing=["TEXTING"],
+            detail=(
+                "Texting is switched off for this deployment (TEXTING=false). The "
+                "buyer page shows no Text button and a send is refused; a text that "
+                "arrives is still recorded. Set TEXTING=true and restart to offer it."
+            ),
+        )
+    missing = account.missing()
+    return IntegrationStatus(
+        key="sms",
+        label="Texting",
+        configured=not missing,
+        impl="twilio" if not missing else "none",
+        missing=missing,
+        detail=(
+            "A rep can text a buyer from their page, from the dealership's number; "
+            "replies land on the timeline. No assistant is connected to SMS."
+            if not missing
+            else "Texting needs the phone line's Twilio account and number."
+        ),
+    )
 
 
 def _scraper_status() -> IntegrationStatus:
@@ -233,7 +286,7 @@ def _scraper_status() -> IntegrationStatus:
 def all_statuses() -> list[IntegrationStatus]:
     return [
         _llm_status(), _email_status(), _inbound_status(),
-        _voice_status(), _scraper_status(),
+        _voice_status(), _sms_status(), _scraper_status(),
     ]
 
 

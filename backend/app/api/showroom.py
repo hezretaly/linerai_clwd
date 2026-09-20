@@ -394,7 +394,10 @@ def showroom(
             # A key alone does not answer the phone: taking calls is a
             # decision a dealership makes, not a side effect of configuring
             # the chat agent.
-            "voice": bool(settings.voice_provider),
+            # Offered only when a provider is named *and* the deployment has
+            # not switched calling off: `CALLING=false` takes the Call button
+            # off every storefront without touching the provider settings.
+            "voice": bool(settings.voice_provider) and settings.calling,
         },
     }
 

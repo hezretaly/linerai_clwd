@@ -8,7 +8,7 @@ import { useDealership } from '../lib/dealership'
 import { PROVENANCE_LABEL, initials, money, relative } from '../lib/format'
 import type { BookingCardData } from '../components/BookingCard'
 import { BookingCard } from '../components/BookingCard'
-import type { Conversation, Lead, TeamMember } from '../lib/types'
+import type { Conversation, IntegrationsPayload, Lead, TeamMember } from '../lib/types'
 import { Button, Input, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
@@ -353,6 +353,15 @@ function Header({
 }) {
   const declined = conversations.some((c) => c.outcome === 'declined')
   const booked = conversations.some((c) => c.stage === 'booked')
+  // Whether texting is offered here at all. `TEXTING=false`, or no Twilio
+  // account, means no button rather than a composer that opens onto a
+  // refusal -- the same query the shell's banner reads, so the two agree.
+  const { data: health } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: () => api.get<IntegrationsPayload>('/api/integrations'),
+    staleTime: 60_000,
+  })
+  const texting_offered = health?.integrations.some((i) => i.key === 'sms' && i.configured) ?? false
 
   return (
     <div className="sticky top-14 z-10 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:static md:px-5">
@@ -399,7 +408,7 @@ function Header({
             />
           )
         )}
-        {lead?.phone && (
+        {lead?.phone && texting_offered && (
           <button
             onClick={onText}
             className={clsx(

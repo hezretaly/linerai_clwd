@@ -29,10 +29,10 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import email_reply, matching
+from app import email_reply, mailboxes, matching
 from app.config import settings
 from app.api.deps import current_user
-from app.db import get_db, utcnow
+from app.db import SessionLocal, get_db, utcnow
 from app.escalations import owner_of
 from app.events import emit
 from app.integrations.email.base import with_name
@@ -237,6 +237,18 @@ async def receive(
     if hinted and not REPLY_RE.search(to):
         to = f"reply+{hinted}@{settings.sending_domain or 'hinted'}"
 
+    # **Which dealership this is for.** The Worker posts to one URL with no
+    # store in the path, so on a host serving several dealerships the
+    # envelope decides: `alsboucars@` is Alsbou's mailbox and `reply+<token>@`
+    # was minted by exactly one store's send. Everything else stays with the
+    # default store, which is what it always was. The request's own session
+    # is the default store's, so a routed delivery opens the right one here
+    # and hands the slug to the background pass, which sets it for itself --
+    # the middleware's ContextVar is gone by the time that runs.
+    slug = mailboxes.store_for(to)
+    if slug:
+        db = SessionLocal(slug)
+
     envelope = {
         "message_id": message_id, "from_address": sender, "to_address": to,
         "subject": subject, "body": body, "in_reply_to": in_reply_to,
@@ -260,6 +272,8 @@ async def receive(
         if seen is not None:
             _receipt(db, outcome="duplicate", detail=f"Already accepted as {seen.id}.",
                      **envelope)
+            if slug:
+                db.close()
             return {"ok": True, "outcome": "duplicate"}
 
     # Claim the message before answering, then do the work after. Returning
@@ -280,16 +294,21 @@ async def receive(
     # handed over as an argument rather than stored: `create_all` adds a table
     # to a database that already exists and never a column.
     background.add_task(
-        _place, claim.id, automated_reason(sender, data.get("headers"), body)
+        _place, claim.id, automated_reason(sender, data.get("headers"), body), slug
     )
-    return {"ok": True, "outcome": "received", "receipt_id": claim.id}
+    if slug:
+        db.close()
+    return {"ok": True, "outcome": "received", "receipt_id": claim.id, "store": slug}
 
 
-def _place(receipt_id: str, refused: str = "") -> None:
+def _place(receipt_id: str, refused: str = "", slug: str = "") -> None:
     """Resolve one claimed delivery and store it. Runs after the response.
 
     Its own session: the request's is closed by the time this runs, and
-    reusing it is the classic background-task crash.
+    reusing it is the classic background-task crash. And its own store:
+    `slug` is the dealership the envelope was routed to, set here for the
+    whole pass so every helper below -- the lead matcher, the reply agent,
+    the emit -- reads and writes that store's file rather than the default.
 
     `refused` is `automated_reason`'s verdict, decided back in the request
     where the headers still exist and handed over as an argument. It is not a
@@ -298,8 +317,11 @@ def _place(receipt_id: str, refused: str = "") -> None:
     design. It is empty when a lead already exists, since the question only
     arises for a delivery that matched nobody.
     """
-    from app.db import SessionLocal
+    with mailboxes.using(slug):
+        _place_in_store(receipt_id, refused)
 
+
+def _place_in_store(receipt_id: str, refused: str) -> None:
     db = SessionLocal()
     try:
         claim = db.query(InboundEmail).filter_by(id=receipt_id).one_or_none()

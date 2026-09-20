@@ -111,6 +111,18 @@ class EmailSender:
             # what the landing page publishes. A third copy of our own support
             # address is how one of them starts disagreeing.
             return bare_address(settings.support_email) or settings.support_email
+        # **The dealership's own mailbox first.** On a host serving several
+        # dealerships one `SENDING_FROM` cannot be right for all of them, and
+        # `sales@` on the shared domain would put every store's buyer mail in
+        # one envelope with no way to route the answer back. The profile's
+        # mailbox (`alsboucars@linerai.us`) is that store's, and the intake
+        # routes mail to it into that store. A profile with none -- the
+        # fixture -- falls through to what the deployment configured.
+        from app import profile
+
+        box = profile.mailbox()
+        if box and settings.sending_domain:
+            return f"{box}@{settings.sending_domain}"
         configured = settings.sending_from or (
             f"sales@{settings.sending_domain}" if settings.sending_domain else ""
         )

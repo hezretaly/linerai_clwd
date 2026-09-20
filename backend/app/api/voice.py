@@ -65,6 +65,16 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 def mint_session(
     db: Session = Depends(get_db), dealership: Dealership = Depends(get_dealership)
 ) -> dict:
+    # The deployment's switch, before the provider's credentials. `CALLING=
+    # false` is a line half set up taken off the screen; a buyer who reaches
+    # this page anyway -- an old link, a typed URL -- gets the same typed
+    # refusal the page already knows how to show, naming the setting rather
+    # than a missing key that is in fact present.
+    if not settings.calling:
+        raise NotConfigured(
+            "voice", ["CALLING"],
+            "Calling is switched off for this deployment (CALLING=false in .env).",
+        )
     provider = get_voice_provider()
     # channel="voice" appends the rules that only make sense out loud: no
     # markdown, no read-out lists, no booking card, numbers said the way people

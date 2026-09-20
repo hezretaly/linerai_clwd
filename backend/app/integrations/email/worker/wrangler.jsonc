@@ -9,7 +9,14 @@
 		// The path is aliased in the backend, so /api/inbound-email reaches the
 		// same handler. Whichever you use, it must be the public origin -- the
 		// Worker runs on Cloudflare's edge and cannot see a private address.
-		"WEBHOOK_URL": "https://linerai.us/api/emails/inbound"
+		"WEBHOOK_URL": "https://linerai.us/api/emails/inbound",
+		// Every local part the intake accepts. The first five are Liner's own
+		// and the reply tokens; after them, **one mailbox per dealership** --
+		// the `mailbox:` in each profile under backend/config/dealerships/.
+		// Mail to a dealership's mailbox is filed in that dealership's store.
+		// A new dealership is a new entry here *and* a `wrangler deploy`;
+		// `make smoke` fails if a profile's mailbox is missing from this list.
+		"ALLOWED_RECIPIENTS": "support@,sales@,founder@,cto@,reply+,alsboucars@,craigsbestcars@"
 	}
 
 	// WEBHOOK_SECRET is deliberately NOT here. `vars` are plaintext in the

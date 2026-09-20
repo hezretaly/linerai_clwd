@@ -211,6 +211,23 @@ With `VOICE_PROVIDER` unset, `/showroom` draws no Call button at all. That is
 on purpose: a button that opens a page saying voice is unavailable is worse
 than no button.
 
+### Switching a channel off without unsetting it
+
+```dotenv
+CALLING=false
+TEXTING=false
+```
+
+Two switches about what is *shown*, separate from whether the provider is
+set up. `CALLING=false` takes the Call button off every storefront and makes
+`/call` refuse to start; `TEXTING=false` takes "Text them" off the buyer page
+and refuses a send. Receiving is never gated — a call or a text that arrives
+is still recorded. Use them for a line that is half set up: off the screen
+rather than failing in front of a buyer, with the credentials left in place
+for the day it is turned back on. `/api/integrations` reports the channel as
+*switched off* and names the setting, so nobody goes looking for a missing
+key that is in fact present. Both need a restart.
+
 ### Email
 
 ```dotenv
@@ -229,10 +246,22 @@ Five things, and each breaks differently:
 - **`SENDING_DOMAIN`** — the domain must be verified in Resend. It also builds
   the `Reply-To: reply+<token>@` that routes a buyer's answer back into their
   timeline.
-- **`SENDING_FROM` is an address, not a header.** Do not put a name in it. The
-  display name is served: their outreach goes out as `Craig and Landreth Cars
-  <sales@linerai.us>`, read from the dealership row, and mail from `/ops` goes
-  out as `Liner`. A name written here is dropped — it used to be sent, and
+- **Each dealership has its own mailbox on that domain, from its profile.**
+  `mailbox: alsboucars` in `alsbou.yaml` makes Alsbou's mail go out as
+  `Alsbou Motors <alsboucars@linerai.us>`, and mail *to* that address is
+  filed in Alsbou's store — `craigsbestcars@linerai.us` likewise for Craig
+  and Landreth. Left out, the local part is the website's host without its
+  last label (`alsboucars.com` → `alsboucars`). The provider verifies the
+  domain, so every mailbox on it sends on the one key: a new dealership is
+  a line in its profile, **plus** an entry in the Worker's
+  `ALLOWED_RECIPIENTS` in `wrangler.jsonc` and a `wrangler deploy`, or
+  Cloudflare drops its mail before it reaches us. `make smoke` fails on a
+  profile whose mailbox is missing from that list.
+- **`SENDING_FROM` is an address, not a header**, and it is the fallback for
+  a dealership with no mailbox — the fixture, which has no website. Do not
+  put a name in it. The display name is served: outreach goes out under the
+  dealership's own name read from its row, and mail from `/ops` goes out as
+  `Liner`. A name written here is dropped — it used to be sent, and
   `.env.example` illustrated the line with "Riverside Auto", so anyone who
   copied that file mailed their prospect's buyers as a fixture dealership.
 - **`WEBHOOK_SECRET`** — shared with the Cloudflare Worker, and the only thing
