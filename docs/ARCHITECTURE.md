@@ -104,24 +104,25 @@ see, and the list of those should be short and named. Today it is: the root
 document, `SPA_PREFIXES`, and `RESERVED`. Three is fine. It should not grow
 without a gate check landing beside it.
 
-### 4. The default store is a fourth file for one dealership
+### 4. What the bare domain serves, and the one case with two files
 
-`DEALERSHIP=riverside` with no prefix reads `backend/liner.db`. `/riverside/…`
-reads `backend/var/stores/riverside.db`. Same profile, same seed, two files,
-and `make stores` reports the second "not seeded" while the first is full.
-`make smoke`'s price-order walk tripped over this: it created the second
-file by asking for it, and the guard that exists for exactly that caught it.
+`DEALERSHIP=<slug>` decides what the **unprefixed** routes serve — `/app`,
+`/showroom`, `/api/…` with no store in the path — and it is resolved
+through `active_store()`, which falls back to that slug. So with
+`DEALERSHIP=craigandlandreth`, the bare domain and `/craigandlandreth/…`
+read the *same* file, `var/stores/craigandlandreth.db`. That is the right
+shape for a dealership's own host: their domain in front, their slug in
+`.env`, and every route is theirs with or without the prefix.
 
-This is the single-dealership era still standing under the multi-store one.
-"The default store" was the only store; now it is a *mode* — "serve this slug
-unprefixed" — that happens to also pick a different file. **Recommendation:**
-`database_url_for("")` should resolve to the file of whichever slug
-`DEALERSHIP=` names, so a dealership has one file however it is addressed.
-Cost: a data copy on every deployed box (`liner.db` → `var/stores/<slug>.db`)
-and a one-line change in `config.py`; risk: every existing `.env`, script and
-smoke assertion assumes `liner.db`, so it is a change to make deliberately,
-with `make stores` reporting both paths until the copy is done. It is the
-highest-value item here and the one not to do casually.
+With `DEALERSHIP` unset the bare domain reads `backend/liner.db` — the
+Riverside fixture, seeded by `make seed` / `make demo-db` — and that is the
+one case with two files: `/riverside/…` would read
+`var/stores/riverside.db`, a second copy nobody serves. Harmless on a demo
+host (nothing links to `/riverside`), and `make smoke` caught the walk that
+once created it by asking for it. Not worth a data migration; worth knowing.
+
+The earlier draft of this section claimed a dealership always had two
+files. It does not; only the fixture does, and only when nothing is named.
 
 ### 5. `site:` is becoming a page schema
 
