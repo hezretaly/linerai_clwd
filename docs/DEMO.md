@@ -328,6 +328,53 @@ changes nothing, because they may have set their own since.
 Change one later with `make set-password EMAIL=...`. Both are safe on a box
 with real bookings on it; `make reset-db` is not.
 
+### Several dealerships on one box: a manager and a rep on each
+
+Every account-writing command acts on **one store — whichever `DEALERSHIP=`
+names** — so to put people on two dealerships you run it twice with the
+variable set each time. Nothing is copied between stores; a person exists in
+exactly one dealership's `users` table and can sign in to exactly that one.
+
+```bash
+# Alsbou Motors
+DEALERSHIP=alsbou make add-user EMAIL=owner@alsbou.com     NAME="Alsbou Owner" ROLE=manager
+DEALERSHIP=alsbou make add-user EMAIL=sales@alsbou.com     NAME="Their Rep"    ROLE=rep
+
+# Craig and Landreth Cars
+DEALERSHIP=craigandlandreth make add-user EMAIL=austin@craigandlandrethcars.com NAME="Austin"    ROLE=manager
+DEALERSHIP=craigandlandreth make add-user EMAIL=rep@craigandlandrethcars.com    NAME="Their Rep" ROLE=rep
+```
+
+Each prints a password once. To choose one instead:
+`DEALERSHIP=alsbou make set-password EMAIL=owner@alsbou.com`. `make stores`
+lists every store and whether it has a database yet; a store that has none
+needs `DEALERSHIP=<slug> make reset-db` first (which also creates whoever is
+in the profile's `staff:` and prints their passwords).
+
+**Where they sign in.** One form, `/login`, and the server finds the store
+that holds the address: an Alsbou manager lands on `/alsbou/app`, Craig's on
+`/craigandlandreth/app`. A URL that names a store — `/alsbou/login` —
+searches only that store.
+
+**What each can do, and what is enforced rather than hidden** — every line
+below was measured with four test accounts on two stores, not read off the
+code:
+
+| Signed in as | Own dashboard | The other dealership | `/api/ops` | Manager-only writes (team caps, publishing the assistant's settings) |
+|---|---|---|---|---|
+| A dealership's **manager** | 200, that dealership's name | 403 *"That session belongs to a different dealership"* | 403 *"Liner staff only"* | 200 |
+| A dealership's **rep** | 200 | 403 | 403 | 403 *"Managers only"* |
+| `founder@` / `cto@linerai.us` (owner) | — | 403 *"That account is Liner staff"* on **every** dealership, including the unprefixed default | 200 | — |
+
+The session cookie carries the store and the realm, and a mismatch is refused
+at the session rather than by any page — so it holds for a direct API call,
+not only for what the sidebar happens to show. The dashboard itself is one
+set of pages for every dealership, named for the store the signed-in person
+belongs to; `/ops` is Liner's own and is never per-store. A dealership's
+manager changes only that dealership's assistant settings, team and
+inventory; nothing on `/app` can reach `ops.db`, and nothing on `/ops` can
+reach a dealership's file.
+
 ---
 
 ## Step 4 — Import their cars
