@@ -71,6 +71,24 @@ function vehiclesFrom(result: Record<string, unknown>): VehicleCardData[] {
   return []
 }
 
+/** Append a row of cars -- unless it is the row already on screen.
+ *
+ *  Every turn about one car looks the car up again (a price is re-read each
+ *  turn because it can change), so every reply used to draw the same card
+ *  under itself: four questions about a Durango, four identical Durango
+ *  cards. The buyer has not been shown anything new, so nothing new is drawn.
+ *  Compared against the *last* row of cars in the thread, whatever text sits
+ *  between -- the moment they ask about a different car, or a search returns
+ *  a different set, the row is drawn again. One helper for the live stream
+ *  and for a refresh, so the two cannot disagree about what "the same" means.
+ */
+function withVehicles(prev: Item[], id: string, vehicles: VehicleCardData[]): Item[] {
+  const last = [...prev].reverse().find((i) => i.kind === 'vehicles')
+  const vins = (cars: VehicleCardData[]) => cars.map((c) => c.vin).join('|')
+  if (last && last.kind === 'vehicles' && vins(last.vehicles) === vins(vehicles)) return prev
+  return [...prev, { kind: 'vehicles', id, vehicles }]
+}
+
 export function Chat() {
   // Who this instance is, and their colour. Read here rather than off the
   // session payload because the resume path returns before that payload
@@ -260,14 +278,9 @@ export function Chat() {
             },
           ])
         } else if (event === 'vehicles') {
-          setItems((prev) => [
-            ...prev,
-            {
-              kind: 'vehicles',
-              id: `cars-${Date.now()}`,
-              vehicles: data.vehicles as VehicleCardData[],
-            },
-          ])
+          setItems((prev) =>
+            withVehicles(prev, `cars-${Date.now()}`, data.vehicles as VehicleCardData[]),
+          )
         } else if (event === 'booking') {
           setItems((prev) => [
             ...prev,
@@ -586,7 +599,7 @@ async function resume(
       .filter((c) => SEARCH_TOOLS.has(c.name))
       .flatMap((c) => vehiclesFrom(c.result))
     if (shown.length > 0) {
-      rebuilt.push({ kind: 'vehicles', id: `cars-${message.id}`, vehicles: shown.slice(0, 3) })
+      rebuilt.splice(0, rebuilt.length, ...withVehicles(rebuilt, `cars-${message.id}`, shown.slice(0, 3)))
     }
   }
   // Times are not replayed from the transcript -- the server looked them up

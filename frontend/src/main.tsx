@@ -1,33 +1,51 @@
-import { StrictMode, useEffect } from 'react'
+import { StrictMode, Suspense, lazy, useEffect, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import './styles/liner-theme.css'
 
-import { AppShell } from './components/dashboard/AppShell'
 import { BuyerTheme } from './components/BuyerTheme'
 import { BASENAME } from './lib/store'
 import { RequireAuth } from './routes/RequireAuth'
 import { Login } from './routes/Login'
 import { Chat } from './routes/Chat'
 import { StorefrontPage } from './routes/StorefrontPage'
-import { Call } from './routes/Call'
-import { OverviewPage } from './routes/Overview'
-import { ConversationListPage } from './routes/ConversationList'
-import { LeadPage, LeadRedirect } from './routes/LeadPage'
-import { CampaignsPage } from './routes/Campaigns'
-import { LeadImportPage } from './routes/LeadImport'
-import { CalendarPage } from './routes/Calendar'
-import { InventoryPage } from './routes/Inventory'
-import { ImportPage } from './routes/Import'
-import { AssistantPage } from './routes/Assistant'
-import { TeamPage } from './routes/Team'
-import { OpsShell } from './routes/ops/OpsShell'
 import { RequireOwner } from './routes/ops/RequireOwner'
-import { OpsCalendarPage } from './routes/ops/OpsCalendar'
-import { OpsMailPage } from './routes/ops/OpsMail'
-import { OpsPhonePage } from './routes/ops/OpsPhone'
+import { Spinner } from './components/ui'
+
+/** A route loaded when it is first visited, not with the page.
+ *
+ *  `/chat` is an iframe on a dealership's storefront, and it used to pull the
+ *  whole dashboard -- every dealer page, the ops pages, the calendar, the
+ *  charts -- into one 880 KB bundle before it could draw a greeting. A buyer
+ *  pressing "Chat with us" waited on code no buyer ever runs. The dealer and
+ *  ops routes are their own chunks now; the buyer surfaces stay in the main
+ *  one because they are the page.
+ */
+function page<M, P extends object>(load: () => Promise<M>, pick: (m: M) => ComponentType<P>) {
+  return lazy(() => load().then((m) => ({ default: pick(m) })))
+}
+
+const Call = page(() => import('./routes/Call'), (m) => m.Call)
+const AppShell = page(() => import('./components/dashboard/AppShell'), (m) => m.AppShell)
+const OverviewPage = page(() => import('./routes/Overview'), (m) => m.OverviewPage)
+const ConversationListPage = page(
+  () => import('./routes/ConversationList'), (m) => m.ConversationListPage,
+)
+const LeadPage = page(() => import('./routes/LeadPage'), (m) => m.LeadPage)
+const LeadRedirect = page(() => import('./routes/LeadPage'), (m) => m.LeadRedirect)
+const CampaignsPage = page(() => import('./routes/Campaigns'), (m) => m.CampaignsPage)
+const LeadImportPage = page(() => import('./routes/LeadImport'), (m) => m.LeadImportPage)
+const CalendarPage = page(() => import('./routes/Calendar'), (m) => m.CalendarPage)
+const InventoryPage = page(() => import('./routes/Inventory'), (m) => m.InventoryPage)
+const ImportPage = page(() => import('./routes/Import'), (m) => m.ImportPage)
+const AssistantPage = page(() => import('./routes/Assistant'), (m) => m.AssistantPage)
+const TeamPage = page(() => import('./routes/Team'), (m) => m.TeamPage)
+const OpsShell = page(() => import('./routes/ops/OpsShell'), (m) => m.OpsShell)
+const OpsCalendarPage = page(() => import('./routes/ops/OpsCalendar'), (m) => m.OpsCalendarPage)
+const OpsMailPage = page(() => import('./routes/ops/OpsMail'), (m) => m.OpsMailPage)
+const OpsPhonePage = page(() => import('./routes/ops/OpsPhone'), (m) => m.OpsPhonePage)
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
@@ -53,6 +71,7 @@ createRoot(document.getElementById('root')!).render(
           was opened for -- without it the first navigation silently drops the
           prefix and lands on the default store's data. */}
       <BrowserRouter basename={BASENAME}>
+        <Suspense fallback={<Spinner />}>
         <Routes>
           {/* Buyer surfaces keep the brand blue. /login is a dealer screen and
               deliberately stays on classic. */}
@@ -126,6 +145,7 @@ createRoot(document.getElementById('root')!).render(
 
           <Route path="*" element={<LeaveToLanding />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

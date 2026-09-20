@@ -46,7 +46,7 @@ _ABSENT_HASH = pwd.hash(secrets.token_hex(32))
 
 
 class LoginBody(BaseModel):
-    # Plain str, not EmailStr: the seeded accounts use @example.invalid, which
+    # Plain str, not EmailStr: the seeded accounts use @riversideauto.example, which
     # RFC 2606 reserves so a misfire can never reach a real stranger. Strict
     # validators reject it, and it is only ever a lookup key here.
     email: str

@@ -31,7 +31,7 @@ import urllib.request
 from http.cookiejar import CookieJar
 
 BASE = "http://127.0.0.1:8000"
-LOGIN = {"email": "dana.mercer@example.invalid", "password": "liner-dev"}
+LOGIN = {"email": "dana.mercer@riversideauto.example", "password": "liner-dev"}
 
 jar = CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))

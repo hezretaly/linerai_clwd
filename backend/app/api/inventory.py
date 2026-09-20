@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -194,6 +195,17 @@ def update_vehicle(
 
     manual = set(json.loads(vehicle.manual_fields_json or "[]"))
     for key, value in body.model_dump().items():
+        if key == "features":
+            # The car's options list, one line each -- what the assistant
+            # answers "is it a three-row" from. Pasted from the dealer's own
+            # page when no import carries it; a string is split the way the
+            # CSV importer splits the same column, so the two agree.
+            lines = value if isinstance(value, list) else re.split(r"[;|\r\n]+", str(value or ""))
+            vehicle.features_json = json.dumps(
+                [str(f).strip()[:200] for f in lines if str(f).strip()][:400]
+            )
+            manual.add("features")
+            continue
         if key not in EDITABLE:
             continue
         setattr(vehicle, key, value)

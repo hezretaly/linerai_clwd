@@ -33,7 +33,7 @@ export function Login() {
   // login form is supposed to ask for. `make build` refuses if they survive.
   const seeded = import.meta.env.DEV
   const [email, setEmail] = useState(
-    seeded ? (wantsOwner ? 'founder@linerai.us' : 'dana.mercer@example.invalid') : '',
+    seeded ? (wantsOwner ? 'founder@linerai.us' : 'dana.mercer@riversideauto.example') : '',
   )
   const [password, setPassword] = useState(seeded ? 'liner-dev' : '')
 
@@ -187,7 +187,7 @@ export function Login() {
             in a bundle served from a real host. */}
         {seeded && (
           <p className="mt-4 text-xs text-muted-foreground">
-            Seeded accounts use @example.invalid, which RFC 2606 reserves so mail can never
+            Seeded accounts use @riversideauto.example, which RFC 2606 reserves so mail can never
             reach a real person. Password is <code className="font-mono">liner-dev</code>.
           </p>
         )}

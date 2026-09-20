@@ -9,7 +9,7 @@ on day one and unacceptable once there are leads in there.
 
 This changes one row and touches nothing else:
 
-    make set-password EMAIL=dana.mercer@example.invalid
+    make set-password EMAIL=dana.mercer@riversideauto.example
 
 It prompts rather than taking the password as an argument, so it never lands in
 shell history or the process list where ``ps`` would show it. ``--stdin`` is

@@ -22,7 +22,7 @@ make dev          # backend :8000, frontend :5173
 ```
 
 Open <http://localhost:5173>, sign in at `/login` with
-`dana.mercer@example.invalid` / `liner-dev`.
+`dana.mercer@riversideauto.example` / `liner-dev`.
 
 `make reset-db` builds the **fixture only** — a handful of buyers, enough for
 the tests. `make demo-db` is the one that fills the screens; `N=30 make

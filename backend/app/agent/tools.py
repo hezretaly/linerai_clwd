@@ -184,7 +184,11 @@ TOOL_DEFS: list[dict[str, Any]] = [
     },
     {
         "name": "get_vehicle",
-        "description": "Full detail for one vehicle by VIN.",
+        "description": (
+            "Full detail for one vehicle by VIN, including the listing's complete "
+            "options list. Call it before answering any equipment question -- seats, "
+            "rows, sunroof, drivetrain, tow package -- about a specific car."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {"vin": {"type": "string"}},
@@ -396,8 +400,17 @@ def home_location(db: Session) -> str:
     return (row.address or "").lower() if row else ""
 
 
-def _vehicle_payload(v: Vehicle, home: str = "") -> dict:
+#: How many options lines a *search* result carries per car. A dealer's own
+#: page lists a hundred per vehicle, and five cars times a hundred lines is
+#: the prompt the model reads on every later turn of the conversation.
+#: `get_vehicle` carries the whole list, and the prompt says to call it before
+#: answering an equipment question.
+SEARCH_FEATURES = 8
+
+
+def _vehicle_payload(v: Vehicle, home: str = "", full: bool = True) -> dict:
     raw = json.loads(v.raw_json or "{}") if v.raw_json else {}
+    features = json.loads(v.features_json or "[]")
     payload = {
         "vin": v.vin,
         "year": v.year,
@@ -414,7 +427,7 @@ def _vehicle_payload(v: Vehicle, home: str = "") -> dict:
         "body_style": v.body_style,
         "seats": v.seats,
         "origin": origin_of(v.make),
-        "features": json.loads(v.features_json or "[]"),
+        "features": features if full else features[:SEARCH_FEATURES],
         "photo_url": v.photo_url,
         "listing_url": v.listing_url,
         "status": v.status,
@@ -582,12 +595,27 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
     keywords = _words(args.get("keywords") or "")
     if keywords:
         def score(v: Vehicle) -> int:
-            haystack = _words(f"{v.keywords} {v.make} {v.model} {v.trim} {v.body_style}")
+            # The year and the options list are in the haystack too: "2018
+            # Audi Q7" names a year, and "third row" or "tow package" is an
+            # options line on the cars that have one and nowhere else.
+            options = " ".join(json.loads(v.features_json or "[]"))
+            haystack = _words(
+                f"{v.year} {v.keywords} {v.make} {v.model} {v.trim} {v.body_style} {options}"
+            )
             return sum(1 for k in keywords if _hits(k, haystack))
 
         scored = [(score(v), v) for v in rows]
-        if any(s for s, _ in scored):
-            rows = [v for s, v in sorted(scored, key=lambda p: -p[0]) if s > 0]
+        best = max((s for s, _ in scored), default=0)
+        if best:
+            # **Only the rows that match the most of what was named.** "Do
+            # you have a BMW X1?" scored the X1 at two and every other BMW at
+            # one, and the buyer who asked about one car was shown three -- the
+            # X1 and two 3-Series they had not mentioned. A row that matches
+            # less of the question than another row is not an answer to it.
+            # "BMW" alone still returns every BMW, since they all tie; a
+            # search that names nothing on the lot falls through to price
+            # order below, exactly as before.
+            rows = [v for s, v in scored if s == best]
 
     rows = rows[:MAX_RESULTS]
     _record_mentions(db, convo.id, rows)
@@ -607,7 +635,17 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
             ),
         }
     home = home_location(db)
-    return {"count": len(rows), "vehicles": [_vehicle_payload(v, home) for v in rows]}
+    out = {
+        "count": len(rows),
+        "vehicles": [_vehicle_payload(v, home, full=False) for v in rows],
+    }
+    if any(len(json.loads(v.features_json or "[]")) > SEARCH_FEATURES for v in rows):
+        out["note"] = (
+            f"Each car's `features` is cut to the first {SEARCH_FEATURES} lines here. "
+            "For any equipment question -- seats, rows, sunroof, tow package -- call "
+            "get_vehicle, which returns the whole list."
+        )
+    return out
 
 
 def get_vehicle(db: Session, convo: Conversation, args: dict) -> dict:
@@ -968,6 +1006,21 @@ def request_details(db: Session, convo: Conversation, args: dict) -> dict:
             "There is no screen on a call, so there is no card to show. Ask for "
             "the number out loud and read it back to check it."
         )
+    # **Once.** The card is replayed on refresh while it is unanswered, so a
+    # second one is the same question twice on one screen -- and a buyer who
+    # has left the boxes empty has answered, in their way. Asked again, the
+    # model gets told rather than given a second card, and the sentence it
+    # writes is the persuasion the prompt asks for instead of a repeat.
+    if details_pending(db, convo):
+        return {
+            "already_asked": True,
+            "note": (
+                "The boxes are already on the buyer's screen, unanswered. No second "
+                "card is shown. Say in one line why filling them in gets them what "
+                "they asked for, then offer anything else you can help with -- and "
+                "do not repeat what the record cannot tell them."
+            ),
+        }
     card = details.card(args.get("fields"), args.get("reason") or "")
     return {
         **card,
@@ -981,6 +1034,30 @@ def request_details(db: Session, convo: Conversation, args: dict) -> dict:
             "line and stop -- do not ask for any of these fields in your reply."
         ),
     }
+
+
+def details_pending(db: Session, convo: Conversation) -> bool:
+    """Is a details card on the buyer's screen with nothing typed into it yet?
+
+    Read off the transcript, the same way the resume path decides whether to
+    redraw the card: the newest of `request_details` and `save_details` in
+    the thread's tool calls decides. One reading here and one in
+    `GET /api/chat/sessions/{id}` would drift, so this is the reading.
+    """
+    pending = False
+    rows = (
+        db.query(Message)
+        .filter(Message.conversation_id == convo.id)
+        .order_by(Message.created_at.asc())
+        .all()
+    )
+    for row in rows:
+        for call in json.loads(row.tool_calls_json or "[]"):
+            if call.get("name") == "request_details" and (call.get("result") or {}).get("fields"):
+                pending = True
+            elif call.get("name") == "save_details":
+                pending = False
+    return pending
 
 
 def save_details(db: Session, convo: Conversation, values: dict) -> dict:
@@ -1228,7 +1305,16 @@ def escalate_to_human(
         convo.status = "handoff"
         convo.stage = "escalated"
         db.commit()
-        return {"escalation_id": open_row.id, "already_escalated": True}
+        return {
+            "escalation_id": open_row.id,
+            "already_escalated": True,
+            "guidance": (
+                "A colleague already has this conversation in their queue; nothing "
+                "new was raised. Do not tell the buyer again that somebody will "
+                "confirm -- they heard it. Get a number if you have none, and carry "
+                "on with anything else you can answer."
+            ),
+        }
 
     rule_key = args.get("rule_key") or ""
     rule = db.query(HandoffRule).filter_by(key=rule_key).one_or_none()
@@ -1281,10 +1367,16 @@ def escalate_to_human(
         "answer yourself."
     )
     if not reachable:
+        # Chat has a card for this and voice has a voice; neither is "ask for
+        # an email in a sentence", which is what this said before -- and the
+        # chat rules forbid exactly that, so the two instructions fought.
         guidance += (
-            " We have no way to reach this buyer, so ask for a name and an email "
-            "address now, in one short sentence, so the rep can follow up if the "
-            "buyer leaves. Save it with save_captured_fields."
+            " We have no way to reach this buyer, so get a phone number now, before "
+            "anything else: on chat call request_details (the boxes ask for it); on "
+            "a call ask out loud and read it back."
+            if convo.channel != "voice" else
+            " We have no way to reach this buyer, so ask for their number out loud "
+            "now and read it back to check it. Save it with save_captured_fields."
         )
     return {
         "escalation_id": escalation.id,

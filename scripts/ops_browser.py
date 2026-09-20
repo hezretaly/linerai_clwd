@@ -130,7 +130,7 @@ def main() -> int:
 
             say("a rep is sent there too, and told their session is intact")
             page.goto(f"{BASE}/login")
-            page.fill("input[type=email]", "marcus.vale@example.invalid")
+            page.fill("input[type=email]", "marcus.vale@riversideauto.example")
             page.fill("input[type=password]", "liner-dev")
             page.click("button[type=submit]")
             page.wait_for_url("**/app", timeout=15000)

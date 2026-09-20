@@ -115,7 +115,7 @@ async def run(buyer: Page, dealer: Page) -> int:
     # login form. Both are supported configurations, so this run works in
     # either rather than only in the one it happened to be started with.
     if "/login" in dealer.url:
-        await dealer.fill("input[type='email']", "dana.mercer@example.invalid")
+        await dealer.fill("input[type='email']", "dana.mercer@riversideauto.example")
         await dealer.fill("input[type='password']", "liner-dev")
         await dealer.click("button[type='submit']")
         await dealer.wait_for_url("**/app**", timeout=15000)

@@ -29,7 +29,7 @@ with sync_playwright() as pw:
     p = ctx.new_page()
     p.on("pageerror", lambda e: print(f"  [pageerror] {e}"))
     p.goto(f"{BASE}/login")
-    p.fill("input[type=email]", "dana.mercer@example.invalid")
+    p.fill("input[type=email]", "dana.mercer@riversideauto.example")
     p.fill("input[type=password]", "liner-dev")
     p.click("button[type=submit]")
     p.wait_for_url("**/app", timeout=15000)

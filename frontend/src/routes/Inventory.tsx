@@ -188,6 +188,10 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
 
   const [price, setPrice] = useState('')
   const [confirming, setConfirming] = useState(false)
+  // The car's options list, one per line, as the dealer's own page prints
+  // it. `null` means "not being edited": the box shows what is stored until
+  // somebody types, so a refetch never overwrites a half-pasted list.
+  const [options, setOptions] = useState<string | null>(null)
 
   const setStatus = useMutation({
     mutationFn: (status: string) => api.post(`/api/inventory/${id}/status`, { status }),
@@ -317,6 +321,42 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
                 will not overwrite {vehicle.manual_fields.length > 1 ? 'these' : 'this'}.
               </p>
             )}
+          </section>
+
+          {/* What the assistant answers "is it a three-row" from. A dealer's
+              own listing page prints these under "Vehicle Options", one per
+              line, and pasting that block here is the whole import when no
+              feed carries it. Saved through the same PATCH as every other
+              edit and marked manual, so the next crawl does not blank it. */}
+          <section className="space-y-2">
+            <Field label={`Options and equipment (${vehicle.features.length} lines)`}>
+              <textarea
+                value={options ?? vehicle.features.join('\n')}
+                onChange={(e) => setOptions(e.target.value)}
+                rows={8}
+                spellCheck={false}
+                placeholder={'One per line, e.g.\nThird row seating\nPanoramic sunroof\nTow package'}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </Field>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Liner reads the whole list before answering an equipment question, and
+                says a colleague will confirm anything that is not on it.
+              </p>
+              <Button
+                variant="primary"
+                disabled={options === null || options === vehicle.features.join('\n')}
+                onClick={() => {
+                  patch.mutate(
+                    { features: (options ?? '').split('\n').map((l) => l.trim()).filter(Boolean) },
+                    { onSuccess: () => setOptions(null) },
+                  )
+                }}
+              >
+                Save options
+              </Button>
+            </div>
           </section>
 
           <section>

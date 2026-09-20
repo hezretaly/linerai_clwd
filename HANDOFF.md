@@ -26,7 +26,7 @@ make install && make reset-db && make dev
 ```
 
 <http://localhost:5173> · sign in at `/login` with
-`dana.mercer@example.invalid` / `liner-dev`. **No `.env` is needed.**
+`dana.mercer@riversideauto.example` / `liner-dev`. **No `.env` is needed.**
 
 ## State — all green as of the last commit
 

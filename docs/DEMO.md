@@ -453,6 +453,24 @@ tells you whether an adapter is needed at all. A CSV export from their DMS is
 the other way in, at `/app/inventory/import`; cost, margin and salesperson
 columns are dropped before a row is built.
 
+**Each car's options list is what Liner answers equipment questions from** —
+"is it a three-row", "does it have a tow package", "heated seats?". A dealer's
+own listing prints it under *Vehicle Options*, a hundred lines per car, and
+there are two ways to get it in:
+
+- a CSV column called `options` (or `features` / `equipment`), split on `;`,
+  `|` or newlines — so a cell holding that block pasted one per line imports
+  as-is;
+- the **Options and equipment** box on the car's drawer at `/app/inventory`,
+  where the block can be pasted straight from the dealer's page. It is saved
+  as a manual edit, so the next crawl does not blank it.
+
+The list crawl does not read detail pages, so a crawled lot has no options
+until one of those runs. A crawl rung for detail pages needs a real capture
+of one first: `make capture URL=<a vehicle's own page>`. What the list does
+not name, Liner says a colleague will confirm — it never reasons it out from
+the model in general — and asks for a number so the answer can reach them.
+
 ---
 
 ## Step 5 — Rehearse

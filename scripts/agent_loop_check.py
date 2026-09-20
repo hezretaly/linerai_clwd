@@ -257,9 +257,14 @@ def main() -> int:
         # "someone is picking this up" and the thread died with nobody watching.
         check("but Liner is not gagged -- only a rep pressing Take over does that",
               convo.agent_paused is False, f"agent_paused={convo.agent_paused}")
-        check("and it is told to ask for a way to reach them",
-              "ask for a name and an email" in esc.get("guidance", ""),
-              f"reachable={esc.get('buyer_reachable')}")
+        # A number, through the card -- not "a name and an email in a
+        # sentence", which is what this guidance said while the chat rules
+        # forbade exactly that. Two instructions that disagree is how the
+        # model picks whichever it read last.
+        check("and it is told to get a number, through the card",
+              "request_details" in esc.get("guidance", "")
+              and "phone number" in esc.get("guidance", ""),
+              f"reachable={esc.get('buyer_reachable')} guidance={esc.get('guidance', '')[:80]}")
 
         # Escalating again on the same conversation must not open a second
         # unclaimed row. It used to, and conversation_out read that back with

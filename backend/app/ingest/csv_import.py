@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 
 from sqlalchemy.orm import Session
 
@@ -191,7 +192,14 @@ def import_csv(db: Session, raw: str) -> IngestRun:
             },
         }
         features, dropped = plausible_features(
-            [f.strip() for f in pick(row, "features").replace("|", ";").split(";") if f.strip()],
+            # One option per line is how a dealer's site prints them, and a CSV
+            # cell can hold newlines -- so a pasted "Vehicle Options" block
+            # imports as-is, beside the `;` and `|` a DMS export uses.
+            [
+                f.strip()
+                for f in re.split(r"[;|\r\n]+", pick(row, "features"))
+                if f.strip()
+            ],
             payload["body_style"],
         )
         payload["features"] = features

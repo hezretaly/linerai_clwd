@@ -48,7 +48,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make stop` | Kill anything on 8000 / 5173 / 8100 |
 
 Ports: backend **8000**, frontend **5173**, fixture site **8100**.
-Logins: `dana.mercer@example.invalid` (manager) and `marcus.vale@example.invalid`
+Logins: `dana.mercer@riversideauto.example` (manager) and `marcus.vale@riversideauto.example`
 (rep), both `liner-dev` in development — those are the **fixture's** accounts.
 A profile with its own `staff:` gets those people instead, with a password
 generated and printed once; the seed reports whichever it actually created,
@@ -297,6 +297,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     logic ran at all. It reads as a broken login and is nothing of the kind.
     `make smoke` reads the top-level routes out of `main.tsx`, fails on one
     the API would not serve, and fetches each against a real build.
+- **`/chat` does not load the dashboard.** It is an iframe on a dealership's
+  storefront, and it pulled every dealer page, the ops pages and the charts
+  into one 886 KB bundle before it could draw a greeting — "the chat takes
+  too long to load", reported from a real host. The dealer and ops routes
+  are `lazy()` chunks in `main.tsx` now (the `page()` helper, because every
+  route here is a named export), under one `Suspense`; the main chunk is
+  260 KB and the buyer surfaces stay in it because they are the page. The
+  overview's 420 KB of charts loads when somebody opens the overview.
 - **Mobile is a supported surface, not an afterthought.** Reps work from
   phones. Two rules keep it that way: a `<table>` never reflows, so any table
   either scrolls inside its own `overflow-x-auto` card or has a card layout
@@ -1716,6 +1724,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   people on the roster, and one manager cannot demonstrate a call being made
   differently by two. Dana and Marcus stay first and keep their addresses —
   every screenshot, smoke run and acceptance script signs in as one of them.
+  - **Their addresses are on the dealership's own domain.** `STAFF` holds
+    local parts, and `seed.staff_address` puts them on the host of the
+    profile's `website_url` — or on `riversideauto.example` for the fixture,
+    which has no site. A manager reading `dana.mercer@example.invalid` on
+    their own login sheet reads a test account, the same failure as being
+    greeted as somebody else's showroom. `.example` is RFC 2606 like
+    `.invalid`, so mail to it still cannot leave the building. A profile
+    with its own `staff:` list never reaches this; those addresses are
+    typed.
   It is **Riverside's roster and does not travel**: a profile with its own
   `staff:` gets exactly that list, because invented names in a prospect's
   assignment picker are the same failure as greeting their buyer as Riverside.
@@ -2532,6 +2549,54 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **A booked thread stays booked.** The appointment is real; only the focus
     follows them. Moving the stage back would make the row stop claiming a
     visit that exists, which is the disagreement the cancel path was fixed for.
+- **A buyer who names one car is shown that car.** "Do you have a BMW X1?"
+  scored the X1 at two words and every other BMW at one, and the buyer was
+  handed three cards — the X1 and two 3-Series nobody mentioned. Only the
+  rows with the *top* score come back now: a row that matches less of the
+  question than another row is not an answer to it. "BMW" alone still returns
+  every BMW, since they tie, and a search that names nothing on the lot still
+  falls through to price order. The year and the options list are in the
+  haystack too, so "2018 Audi Q7" and "tow package" both land.
+- **The same car is not drawn again under every reply.** Each turn about one
+  car looks it up again — a price is re-read each turn because it can change
+  — so four questions about a Durango drew four identical Durango cards.
+  `withVehicles` in `Chat.tsx` skips a row of cars whose VINs equal the last
+  row in the thread, whatever text sits between; a different car or a
+  different set is drawn. One helper for the live stream and the refresh
+  path, so the two cannot disagree about what "the same" means.
+- **A car's options list is its knowledge base, and `features_json` is where
+  it lives.** A dealer's own listing prints a hundred lines under "Vehicle
+  Options" — engine, drivetrain, the 40-20-40 rear bench — and that list is
+  what answers "is it a three-row" about *this* car rather than about the
+  model in general. Three ways in, one store: the CSV importer's
+  `features`/`options`/`equipment` column (split on `;`, `|` **or newlines**,
+  because that block is pasted one per line), a paste box on the vehicle's
+  drawer on `/app/inventory` (PATCH `features`, marked manual so a crawl
+  does not blank it), and the crawl — which needs a real capture of a detail
+  page before a rung can be written for it, per the `Adapter` rule.
+  - **`get_vehicle` carries the whole list; a search carries eight lines
+    per car.** Five cars times a hundred lines is the prompt the model reads
+    on every later turn, so the search result says it is cut and the prompt
+    says to call `get_vehicle` before answering an equipment question.
+  - **Absent from the list is a question for a colleague, never a guess.**
+    The prompt's rule: answer from the list if it names the thing; if it
+    does not, or the car has none, that is the unanswerable case below.
+- **A question the record cannot answer is a lead, not a dead end — and it
+  is refused once.** A real transcript: a buyer asked whether a Durango was a
+  three-row, was told the listing did not say, pressed twice, and was told
+  the same thing three times — then the quiet-buyer nudge said it a fourth.
+  Nobody asked for a number. The rule now: say once that a colleague will
+  confirm, `escalate_to_human` with the question, and `request_details` if
+  there is no number; on the next turn *do not restate the refusal* — say
+  why the boxes are worth filling in, once, and offer other help. Three
+  executors hold what the prompt cannot: `request_details` answers
+  `already_asked` instead of drawing a second card while one is unanswered
+  (`details_pending` reads the transcript the way the resume path does);
+  `escalate_to_human` on an open handoff says so in its guidance rather than
+  leaving the model to announce a colleague again; and its "no way to reach
+  this buyer" guidance now says *a number, through the card* — it used to
+  say "a name and an email in a sentence", which the chat rules forbid, so
+  two instructions fought and the model picked whichever it read last.
 - **Keywords split on non-alphanumerics, not on spaces.** `"Do you have a BMW
   X5?"` tokenised to `x5?`, matched nothing, and returned the three cheapest
   cars on the lot — while `"BMW X5"` and `"tell me about the BMW X5"` both

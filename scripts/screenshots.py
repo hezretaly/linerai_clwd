@@ -384,7 +384,7 @@ async def main() -> int:
 
         print("\nsigning in...")
         await page.goto(BASE + "/login", wait_until="networkidle")
-        await page.fill('input[type="email"]', "dana.mercer@example.invalid")
+        await page.fill('input[type="email"]', "dana.mercer@riversideauto.example")
         await page.fill('input[type="password"]', "liner-dev")
         # Signing in is a *document load* now: the server decides which store
         # the address belongs to, and crossing into one reloads so the router

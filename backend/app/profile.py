@@ -90,6 +90,17 @@ def _section(key: str) -> dict:
         return {}
 
 
+def _top(key: str):
+    """One top-level scalar of the running profile, or None."""
+    path = _path()
+    if not path.is_file():
+        return None
+    try:
+        return (yaml.safe_load(path.read_text()) or {}).get(key)
+    except (OSError, yaml.YAMLError):
+        return None
+
+
 def _section_list(key: str) -> list:
     """A top-level block that is a list rather than a mapping."""
     path = _path()
@@ -265,6 +276,32 @@ def inventory() -> dict:
         "fixture_csv": fixture,
         "origin": "env" if settings.scraper_base_url.strip() else "none",
     }
+
+
+#: The invented showroom's own invented domain. `.example` is reserved by RFC
+#: 2606 like `.invalid`, so mail to it can never leave the building -- but it
+#: reads as a dealership's address rather than as a placeholder, which is what
+#: the login sheet a prospect is shown has to do. The fixture's finance link
+#: already lived here.
+FIXTURE_DOMAIN = "riversideauto.example"
+
+
+def staff_domain() -> str:
+    """The domain the seeded staff sign in with.
+
+    A dealership's people have addresses at the dealership's own site, so the
+    seed builds the fixture roster's addresses from `website_url` -- `dana
+    .mercer@craigandlandrethcars.com` on Craig's instance, not `@example
+    .invalid`, which is what a real manager reads as a test account. A profile
+    with its own `staff:` list never reaches this: those addresses are typed.
+
+    Only the host, with `www.` dropped. A profile with no website -- the
+    fixture is the one -- gets the fixture's own invented domain.
+    """
+    raw = str(_top("website_url") or "").strip()
+    host = re.sub(r"^https?://", "", raw).split("/")[0].strip().lower()
+    host = re.sub(r"^www\.", "", host)
+    return host if "." in host else FIXTURE_DOMAIN
 
 
 def staff() -> list[dict]:

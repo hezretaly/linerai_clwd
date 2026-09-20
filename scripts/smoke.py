@@ -36,11 +36,11 @@ from http.cookiejar import CookieJar
 BASE = "http://127.0.0.1:8000"
 TSX = pathlib.Path(__file__).resolve().parent.parent / "frontend" / "src" / "main.tsx"
 WS = "ws://127.0.0.1:8000/ws/dealer"
-LOGIN = {"email": "dana.mercer@example.invalid", "password": "liner-dev"}
+LOGIN = {"email": "dana.mercer@riversideauto.example", "password": "liner-dev"}
 # The other seeded login, and the only one that is not a manager. Assigning a
 # buyer to somebody else is a manager's act now, so proving that takes a
 # session that is not one.
-REP_LOGIN = {"email": "marcus.vale@example.invalid", "password": "liner-dev"}
+REP_LOGIN = {"email": "marcus.vale@riversideauto.example", "password": "liner-dev"}
 
 jar = CookieJar()
 opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -447,6 +447,74 @@ def main() -> int:
     check("the first buyer message puts it on the badge and in the list together",
           badge_after == badge_before + 1 and convo in listed_after,
           f"badge {badge_before} -> {badge_after}, listed: {convo in listed_after}")
+
+    # **A buyer who names one car is shown that car.** "Do you have a Kia
+    # Sorento?" scored every Kia at one and the Sorentos at two, and the
+    # buyer was handed three cards -- two they had not asked about. Only the
+    # top-scoring rows come back now. Driven through the stub as typed text,
+    # because that is the path a real buyer's sentence takes.
+    named = call("POST", "/api/chat/sessions")["conversation_id"]
+    reply, _, _ = say(named, content="Do you have a Kia Sorento?")
+    found = [
+        f"{v['make']} {v['model']}"
+        for c in (reply or {}).get("tool_calls", [])
+        if c["name"] == "search_inventory"
+        for v in c.get("result", {}).get("vehicles", [])
+    ]
+    check("naming one car returns only that car",
+          found and all(f == "Kia Sorento" for f in found), str(found))
+
+    # **The details card is asked for once.** A second `request_details`
+    # while the first is unanswered used to draw a second card; it answers
+    # `already_asked` now, with the sentence the model should write instead.
+    # And the escalation's "no way to reach this buyer" guidance points at
+    # the card rather than at "a name and an email in a sentence", which the
+    # chat rules forbid -- two instructions that disagreed.
+    from app.agent import tools as _tools
+    from app.db import SessionLocal as _Local
+    from app.models import Conversation as _Convo, Message as _Msg
+    with _Local() as _db:
+        _c = _db.query(_Convo).filter_by(id=named).one()
+        first = _tools.request_details(_db, _c, {"fields": ["name", "phone"], "reason": "x"})
+        _db.add(_Msg(conversation_id=_c.id, role="assistant", content="ok",
+                     tool_calls_json=json.dumps([{"name": "request_details", "result": first}])))
+        _db.commit()
+        second = _tools.request_details(_db, _c, {"fields": ["phone"]})
+        check("a details card is drawn once while it is unanswered",
+              bool(first.get("fields")) and second.get("already_asked") is True
+              and "fields" not in second, str(second)[:120])
+        esc = _tools.escalate_to_human(_db, _c, {"reason": "is it a three-row?"})
+        check("an escalation with no number asks for one through the card",
+              "request_details" in esc.get("guidance", ""), esc.get("guidance", "")[:100])
+        again = _tools.escalate_to_human(_db, _c, {"reason": "and the tow rating?"})
+        check("and a second escalation on an open handoff says so instead of raising twice",
+              again.get("already_escalated") is True and "guidance" in again)
+
+    # **A car's options list is its knowledge base.** Pasted one per line on
+    # the vehicle's drawer, saved through the same PATCH as any edit, marked
+    # manual, and handed whole to `get_vehicle` -- while a search carries only
+    # the first few lines per car and says so.
+    plate = call("GET", "/api/inventory?status=available")["vehicles"][0]
+    kept = plate["features"]
+    pasted = "\n".join(f"Option line {n}" for n in range(1, 13)) + "\nThird row seating"
+    saved = call("PATCH", f"/api/inventory/{plate['id']}", {"features": pasted})
+    check("an options block pasted one per line is stored as lines",
+          len(saved["features"]) == 13 and "features" in saved["manual_fields"],
+          f"{len(saved['features'])} lines, manual={saved['manual_fields']}")
+    with _Local() as _db:
+        _c = _db.query(_Convo).filter_by(id=named).one()
+        whole = _tools.get_vehicle(_db, _c, {"vin": plate["vin"]})
+        # A phrase only the pasted list carries -- "third row seating" ties
+        # with every real three-row on the lot and the cap of five decides
+        # which are shown, which is not what this is checking.
+        cut = _tools.search_inventory(_db, _c, {"keywords": "option line 12"})
+        check("get_vehicle carries the whole list", len(whole["features"]) == 13)
+        check("a search carries a few lines per car and says it is cut",
+              any(v["vin"] == plate["vin"] for v in cut["vehicles"])
+              and all(len(v["features"]) <= _tools.SEARCH_FEATURES for v in cut["vehicles"])
+              and "get_vehicle" in cut.get("note", ""),
+              f"{[len(v['features']) for v in cut['vehicles']]} {cut.get('note', '')[:40]}")
+    call("PATCH", f"/api/inventory/{plate['id']}", {"features": kept})
     check("a tool actually ran", bool(reply and reply["tool_calls"]),
           ", ".join(c["name"] for c in reply["tool_calls"]) if reply else "")
     check("stage advanced to browsing", state["stage"] == "browsing", state["stage"])

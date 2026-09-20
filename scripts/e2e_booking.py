@@ -36,7 +36,7 @@ async def main() -> int:
         dealer_ctx = await browser.new_context(viewport={"width": 1280, "height": 900})
         dealer = await dealer_ctx.new_page()
         await dealer.goto(f"{BASE}/login", wait_until="networkidle")
-        await dealer.fill('input[type="email"]', "dana.mercer@example.invalid")
+        await dealer.fill('input[type="email"]', "dana.mercer@riversideauto.example")
         await dealer.fill('input[type="password"]', "liner-dev")
         await dealer.click('button[type="submit"]')
         await dealer.wait_for_url("**/app", timeout=10_000)

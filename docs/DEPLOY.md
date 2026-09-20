@@ -317,9 +317,9 @@ data on disk, an app that still cannot see it, and no error anywhere.
 
 ## 4. Three roles, and only two of them belong to the dealership
 
-`make reset-db` prints them. The manager account (`dana.mercer@example.invalid`)
+`make reset-db` prints them. The manager account (`dana.mercer@riversideauto.example`)
 sees every lead, the team page and the assistant settings; the rep account
-(`marcus.vale@example.invalid`) works the floor. Three more rep accounts exist
+(`marcus.vale@riversideauto.example`) works the floor. Three more rep accounts exist
 on `REP_PASSWORD` — `marcus.vale`, `priya.raman`, `trevor.osei`.
 
 `founder@linerai.us` and `cto@linerai.us` are **ours**, on `OWNER_PASSWORD`.
@@ -395,7 +395,7 @@ cannot sign in with the value in `.env`, that is almost always why.
 To fix it without losing data:
 
 ```bash
-cd /srv/liner && sudo -u liner make set-password EMAIL=dana.mercer@example.invalid
+cd /srv/liner && sudo -u liner make set-password EMAIL=dana.mercer@riversideauto.example
 ```
 
 It prompts, so the password never reaches shell history or `ps`. `make reset-db`

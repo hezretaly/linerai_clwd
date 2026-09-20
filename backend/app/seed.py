@@ -442,22 +442,35 @@ OWNERS = [
 #: Dana and Marcus stay first and keep their addresses: every screenshot, smoke
 #: run and acceptance script signs in as one of them, and the README documents
 #: that pair by name.
+#:
+#: **Local parts only.** The domain is the dealership's own -- the host of the
+#: profile's `website_url`, or the fixture's `riversideauto.example` when there
+#: is none -- because a manager reading `dana.mercer@riversideauto.example` on their
+#: own login sheet reads a test account, and every other surface here already
+#: refuses to greet a prospect as somebody else's showroom. `staff_address`
+#: is the one place an address is built, so the history's lookups by address
+#: and this list cannot disagree.
 STAFF = [
-    ("Dana Mercer", "dana.mercer@example.invalid", "manager", "DM", 6),
-    ("Marcus Vale", "marcus.vale@example.invalid", "rep", "MV", 8),
-    ("Priya Raman", "priya.raman@example.invalid", "rep", "PR", 8),
-    ("Trevor Osei", "trevor.osei@example.invalid", "rep", "TO", 8),
-    ("Rosa Delgado", "rosa.delgado@example.invalid", "manager", "RD", 6),
-    ("Nina Kowalski", "nina.kowalski@example.invalid", "rep", "NK", 8),
-    ("Andre Bassett", "andre.bassett@example.invalid", "rep", "AB", 8),
-    ("Hana Oyelaran", "hana.oyelaran@example.invalid", "rep", "HO", 6),
-    ("Wes Ferraro", "wes.ferraro@example.invalid", "rep", "WF", 8),
+    ("Dana Mercer", "dana.mercer", "manager", "DM", 6),
+    ("Marcus Vale", "marcus.vale", "rep", "MV", 8),
+    ("Priya Raman", "priya.raman", "rep", "PR", 8),
+    ("Trevor Osei", "trevor.osei", "rep", "TO", 8),
+    ("Rosa Delgado", "rosa.delgado", "manager", "RD", 6),
+    ("Nina Kowalski", "nina.kowalski", "rep", "NK", 8),
+    ("Andre Bassett", "andre.bassett", "rep", "AB", 8),
+    ("Hana Oyelaran", "hana.oyelaran", "rep", "HO", 6),
+    ("Wes Ferraro", "wes.ferraro", "rep", "WF", 8),
 ]
 
 
-def build_user(name: str, email: str, role: str, initials: str, cap: int) -> User:
+def staff_address(local: str) -> str:
+    """One fixture person's address on this dealership's own domain."""
+    return f"{local}@{profile.staff_domain()}"
+
+
+def build_user(name: str, local: str, role: str, initials: str, cap: int) -> User:
     return User(
-        name=name, email=email, password_hash=_hash(_password_for(role)),
+        name=name, email=staff_address(local), password_hash=_hash(_password_for(role)),
         role=role, avatar_initials=initials, daily_cap=cap,
         notify_channel="email" if role == "manager" else "dashboard",
     )
@@ -788,10 +801,10 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     # and the four this history actually names are the four it should ask for.
     # The rest of the floor carries no fixture history and does not need to.
     floor = {u.email: u for u in users}
-    manager = floor["dana.mercer@example.invalid"]
-    marcus = floor["marcus.vale@example.invalid"]
-    priya = floor["priya.raman@example.invalid"]
-    trevor = floor["trevor.osei@example.invalid"]
+    manager = floor[staff_address("dana.mercer")]
+    marcus = floor[staff_address("marcus.vale")]
+    priya = floor[staff_address("priya.raman")]
+    trevor = floor[staff_address("trevor.osei")]
     by_vin = {v.vin: v for v in vehicles}
     sienna = by_vin["5TDKZ3DC8JS905311"]
     pacifica = by_vin["2C4RC1BG7KR522104"]  # the sold one
@@ -1057,7 +1070,9 @@ def seed(db: Session | None = None) -> None:
         # A fixture account's password comes from `.env` and survives; a
         # profile's own person gets a fresh one on every reseed, so only that
         # kind needs the line about writing it down.
-        generated = [u for u, _p in logins if u.email not in {row[1] for row in STAFF}]
+        generated = [
+            u for u, _p in logins if u.email not in {staff_address(row[1]) for row in STAFF}
+        ]
         if generated:
             print("\nThose passwords were generated and are shown once -- only the hash is\n"
                   "stored. A reseed makes new ones. To set one yourself:\n"
