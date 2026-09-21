@@ -32,6 +32,44 @@ def digits(value: str) -> str:
     return re.sub(r"\D", "", value or "")[-10:]
 
 
+def diallable(value: str) -> str:
+    """The ten digits somebody can ring, or "" when this is not a number.
+
+    **A number taken by ear is a guess, and a wrong one is worse than none.** A
+    real call ended with an appointment booked against `1 2 3 4 4 5 5 6 5 6 5`
+    -- eleven digits, read back to the buyer twice and confirmed both times.
+    Nobody can ring it, so that booking was a lost lead wearing the shape of a
+    won one.
+
+    Worse than unreachable: `digits` above keys identity on the *last ten*, so
+    a mis-heard number both fails to reach the buyer and can collide with a
+    stranger who happens to share those ten. Refusing an implausible one costs
+    a re-ask; accepting it costs the lead and risks somebody else's row.
+
+    Ten digits, or eleven behind a leading 1 -- the NANP this system assumes
+    everywhere it compares a number. Deliberately not an international
+    validator: there is no country code anywhere else in this codebase to be
+    consistent with, and inventing one here would be a second rule about what
+    a number is.
+    """
+    raw = re.sub(r"\D", "", value or "")
+    if len(raw) == 11 and raw.startswith("1"):
+        raw = raw[1:]
+    if len(raw) != 10:
+        return ""
+    # An area code and an exchange code cannot begin with 0 or 1. That is the
+    # only structural rule NANP gives us, and it catches the mis-hearing this
+    # is for: a spoken "one" counted into the area code rather than in front of
+    # it. It is **not** a claim that everything else is real -- the eleven
+    # digits from that call reduce to `2344556565`, which is plausible on every
+    # rule there is, so the read-back remains the only check on a number a
+    # transcriber guessed at. This refuses what cannot be rung, not what is
+    # wrong.
+    if raw[0] in "01" or raw[3] in "01":
+        return ""
+    return raw
+
+
 def match_lead(
     db: Session, email: str, phone: str, *, exclude_id: str | None = None
 ) -> Lead | None:

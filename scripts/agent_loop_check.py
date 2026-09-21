@@ -335,9 +335,31 @@ def main() -> int:
         check("the conversation is closed with a summary", bool(convo.summary),
               convo.summary[:50])
         check("and stamped with an end time", convo.ended_at is not None)
-        check("an emailed summary with no address on file says so, rather than lying",
-              closed.get("emailed") is False and "no address on file" in closed.get("note", ""),
+        # **Nothing is emailed, because nothing offers it any more.** Every call
+        # used to end on "would you like a summary sent over email?" -- a
+        # question after the buyer had said goodbye, about a thing they never
+        # asked for. The offer is out of the tool's description and the send is
+        # behind a switch that is off, so even a `send_summary` a model passes
+        # anyway sends nothing and says so rather than claiming it went.
+        check("a summary is not emailed on a deployment that has it switched off",
+              closed.get("emailed") is False and "switched off" in closed.get("note", ""),
               closed.get("note", "")[:60])
+        # And with it on, the older answer still holds: no address, no lie.
+        from app.config import settings as _cfg_sum
+
+        kept_summary = _cfg_sum.buyer_summary_email
+        try:
+            _cfg_sum.buyer_summary_email = True
+            second = fresh_conversation(db)
+            tools.attach_lead(db, second, name="Sam Ford", email="", phone="502 555 0134")
+            db.commit()
+            asked = tools.close_conversation(
+                db, second, {"summary": "Wanted a third row.", "send_summary": True}, "sum-1")
+            check("switched on, a summary with no address on file says so rather than lying",
+                  asked.get("emailed") is False and "no address on file" in asked.get("note", ""),
+                  asked.get("note", "")[:60])
+        finally:
+            _cfg_sum.buyer_summary_email = kept_summary
 
         print("\n== guards run on the live path too ==")
         convo = fresh_conversation(db)

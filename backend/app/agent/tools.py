@@ -143,6 +143,14 @@ def _origin_matches(make: str, wanted: str) -> bool:
     return origin == wanted
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+#: The three that are columns on `leads` rather than `captured_fields` rows.
+#: One list, because both writers have to agree: the card's `save_details`
+#: keeps them out of the captured fields it passes on, and
+#: `save_captured_fields` sends them through `attach_lead` instead of storing
+#: a second copy. A number in both places is two answers to one question, and
+#: `app/matching.py` reads the column.
+CONTACT_KEYS = ("name", "email", details.PHONE_KEY)
+
 
 class ToolError(Exception):
     """A tool refused. The message goes back to the model as a tool result."""
@@ -322,9 +330,9 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "description": (
             "Call this ONLY when the buyer has said they are done -- 'that's all', "
             "'thanks, bye', 'I'll think about it'. Never end a conversation yourself "
-            "because you have run out of things to say; ask a question instead. Before "
-            "calling it, offer to email them a summary of what you found, and pass "
-            "send_summary=true only if they say yes."
+            "because you have run out of things to say; ask a question instead. Say "
+            "your goodbye and nothing else: do not offer to email them a summary, and "
+            "do not ask them another question on the way out."
         ),
         "input_schema": {
             "type": "object",
@@ -338,7 +346,10 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 },
                 "send_summary": {
                     "type": "boolean",
-                    "description": "True only if the buyer asked for it by email.",
+                    "description": (
+                        "Only if the buyer asked, unprompted, to be emailed a summary. "
+                        "Never offer one. Most deployments send nothing either way."
+                    ),
                 },
             },
             "required": ["summary"],
@@ -1104,7 +1115,7 @@ def save_details(db: Session, convo: Conversation, values: dict) -> dict:
     rest = [
         {"key": key, "value": value, "provenance": "typed"}
         for key, value in keep.items()
-        if key not in ("name", "email", details.PHONE_KEY)
+        if key not in CONTACT_KEYS
     ]
     saved = save_captured_fields(db, convo, {"fields": rest}) if rest else {"saved": []}
     emit(db, "lead.qualified", {
@@ -1121,6 +1132,63 @@ def save_captured_fields(db: Session, convo: Conversation, args: dict) -> dict:
     'inferred' and the rejection is reported back, so the model learns the
     boundary within the turn.
     """
+    # **A number said out loud has to land on the row, or it was never taken.**
+    #
+    # This wrote `captured_fields` and nothing else, and refused outright
+    # without a lead -- which on a call is every turn before the booking, since
+    # `attach_lead` is what mints one and there is no card to run it. So a
+    # caller who gave their number, heard it read back and said yes had it
+    # recorded nowhere a tool could see: `contact_on` stayed empty,
+    # `check_availability` answered *you do not have a name and a phone number
+    # for this buyer yet*, and the assistant obediently asked again. A real
+    # call asked three times and confirmed the same digits twice.
+    #
+    # So the three contact keys go through `attach_lead` -- the same single
+    # writer the details card uses, minting the buyer where there is none. Not
+    # a second copy of "who is this person": that is what `app/matching.py`
+    # exists to prevent.
+    given = [
+        (key, (field.get("value") or "").strip(), field)
+        for field in args.get("fields", [])
+        for key in [(field.get("key") or "").strip()]
+    ]
+    # **Only what the buyer actually gave.** `typed` is a value they said in
+    # their own words and `caller_id` is one the network handed us; either can
+    # go on the row a rep rings. An `inferred` name -- the guess taken off an
+    # email signature -- must not: it stays a captured field wearing its
+    # provenance, which is the only thing standing between a guess and a rep
+    # asserting it on the phone.
+    contact = {
+        key: value
+        for key, value, field in given
+        if key in CONTACT_KEYS and value
+        and (field.get("provenance") or "") in {"typed", "caller_id"}
+    }
+
+    # Both are heard rather than read, which is where the mis-hearing is. A
+    # spelled-out address is the other one: `josh at example dot com` arrives
+    # however the transcriber heard it.
+    if contact.get(details.PHONE_KEY) and not matching.diallable(contact[details.PHONE_KEY]):
+        raise ToolError(
+            f"{contact[details.PHONE_KEY]!r} is not a number anybody can ring -- a "
+            "phone number here is ten digits. On a call that is a mis-heard digit, so "
+            "read back what you have, ask them to say it again slowly, and save it "
+            "once it is ten digits. Do not treat it as confirmed."
+        )
+    if contact.get("email") and not EMAIL_RE.match(contact["email"].lower()):
+        raise ToolError(
+            f"{contact['email']!r} is not an address that would reach anybody. Ask "
+            "them to spell it again and read it back before you save it."
+        )
+    if contact:
+        attach_lead(
+            db, convo,
+            name=contact.get("name", ""),
+            email=contact.get("email", "").lower(),
+            phone=contact.get(details.PHONE_KEY, ""),
+        )
+        db.commit()
+
     if not convo.lead_id:
         raise ToolError("No lead on this conversation yet; book or capture contact first.")
 
@@ -1134,11 +1202,16 @@ def save_captured_fields(db: Session, convo: Conversation, args: dict) -> dict:
     from app.models import CapturedField
 
     saved, downgraded = [], []
-    for field in args.get("fields", []):
-        key = (field.get("key") or "").strip()
-        value = (field.get("value") or "").strip()
+    for key, value, field in given:
         provenance = (field.get("provenance") or "inferred").strip()
         if not key or not value:
+            continue
+        # A contact value that went onto the row above is not also a captured
+        # field: that would be two answers to one question, and
+        # `app/matching.py` reads the column -- the rule `save_details` already
+        # follows. A *guess* at one is the other way round and falls through to
+        # be stored here, because the provenance is the point of keeping it.
+        if key in CONTACT_KEYS and key in contact:
             continue
         if provenance not in {"typed", "listing", "caller_id", "inferred"}:
             provenance = "inferred"
@@ -1167,6 +1240,16 @@ def save_captured_fields(db: Session, convo: Conversation, args: dict) -> dict:
     })
 
     result: dict[str, Any] = {"saved": saved}
+    if contact:
+        # Said back, so the model can see the number is now on file and stop
+        # asking for it. That is the whole failure this branch exists for: the
+        # assistant asked, heard, confirmed -- and then a tool told it there was
+        # no number, because nothing had written one anywhere.
+        result["contact"] = contact_on(db, convo)
+        result["note"] = (
+            "That is on the buyer's record now, so nothing will ask you for it again. "
+            "Do not read it back a second time."
+        )
     if downgraded:
         result["rejected_typed"] = downgraded
         result["note"] = (
@@ -1229,7 +1312,26 @@ def close_conversation(
 
     result = {"closed": True, "summary": summary, "emailed": False}
 
+    # **Nobody is offered a summary, and by default none is sent.** Every call
+    # ended on *"would you like a quick summary sent over email before we
+    # finish?"* -- a question after the buyer had already said goodbye, about a
+    # thing they had not asked for, on the one turn that should be four words
+    # long. The offer is gone from this tool's description, so the only way
+    # `send_summary` arrives now is a buyer asking for one unprompted.
+    #
+    # `BUYER_SUMMARY_EMAIL` is off, so even that sends nothing until a
+    # deployment turns it on. A switch rather than a deletion because the
+    # composer is real and works; a deployment that wants it has one line to
+    # change, and the reason it is off is that nobody asked for the mail.
     if not args.get("send_summary"):
+        return result
+    from app.config import settings
+
+    if not settings.buyer_summary_email:
+        result["note"] = (
+            "Summary emails are switched off on this deployment, so nothing was sent. "
+            "Do not tell the buyer one is coming."
+        )
         return result
 
     lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None

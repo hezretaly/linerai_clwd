@@ -3509,6 +3509,7 @@ def main() -> int:
 
     print("\n== what the buyer actually reads ==")
     # Five things from one real conversation, in the order they went wrong.
+    from app import matching as _matching
     from app.agent import phrasing as _say
     from app.agent import runner as _turn
     from app.agent import tools as _ex
@@ -3616,6 +3617,60 @@ def main() -> int:
         check("a second escalation does not draw a second card over the first",
               not again_up.get("fields") and again_up.get("already_escalated"),
               str(again_up.get("already_escalated")))
+        # **A number said out loud lands on the row, or it was never taken.**
+        # `save_captured_fields` wrote captured fields and refused outright
+        # without a lead -- which on a call is every turn before the booking,
+        # since `attach_lead` is what mints one and there is no card to run it.
+        # So a caller who gave their number, heard it read back and said yes had
+        # it recorded nowhere a tool could see: `check_availability` answered
+        # *you do not have a name and a phone number for this buyer yet* and the
+        # assistant asked again. A real call asked three times.
+        heard = _Thread(channel="voice", status="active", stage="opening")
+        _cdb.add(heard)
+        _cdb.commit()
+        _cdb.refresh(heard)
+        # Digits, and unique to this run: `matching` keys identity on the last
+        # ten, so a fixed number would match whatever a previous run or another
+        # section left behind and this would assert against *their* buyer.
+        said = f"(502) 555 {''.join(secrets.choice('0123456789') for _ in range(4))}"
+        check("a call has nobody on file to begin with",
+              not _ex.contact_on(_cdb, heard)["phone"])
+        _ex.save_captured_fields(_cdb, heard, {"fields": [
+            {"key": "name", "value": "Josh", "provenance": "typed"},
+            {"key": "phone", "value": said, "provenance": "typed"},
+        ]})
+        check("saving what was heard puts it on the buyer's record",
+              _matching.digits(_ex.contact_on(_cdb, heard)["phone"]) == _matching.digits(said),
+              str(_ex.contact_on(_cdb, heard)))
+        check("so nothing asks for it again",
+              _ex.check_availability(_cdb, heard, {}).get("contact_known") is True,
+              str(_ex.check_availability(_cdb, heard, {}).get("note", "already known")))
+        # **And a number nobody can ring is refused rather than confirmed.** A
+        # real call booked an appointment against eleven mis-heard digits, read
+        # back to the buyer twice and agreed both times -- a lost lead wearing
+        # the shape of a won one. `matching.digits` keys identity on the last
+        # ten, so it can also collide with a stranger.
+        #
+        # Two classes, and the limit is stated rather than implied: too few
+        # digits to dial, and an area code that cannot exist. A *plausible*
+        # wrong number still passes -- the eleven digits from that call reduce
+        # to `2344556565`, which breaks no rule there is -- which is why the
+        # read-back stays in the addendum and this claims only what it does.
+        for bad in ("1 2 3 4 5", "123 455 6565"):
+            try:
+                _ex.save_captured_fields(_cdb, heard, {"fields": [
+                    {"key": "phone", "value": bad, "provenance": "typed"},
+                ]})
+                junk = ""
+            except Exception as exc:
+                junk = str(exc)
+            check(f"a number nobody can ring is refused: {bad!r}",
+                  "ten digits" in junk and "again" in junk, junk[:60] or "accepted")
+        check("and the good number is still the one on file",
+              _matching.digits(_ex.contact_on(_cdb, heard)["phone"]) == _matching.digits(said),
+              _ex.contact_on(_cdb, heard)["phone"])
+        heard_lead = heard.lead_id
+
         # Given back, children first -- the two escalations above point at this
         # thread, and a row left behind is a *Needs a person* queue entry on
         # the board for a conversation nobody had.
@@ -3625,6 +3680,29 @@ def main() -> int:
                 _sql_chat(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": thread.id}
             )
         _cdb.execute(_sql_chat("DELETE FROM conversations WHERE id = :c"), {"c": thread.id})
+        # The voice thread above minted a buyer, so it goes back too -- a lead
+        # per run is the `Smoke Stranger` leak in another column.
+        for table in ("conversation_once", "escalations", "messages", "vehicle_mentions"):
+            _cdb.execute(
+                _sql_chat(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": heard.id}
+            )
+        _cdb.execute(_sql_chat("DELETE FROM conversations WHERE id = :c"), {"c": heard.id})
+        # **Only a buyer this section minted.** `attach_lead` *matches* before
+        # it creates, so a fixed number here would hand back somebody else's
+        # row -- and the first version of this deleted a seeded fixture buyer
+        # and their captured fields, which surfaced two sections earlier as
+        # "the fixture really has an inferred field to test with". The number is
+        # run-unique now, and this checks anyway: a cleanup that can reach
+        # further than what it made is one bad run from taking real rows.
+        own = _cdb.execute(
+            _sql_chat("SELECT phone FROM leads WHERE id = :l"), {"l": heard_lead}
+        ).scalar() if heard_lead else None
+        if heard_lead and _matching.digits(own or "") == _matching.digits(said):
+            for table in ("captured_fields", "lead_addresses", "appointments", "outreach"):
+                _cdb.execute(
+                    _sql_chat(f"DELETE FROM {table} WHERE lead_id = :l"), {"l": heard_lead}
+                )
+            _cdb.execute(_sql_chat("DELETE FROM leads WHERE id = :l"), {"l": heard_lead})
         _cdb.commit()
     finally:
         _cdb.close()

@@ -54,6 +54,19 @@ def plain(text: str) -> str:
     return "\n".join(line.rstrip() for line in out.split("\n")).strip()
 
 
+def asks_something_else(text: str) -> bool:
+    """Is there a question in here *before* the closing offer?
+
+    On a call there is no card to read, so this is what tells a double ask
+    apart: two question marks, the last one being the sign-off. A real call ran
+    on turns like *"Which one interests you most? And is there anything else I
+    can help with?"* and *"Would you like more details on that one? And could I
+    get your name and phone number?"* -- and a caller answers the last thing
+    they heard, so the question that mattered went unanswered every time.
+    """
+    return "?" in _OFFER_MORE.sub("", text or "")
+
+
 def without_offer_more(text: str) -> str:
     """Drop a trailing "is there anything else?" from a turn that is asking.
 

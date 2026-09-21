@@ -1380,6 +1380,52 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   buyer keeps and reads back to a rep. Only `typed` fields go in — an inferred
   guess repeated back as fact is how a buyer arrives arguing about a budget
   they never gave.
+  - **Nobody is offered one, and `BUYER_SUMMARY_EMAIL` is off.** The tool's
+    own description told the model to offer it before closing, so every call
+    ended on *"would you like a quick summary sent over email before we
+    finish?"* — an extra question after the buyer had already said goodbye,
+    about a thing they never asked for, on the one turn that should be four
+    words long. The offer is out of the description; the send is behind a
+    switch that is off, so a `send_summary` a model passes anyway sends
+    nothing and the result says so rather than letting it claim one is coming.
+    A switch rather than a deletion because the composer works and a
+    deployment that wants the mail has one line to change.
+- **A number said out loud has to land on the row, or it was never taken.**
+  `save_captured_fields` wrote `captured_fields` and refused outright without a
+  lead — which on a call is every turn before the booking, since `attach_lead`
+  is what mints one and there is no card to run it. So a caller who gave their
+  number, heard it read back and said yes had it recorded nowhere a tool could
+  see: `contact_on` stayed empty, `check_availability` answered *you do not
+  have a name and a phone number for this buyer yet*, and the assistant
+  obediently asked again. A real call asked three times and read the same
+  digits back twice. The three contact keys now go through `attach_lead` — the
+  single writer the details card already uses, minting the buyer where there is
+  none — and the result says the number is on file so nothing reads it back a
+  third time.
+  - **Only what the buyer actually gave.** `typed` is a value they said in
+    their own words and `caller_id` is one the network handed us; either may go
+    on the row a rep rings. An `inferred` one — the name guessed off an email
+    signature — stays a captured field wearing its provenance, which is the
+    only thing between a guess and a rep asserting it on the phone. Got wrong
+    first: sending every contact value to the row deleted that provenance, and
+    the gate caught it two sections away as *the fixture really has an inferred
+    field to test with*.
+  - **A number nobody can ring is refused rather than confirmed.**
+    `matching.diallable` wants ten digits, or eleven behind a leading 1, with
+    an area and exchange code that can exist. `matching.digits` keys identity
+    on the last ten, so a mis-heard number both reaches nobody and can collide
+    with a stranger who shares them. It claims only what it does: the eleven
+    digits from that call reduce to `2344556565`, which breaks no rule there
+    is, so the read-back in the addendum is still the only check on a value a
+    transcriber guessed at.
+  - **One question per turn is a voice rule the prompt has to carry alone.**
+    Every turn in that call asked twice — *"Which one interests you most? And
+    is there anything else I can help with?"* — and a caller answers the last
+    thing they heard, so the question that mattered went unanswered each time.
+    `record_assistant_message` drops a sign-off from a turn that already asks,
+    but **a call's words never pass through it**: `/api/voice/transcript`
+    writes that row itself and must record what was actually said. Same
+    asymmetry as the reply guard.
 - **The transcript is a side channel, not what the model heard.** The model
   gets the raw audio; `conversation.item.input_audio_transcription` is a
   parallel service for our records. So a garbled transcript means a poor

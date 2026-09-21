@@ -279,7 +279,14 @@ def record_assistant_message(
     # forgets. After the guards, which have already read the text: neither of
     # these changes a number, a make or a word of a sentence.
     reply = phrasing.plain(reply)
-    if _asked_in_a_box(calls):
+    # A turn that drew a card is asking, and so is one that already asked in
+    # words: either way the sign-off is a second question and the buyer answers
+    # whichever they read last. **Chat and email only**, because a call's words
+    # are spoken before this server sees them -- `/api/voice/transcript` writes
+    # that row itself, and it must record what was actually said rather than
+    # what we would have preferred. Same asymmetry as the reply guard, and on a
+    # call the addendum's one-question rule is the only lever there is.
+    if _asked_in_a_box(calls) or phrasing.asks_something_else(reply):
         reply = phrasing.without_offer_more(reply)
 
     message = Message(

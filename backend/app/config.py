@@ -275,6 +275,14 @@ class Settings(BaseSettings):
     # discounted by roughly eighty times, so truncating often costs more than
     # the tokens it saves.
     voice_retention_ratio: float = 0.8
+    # Whether `close_conversation` may email the buyer a summary of the
+    # conversation. **Off**, because every call ended by offering one -- an
+    # extra question after the buyer had already said goodbye, about something
+    # they never asked for. The offer is gone from the tool's description, so
+    # the only way this is even reached now is a buyer asking unprompted, and
+    # this decides whether that sends anything. The composer (`buyer_summary`)
+    # is real and unchanged: a deployment that wants the mail sets one line.
+    buyer_summary_email: bool = False
     # The method's signature move (section 13) is a personalized walkaround
     # video. Nothing in this system records, stores or sends one, so it is off
     # -- and the gate in the method text turns into an instruction never to
