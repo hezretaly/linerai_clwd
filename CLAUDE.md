@@ -42,6 +42,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make ingest` | **Crawl the dealership's own site, every step narrated.** `ARGS=--publish` applies it |
+| `make mail-check` | **Why a message to one of our addresses did not arrive**: `TO=alsboucars@linerai.us`. Which store that mailbox routes to, whether it is seeded, whether this checkout's Worker would keep it, and every receipt for it across every store. *No receipt at all* is the answer that matters — it means Cloudflare or the Worker, not this app |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
 | `make build` | Build the frontend into `frontend/dist` (the API serves it in production) |
@@ -466,6 +467,22 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   Jordan Reyes. Nothing pre-writable belongs at `contact_capture`: the
   assistant has just asked for a name and an email and a chip cannot know
   either, so there is no chip there and the composer is the answer.
+- **Chips are the way in, not a running menu.** A followup chip names a
+  `stage`, and the stage machine belongs to the **stub**: `loop.run_turn`
+  never writes `convo.stage`, so on a live deployment the chips freeze on
+  whatever the first turn set and stay there. A real conversation ran to the
+  end under *Tell me about the first one* and *Anything cheaper?* — offered
+  beside a details card, and again after a colleague had been called in, about
+  a list the buyer had stopped looking at ten messages earlier. So the live
+  path serves the openers and then stops; the composer is the answer after
+  that. Nothing is deleted: the stub still drives its stages, which is what
+  `make smoke` books an appointment through, and a chip's *action* is
+  untouched — the openers carry `under_price`, `with_seats` and `matching`
+  and still answer themselves with no model turn.
+  - **"Still at the opening" means the buyer, not the stage.** With the stage
+    frozen at `opening` on a live host, the openers were re-offered under
+    every reply — *What's under $20k?* beside the answer to exactly that
+    question. `_buyer_spoke` reads the transcript instead.
 - **A chip whose meaning is fixed answers itself, with no model turn.**
   "What's under $20k?" is a button the dealership put on screen and it can
   only mean `search_inventory(max_price=20000)`. Sending that to a model asks
@@ -2726,6 +2743,60 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   this buyer" guidance now says *a number, through the card* — it used to
   say "a name and an email in a sentence", which the chat rules forbid, so
   two instructions fought and the model picked whichever it read last.
+  - **And the escalation draws the card itself, because the second call is
+    the one a model drops.** All of the above was written as a prompt rule
+    asking for two tool calls in one turn, and a live conversation shows what
+    that is worth: the buyer asked whether a Versa had any options, was told
+    the listing did not say and that a colleague would confirm, asked again,
+    was told the same thing — and was never asked for a number, three turns
+    running, until *they* offered one. A promise nobody could keep, which is
+    worse than "I don't know". So `escalate_to_human` returns the details
+    card when the handoff would otherwise leave nobody to ring: one call,
+    both effects, in the shape `close_conversation` already refuses the first
+    close on a buyer with no phone number. Nothing is drawn for a buyer
+    already on file, over a card already unanswered, or on a call.
+    - **A card is what a result carries, not what a tool is called.** Three
+      readers keyed on the name `request_details` — the stream, the rehydrate
+      and `details_pending` — so a card drawn by any other tool would have
+      been invisible to all three, and the once-only guard would have let a
+      second one onto the same screen.
+- **Every turn ends by offering more, except a turn that is already asking.**
+  "Is there anything else I can help with" is the question that finds the
+  second thing a buyer came for — and under a form it asks them to fill it in
+  and to change the subject in the same breath. A real reply: *"Please fill in
+  the details on screen so a colleague can confirm the Versa's features. Is
+  there anything else I can help with?"* The prompt says so now, and
+  `record_assistant_message` drops the sentence when the turn drew a card,
+  because the prompt two lines above already said never more than one question
+  in a message and it was obeyed anyway. Only the final sentence, and only one
+  naming "anything else" and ending in a question mark, so the worst a false
+  positive can do is remove something redundant.
+- **Markdown is not rendered, so it is not sent.** The thread is plain text on
+  purpose — rendering markdown in a bubble is a parser and a sanitiser on the
+  one surface a stranger types into, for emphasis nobody asked for — and a
+  model writes it unless something stops it, so `**$6,157**` reached the buyer
+  with the asterisks in it. `phrasing.plain` takes the markers back out in
+  `record_assistant_message`, which is the single writer every path goes
+  through (chip, live, stub, nudge). It removes markers and never content, so
+  it is safe after the guards have read the text. Underscores are left alone:
+  `josh_r@example.com` is an address a buyer typed.
+  - **A dealer decorates a field too, and that is data rather than markdown.**
+    Alsbou's Boxster is trimmed `CONVERTIBLE *LOW MILES*` in their own export,
+    and it rendered as asterisks on the card, in the sentence and out loud on
+    a call. `phrasing.cased` strips it — before its `isupper()` early return,
+    because a mixed-case trim can be decorated too — and the row keeps what
+    the dealer sent, exactly as with the shouting.
+- **One card per car in a row, however many tools found it.** The row is built
+  from every tool result of the turn, and a turn about one car very often looks
+  it up twice — a search that narrows to it, then `get_vehicle` for the
+  equipment list. So a reply about a Nissan Versa drew two identical Versa
+  cards, same price, same mileage. `withVehicles` in the browser already
+  refused to redraw the row *above* it, which is exactly why this looked
+  fixed: that guard compares one row with another, and this was one row with
+  the car in it twice. Deduplicated where the row is composed, on the server
+  for the live stream and in the browser for the refresh path, both keeping
+  the first mention's position — it is the one the reply's sentence is written
+  around.
 - **Keywords split on non-alphanumerics, not on spaces.** `"Do you have a BMW
   X5?"` tokenised to `x5?`, matched nothing, and returned the three cheapest
   cars on the lot — while `"BMW X5"` and `"tell me about the BMW X5"` both

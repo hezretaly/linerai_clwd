@@ -1,4 +1,4 @@
-.PHONY: prune-ops help install build set-password add-user ingest agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
+.PHONY: prune-ops help install build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -126,6 +126,10 @@ fixture-site: ## Serve the scraper fixture dealer site on :8100
 
 ingest: ## Crawl the dealership's own site, every step narrated. ARGS=--publish to apply.
 	$(PY) scripts/ingest.py $(ARGS)
+
+mail-check: ## Why a message to one of our addresses did not arrive: TO=alsboucars@linerai.us
+	@test -n "$(TO)" || (echo 'Usage: make mail-check TO=alsboucars@linerai.us'; exit 1)
+	$(PY) scripts/mail_check.py "$(TO)"
 
 capture: ## Fetch a dealer site's listings and report what can be read: URL=https://...
 	@test -n "$(URL)" || (echo "Usage: make capture URL=https://a-dealer-site/inventory [PAGES=8]"; exit 1)

@@ -87,10 +87,24 @@ function vehiclesFrom(result: Record<string, unknown>): VehicleCardData[] {
  *  and for a refresh, so the two cannot disagree about what "the same" means.
  */
 function withVehicles(prev: Item[], id: string, vehicles: VehicleCardData[]): Item[] {
+  // One card per car *within* the row as well as between rows. A turn that
+  // searches and then looks the same car up hands back two copies of it, and
+  // a refresh rebuilds the row from every tool call on the message -- so the
+  // row itself has to be deduplicated, or the same Versa is drawn twice under
+  // one reply. The server does this on the live stream; this is the other
+  // path, and both keep the first mention's position.
+  const seen = new Set<string>()
+  const cars: VehicleCardData[] = []
+  for (const car of vehicles) {
+    if (seen.has(car.vin)) continue
+    seen.add(car.vin)
+    cars.push(car)
+  }
   const last = [...prev].reverse().find((i) => i.kind === 'vehicles')
-  const vins = (cars: VehicleCardData[]) => cars.map((c) => c.vin).join('|')
-  if (last && last.kind === 'vehicles' && vins(last.vehicles) === vins(vehicles)) return prev
-  return [...prev, { kind: 'vehicles', id, vehicles }]
+  const vins = (of: VehicleCardData[]) => of.map((c) => c.vin).join('|')
+  if (!cars.length) return prev
+  if (last && last.kind === 'vehicles' && vins(last.vehicles) === vins(cars)) return prev
+  return [...prev, { kind: 'vehicles', id, vehicles: cars }]
 }
 
 export function Chat() {

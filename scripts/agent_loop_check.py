@@ -257,14 +257,21 @@ def main() -> int:
         # "someone is picking this up" and the thread died with nobody watching.
         check("but Liner is not gagged -- only a rep pressing Take over does that",
               convo.agent_paused is False, f"agent_paused={convo.agent_paused}")
-        # A number, through the card -- not "a name and an email in a
-        # sentence", which is what this guidance said while the chat rules
-        # forbade exactly that. Two instructions that disagree is how the
-        # model picks whichever it read last.
-        check("and it is told to get a number, through the card",
-              "request_details" in esc.get("guidance", "")
-              and "phone number" in esc.get("guidance", ""),
-              f"reachable={esc.get('buyer_reachable')} guidance={esc.get('guidance', '')[:80]}")
+        # **The escalation asks for the number itself.** It used to tell the
+        # model to call `request_details` next, and a real conversation shows
+        # what that cost: a buyer was promised a colleague three times over
+        # three turns and never asked how to reach them, so nobody could have
+        # confirmed anything. The second call is exactly the one a model drops,
+        # so the executor makes it -- one call, both effects.
+        check("the escalation draws the boxes itself when nobody can be rung",
+              bool(esc.get("fields")) and esc.get("buyer_reachable") is False,
+              f"reachable={esc.get('buyer_reachable')} fields={len(esc.get('fields') or [])}")
+        check("and a phone number is what they ask for",
+              any(f.get("key") == "phone" for f in esc.get("fields") or []),
+              str([f.get("key") for f in esc.get("fields") or []]))
+        check("and the guidance says the boxes are already up, not to ask again",
+              "screen" in esc.get("guidance", "") and "request_details" not in esc.get("guidance", ""),
+              esc.get("guidance", "")[:90])
 
         # Escalating again on the same conversation must not open a second
         # unclaimed row. It used to, and conversation_out read that back with

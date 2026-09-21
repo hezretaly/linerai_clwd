@@ -156,10 +156,13 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     # as a tool call when the card is submitted, so a card with one after it
     # has been dealt with, and redrawing it would ask a buyer for details they
     # have already given -- which reads as not having been listened to.
+    # Keyed on the result carrying fields rather than on the tool's name:
+    # `escalate_to_human` draws the card itself when a handoff would otherwise
+    # leave nobody to ring, and a name-keyed read would lose it on a refresh.
     out["details"] = None
     for message in out["messages"]:
         for call in message["tool_calls"]:
-            if call.get("name") == "request_details":
+            if (call.get("result") or {}).get("fields"):
                 out["details"] = call.get("result") or None
             elif call.get("name") == "save_details":
                 out["details"] = None
@@ -207,8 +210,13 @@ def buyer_tool_calls(calls: list[dict]) -> list[dict]:
             kept = {"vehicles": buyer_vehicles(result["vehicles"])}
         elif name == "get_vehicle" and result.get("vin"):
             kept = buyer_vehicles([result])[0]
-        elif name == "request_details":
-            kept = {k: result.get(k) for k in ("fields", "reason") if k in result}
+        elif result.get("fields"):
+            # The card, whichever tool drew it -- `request_details` asks for
+            # one, and `escalate_to_human` draws one itself when a handoff
+            # would otherwise leave nobody to ring. Only the boxes and the
+            # line above them: an escalation's own reason, its id and the
+            # model's guidance stay on this side.
+            kept = {k: result.get(k) for k in ("fields", "reason", "required") if k in result}
         out.append({"name": name, "result": kept})
     return out
 
@@ -315,12 +323,20 @@ async def send_message(
 
             yield _sse("assistant_message", payload)
 
-            vehicles = [
+            # **One card per car, however many tools found it.** A turn that
+            # searches *and* then looks the same car up returns it twice, and
+            # both copies were drawn: a real reply about a Nissan Versa put two
+            # identical Versa cards under itself, same price, same mileage. The
+            # buyer has been shown one car. `withVehicles` in the browser
+            # already refuses to redraw the row *above* it, which is why this
+            # looked fixed -- that guard compares rows and this is one row with
+            # the car in it twice.
+            vehicles = _one_each(
                 v
                 for call in payload["tool_calls"]
                 if call.get("name") in {"search_inventory", "get_vehicle"}
                 for v in _vehicles_from(call.get("result", {}))
-            ]
+            )
             if vehicles:
                 yield _sse("vehicles", {"vehicles": buyer_vehicles(vehicles[:SHOWN])})
 
@@ -353,7 +369,7 @@ async def send_message(
                 (
                     call.get("result", {})
                     for call in payload["tool_calls"]
-                    if call.get("name") == "request_details"
+                    if (call.get("result") or {}).get("fields")
                 ),
                 None,
             )
@@ -576,6 +592,25 @@ def _vehicles_from(result: dict) -> list[dict]:
     if "vin" in result:
         return [result]
     return []
+
+
+def _one_each(vehicles) -> list[dict]:
+    """The cars of one turn, in the order they were found, each once.
+
+    A turn about a single car very often looks it up twice -- a search that
+    narrows to it and then `get_vehicle` for the equipment list -- and the row
+    is built from every tool result the turn produced, so the buyer got two
+    identical cards. The first mention keeps the position: it is the one the
+    reply's sentence is written around.
+    """
+    seen, out = set(), []
+    for vehicle in vehicles:
+        vin = (vehicle or {}).get("vin")
+        if vin in seen:
+            continue
+        seen.add(vin)
+        out.append(vehicle)
+    return out
 
 
 def _sse(event: str, data: dict) -> str:

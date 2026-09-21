@@ -14,6 +14,66 @@ be a hole in the guard rather than a licence.
 
 from __future__ import annotations
 
+import re
+
+#: Markdown a chat bubble renders as literal punctuation. `**$6,157**` reaches
+#: the buyer with the asterisks in it, `### ` as three hashes, and a backtick
+#: as a backtick -- the thread is plain text, deliberately: rendering markdown
+#: in a bubble is a parser and a sanitiser on the one surface a stranger types
+#: into, for emphasis nobody asked for. So the markers are removed instead.
+#:
+#: Underscores are left alone. `josh_r@example.com` is an address a buyer
+#: typed, and `_` as emphasis is rare enough that dropping it would break more
+#: than it tidied.
+_MARKDOWN = (
+    (re.compile(r"\*{1,3}"), ""),        # **bold**, *italic*, ***both***
+    (re.compile(r"^ {0,3}#{1,6}\s+", re.M), ""),  # ### a heading
+    (re.compile(r"`+"), ""),             # `code`
+    (re.compile(r"\n{3,}"), "\n\n"),     # blank lines a bubble shows as gaps
+)
+
+#: A closing offer that is a second question. See `without_offer_more`.
+_OFFER_MORE = re.compile(
+    r"(?:^|(?<=[.!?\n]))[^.!?\n]*\banything else\b[^.!?\n]*\?\s*$",
+    re.I,
+)
+
+
+def plain(text: str) -> str:
+    """One reply, with markdown taken back out of it.
+
+    A model writes markdown unless something stops it, and asking the prompt
+    to stop is a request: the rule is here instead, on the one path every
+    reply takes. It removes markers and never content -- no number, no make
+    and no word of a sentence changes, which is what makes it safe to run
+    after the guards have already read the text.
+    """
+    out = text or ""
+    for pattern, repl in _MARKDOWN:
+        out = pattern.sub(repl, out)
+    return "\n".join(line.rstrip() for line in out.split("\n")).strip()
+
+
+def without_offer_more(text: str) -> str:
+    """Drop a trailing "is there anything else?" from a turn that is asking.
+
+    **Two questions in one turn get the wrong one answered.** Every turn ends
+    by offering more -- that is the behaviour `BRIEF` asks for, and it is how
+    the second thing a buyer came for gets found. But a turn that has just put
+    a card on their screen is already a question, and a real reply read:
+
+        Please fill in the details on screen so a colleague can confirm the
+        Versa's features. Is there anything else I can help with?
+
+    The buyer is being asked for their number and asked to change the subject
+    in the same breath. The card is the ask, so the sign-off goes.
+
+    Only the final sentence, and only one that names "anything else" and ends
+    in a question mark -- so the worst a false positive can do is remove a
+    sentence that was redundant anyway.
+    """
+    return _OFFER_MORE.sub("", text or "").strip()
+
 
 def money(value: int | None) -> str:
     """`$21,400`, or what the listing itself says when it carries no price.
@@ -79,7 +139,19 @@ def cased(value: str) -> str:
     is free text and there is no table of every one; a rule that guessed
     harder would invent names, which is the more expensive error.
     """
-    if not value or not value.isupper():
+    if not value:
+        return value
+    # **A dealer decorates a field and a chat bubble renders it literally.**
+    # Alsbou's Boxster is trimmed `CONVERTIBLE *LOW MILES*` in their own
+    # export, and the asterisks reached the buyer as asterisks -- on the card,
+    # in the sentence, and read out on a call. They are shouting, not data:
+    # nothing downstream means anything by them, `search_inventory` lowercases
+    # before it matches, and the row keeps what the dealer sent. Stripped
+    # before the early return below, because a mixed-case trim can be
+    # decorated too and `isupper()` would let that one through.
+    if "*" in value:
+        value = " ".join(value.replace("*", " ").split())
+    if not value.isupper():
         return value
     if value in _CASED:
         return _CASED[value]

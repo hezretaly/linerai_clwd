@@ -1053,7 +1053,11 @@ def details_pending(db: Session, convo: Conversation) -> bool:
     )
     for row in rows:
         for call in json.loads(row.tool_calls_json or "[]"):
-            if call.get("name") == "request_details" and (call.get("result") or {}).get("fields"):
+            # **A card is what a result carries, not what a tool is called.**
+            # `escalate_to_human` draws one itself when a handoff would leave
+            # nobody reachable, so reading the name here would have missed it
+            # and offered the buyer a second card over the first.
+            if (call.get("result") or {}).get("fields"):
                 pending = True
             elif call.get("name") == "save_details":
                 pending = False
@@ -1305,15 +1309,23 @@ def escalate_to_human(
         convo.status = "handoff"
         convo.stage = "escalated"
         db.commit()
+        lead_now = (
+            db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+        )
         return {
             "escalation_id": open_row.id,
             "already_escalated": True,
             "guidance": (
                 "A colleague already has this conversation in their queue; nothing "
                 "new was raised. Do not tell the buyer again that somebody will "
-                "confirm -- they heard it. Get a number if you have none, and carry "
-                "on with anything else you can answer."
+                "confirm -- they heard it. Carry on with anything else you can "
+                "answer."
             ),
+            # Still nobody to ring, so the boxes go up here too -- the second
+            # escalation of a conversation is the one where a number matters
+            # most, and `contact_card` draws nothing when one is already on
+            # screen or the buyer is already on file.
+            **contact_card(db, convo, bool(lead_now and (lead_now.email or lead_now.phone))),
         }
 
     rule_key = args.get("rule_key") or ""
@@ -1371,9 +1383,8 @@ def escalate_to_human(
         # an email in a sentence", which is what this said before -- and the
         # chat rules forbid exactly that, so the two instructions fought.
         guidance += (
-            " We have no way to reach this buyer, so get a phone number now, before "
-            "anything else: on chat call request_details (the boxes ask for it); on "
-            "a call ask out loud and read it back."
+            " We have no way to reach this buyer, so the boxes asking for a number "
+            "are on their screen now. Say in one line what they are for and stop."
             if convo.channel != "voice" else
             " We have no way to reach this buyer, so ask for their number out loud "
             "now and read it back to check it. Save it with save_captured_fields."
@@ -1384,7 +1395,36 @@ def escalate_to_human(
         "rule_key": rule_key,
         "buyer_reachable": reachable,
         "guidance": guidance,
+        **contact_card(db, convo, reachable),
     }
+
+
+def contact_card(db: Session, convo: Conversation, reachable: bool) -> dict:
+    """The details card, drawn by the escalation itself when nobody can be rung.
+
+    **Raising a handoff and asking for a number are one act.** They were two
+    calls, and a real conversation shows what that costs: the buyer asked
+    whether a car had a third row, the listing did not say, and Liner said a
+    colleague would confirm -- three times, over three turns, without ever
+    asking how to reach them. Nobody could have confirmed anything. The buyer
+    had to say *maybe you could reach out to me* before the boxes appeared.
+
+    Telling the model harder does not fix it: the prompt already asked for
+    `request_details` in that turn, and the second call is exactly the one a
+    model drops. So the executor does it. An escalation that leaves nobody
+    reachable now *is* the ask -- one tool call, both effects, which is the
+    same reasoning that makes `close_conversation` refuse the first close on a
+    buyer with no phone number.
+
+    Nothing is drawn when there is no need: a buyer already on file, a card
+    already unanswered on their screen, or a call, which has no screen at all.
+    """
+    if reachable or convo.channel == "voice" or details_pending(db, convo):
+        return {}
+    return details.card(
+        None,
+        "A colleague will confirm this for you -- leave a number and they will call.",
+    )
 
 
 def answer_from_knowledge(db: Session, convo: Conversation, args: dict) -> dict:

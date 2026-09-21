@@ -15,7 +15,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.agent import guards, rail_actions, stub, tools
+from app.agent import guards, phrasing, rail_actions, stub, tools
 from app.config import settings
 from app.db import utcnow
 from app.events import emit
@@ -24,19 +24,53 @@ from app.models import Conversation, Message, Rail
 log = logging.getLogger("liner.agent")
 
 
+def _buyer_spoke(db: Session, convo: Conversation) -> bool:
+    """Has the buyer said anything in this thread yet?
+
+    The opening chips are for somebody who has not started, so "still at the
+    opening" has to mean the buyer rather than the stage: `loop.run_turn` never
+    writes `convo.stage`, so on a live deployment a thread sits at `opening`
+    for ever and the openers were re-offered under every reply -- *What's
+    under $20k?* beside the answer to exactly that question.
+    """
+    return (
+        db.query(Message)
+        .filter_by(conversation_id=convo.id, role="buyer")
+        .first()
+        is not None
+    )
+
+
 def rails_for(db: Session, convo: Conversation) -> list[Rail]:
     """A lookup on (kind, stage, enabled) -- deterministic, seedable, testable.
 
     Deliberately not model-generated: chips are a second place a model could
     invent a car that isn't there, and they would add latency to every turn.
     """
-    if convo.stage == "opening":
+    if convo.stage == "opening" and not _buyer_spoke(db, convo):
         followups = (
             db.query(Rail)
             .filter_by(kind="opener", enabled=True)
             .order_by(Rail.sort_order.asc())
             .all()
         )
+    elif settings.llm_mode == "live":
+        # **A followup chip names a stage, and only the stub advances stages.**
+        # `stub.run_turn` is the state machine those rows were written for;
+        # `loop.run_turn` has none and never writes `convo.stage`, so on a live
+        # deployment the chips freeze on whatever the first turn set and stay
+        # there for the whole conversation. A real one ran to the end under
+        # *Tell me about the first one* and *Anything cheaper?* -- offered
+        # beside a details card, and again after a colleague had been called
+        # in. That is not a shortcut, it is three buttons about a list the
+        # buyer stopped looking at ten messages ago.
+        #
+        # So live serves the openers and then stops: the chips are the way in,
+        # which is the job a dealership put them there for, and after that the
+        # composer is the answer. A chip's *action* is untouched -- the
+        # openers carry `under_price`, `with_seats` and `matching`, and they
+        # still answer themselves with no model turn.
+        return []
     else:
         query = db.query(Rail).filter_by(kind="followup", stage=convo.stage, enabled=True)
         if not convo.focus_vehicle_id:
@@ -210,6 +244,21 @@ def _summarise(reply: str) -> str:
     return f"{cut}..."
 
 
+def _asked_in_a_box(calls: list[dict]) -> bool:
+    """Did this turn put something on screen for the buyer to fill in?
+
+    Read off the results rather than the tool names, because both cards are
+    only drawn when their tool actually returned one: `request_details`
+    answers `already_asked` when a card is already unanswered, and
+    `check_availability` can come back with no slots at all.
+    """
+    for call in calls:
+        result = call.get("result") or {}
+        if isinstance(result, dict) and (result.get("fields") or result.get("slots")):
+            return True
+    return False
+
+
 def record_assistant_message(
     db: Session, convo: Conversation, reply: str, calls: list[dict]
 ) -> Message:
@@ -219,6 +268,20 @@ def record_assistant_message(
     the model. Same row, same close-on-booked rule, same event -- a second copy
     of this is how a conversation ends up booked but still showing as open.
     """
+    # **What the buyer reads, cleaned once, on the path every reply takes.**
+    # Two things, and both were visible in a real conversation: a model writes
+    # markdown unless something stops it and the thread is plain text, so
+    # `**$6,157**` arrived with the asterisks in it; and a turn that puts a
+    # card on screen must not also ask whether there is anything else, because
+    # the card *is* the question. Here rather than in the prompt for the usual
+    # reason -- a prompt is a request -- and here rather than at four call
+    # sites (chip, live, stub, nudge) because the fifth is the one somebody
+    # forgets. After the guards, which have already read the text: neither of
+    # these changes a number, a make or a word of a sentence.
+    reply = phrasing.plain(reply)
+    if _asked_in_a_box(calls):
+        reply = phrasing.without_offer_more(reply)
+
     message = Message(
         conversation_id=convo.id,
         role="assistant",

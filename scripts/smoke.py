@@ -484,8 +484,12 @@ def main() -> int:
               bool(first.get("fields")) and second.get("already_asked") is True
               and "fields" not in second, str(second)[:120])
         esc = _tools.escalate_to_human(_db, _c, {"reason": "is it a three-row?"})
-        check("an escalation with no number asks for one through the card",
-              "request_details" in esc.get("guidance", ""), esc.get("guidance", "")[:100])
+        # The escalation asks for a number itself -- but a card is already
+        # unanswered on this screen from the lines above, so it draws nothing
+        # rather than stacking a second one. Both halves of the same rule.
+        check("an escalation over an unanswered card does not draw another",
+              not esc.get("fields") and esc.get("buyer_reachable") is False,
+              f"fields={len(esc.get('fields') or [])} reachable={esc.get('buyer_reachable')}")
         again = _tools.escalate_to_human(_db, _c, {"reason": "and the tow rating?"})
         check("and a second escalation on an open handoff says so instead of raising twice",
               again.get("already_escalated") is True and "guidance" in again)
@@ -3502,6 +3506,128 @@ def main() -> int:
           str(sorted(actions)))
     check("and a malformed action falls back to the model rather than raising",
           _actions.action_of(SimpleNamespace(action_json="{not json")) == ("", {}))
+
+    print("\n== what the buyer actually reads ==")
+    # Five things from one real conversation, in the order they went wrong.
+    from app.agent import phrasing as _say
+    from app.agent import runner as _turn
+    from app.agent import tools as _ex
+    from app.api.chat import _one_each as _once
+    from app.config import settings as _cfg_chat
+    from app.db import SessionLocal as _ChatSession
+    from app.models import Conversation as _Thread
+
+    # **A dealer decorates a field and a bubble renders it literally.** Their
+    # Boxster is trimmed `CONVERTIBLE *LOW MILES*` in their own export, and the
+    # asterisks reached the buyer -- on the card, in the sentence, and read out
+    # on a call. Driven against the real lot rather than the function, because
+    # the row is what the storefront serialises.
+    shouted = [
+        v for v in call("GET", "/alsbou/api/showroom?limit=100")["vehicles"]
+        if "*" in f"{v.get('make')} {v.get('model')} {v.get('trim')}"
+    ]
+    check("no car's name reaches a buyer with a dealer's decoration in it",
+          not shouted, str([v.get("trim") for v in shouted][:3]))
+    check("and the rule bites on a decorated trim whatever its case",
+          _say.cased("CONVERTIBLE *LOW MILES*") == "Convertible LOW Miles"
+          and _say.cased("Convertible *Low Miles*") == "Convertible Low Miles",
+          repr(_say.cased("CONVERTIBLE *LOW MILES*")))
+
+    # **One card per car, however many tools found it.** A turn that searches
+    # and then looks the same car up returned it twice and drew it twice: two
+    # identical Versa cards under one reply, same price, same mileage.
+    versa, other = {"vin": "V1"}, {"vin": "V2"}
+    check("the same car found twice in one turn is drawn once",
+          _once([versa, other, dict(versa)]) == [versa, other],
+          str(_once([versa, other, dict(versa)])))
+    check("and the browser does it too, for the refresh path",
+          "seen.has(car.vin)" in (TSX.parent / "routes" / "Chat.tsx").read_text(),
+          "withVehicles dedupes its row")
+
+    _cdb = _ChatSession()
+    try:
+        thread = _Thread(channel="chat", status="active", stage="opening")
+        _cdb.add(thread)
+        _cdb.commit()
+        _cdb.refresh(thread)
+
+        # **Chips are the way in, not a running menu.** A followup names a
+        # stage and only the stub advances stages, so on a live deployment they
+        # froze on the first turn's set: a real conversation ran to the end
+        # under *Tell me about the first one*, offered beside a details card
+        # and again after a colleague had been called in.
+        check("the openers are offered before the buyer has said anything",
+              len(_turn.rails_for(_cdb, thread)) >= 3,
+              str([r.label for r in _turn.rails_for(_cdb, thread)]))
+        _turn.record_buyer_message(_cdb, thread, "is the durango a three row?")
+        thread.stage = "browsing"
+        _cdb.commit()
+        check("and never re-offered under a reply once they have",
+              not [r for r in _turn.rails_for(_cdb, thread) if r.kind == "opener"],
+              str([r.label for r in _turn.rails_for(_cdb, thread)]))
+        kept_mode = _cfg_chat.llm_mode
+        try:
+            _cfg_chat.llm_mode = "live"
+            check("on the live path, where nothing advances a stage, there are none",
+                  _turn.rails_for(_cdb, thread) == [], "chips after the buyer speaks")
+        finally:
+            _cfg_chat.llm_mode = kept_mode
+
+        # **Raising a handoff and asking for a number are one act.** They were
+        # two calls, and the second is the one a model drops: a buyer was
+        # promised a colleague three times over three turns and never asked how
+        # to reach them, so nobody could have confirmed anything.
+        raised = _ex.escalate_to_human(
+            _cdb, thread, {"rule_key": "vehicle_question", "reason": "three-row?"}, "smk-1")
+        check("an escalation with nobody to ring puts the boxes up itself",
+              [f["key"] for f in raised.get("fields") or []] == ["name", "phone"],
+              str([f.get("key") for f in raised.get("fields") or []]))
+        check("and says what they are for in the buyer's own terms",
+              "colleague" in (raised.get("reason") or "").lower(), raised.get("reason"))
+
+        # **And a turn that is asking does not also ask what else.** Two
+        # questions in one message gets the wrong one answered: a real reply
+        # read *Please fill in the details on screen ... Is there anything else
+        # I can help with?* -- fill this in, and change the subject.
+        written = _turn.record_assistant_message(
+            _cdb, thread,
+            "**A colleague** will confirm that. Is there anything else I can help with?",
+            [{"name": "escalate_to_human", "result": raised}],
+        )
+        _cdb.commit()
+        check("the sign-off is dropped from a turn that drew a card",
+              "anything else" not in written.content.lower(), repr(written.content))
+        # **Markdown is not displayed, so it is not sent.** The thread is plain
+        # text deliberately, and a model writes markdown unless something stops
+        # it -- `**$6,157**` reached the buyer with the asterisks in it.
+        check("and markdown is taken back out of what is stored",
+              "*" not in written.content and written.content.startswith("A colleague"),
+              repr(written.content))
+        check("it strips markers and never content",
+              _say.plain("**$6,157** and `75,437` miles") == "$6,157 and 75,437 miles",
+              _say.plain("**$6,157** and `75,437` miles"))
+        check("and leaves an address alone, where an underscore is not emphasis",
+              _say.plain("josh_r@example.com") == "josh_r@example.com")
+
+        # Once. The card is replayed on refresh while it is unanswered, so a
+        # second escalation must not put a second one on the same screen.
+        again_up = _ex.escalate_to_human(
+            _cdb, thread, {"rule_key": "vehicle_question", "reason": "asked twice"}, "smk-2")
+        check("a second escalation does not draw a second card over the first",
+              not again_up.get("fields") and again_up.get("already_escalated"),
+              str(again_up.get("already_escalated")))
+        # Given back, children first -- the two escalations above point at this
+        # thread, and a row left behind is a *Needs a person* queue entry on
+        # the board for a conversation nobody had.
+        from sqlalchemy import text as _sql_chat
+        for table in ("conversation_once", "escalations", "messages", "vehicle_mentions"):
+            _cdb.execute(
+                _sql_chat(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": thread.id}
+            )
+        _cdb.execute(_sql_chat("DELETE FROM conversations WHERE id = :c"), {"c": thread.id})
+        _cdb.commit()
+    finally:
+        _cdb.close()
 
     print("\n== one follow-up when a buyer goes quiet ==")
     # **The allowance is the server's, and that is the whole check.** The clock
