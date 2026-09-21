@@ -261,18 +261,21 @@ inventory:
 # assignment roster, the Liner setup page and publishing the assistant's
 # instructions. A rep gets none of those.
 #
-# NOTE the address is `alsbou.com`, while their site is `alsboucars.com`. Kept
-# as given -- for a sign-in it is an identifier and a demo account does not
-# need a reachable mailbox, and `OUTBOUND_ONLY_TO` refuses mail to it anyway.
-# Worth correcting before they use it for real, since a rep's signature and
-# any Reply-To would carry it.
+# **The address is on their own domain, and that is the rule rather than a
+# preference.** It was `owner@alsbou.com` while their site is `alsboucars.com`
+# -- an address at a domain that is not theirs, on the login sheet their own
+# manager reads, which is the same failure as greeting their buyer as
+# Riverside Auto. `manager@` because we do not know the person: a role mailbox
+# at their own domain is honest, where a name we invented is not, and one
+# login per store is what the demo hands over. Their real people go on with
+# `make add-user`, which needs no reseed.
 #
 # The password is generated and printed once by the seed, like every profile's
 # own people -- an environment variable per person is one somebody has to add
 # to the deployment. To choose one instead:
-#   make set-password EMAIL=owner@alsbou.com
+#   make set-password EMAIL=manager@alsboucars.com
 staff:
-  - { name: Alsbou Owner, email: owner@alsbou.com, role: manager }
+  - { name: Alsbou Motors Manager, email: manager@alsboucars.com, role: manager }
   # TO FILL -- their real reps. Placeholders so the floor has a shape: a
   # roster of one has nobody to hand a buyer to, so assignment, the per-rep
   # queues and the team page have nothing to show. `@placeholder.invalid`

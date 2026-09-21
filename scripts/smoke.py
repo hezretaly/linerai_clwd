@@ -2240,6 +2240,60 @@ def main() -> int:
     check("and a mailbox can never look like a reply token",
           all("+" not in box and box != "reply" for box, _ in declared), str(declared))
 
+    print("\n== every store's manager signs in at their own domain ==")
+    # A login sheet is the first thing a dealership reads, and an address at a
+    # domain that is not theirs reads as a test account -- the same failure as
+    # greeting their buyer as Riverside Auto, in the one place nobody looked.
+    # Managers only: a profile's `@placeholder.invalid` reps are deliberately
+    # and visibly invented, which is what that domain is for.
+    from app.config import settings as _cfg_st
+    from app.db import has_database as _seeded
+    from app.models import User as _Staff2
+    from app.seed import STAFF as _FIXTURE_STAFF, _role_manager as _fallback
+    from app import profile as _prof
+    # The default store is whichever `DEALERSHIP=` names, so naming it again
+    # by slug would check one file twice.
+    for _slug in [""] + [s for s in _known() if s != _cfg_st.dealership and _seeded(s)]:
+        with _boxes.using(_slug), _Store2(_slug) as _sdb:
+            home = _prof.staff_domain()
+            bosses = [u.email for u in _sdb.query(_Staff2).filter_by(role="manager").all()]
+            named = _slug or "the default store"
+            check(f"{named}: a manager exists to sign in as", bool(bosses), str(bosses))
+            check(f"{named}: every manager is at {home}",
+                  all(e.rsplit("@", 1)[-1] == home for e in bosses), str(bosses))
+    # And the rule for a store that has not named anybody: one manager at the
+    # role mailbox on their own site, never Riverside's floor wearing their
+    # domain. `manager@` is the only login here that can be derived rather
+    # than invented, which is why it is the one used.
+    with _boxes.using("alsbou"):
+        made = _fallback({"name": "Some Motors"})
+    check("a profile that names no staff gets one manager, not the fixture's nine",
+          len(made) == 1 and made[0]["role"] == "manager", str(made))
+    check("and it is manager@ on their own site",
+          made[0]["email"] == "manager@alsboucars.com", made[0]["email"])
+    check("and no fixture person's name travels onto their roster",
+          not any(local in json.dumps(made) for _, local, *_ in _FIXTURE_STAFF), str(made))
+    # With no website there is no domain left but the fixture's, and
+    # `manager@riversideauto.example` on a real dealership's sheet is the
+    # failure this replaced arriving one step later. It refuses instead, and
+    # names both ways out -- a refusal nobody can act on is a crash.
+    try:
+        # Named rather than left to the default store, which has a website
+        # whenever somebody runs the gate with `DEALERSHIP=` set to a real one.
+        with _boxes.using("riverside"):
+            _fallback({"name": "No Site Motors"})
+        refused = ""
+    except SystemExit as exc:
+        refused = str(exc)
+    check("a profile with no staff and no website is refused, not given the fixture's domain",
+          "website_url" in refused and "staff:" in refused,
+          (refused.strip().splitlines() or ["seeded anyway"])[0][:70])
+    # And it names the profile whose domain it just read, not the one the
+    # process booted as -- the two differ exactly when somebody is looking at
+    # several stores, and the fix is an edit to one file.
+    check("and the refusal names that profile, not whichever the process booted as",
+          "riverside.yaml" in refused, refused.strip().split(" names")[0][-40:])
+
     # **A live event reaches the dashboards of its own store and no other.**
     # `replay` was always store-scoped; the live push went to every socket
     # in the process, so Craig's dashboard received `email.received` naming

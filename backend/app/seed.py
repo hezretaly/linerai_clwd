@@ -483,6 +483,42 @@ def build_owner(name: str, email: str, password_env: str, initials: str) -> OpsU
     )
 
 
+def _role_manager(raw: dict) -> list[dict]:
+    """One manager account for a dealership that has not named its people.
+
+    `manager@` on their own site, which is the only login here that can be
+    *derived* rather than invented: a role mailbox at their own domain is
+    honest about being a role, where a name nobody gave us is a colleague who
+    does not exist on the page their real manager is reading.
+
+    It refuses rather than falling back when the profile has no `website_url`,
+    because the only domain left to use would be the fixture's -- and
+    `manager@riversideauto.example` on a real dealership's login sheet is the
+    failure this replaced, arriving one step later. `_check_profile` does not
+    require a website (a dealership without one is a real thing), so this is
+    where it becomes required: the moment an address has to be built from it.
+    """
+    domain = profile.staff_domain()
+    if domain == profile.FIXTURE_DOMAIN:
+        # The file whose domain was just read, not the one the process booted
+        # as. They are the same in a seed -- it runs with `DEALERSHIP=<slug>`
+        # set, which `make reset-all` does per store -- and naming the wrong
+        # one sends somebody to edit a profile that is not the problem.
+        from app.db import active_store
+
+        raise SystemExit(
+            f"\n{settings.config_for(active_store())} names no staff and has no website_url.\n\n"
+            "One of the two is needed to give this dealership a login:\n\n"
+            "  staff:\n"
+            "    - { name: Their Name, email: them@theirsite.com, role: manager }\n\n"
+            "  ...or website_url: \"https://theirsite.com/\", and the seed creates\n"
+            "  manager@theirsite.com.\n\n"
+            "Nothing here can invent either one: an address on a domain that is\n"
+            "not theirs is what their own manager reads as a test account.\n"
+        )
+    return [{"name": f"{raw['name']} Manager", "email": f"manager@{domain}", "role": "manager"}]
+
+
 def _seed_users(db: Session, raw: dict) -> tuple[list[User], list[tuple[User, str]]]:
     """The dealership's staff, and the password each one can sign in with.
 
@@ -499,18 +535,29 @@ def _seed_users(db: Session, raw: dict) -> tuple[list[User], list[tuple[User, st
     real manager is reading, is the same failure as being greeted as Riverside
     Auto. So a profile with a `staff:` list gets exactly that list.
 
+    **And a profile without one gets a manager rather than Riverside's
+    floor.** The fixture roster used to be the fallback for *any* profile that
+    had not named its people, which put `dana.mercer@` on the prospect's own
+    domain -- nine invented colleagues, addressed convincingly enough to read
+    as a real floor, on the one sheet somebody types from. The fixture reaches
+    STAFF by carrying the fixture, which is the thing that list belongs to;
+    everyone else gets `_role_manager`, one account at `manager@` on their own
+    site. It is the only login here that can be derived rather than invented,
+    which is why it is the one used.
+
     The fixture's four keep their `.env`-driven passwords, because every test,
     screenshot and smoke run signs in as one of them. A profile's own people
     get a generated one, for the reason `add_user` generates rather than
     reading `.env`: an environment variable per person is one somebody has to
     add to the deployment. A reseed rebuilds the database, so it rotates them.
     """
-    people = profile.staff() if not _has_fixture(raw) else []
-    if not people:
+    if _has_fixture(raw):
         users = [build_user(*person) for person in STAFF]
         db.add_all(users)
         db.commit()
         return users, [(u, _password_for(u.role)) for u in users]
+
+    people = profile.staff() or _role_manager(raw)
 
     users, minted = [], []
     for person in people:

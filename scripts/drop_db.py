@@ -12,6 +12,12 @@ there is exactly the pair that drifts, and the direction it drifts in is
 
     python scripts/drop_db.py           # the store DEALERSHIP= names
     python scripts/drop_db.py --list    # every store, and whether it is seeded
+
+`--list` also prints, per store, the address its mail leaves from and who can
+sign in as a manager. Those are the two questions somebody actually opens this
+for -- "which mailbox is this dealership's" and "what do I log in with" -- and
+the answers otherwise live in a profile file and a database respectively, with
+nothing putting them side by side.
 """
 
 from __future__ import annotations
@@ -72,6 +78,69 @@ def rows(slug: str) -> str:
     return f"{total // 1024} KB"
 
 
+def sends_from(slug: str) -> str:
+    """The address this store's buyer mail leaves from, and comes back to.
+
+    Asked of the sender rather than composed here, because `mailbox@domain`
+    is only the first rung -- `SENDING_FROM` and the derived `sales@` are the
+    other two, and a second implementation of "which mailbox is this
+    dealership's" is how a listing promises an address the send does not use.
+    """
+    from app import mailboxes
+    from app.integrations.registry import get_email_sender
+
+    try:
+        with mailboxes.using(slug):
+            return get_email_sender().default_address("dealership")
+    except Exception:  # a listing must not fail over an unconfigured sender
+        return ""
+
+
+def managers(slug: str) -> str:
+    """Who can sign in to this store as a manager.
+
+    Read out of the file read-only, like `rows` -- a listing must not create a
+    database, and opening one through the application's engine would. The
+    password is not here and cannot be: only its hash is stored. A reseed
+    prints a new one, or `make set-password EMAIL=...` sets it.
+    """
+    paths = files_for(slug)
+    if not paths or not paths[0].exists():
+        return ""
+    try:
+        with sqlite3.connect(f"file:{paths[0]}?mode=ro", uri=True) as conn:
+            found = [
+                row[0] for row in conn.execute(
+                    "SELECT email FROM users WHERE role = 'manager' AND active = 1"
+                ).fetchall()
+            ]
+    except sqlite3.Error:
+        return ""
+    return ", ".join(found)
+
+
+def _detail(slug: str) -> None:
+    """The two facts somebody opens this listing to find.
+
+    A store with a mailbox and no `SENDING_DOMAIN` names the setting rather
+    than printing nothing: "this dealership has no address" and "this
+    deployment has no domain to put one on" are different problems with
+    different fixes, and a blank line says neither.
+    """
+    from app import mailboxes, profile
+
+    mail, people = sends_from(slug), managers(slug)
+    if mail:
+        print(f"      mail    {mail}")
+    else:
+        with mailboxes.using(slug):
+            box = profile.mailbox()
+        if box:
+            print(f"      mail    {box}@ -- no SENDING_DOMAIN set, so nothing finishes the address")
+    if people:
+        print(f"      sign in {people}")
+
+
 def main() -> int:
     if "--list" in sys.argv:
         slugs = known_stores()
@@ -80,8 +149,10 @@ def main() -> int:
         for slug in slugs:
             here = " <- DEALERSHIP=" if slug == current else ""
             print(f"  {slug:22} {rows(slug):>12}   {files_for(slug)[0]}{here}")
+            _detail(slug)
         if not current:
             print(f"\n  (no DEALERSHIP set, so the default store is {settings.database_url})")
+            _detail("")
         print()
         return 0
 

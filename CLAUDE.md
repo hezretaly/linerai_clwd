@@ -25,7 +25,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
 | `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it). `ops.db` is a separate file and survives it; the store's **delivery receipts do not** |
 | `make reset-all` | **Every dealership at once**, each seeded from its own profile with its own manager and reps, passwords printed per store. `make reset-db` is one store — whichever `DEALERSHIP=` names — which on a host serving several left the others with no database. `ARGS=--only a,b` narrows it |
-| `make stores` | Every dealership this deployment can serve, and which are seeded. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
+| `make stores` | Every dealership this deployment can serve, and which are seeded, **each with the address its mail leaves from and its manager sign-in** — the two facts somebody opens it for, otherwise one in a profile file and one in a database. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
 | `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
 | `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
 | `make prune-ops` | Drop the pre-split `ops_` tables out of the store files. Reports by default, `ARGS=--apply` removes them, and it refuses any store holding a row `ops.db` does not |
@@ -1831,6 +1831,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   It is **Riverside's roster and does not travel**: a profile with its own
   `staff:` gets exactly that list, because invented names in a prospect's
   assignment picker are the same failure as greeting their buyer as Riverside.
+  - **And a real dealership's manager signs in at `manager@` on their own
+    site.** The roster travelled anyway, through the fallback: STAFF was what
+    *any* profile got when it had not named its people, so a new prospect's
+    first seed put `dana.mercer@theirdomain.com` — nine invented colleagues,
+    addressed convincingly enough to read as a real floor — on the one sheet
+    somebody types from. The fixture now reaches that list by carrying the
+    fixture, which is what it belongs to; everyone else gets one account at
+    `manager@<the host of their website_url>`. That address is the only
+    login here that can be *derived* rather than invented, which is why it is
+    the one used: a role mailbox at their own domain is honest about being a
+    role, where a name nobody gave us is a colleague who does not exist. It
+    was got wrong in a profile too — Alsbou's manager was `owner@alsbou.com`
+    while their site is `alsboucars.com`, a domain that is not theirs.
+  - **A profile with neither a `staff:` list nor a `website_url` is
+    refused.** The only domain left to build from is the fixture's, and
+    `manager@riversideauto.example` on a real dealership's login sheet is the
+    failure above arriving one step later. `_check_profile` does not require
+    a website — a dealership without one is a real thing — so the requirement
+    starts where an address has to be built from it, and the message names
+    both ways out.
   - **Staff are looked up by address, never unpacked positionally.**
     `_seed_history` took the first four and broke outright on "too many values
     to unpack" the moment anybody joined — a roster is exactly the list that

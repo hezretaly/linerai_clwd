@@ -141,8 +141,15 @@ inventory:
 # the four with their real people before this is in front of them -- invented
 # colleagues on a page their own manager is reading is the failure this file
 # otherwise exists to prevent -- and delete any that are left over.
+#
+# **The manager signs in at the role mailbox on their own domain.** It was
+# `austin@craigandlandrethcars.com`, which is a guess at a real person's
+# mailbox -- and a login that is wrong about who somebody is reads worse than
+# one that names a role. Austin is who the account belongs to and the roster
+# says so; `manager@` is what he signs in with, because it is the address this
+# store's demo hands over. His own, once he gives it, is `make add-user`.
 staff:
-  - { name: Austin, email: austin@craigandlandrethcars.com, role: manager }
+  - { name: Austin, email: manager@craigandlandrethcars.com, role: manager }
   - { name: Sales Rep One, email: rep1@placeholder.invalid, role: rep }
   - { name: Sales Rep Two, email: rep2@placeholder.invalid, role: rep }
   - { name: Sales Rep Three, email: rep3@placeholder.invalid, role: rep }

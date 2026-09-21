@@ -257,6 +257,17 @@ Five things, and each breaks differently:
   `ALLOWED_RECIPIENTS` in `wrangler.jsonc` and a `wrangler deploy`, or
   Cloudflare drops its mail before it reaches us. `make smoke` fails on a
   profile whose mailbox is missing from that list.
+  - **No new Cloudflare rule per dealership**, as long as the catch-all
+    route to the Worker is in place — and it has to be anyway, because
+    `reply+<token>@` addresses are minted per send and cannot be enumerated
+    as rules. So the catch-all already carries `alsboucars@` and
+    `craigsbestcars@` to the Worker; what decides whether they are *kept* is
+    `ALLOWED_RECIPIENTS`, which is a Worker deploy and not a dashboard edit.
+    That filter runs before any receipt is written, so an address missing
+    from it leaves no trace anywhere — the `founder@` failure, one
+    dealership at a time.
+  - `make stores` prints each store's address beside its sign-in, which is
+    the quickest answer to "does this dealership have a mailbox yet".
 - **`SENDING_FROM` is an address, not a header**, and it is the fallback for
   a dealership with no mailbox — the fixture, which has no website. Do not
   put a name in it. The display name is served: outreach goes out under the
@@ -336,8 +347,20 @@ generated password once:
 
 ```yaml
 staff:
-  - { name: Austin, email: austin@craigandlandrethcars.com, role: manager }
+  - { name: Austin, email: manager@craigandlandrethcars.com, role: manager }
 ```
+
+**The address is on their own domain, and that is the rule.** A login sheet
+is the first thing a dealership reads, and an address at a domain that is not
+theirs reads as a test account — the same failure as being greeted as
+Riverside Auto, in the one place nobody looks. `manager@` rather than a
+person's name where we do not know one: a role mailbox at their own site is
+honest about being a role, and it is the only login here that can be derived
+rather than invented. A profile that names nobody gets exactly that one
+account; it does **not** fall back to Riverside's nine, which used to put
+`dana.mercer@` on the prospect's own domain. A profile with neither a
+`staff:` list nor a `website_url` is refused, because the only domain left
+would be the fixture's.
 
 A prospect's instance no longer ships with Dana Mercer and Marcus Vale on the
 roster — a real manager reading four names they have never heard of is the
@@ -379,18 +402,17 @@ person exists in exactly one dealership's `users` table and can sign in to
 exactly that one.
 
 ```bash
-# Alsbou Motors
-DEALERSHIP=alsbou make add-user EMAIL=owner@alsbou.com     NAME="Alsbou Owner" ROLE=manager
-DEALERSHIP=alsbou make add-user EMAIL=sales@alsbou.com     NAME="Their Rep"    ROLE=rep
+# Alsbou Motors -- the seed already made manager@alsboucars.com; these are extra
+DEALERSHIP=alsbou make add-user EMAIL=sales@alsboucars.com NAME="Their Rep" ROLE=rep
 
-# Craig and Landreth Cars
-DEALERSHIP=craigandlandreth make add-user EMAIL=austin@craigandlandrethcars.com NAME="Austin"    ROLE=manager
-DEALERSHIP=craigandlandreth make add-user EMAIL=rep@craigandlandrethcars.com    NAME="Their Rep" ROLE=rep
+# Craig and Landreth Cars -- likewise manager@craigandlandrethcars.com
+DEALERSHIP=craigandlandreth make add-user EMAIL=rep@craigandlandrethcars.com NAME="Their Rep" ROLE=rep
 ```
 
 Each prints a password once. To choose one instead:
-`DEALERSHIP=alsbou make set-password EMAIL=owner@alsbou.com`. `make stores`
-lists every store and whether it has a database yet; a store that has none
+`DEALERSHIP=alsbou make set-password EMAIL=manager@alsboucars.com`. `make stores`
+lists every store with its mailbox and its manager sign-in, and whether it has
+a database yet; a store that has none
 needs `DEALERSHIP=<slug> make reset-db` first (which also creates whoever is
 in the profile's `staff:` and prints their passwords).
 
