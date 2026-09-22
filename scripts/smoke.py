@@ -4522,9 +4522,11 @@ def main() -> int:
         # come from the export and the sentence between them is the dealer's.
         # Nothing subtracts one from the other, and this is why: the gap
         # between what they advertise and what they headline is NOT a
-        # constant. Four of Alsbou's 69 are electric and pay no smog fee, so a
+        # constant. Five of Alsbou's 91 are electric and pay no smog fee, so a
         # fixed schedule taken off the total would be wrong by $58.25 on
-        # exactly the four nobody would think to check.
+        # exactly the five nobody would think to check -- and not on the
+        # hybrids, which pay it like a petrol car. Their own capture: 84 cars
+        # at a $158 gap, five at $100.
         gaps = {c["price"] - c["advertised_price"]
                 for c in lot if c.get("price") and c.get("advertised_price") is not None}
         check("the fees inside their price are not one number for the whole lot",
@@ -4549,7 +4551,7 @@ def main() -> int:
               len({f["name"].lower() for f in facets[group]}) == len(facets[group]),
               str([f["name"] for f in facets[group]])[:70])
 
-    # Alsbou's export stamps their own city on all 69 of their cars, and their
+    # Alsbou's export stamps their own city on all 91 of their cars, and their
     # dealership row carries that same city. Printed on every row it is noise,
     # and noise is how the one row that says *Riverside* stops being read.
     home = (shop["address"] or "").lower()

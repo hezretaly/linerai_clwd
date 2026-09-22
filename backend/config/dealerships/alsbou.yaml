@@ -232,9 +232,23 @@ site:
   # link that goes nowhere is worse on their own storefront than none at all.
   social: []
 
-# Their lot: 69 vehicles, committed so `make reset-db` rebuilds it with no
+# Their lot: 91 vehicles, committed so `make reset-db` rebuilds it with no
 # network at all -- which is the only option here, since their site refuses
 # this machine.
+#
+# REGENERATED FROM A CAPTURE, and the command is in the repository:
+#
+#     backend/.venv/bin/python scripts/alsbou_from_capture.py <their-page.html>
+#
+# It merges the three statements of the lot their own inventory page carries
+# -- the rendered cards (all 91, with the six cells their card prints), an
+# embedded JSON payload (40, the only source for the engine, the body type
+# and the Carfax link) and JSON-LD (the first 50, kept as a cross-check on
+# the price) -- and keeps whatever this file already held wherever the new
+# capture is silent, because that is an older capture of the same site rather
+# than a guess. Two things it refuses: a card value ending in an ellipsis,
+# which is their CSS clipping `AUTOMATIC` to `AUTOMA...` and would have been
+# seeded on 88 of the 91; and `N / A`, which draws a spec cell saying nothing.
 #
 # WHERE THE COLUMNS CAME FROM. The first version of this file was built from
 # a CSV that carried no mileage and no body style, and said so -- "worth

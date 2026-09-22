@@ -30,7 +30,7 @@ import { chromeClass, cityOf, SORTS, type Car, type Site } from '../_shared/type
  * **The layout is their inventory page's layout**, and that is not
  * decoration. A filter sidebar on the left, a results toolbar carrying the
  * live count and a sort control, a three-column card grid on the right. With
- * 69 or 486 cars, chips above the grid push the cars themselves below the
+ * 91 or 486 cars, chips above the grid push the cars themselves below the
  * fold, and "Sort by" is the first control a person reaches for on somebody
  * else's lot. Below `lg` the sidebar collapses behind a toggle, which is what
  * their own page does.

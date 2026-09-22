@@ -154,7 +154,7 @@ def _car(v: Vehicle, home: str = "") -> dict:
 
     `home` is the dealership's own address, lowercased, and it is what decides
     whether the card says where the car is standing. Alsbou's export stamps
-    "Santa Ana" on all 69 of their cars, which is the address at the top of the
+    "Santa Ana" on all 91 of their cars, which is the address at the top of the
     page -- printed on every row it is noise, and noise is how the one row that
     says *Riverside* stops being read. The same comparison `tools.home_location`
     makes for the note the assistant raises, so a card and a sentence about the

@@ -2526,10 +2526,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         come from the export and the sentence between them is the dealer's
         own. Nothing subtracts one from the other, and this is why: the gap
         between what Alsbou advertise and what they headline is *not* a
-        constant — four of their 69 are electric and pay no smog fee, so a
+        constant — five of their 91 are electric and pay no smog fee, so a
         fixed schedule taken off the total would be wrong by $58.25 on exactly
-        the four nobody would think to check. `make smoke` pins that the gap
-        varies, because a constant is what would make the shortcut look safe.
+        the five nobody would think to check. Their capture states it: 84 cars
+        at a $158 gap and five at $100, with the *hybrids* paying the smog fee
+        like a petrol car, which is the detail a rule of thumb gets wrong.
+        `make smoke` pins that the gap varies, because a constant is what
+        would make the shortcut look safe.
       - **A dealer's own page is an export.** Their CSV carried no mileage and
         no body style and the profile said so, asking them for a fuller one.
         They did not need to send it: their inventory page publishes both, and
@@ -2570,7 +2573,7 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         button is white without that class.
     - **The layout is their inventory page's layout**, and that is not
       decoration. A filter sidebar, a results toolbar carrying the live count
-      and a sort control, a three-column grid. With 69 or 486 cars, chips
+      and a sort control, a three-column grid. With 91 or 486 cars, chips
       above the grid push the cars themselves below the fold, and "Sort by" is
       the first control a person reaches for on somebody else's lot. The
       sidebar collapses behind a toggle below `lg`, which is what their own
@@ -2593,7 +2596,7 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         with the default shows the wrong grid under the right caption, and
         nothing on the page contradicts it.
     - **A car standing at the address on the page does not repeat it.**
-      Alsbou's export stamps their own city on all 69 of their cars, so every
+      Alsbou's export stamps their own city on all 91 of their cars, so every
       card read "· Santa Ana" under an address strip already saying Santa Ana.
       Noise on every row is how the one row that says *Riverside* stops being
       read — the same comparison `tools.home_location` makes for the note the

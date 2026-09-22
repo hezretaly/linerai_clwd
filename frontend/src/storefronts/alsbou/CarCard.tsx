@@ -22,9 +22,12 @@ const COLS: Record<number, string> = { 1: 'grid-cols-1', 2: 'grid-cols-2', 3: 'g
  *
  * **The pricing disclosure states; it does not compute.** Both figures come
  * from the export and the sentence between them is the dealer's own. Nothing
- * here subtracts one from the other: which fees apply varies per car, and four
- * of Alsbou's 69 are electric and pay no smog fee, so a fixed schedule
- * subtracted from a total would be wrong on exactly the four nobody checks.
+ * here subtracts one from the other: which fees apply varies per car, and five
+ * of Alsbou's 91 are electric and pay no smog fee, so a fixed schedule
+ * subtracted from a total would be wrong on exactly the five nobody checks.
+ * Their own capture states it: 84 cars carry a $158 gap and those five a $100
+ * one. The hybrids are not among them -- they pay the smog fee like a petrol
+ * car, which is exactly the kind of thing a rule of thumb gets wrong.
  *
  * **Where their three CTAs were, there is one.** "I WANT THIS CAR", "GET
  * PRE-APPROVED" and a Capital One pre-qualification widget are all forms, and
