@@ -116,6 +116,11 @@ def brief(
     shop = db.query(Dealership).first()
     if author is not None:
         parts.append(_author_block(author, shop))
+    else:
+        parts.append(
+            "--- HOW IT ENDS ---\nDo not sign the email. The dealership's "
+            "sign-off is appended when it is sent."
+        )
     parts.append(_buyer_block(db, lead))
     parts.append(_dealership_block(db))
 
@@ -134,10 +139,29 @@ def brief(
         "state must come from the blocks above: no price, mileage, feature or "
         "vehicle that is not written there, and no policy answer you compose "
         "yourself. If what they asked for needs something you have not been "
-        "given, say plainly in the draft that a colleague will confirm it "
+        "given, say plainly that you will check it and come back to them "
         "rather than filling the gap."
     )
     return "\n\n".join(p for p in parts if p)
+
+
+#: The dealership's price and financing settings, as rules for somebody
+#: writing *as a rep*. The assistant's own wording (`prompts.PRICE`) ends in
+#: "hand off to a rep", which is nonsense addressed to the rep. An unknown key
+#: falls back to the strict one, as it does for the assistant.
+DRAFT_PRICE = {
+    "listed_only": "Quote the listed price only. Do not offer a discount or "
+                   "estimate a total in writing.",
+    "range_ok": "You may quote the listed price and say you are happy to talk "
+                "about it in person.",
+}
+DRAFT_FINANCING = {
+    "refer_to_rep": "Put no rates, terms, approvals or credit decisions in "
+                    "writing; offer to go through financing with them in "
+                    "person or on the phone.",
+    "general_info": "You may explain the financing process in general terms, "
+                    "never with specific numbers.",
+}
 
 
 #: How a role on the roster reads in a sentence a buyer sees. The stored
@@ -154,15 +178,28 @@ def _author_block(author: User, shop: Dealership | None) -> str:
     the buyer-facing assistant's -- "you are Liner" -- so without this the
     draft spoke as Liner, or as "our team", above a rep's own signature: an
     email in two voices, which a buyer reads as a template.
+
+    **And it closes with their first name**, as a person writing their own
+    email does. The block appended at send carries their full name and title
+    over the dealership's details (`outreach_send.person_signature`), which is
+    the usual shape of an email: a closing, then a signature.
     """
     title = ROLE_TITLE.get(author.role, author.role or "member of the team")
     where = f" at {shop.name}" if shop is not None and shop.name else ""
+    first = (author.name or "").split()[0] if (author.name or "").strip() else ""
+    closing = (
+        f"End with a short closing and their first name on its own line, for "
+        f"example \"Best,\\n{first or author.name}\". Their signature -- full "
+        "name, title and the dealership's details -- is appended under it when "
+        "it is sent, so do not write any of that."
+    )
     return (
         "--- WHO IS WRITING ---\n"
         f"{author.name}, {title}{where}. Write as them, in the first person "
         "(\"I\", and \"we\" for the dealership), never as Liner or as an "
         "assistant. They are a person the buyer can call back and ask for by "
-        "name."
+        "name.\n"
+        + closing
     )
 
 
@@ -229,13 +266,13 @@ def _dealership_block(db: Session) -> str:
         lines += [
             f"Tone: {live.tone}",
             f"How hard to push: {live.push_level}",
-            f"What may be said about price: {live.price_mode}",
-            f"Financing: {live.financing_mode}",
+            # The dealership's rule in words, not its setting's key:
+            # `listed_only` means nothing to a model, and this is the one
+            # posture a draft must keep now that it no longer runs under the
+            # buyer assistant's prompt.
+            f"Price: {DRAFT_PRICE.get(live.price_mode, DRAFT_PRICE['listed_only'])}",
+            f"Financing: {DRAFT_FINANCING.get(live.financing_mode, DRAFT_FINANCING['refer_to_rep'])}",
         ]
-    lines.append(
-        "Do not sign the email. The sender's own sign-off is appended when it "
-        "is sent, and a second one reads as a mistake."
-    )
     return "\n".join(lines)
 
 
@@ -303,7 +340,7 @@ def _knowledge_block(db: Session) -> str:
         "--- THE DEALERSHIP'S OWN ANSWERS ---",
         "Quote these verbatim where one applies. Do not compose your own "
         "version of a policy, and do not answer a policy question that is not "
-        "here -- say a colleague will confirm it.",
+        "here -- say you will confirm it.",
     ]
     for e in entries:
         lines.append(f"  {e.topic}: {e.answer}")

@@ -944,6 +944,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     above a rep's signature. `email_draft._author_block` names them and their
     role and says first person; roles are turned into words a buyer reads
     (`rep` is nobody's job title).
+  - **Its own prompt, not the buyer assistant's.** `loop.DRAFT_SYSTEM` plus
+    the brief, and nothing from `build_system_prompt`. That prompt says who
+    Liner is and hands anything unanswerable to "a colleague" -- right for
+    Liner, and it came through in a rep's own email as *"a colleague can
+    discuss the price"*, written by the person who would. The facts it
+    carried are all in the brief already; the pricing and financing posture
+    travels there in words written for a rep (`DRAFT_PRICE`), because the
+    assistant's say "hand off to a rep". `make agent-check` asserts the draft
+    ran under `DRAFT_SYSTEM` and that no line of the brief says "colleague".
+  - **It closes with their first name, and the sign-off carries the rest.**
+    With no signature of their own, `signature_for` was the dealership's
+    block alone, so a first-person email went out with no human name on it
+    anywhere. `person_signature` is their name and title over the
+    dealership's details, the composer shows it under the body before the
+    send, and Liner's automated replies still sign as the dealership.
   - **It comes with a subject.** The model is asked for one fixed first line,
     `Subject: ...`, and `split_subject` takes it off; one text rather than two
     requests, so the guards read the subject with the body. A subject the rep
@@ -984,7 +999,8 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     tell from a real draft.
 - **A sign-off is composed, and it is the sender's own.** The dealership's
   name, address and phone come from its row; a rep who has written their own
-  gets theirs instead, and Liner's own replies always sign as the dealership —
+  gets theirs instead, one who has not gets their name and title above the
+  dealership's, and Liner's own replies always sign as the dealership —
   an automated message carrying a rep's name puts that person on words they
   never saw. `with_signature` is idempotent, so a rep who types the
   dealership's name out of habit does not send it twice.

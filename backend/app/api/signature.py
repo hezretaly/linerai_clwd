@@ -65,7 +65,7 @@ def _row(db: Session, user: User) -> UserSignature:
     return row
 
 
-def _out(db: Session, row: UserSignature, request: Request) -> dict:
+def _out(db: Session, row: UserSignature, request: Request, user: User) -> dict:
     base = settings.public_base_url or str(request.base_url)
     return {
         "text": row.text or "",
@@ -77,7 +77,7 @@ def _out(db: Session, row: UserSignature, request: Request) -> dict:
         # What goes out when this person has written nothing. Shown so the
         # editor can say "leave it empty and you get this" rather than leaving
         # somebody guessing what an empty box means.
-        "fallback": outreach_send.signature(db),
+        "fallback": outreach_send.person_signature(db, user),
         "max_chars": MAX_TEXT,
         "max_image_kb": MAX_IMAGE_BYTES // 1024,
     }
@@ -89,7 +89,7 @@ def read_signature(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
-    return _out(db, _row(db, user), request)
+    return _out(db, _row(db, user), request, user)
 
 
 class SignatureBody(BaseModel):
@@ -111,7 +111,7 @@ def write_signature(
     row = _row(db, user)
     row.text = text
     db.commit()
-    return _out(db, row, request)
+    return _out(db, row, request, user)
 
 
 @router.post("/me/signature/image")
@@ -153,7 +153,7 @@ async def upload_signature_image(
     db.commit()
     if old is not None and old.exists():
         old.unlink()
-    return _out(db, row, request)
+    return _out(db, row, request, user)
 
 
 @router.delete("/me/signature/image")
@@ -170,7 +170,7 @@ def remove_signature_image(
     row.image_token = ""
     row.image_ext = ""
     db.commit()
-    return _out(db, row, request)
+    return _out(db, row, request, user)
 
 
 #: No `/api` prefix and no session: this is the URL a recipient's mail client

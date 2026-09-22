@@ -223,7 +223,6 @@ def draft_text(
     *,
     brief: str,
     provider: Provider | None = None,
-    channel: str = "email",
 ) -> tuple[str, list[str]]:
     """Write something a **rep** will read, decide on, and maybe send.
 
@@ -257,11 +256,14 @@ def draft_text(
     `app/recap.py` does.
     """
     provider = provider or get_provider()
-    dealership = db.query(Dealership).first()
-    system = build_system_prompt(
-        db, dealership, live_settings(db), channel=channel or "email"
-    )
-    system = f"{system}\n{brief.strip()}"
+    # **Not the buyer assistant's prompt.** That one says who Liner is and
+    # that a colleague will pick up whatever it cannot answer -- correct for
+    # Liner, and exactly wrong for an email a rep sends under their own name:
+    # drafts came back first person in one sentence and "a colleague can
+    # discuss the price" in the next, as though the writer were somebody
+    # else. The facts it carried are all in the brief; the pricing posture is
+    # the one rule that has to travel, and it does, in the dealership block.
+    system = f"{DRAFT_SYSTEM}\n\n{brief.strip()}"
 
     # The transcript, so the draft can refer to what was actually said. The
     # instruction itself is the last user turn, which is what a model reads
@@ -321,7 +323,25 @@ DRAFT_REQUEST = (
     "Draft this email now, in the first person, as the team member named in "
     "the brief -- it goes out under their name. Start with exactly one line "
     "`Subject: ` followed by a short subject, then a blank line, then the "
-    "email body. No sign-off with a name after the body: their own sign-off "
-    "is appended when it is sent. Do not say that you are an assistant, and "
-    "do not promise anything the team has not agreed to."
+    "email body, ending with the closing the brief asks for. Do not say that "
+    "you are an assistant, and do not promise anything the team has not "
+    "agreed to."
 )
+
+
+#: The whole system prompt of a draft, ahead of `email_draft.brief`. Short on
+#: purpose: the brief is the data, and this is only who is speaking and how.
+DRAFT_SYSTEM = """You write emails for a member of a car dealership's sales team. They read
+what you write, may edit it, and send it themselves under their own name. It is
+their email, not an assistant's.
+
+Write in the first person as the person named under WHO IS WRITING: "I" for
+them and "we" for the dealership. Never mention Liner, an assistant or AI.
+Anything that needs checking, they check: "I'll confirm that and come back to
+you", never "a colleague will". Anything that happens at the dealership, they
+are part of: "when you come in, I can go through the price with you", never
+"someone can".
+
+State only facts written in the brief below -- no price, mileage, feature,
+vehicle or policy that is not there. Plain text, no markdown. Two or three
+short paragraphs; a buyer reads this on a phone."""

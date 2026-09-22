@@ -493,12 +493,21 @@ def main() -> int:
         written = email_draft.brief(
             db, buyer, drafted, instruction="Ask whether Saturday still works.", author=writer)
         # **Written as the person who pressed the button.** It goes out under
-        # their name and their own sign-off, and the prompt around the brief is
-        # the buyer-facing assistant's -- so without this the draft spoke as
-        # Liner above a rep's signature, an email in two voices.
+        # their name, so without this the draft spoke as Liner above a rep's
+        # signature, an email in two voices.
         check("the draft is written as the signed-in person, by name",
               "--- WHO IS WRITING ---" in written and writer.name in written,
               writer.name)
+        # **And it ends with their name.** The block appended at send is the
+        # dealership's unless they wrote their own, so a draft told not to
+        # sign went out saying "I" with no person's name anywhere on it.
+        check("and it is asked to close with their first name",
+              f"\\n{writer.name.split()[0]}" in written, written[written.find("WHO IS"):][:400])
+        # **Nothing in it defers to "a colleague".** That is the buyer
+        # assistant's line, and it came through in a rep's own email: "a
+        # colleague can discuss the price", written by the person who would.
+        check("and nothing in the brief tells a rep to defer to a colleague",
+              "colleague" not in written.lower(), "a colleague line is in the brief")
         check("the brief carries the rep's own instruction",
               "Saturday still works" in written, written[:60])
         for block in ("THE BUYER", "THE DEALERSHIP, AND HOW IT SOUNDS",
@@ -534,6 +543,14 @@ def main() -> int:
         # escalated anything.
         check("and the model was never offered a tool to act with",
               drafter.seen_offer_tools == [False], str(drafter.seen_offer_tools))
+        # **Its own prompt, not the buyer assistant's.** That one names Liner
+        # and hands anything unanswerable to a colleague -- right for Liner,
+        # wrong for an email a person sends as themselves.
+        drafted_under = drafter.seen_systems[0]
+        check("under the drafting prompt, not the buyer assistant's",
+              drafted_under.startswith(loop.DRAFT_SYSTEM)
+              and "GREETING -- ALREADY ON THEIR SCREEN" not in drafted_under,
+              drafted_under[:80])
         check("nothing was written into the buyer's transcript",
               db.query(Message).filter_by(conversation_id=drafted.id).count() == 0,
               "a draft landed in the thread")

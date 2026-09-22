@@ -4001,8 +4001,17 @@ def main() -> int:
     )
     if _lead_for_sig:
         served = call("GET", f"/api/leads/{_lead_for_sig['id']}/timeline")["email_signature"]
+        # The block *this person's* send appends -- their own, or their name
+        # over the dealership's -- not the dealership's alone, which is what
+        # Liner's automated replies carry.
+        _sdb3 = _SigSession()
+        try:
+            _signer = _sdb3.query(_SigUser).filter_by(email=LOGIN["email"]).one()
+            _theirs = _send.signature_for(_sdb3, _signer)
+        finally:
+            _sdb3.close()
         check("and the buyer page is served the same block the send appends",
-              served == block_text, repr(served)[:70])
+              served == _theirs, repr(served)[:70])
 
     print("\n== each person's own sign-off ==")
     # **A table, not columns on `users`.** `create_all` adds a table to a
@@ -4027,6 +4036,12 @@ def main() -> int:
     # does instead of leaving somebody to find out by sending one.
     check("and blank is answered by the dealership's own block",
           dealer_row.name in mine["fallback"], mine["fallback"][:40])
+    # **With the person's name on top.** Blank used to mean the dealership's
+    # block alone, so a rep's first-person email went out with no human name
+    # anywhere on it and a buyer had nobody to ask for.
+    _me_name = call("GET", "/api/auth/me")["user"]["name"]
+    check("and blank still signs with the person's own name",
+          mine["fallback"].startswith(_me_name), mine["fallback"][:60])
 
     written = call("PUT", "/api/me/signature",
                    {"text": f"Dana Mercer\nSales Manager\n{run}"})

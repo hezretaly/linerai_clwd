@@ -280,6 +280,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
               <EmailReply
                 lead={lead}
                 drafting={reach?.email.draft}
+                signature={data?.email_signature ?? ''}
                 answering={undefined}
                 onDone={() => { setMode('chat'); invalidate() }}
               />
@@ -948,12 +949,16 @@ type Preset = '' | (typeof PRESETS)[number][0]
 function EmailReply({
   lead,
   drafting,
+  signature,
   answering,
   onDone,
 }: {
   lead: Lead
   /** From `/reach`: whether a model is there to draft with, and why not. */
   drafting?: { available: boolean; reason: string }
+  /** What the send appends: this person's own sign-off, or their name and
+   *  title over the dealership's details. */
+  signature: string
   answering: TimelineEntry | undefined
   onDone: () => void
 }) {
@@ -1118,6 +1123,17 @@ function EmailReply({
         placeholder="Write the reply..."
         className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
       />
+      {/* **Shown, not typed, and it carries their name.** Appended on the way
+          out by the compose endpoint, so a rep who could not see it typed
+          their name again or wondered why it was missing. A built draft goes
+          through the outreach endpoint, which appends nothing -- it signs
+          itself in the body -- so the preview is not shown for one. */}
+      {signature && !preset && (
+        <div className="mt-2 rounded-md border border-dashed border-border bg-muted/30 p-2">
+          <p className="text-[11px] font-medium text-muted-foreground">Sent with this sign-off</p>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{signature}</p>
+        </div>
+      )}
       {problem && <p className="mt-1.5 text-xs text-destructive">{problem}</p>}
       {/* **The guards refused it, and the rep is told why.** A draft carrying
           a price nothing sourced is exactly as wrong as a chat bubble

@@ -250,11 +250,33 @@ def signature_for(db: Session, user=None) -> str:
     """
     from app.models import UserSignature
 
-    if user is not None:
-        row = db.query(UserSignature).filter_by(user_id=user.id).one_or_none()
-        if row is not None and (row.text or "").strip():
-            return row.text.strip()
-    return signature(db)
+    if user is None:
+        return signature(db)
+    row = db.query(UserSignature).filter_by(user_id=user.id).one_or_none()
+    if row is not None and (row.text or "").strip():
+        return row.text.strip()
+    return person_signature(db, user)
+
+
+def person_signature(db: Session, user) -> str:
+    """A person's sign-off before they have written one: who, then where.
+
+    **Their name is on it by default.** It fell back to the dealership's
+    block alone, so an email a rep wrote in the first person -- drafted or
+    typed -- went out with no human name anywhere on it, and the buyer had
+    nobody to ask for when they rang the number underneath. Composed from
+    rows like `signature`, for its reason: a name and a title typed from
+    memory drift, and these are already on the account.
+    """
+    from app.email_draft import ROLE_TITLE
+
+    title = ROLE_TITLE.get(user.role, "")
+    who = "\n".join(
+        line for line in ((user.name or "").strip(), title[:1].upper() + title[1:])
+        if line
+    )
+    shop = signature(db)
+    return "\n".join(part for part in (who, shop) if part)
 
 
 def signature_image_url(db: Session, user=None, base: str = "") -> str:
