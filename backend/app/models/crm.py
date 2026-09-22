@@ -362,6 +362,30 @@ class Outreach(Base):
     created_at: Mapped[datetime] = created()
 
 
+class LinkClick(Base):
+    """One press of a counted link on the dealership's own storefront.
+
+    The website half of *Credit applications*. An emailed application link is
+    counted on its `outreach` row, because there is a buyer and a send to hang
+    it on; a visitor pressing Financing on the storefront has neither, so the
+    press is a row of its own -- anonymous, and nothing more is claimed about
+    it than that somebody opened the page. What happens on the dealer's form
+    never comes back, exactly as with the emailed link.
+
+    A table rather than a column for the reason `runtime_flags` is one:
+    `create_all` adds a table to an existing database and never a column.
+    """
+
+    __tablename__ = "link_clicks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: What was opened. Closed vocabulary in `api/redirect.py`'s `COUNTED`.
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    #: Where the press came from: `website` for the storefront.
+    source: Mapped[str] = mapped_column(String(20), default="website")
+    created_at: Mapped[datetime] = created()
+
+
 class InboundEmail(Base):
     """A receipt for every delivery the webhook was handed, kept or not.
 

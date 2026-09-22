@@ -25,9 +25,9 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.settings import live_settings
-from app.db import SessionLocal, utcnow
+from app.db import SessionLocal, current_store, utcnow
 from app.events import emit
-from app.models import Outreach
+from app.models import LinkClick, Outreach
 
 log = logging.getLogger("liner.redirect")
 
@@ -75,6 +75,61 @@ def follow(token: str) -> RedirectResponse:
                 "lead_id": record.lead_id,
                 "kind": record.kind,
             })
+        return RedirectResponse(destination, status_code=302)
+    finally:
+        db.close()
+
+
+def store_path(path: str) -> str:
+    """`path` under the store this request is for, as a public link.
+
+    A link a browser follows arrives with no store but the one written in it:
+    `/r/<token>` unprefixed is looked up in the *default* store's file, so an
+    Alsbou application link resolved to nothing and answered 404 -- the same
+    hole `withStore` closes in the browser, here on a URL we compose.
+    """
+    slug = current_store.get()
+    return f"/{slug}{path}" if slug else path
+
+
+#: The storefront links that are counted, by the kind a press is filed under.
+#: Each resolves to a URL the dealership configured -- never to one written in
+#: the link, which would make this an open redirect anyone could point
+#: anywhere under our name.
+COUNTED = {"credit-application": "credit_application"}
+
+
+def site_hop(kind: str) -> str:
+    """The counted path a storefront link to `kind` is rewritten to."""
+    slug = next(k for k, v in COUNTED.items() if v == kind)
+    return store_path(f"/r/site/{slug}")
+
+
+@router.get("/r/site/{what}")
+def follow_site(what: str) -> RedirectResponse:
+    """A storefront visitor opening the dealer's finance page, counted.
+
+    **The website half of Credit applications.** Their Financing banner, nav
+    item and promo lead to their own page on their own host; pressed straight
+    through, nothing here would ever know. So the storefront's link to the
+    configured application URL is rewritten to this hop, which files one
+    anonymous press and forwards -- in a new tab, so the buyer keeps the
+    storefront and the chat they were in. Clicks, never completions.
+    """
+    kind = COUNTED.get(what)
+    if kind is None:
+        raise HTTPException(404, "There is no such link.")
+    db = SessionLocal()
+    try:
+        destination = (live_settings(db).credit_application_url or "").strip()
+        if not destination:
+            raise HTTPException(
+                410,
+                "This dealership has not set up its finance application link. "
+                "Call them and they will send it to you.",
+            )
+        db.add(LinkClick(kind=kind, source="website"))
+        db.commit()
         return RedirectResponse(destination, status_code=302)
     finally:
         db.close()

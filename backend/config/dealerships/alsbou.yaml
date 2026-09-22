@@ -19,6 +19,14 @@ timezone: America/Los_Angeles
 address: 1223 W 17th St, Santa Ana, CA 92706
 phone: (951) 366-4755
 website_url: "https://www.alsboucars.com/"
+# Their finance application: what the Credit application email links to, and
+# the page their storefront's Financing links open. Both go through a hop that
+# counts the press before forwarding (`/r/<token>` for an email, `/r/site/...`
+# for the storefront), which is where the overview's Credit applications
+# number comes from -- clicks, never completed applications, because what
+# happens on their form never comes back. Seeded into the Liner setup page's
+# application link; on a box already seeded, paste it there and publish.
+financing_url: "https://www.alsboucars.com/financing"
 # Their mailbox on Liner's sending domain -- the local part of the
 # address their buyers write to and their mail goes out from:
 # `alsbou@<SENDING_DOMAIN>`. Mail arriving for it is filed in this store.

@@ -757,6 +757,20 @@ def _seed_vehicle_details(db: Session, folder: pathlib.Path) -> None:
         print(f"    note: details/{vin}.md names no vehicle on this lot")
 
 
+def finance_url(raw: dict) -> str:
+    """The application link a profile gives this dealership, or "".
+
+    The profile's `financing_url` where it names an https page -- it lands in
+    an email a buyer clicks, so anything else is dropped rather than sent --
+    then the fixture's own -- `.example`, reserved by RFC 2606, so it is
+    visibly a fixture and cannot resolve to a real finance portal.
+    """
+    stated = str(raw.get("financing_url") or "").strip()
+    if stated.startswith("https://"):
+        return stated
+    return "https://riversideauto.example/finance" if _has_fixture(raw) else ""
+
+
 def _seed_settings(db: Session, manager: User, raw: dict) -> None:
     """The published instructions, greeting included.
 
@@ -765,17 +779,15 @@ def _seed_settings(db: Session, manager: User, raw: dict) -> None:
     already been sent, so a hardcoded one would have the assistant believe it
     had introduced itself as somebody else's showroom.
 
-    `credit_application_url` is the fixture's alone. A real prospect has not
-    given us their finance portal, and inventing one puts a link in front of a
-    buyer that goes nowhere: with it empty the draft refuses with a typed
-    `not_configured` and the overview card says why, which is the behaviour
-    that exists for exactly this.
+    `credit_application_url` is the profile's `financing_url`, and the
+    fixture's own `.example` one. A prospect whose profile names none gets
+    none: inventing one puts a link in front of a buyer that goes nowhere, and
+    with it empty the draft refuses with a typed `not_configured` and the
+    overview card says why, which is the behaviour that exists for exactly
+    this.
     """
     greeting = f"Hi! I'm Liner, {_possessive(raw['name'])} assistant. What are you looking for?"
-    # .example is reserved by RFC 2606, the same reason the seeded addresses
-    # use .invalid: this is visibly a fixture and cannot resolve to a real
-    # finance portal.
-    finance = "https://riversideauto.example/finance" if _has_fixture(raw) else ""
+    finance = finance_url(raw)
     live = AssistantSettings(
         version=7, status="live", tone="warm", push_level="balanced",
         price_mode="listed_only", financing_mode="refer_to_rep",

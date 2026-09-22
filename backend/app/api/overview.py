@@ -26,6 +26,7 @@ from app.models import (
     Dealership,
     Escalation,
     Lead,
+    LinkClick,
     Message,
     Outreach,
     User,
@@ -130,6 +131,14 @@ def overview(
             Outreach.kind == "credit_application",
             Outreach.click_count > 0,
         )
+        .count()
+    )
+    # The website half: somebody pressing Financing on the storefront. No
+    # buyer and no send to hang it on, so it is a row of its own -- and it is
+    # the same act as opening the emailed link, so it counts on the same card.
+    credit_site = (
+        db.query(LinkClick)
+        .filter(LinkClick.created_at >= since, LinkClick.kind == "credit_application")
         .count()
     )
     credit_url = (live_settings(db).credit_application_url or "").strip()
@@ -252,13 +261,17 @@ def overview(
              "value": appointments_set, "window": "last 24 hours"},
             {"key": "needs_a_person", "label": "Needs a person",
              "value": len(open_escalations), "window": "open now"},
-            # Counts applications a rep actually sent. With no application URL
-            # configured there is nothing to send, and the card says that rather
-            # than showing a zero that looks like a quiet day.
+            # Opens of the application, from the two places a buyer can reach
+            # it: the link a rep emailed, and the storefront's Financing links.
+            # Clicks, never completions -- the dealer's form reports nothing
+            # back. With no application URL configured there is nothing to open,
+            # and the card says that rather than a zero that reads as a quiet
+            # day.
             {"key": "credit_apps", "label": "Credit applications",
-             "value": credit_opened,
+             "value": credit_opened + credit_site,
              "window": (
-                 f"opened, of {credit_sent} sent -- last 24 hours" if credit_url
+                 f"opened -- {credit_opened} of {credit_sent} emailed, "
+                 f"{credit_site} from the website -- last 24 hours" if credit_url
                  else "no application link set"
              ),
              "unavailable": not credit_url},

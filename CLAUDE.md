@@ -617,6 +617,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   form never comes back. With no `credit_application_url` configured there is
   nothing to send, so the draft refuses with a typed `not_configured` and the
   card says why instead of showing a zero that reads as a quiet day.
+  - **The storefront's Financing links are the other half.** They led
+    straight to the dealer's page, so a visitor pressing one was invisible and
+    the card could only count emailed links. `showroom._counted` serves every
+    `site:` link equal to the configured URL as `/r/site/credit-application`,
+    which files an anonymous `link_clicks` row and forwards in a new tab. The
+    destination is read from the setting, never from the URL, or the hop is
+    an open redirect in the dealership's name.
+  - **The URL is a dealership fact**, so it is the profile's `financing_url`
+    and the seed writes it into the setting (`seed.finance_url`); the fixture
+    keeps its `.example` one and a profile naming none gets none.
+  - **A hop has to name its store.** `/r/<token>` unprefixed is looked up in
+    the default store's file, so with `PUBLIC_BASE_URL` set every
+    non-default dealership's emailed link was a 404. `redirect.store_path`
+    prefixes it; `request.base_url` already carries the prefix, which is why
+    it only broke where production composes links.
 - **The calendar answers two different questions, so it has two views.** The
   week grid lays out a shape — where the gaps are, what clashes — and is bad
   at "what is next", which needs one glance down a column rather than paging

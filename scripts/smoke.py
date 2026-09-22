@@ -813,6 +813,63 @@ def main() -> int:
     check("a second click does not count twice", again == after, f"{after} -> {again}")
     check("an unknown token is a 404, not a redirect to nowhere",
           follow(BASE + "/r/not-a-real-token")[0] == 404)
+
+    # **The website half.** A storefront visitor pressing Financing has no
+    # buyer row and no send to count on, and it used to go straight to the
+    # dealer's own page -- so the card could only ever count the emailed link.
+    # The storefront's links to the configured URL are served as a hop that
+    # files the press and forwards; this drives the hop and then the rewrite.
+    code, location = follow(BASE + "/r/site/credit-application")
+    check("a storefront Financing press lands on the dealership's application",
+          code == 302 and location == "https://riverside.example/finance",
+          f"{code} -> {location}")
+    site_after = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "credit_apps")
+    check("and counts on the same card as the emailed link",
+          site_after["value"] == again + 1 and "from the website" in site_after["window"],
+          f"{again} -> {site_after['value']} / {site_after['window']}")
+    # The destination comes from the setting, never from the URL -- a hop
+    # that forwarded to whatever it was handed would be an open redirect
+    # wearing the dealership's name.
+    check("and a hop for anything but a named kind is a 404, not a forward",
+          follow(BASE + "/r/site/https%3A%2F%2Fevil.example")[0] == 404)
+
+    from app.api import showroom as _showroom_mod
+    from app.api.redirect import store_path as _store_path
+    from app.db import SessionLocal as _HopSession, current_store as _hop_store
+
+    _hdb = _HopSession()
+    try:
+        served = _showroom_mod._counted(_hdb, {
+            "links": [{"label": "Financing", "href": "https://RIVERSIDE.example/finance/"},
+                      {"label": "Reviews", "href": "https://riverside.example/reviews"}],
+            "banners": [], "promos": [], "social": [],
+            "cta": {"label": "Apply", "href": "https://riverside.example/finance"},
+        })
+    finally:
+        _hdb.close()
+    check("the storefront's links to the application are served as the counted hop",
+          served["links"][0]["href"] == "/r/site/credit-application"
+          and served["cta"]["href"] == "/r/site/credit-application",
+          str(served["links"][0]))
+    check("and every other link of theirs is left alone",
+          served["links"][1]["href"] == "https://riverside.example/reviews")
+    # A link a browser follows carries no store but the one written in it, so
+    # an unprefixed hop for a second dealership is looked up in the default
+    # store's file and the buyer gets a 404 for the link they were sent.
+    _tok = _hop_store.set("alsbou")
+    try:
+        check("a hop composed for another store carries that store's prefix",
+              _store_path("/r/abc") == "/alsbou/r/abc", _store_path("/r/abc"))
+    finally:
+        _hop_store.reset(_tok)
+    from app.seed import finance_url as _finance_url
+    import yaml as _yaml
+
+    _alsbou = _yaml.safe_load(pathlib.Path("backend/config/dealerships/alsbou.yaml").read_text())
+    check("and Alsbou's application is their own financing page, from their profile",
+          _finance_url(_alsbou) == "https://www.alsboucars.com/financing", _finance_url(_alsbou))
+    check("while a profile naming none gets none, rather than an invented one",
+          _finance_url({"name": "No Link Motors"}) == "")
     # **And a screen has to be able to reach it.** Everything above is the
     # endpoint, which was always right; the one control that could send a
     # credit application lived in a component that stopped being rendered, so

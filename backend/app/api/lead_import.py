@@ -513,10 +513,20 @@ def _track_links(request: Request, db: Session, record: Outreach) -> None:
     if not target or target not in record.body:
         return
 
+    from app.api.redirect import store_path
+
     token = secrets.token_urlsafe(16)
-    base = (settings.public_base_url or str(request.base_url)).rstrip("/")
+    # Under the store the send came from, or the click is looked up in the
+    # default store's file and a non-default dealership's buyer gets a 404 for
+    # the link they were sent. `request.base_url` already carries the prefix
+    # (`StorePrefix` sets `root_path`); `PUBLIC_BASE_URL` -- what production
+    # uses -- does not, which is how it went unnoticed on every box without it.
+    if settings.public_base_url:
+        link = settings.public_base_url.rstrip("/") + store_path(f"/r/{token}")
+    else:
+        link = f"{str(request.base_url).rstrip('/')}/r/{token}"
     record.click_token = token
-    record.body = record.body.replace(target, f"{base}/r/{token}")
+    record.body = record.body.replace(target, link)
 
 
 @router.post("/{lead_id}/outreach")

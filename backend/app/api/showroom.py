@@ -231,7 +231,50 @@ def identity(db: Session) -> dict:
         "id": "", "name": "", "timezone": "", "hours": {},
         "address": "", "phone": "", "website_url": "",
     }
-    return {**out, "brand": brand(), "site": site()}
+    return {**out, "brand": brand(), "site": _counted(db, site())}
+
+
+def _same_page(a: str, b: str) -> bool:
+    """Two URLs naming one page: host case and a trailing slash ignored."""
+    from urllib.parse import urlsplit
+
+    x, y = urlsplit(a.strip()), urlsplit(b.strip())
+    return (
+        x.netloc.lower() == y.netloc.lower()
+        and x.path.rstrip("/") == y.path.rstrip("/")
+        and x.query == y.query
+    )
+
+
+def _counted(db: Session, block: dict) -> dict:
+    """Their links to the finance application, pointed at a hop that counts.
+
+    Alsbou's Financing is in their nav, their banner strip and a promo band,
+    and every one leads to their own page -- invisible to this system, so the
+    overview's Credit applications could only ever count the emailed link.
+    Each link equal to the configured application URL is served as
+    `redirect.site_hop` instead, which files the press and forwards. Decided
+    against the *configured* URL rather than a word in the label: a dealer who
+    changes their finance page changes it in one place, and a banner labelled
+    "Financing" that points somewhere else is not the application.
+    """
+    from app.api.redirect import site_hop
+
+    target = (live_settings(db).credit_application_url or "").strip()
+    if not target:
+        return block
+    hop = site_hop("credit_application")
+
+    def swap(item: dict | None) -> dict | None:
+        if item and _same_page(item.get("href", ""), target):
+            return {**item, "href": hop, "counted": True}
+        return item
+
+    out = dict(block)
+    for key in ("banners", "promos", "links", "social"):
+        out[key] = [swap(i) for i in block.get(key) or []]
+    out["cta"] = swap(block.get("cta"))
+    return out
 
 
 def _fold(rows: list[tuple[str, int]]) -> list[tuple[str, int]]:
