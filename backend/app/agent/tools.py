@@ -474,6 +474,29 @@ def _vehicle_payload(v: Vehicle, home: str = "", full: bool = True) -> dict:
             "a URL out, and never say a URL on a call. Booking a visit comes first: "
             "the price is a person's answer."
         )
+    # **What the dealership has written down about this one car**: its full
+    # specification, its vehicle history report, what its service record does
+    # and does not cover. Prose rather than a list, because that is what a
+    # history report is -- `features` is the options list and stays a list.
+    #
+    # `full` only, so a search never carries it. One car's report is a page of
+    # text and five of them would sit in the conversation for every later turn,
+    # which is the same reasoning that cuts the options list down in a search.
+    #
+    # The note is the load-bearing half. Everything this codebase does about
+    # invented facts assumes the model answers from a tool result and nothing
+    # else, and handing it a page of prose is the one place that could slip --
+    # so it is told the boundary explicitly rather than left to infer it.
+    if full and raw.get("detail_doc"):
+        payload["detail"] = raw["detail_doc"]
+        payload["detail_note"] = (
+            "The dealership's own written detail for this vehicle, including its "
+            "history report. Answer from it and quote it; never go beyond it, and "
+            "never fill a gap in it from what you know about the model in general. "
+            "Anything it marks as not confirmed must not be stated as fact -- say "
+            "the listing mentions it and that a colleague will confirm. A question "
+            "it does not cover is one for a colleague too."
+        )
     if v.rule_hold_price:
         payload["price_note"] = "This price is firm. Do not suggest it is negotiable."
     if v.rule_mention_warranty:

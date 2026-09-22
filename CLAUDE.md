@@ -2912,6 +2912,38 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Absent from the list is a question for a colleague, never a guess.**
     The prompt's rule: answer from the list if it names the thing; if it
     does not, or the car has none, that is the unanswerable case below.
+- **A vehicle history report is prose, so it is a file rather than a column.**
+  `backend/fixtures/<dealer>/details/<VIN>.md` is what the dealership has
+  written down about one car — its full specification, its Carfax record, what
+  its service history does and does not cover — read into `raw_json` at seed
+  time and handed to the model by `get_vehicle`. The options list stays a
+  list in `features`; owners, accidents, title checks and thirty service
+  entries are not options, and a CSV cell holding them makes the file
+  unreadable and its diff useless. A file per car is editable by a person and
+  reviewable in a pull request.
+  - **`get_vehicle` only, never a search.** One car's report is a page of
+    text, and five of them sit in the conversation for every later turn —
+    the same bill the options list is cut down for.
+  - **It never arrives without the rule for reading it.** Everything here
+    about invented facts assumes the model answers from a tool result and
+    nothing else, and a page of prose is the one place that could slip. So
+    `detail_note` says it outright: answer from it, never go beyond it, never
+    fill a gap from what you know about the model in general.
+  - **What is claimed is not what is confirmed, and the difference is the
+    whole point.** Alsbou's listing attributes a 360-degree camera, night
+    vision, Valcona leather and *three-row seating* to the Prestige trim in
+    hedged language, and none is in the decoded specification for that car.
+    In `features` they would be equipment Liner states as fact — a buyer
+    driving over for a third row that may not be there. They sit in the
+    detail under **Not confirmed on this car**, so the model can say the
+    listing mentions it and put the buyer to a colleague, which is more
+    honest than either asserting it or claiming never to have heard of it.
+    `make smoke` fails if one of them reaches the options list.
+  - A VIN with no file is the normal case and changes nothing: the assistant
+    falls through to the same "a colleague will confirm" path it already
+    takes for a question the record cannot answer. **One car on a lot of 91
+    has one**, which is also the honest demo — the contrast between a car
+    with a report and a car without is the product working, not a gap.
 - **A question the record cannot answer is a lead, not a dead end — and it
   is refused once.** A real transcript: a buyer asked whether a Durango was a
   three-row, was told the listing did not say, pressed twice, and was told

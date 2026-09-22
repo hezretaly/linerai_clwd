@@ -4532,6 +4532,65 @@ def main() -> int:
         check("the fees inside their price are not one number for the whole lot",
               len(gaps) > 1, f"{len(gaps)} distinct: {sorted(gaps)}")
 
+        # **A car's written detail, and the line between what is confirmed and
+        # what is merely claimed.** The dealership supplies a history report
+        # with this one, and `details/<VIN>.md` beside the CSV is where it
+        # lives -- prose, because a Carfax record is owners, accidents, title
+        # checks and thirty service entries, and a CSV column holding that
+        # makes the file unreadable.
+        #
+        # Driven through the executors rather than read off the file: what
+        # matters is not that the text exists but which tool hands it over.
+        from sqlalchemy import text as sqla_text
+
+        from app import mailboxes as _mb_det
+        from app.agent import tools as _tools_det
+        from app.db import SessionLocal as _Store_det
+        from app.models import Conversation as _Convo_det
+
+        Q7 = "WA1VABF71JD050557"
+        with _mb_det.using("alsbou"), _Store_det("alsbou") as _ddb:
+            _c = _Convo_det(channel="chat", status="active", stage="opening")
+            _ddb.add(_c); _ddb.commit(); _ddb.refresh(_c)
+            try:
+                one = _tools_det.get_vehicle(_ddb, _c, {"vin": Q7})
+                many = _tools_det.search_inventory(_ddb, _c, {"keywords": "Audi Q7"})
+                found = [v for v in many["vehicles"] if v["vin"] == Q7]
+                check("a car with written detail hands it over on get_vehicle",
+                      len(one.get("detail", "")) > 1000, f"{len(one.get('detail',''))} chars")
+                # The note is the load-bearing half: a page of prose is the one
+                # place the model could answer from what it knows about the
+                # model in general rather than from this car's record.
+                check("and it never arrives without the rule for reading it",
+                      "never go beyond it" in one.get("detail_note", ""),
+                      one.get("detail_note", "")[:60] or "no note")
+                check("a search does not carry it, on any of its results",
+                      all("detail" not in v for v in many["vehicles"]) and bool(found),
+                      f"{len(many['vehicles'])} results, Q7 present: {bool(found)}")
+                check("and a search still cuts the options list it does carry",
+                      found and 0 < len(found[0]["features"]) < len(one["features"]),
+                      f"{len(found[0]['features']) if found else 0} of {len(one['features'])}")
+                # **The thing this must never do.** The listing attributes a
+                # 360-degree camera, night vision and three-row seating to the
+                # *trim*, hedged, and none is in the decoded spec for this car.
+                # In `features` they would be equipment Liner states as fact --
+                # a buyer driving over for a third row that is not there.
+                options = " | ".join(one["features"]).lower()
+                claimed = [w for w in ("360-degree", "night vision", "bang & olufsen",
+                                       "virtual cockpit", "valcona") if w in options]
+                check("an unconfirmed claim is never in the options list",
+                      not claimed, f"in features: {claimed}")
+                check("but the detail does carry it, marked as unconfirmed",
+                      "Not confirmed on this car" in one["detail"]
+                      and "360-degree camera" in one["detail"])
+            finally:
+                for _t in ("vehicle_mentions", "messages", "escalations",
+                           "conversation_once"):
+                    _ddb.execute(sqla_text(f"DELETE FROM {_t} WHERE conversation_id = :c"),
+                                 {"c": _c.id})
+                _ddb.execute(sqla_text("DELETE FROM conversations WHERE id = :c"), {"c": _c.id})
+                _ddb.commit()
+
     # **A browse filter's count has to be what pressing it returns.** Both
     # filters match with `ilike` and `GROUP BY` is case-sensitive, so a lot
     # spelling one body style two ways offered two filters that returned the

@@ -10,6 +10,7 @@ Idempotent by wipe: ``seed()`` clears the tables it owns and rebuilds them.
 from __future__ import annotations
 
 import json
+import pathlib
 import secrets
 from datetime import datetime, timedelta
 
@@ -708,6 +709,52 @@ def _seed_profile_inventory(db: Session) -> None:
     print(f"  loaded {applied['created']} vehicles from {name}")
     for entry in errors[:3]:
         print(f"    note: {entry.get('error')}")
+    _seed_vehicle_details(db, path.parent)
+
+
+def _seed_vehicle_details(db: Session, folder: pathlib.Path) -> None:
+    """One car's written detail, from `details/<VIN>.md` beside the CSV.
+
+    **A CSV row cannot hold a vehicle history report and should not try.** The
+    options list is a list and lives in `features`; a Carfax record is prose --
+    owners, accidents, title checks and thirty service entries -- and a column
+    holding it makes the file unreadable and the diff useless. A file per car
+    is editable by a person, reviewable in a pull request, and read here into
+    `raw_json` because `create_all` adds a table to an existing database and
+    never a column.
+
+    Only `get_vehicle` hands it to the model, never a search: this is the
+    expensive half of "a car's options list is its knowledge base", and five
+    cars' worth of it in a search result is the prompt bill on every later
+    turn of the conversation.
+
+    A VIN with no file is the normal case and says nothing -- the assistant
+    falls through to the same "a colleague will confirm" path it already
+    takes for a question the record cannot answer.
+    """
+    if not folder.is_dir():
+        return
+    details = sorted((folder / "details").glob("*.md")) if (folder / "details").is_dir() else []
+    if not details:
+        return
+    loaded, unknown = 0, []
+    for doc in details:
+        vin = doc.stem.upper()
+        vehicle = db.query(Vehicle).filter(Vehicle.vin == vin).one_or_none()
+        if vehicle is None:
+            unknown.append(vin)
+            continue
+        raw = json.loads(vehicle.raw_json or "{}")
+        raw["detail_doc"] = doc.read_text(encoding="utf-8").strip()
+        vehicle.raw_json = json.dumps(raw)
+        loaded += 1
+    db.commit()
+    print(f"  loaded written detail for {loaded} vehicle(s)")
+    # A file naming a VIN this lot does not carry is a car that sold, or a
+    # typo. Either way it is silently doing nothing, which is the state worth
+    # printing rather than swallowing.
+    for vin in unknown:
+        print(f"    note: details/{vin}.md names no vehicle on this lot")
 
 
 def _seed_settings(db: Session, manager: User, raw: dict) -> None:
