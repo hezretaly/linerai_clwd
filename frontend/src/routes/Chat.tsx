@@ -122,6 +122,16 @@ export function Chat() {
    * transcript, the rails and the composer are the same in both. */
   const query = new URLSearchParams(window.location.search)
   const embedded = query.get('embed') === '1'
+  /* Same flag `/call` takes, and for the same reason: the scripted-assistant
+   * banner below names this deployment's unset environment variables, and
+   * this page is the one that goes in an iframe on a dealership's public
+   * website. A car buyer reading `OPENAI_API_KEY, LLM_MODE=live are not set`
+   * on their forecourt's own page is the `/call` failure arriving on the
+   * surface where it reaches the most people. Whoever is setting it up still
+   * needs the banner -- a canned reply mistaken for the real product is the
+   * thing it exists to prevent -- so it moves behind the flag rather than
+   * going away, and the Liner setup page's link carries it. */
+  const diagnostics = query.get('diagnostics') === '1'
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [items, setItems] = useState<Item[]>([])
   const [rails, setRails] = useState<Rail[]>([])
@@ -373,7 +383,7 @@ export function Chat() {
         </header>
       )}
 
-      {stubbed && (
+      {diagnostics && stubbed && (
         <p className="border-b border-warning/30 bg-warning-muted px-5 py-2 text-xs text-warning-foreground">
           Scripted assistant --{' '}
           {stubbed.map((key, i) => (

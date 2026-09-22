@@ -555,7 +555,19 @@ back.
 ## Step 6 — Putting the chat on their own website
 
 The assistant goes on a dealer's site as an iframe of the real `/chat`, which
-is the same thing their storefront here already does. One line:
+is the same thing their storefront here already does. One line, in their
+page's `<body>`:
+
+```html
+<script src="https://linerai.us/alsbou/embed.js" defer></script>
+```
+
+That draws the corner bubble and opens the chat in a panel — a sheet on a
+phone, a card on a laptop. Optional attributes: `data-color="#c8a04a"` for
+their brand (a hex, or it is ignored), `data-side="left"`, `data-label`,
+`data-title`, and `data-store` if the page cannot carry the slug in the URL.
+
+A bare iframe still works where they would rather place it themselves:
 
 ```html
 <iframe src="https://linerai.us/alsbou/chat?embed=1"
@@ -590,12 +602,19 @@ Three things to set or check:
 - **`allow="microphone"`** on the iframe, and only if `CALLING=true`.
   Without it the Call button inside the frame fails silently.
 
-**What we do not have is a drop-in bubble.** A bare iframe is a rectangle in
-their page layout, not a corner button that opens a panel — fine for a test
-they drop into a page they control, not the thing to promise on a call. The
-corner bubble on their own site would be a small loader script served from
-our origin, and it is worth writing the day a dealer says yes rather than to
-get one test in front of them.
+**The slug is in the script's own URL, and that is deliberate** — a dealer
+copies one line and the line already names them. The script logs which store
+it resolved, because opening the wrong one is otherwise silent and looks
+entirely normal.
+
+**It is a third widget and cannot share code with the other two.** Their page
+is somebody else's HTML with no build step of ours, so `frontend/public/embed.js`
+is plain JavaScript with its own styles. What keeps that duplication honest is
+how little it may do: a button, a panel, and an iframe of the real `/chat`.
+Every rule about what the assistant may say lives on the far side of that
+frame. `make smoke` fails if it grows a `fetch(`, names a dealership, or stops
+using a shadow root; `make shots` mounts it on a page whose CSS is hostile on
+purpose and checks their stylesheet cannot reach our button.
 
 **The ceilings are what stands between a public embed and their model bill.**
 `/chat` is public by design, so once it is on a live site a script can post to

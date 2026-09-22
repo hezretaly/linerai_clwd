@@ -2021,6 +2021,48 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     search. `make smoke` drives the refusal over HTTP rather than against the
     window objects: the limit can be perfectly correct and never reached from
     the endpoint, which is the half that was missing.
+- **A dealership puts the bubble on its own site with one script tag**, and
+  `frontend/public/embed.js` is a *third* widget that cannot share code with
+  the two React ones — their page is somebody else's HTML with somebody
+  else's CSS and no build step of ours. What keeps that duplication honest is
+  how little it is allowed to do: a button, a panel, and an iframe of the
+  real `/chat`. A second chat *client* is the thing it must never become,
+  because that is how one surface quietly stops drawing the booking card.
+  - **The store comes from the script's own URL.** `/<slug>/embed.js` names
+    that dealership, because `StorePrefix` strips the slug before the file is
+    served and `currentScript.src` still carries it — so a dealer copies one
+    line and the line already names them. The resolved store is logged, since
+    opening the wrong one is silent and looks entirely normal, which is the
+    failure the prefix exists to prevent. One file, byte for byte, under
+    every prefix.
+  - **Everything is in a shadow root.** Their stylesheet cannot reach our
+    button and ours cannot touch their page. On a site nobody here has seen,
+    that is the difference between a widget and a bug report — `make shots`
+    mounts it on a page whose CSS is hostile on purpose and fails if our
+    button comes back their pink.
+  - It follows the storefront widget's rules rather than inventing its own:
+    mounted on the first open and kept, and a closed panel is `visibility:
+    hidden` so a keyboard cannot tab into an invisible chat.
+  - `data-color` is validated to a hex before it reaches a stylesheet, the
+    same rule the profile's accent follows and for the same reason.
+- **The chat panel is a sheet on a phone and a card on a laptop.** At 390px
+  the old fixed 24rem box left the chat 358px wide with the page showing round
+  three sides of it — and that is the width a keyboard, a booking card and a
+  row of cars have to share. It is `fixed` to the screen below `sm` and
+  returns to the corner above it. Opening is a transition rather than a
+  switch, and the closed state is `visibility: hidden` rather than
+  `opacity: 0`: an invisible iframe that a keyboard can still reach is worse
+  than a visible one. **The two storefronts keep their own copy on purpose** —
+  a storefront designs its own bubble, panel and placement, and the next
+  dealership's may be a bar across the bottom or a tab down the side.
+- **`/chat` hides the scripted-assistant banner from buyers**, behind the same
+  `?diagnostics=1` as `/call`. It names this deployment's unset environment
+  variables — `OPENAI_API_KEY, LLM_MODE=live are not set` — and `/chat` is the
+  page that goes in an iframe on a dealership's *public website*, so that is
+  the `/call` leak arriving on the surface that reaches the most people.
+  Whoever is setting it up still needs it, because a canned reply mistaken for
+  the real product is exactly what it exists to prevent, so the Liner setup
+  page's link carries the flag.
 - **Who may frame these pages is decided here, not left to omission.** Neither
   shipped nginx config sets `X-Frame-Options` or a CSP, so every page of this
   app could be framed by anyone — and the next person to add a security-header

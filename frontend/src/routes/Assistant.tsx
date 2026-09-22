@@ -76,13 +76,16 @@ export function AssistantPage() {
             without it both of these open the *default* store's assistant. */}
         <div className="mb-6 flex flex-wrap items-center gap-3">
           <span className="text-sm text-muted-foreground">Try it as a buyer:</span>
+          {/* Carries the flag too: the scripted-assistant banner is what
+              tells somebody setting this up that a canned reply is canned,
+              and a buyer on a dealership's own website must never read it. */}
           <a
-            href={withStore('/chat')}
+            href={withStore('/chat?diagnostics=1')}
             target="_blank"
             rel="noreferrer"
             className="text-sm font-medium text-primary hover:underline"
           >
-            Open the chat
+            Open the chat (with diagnostics)
           </a>
           {/* Carries the flag: a manager checking setup wants the transcript
               and, if the line is not answering, the variables that are unset.

@@ -437,9 +437,25 @@ function Widget({
     <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-3">
       <div
         className={clsx(
-          'w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-xl',
-          'h-[min(34rem,calc(100dvh-7rem))]',
-          open ? 'flex' : 'hidden',
+          // **On a phone this is a sheet, not a card in the corner.** At
+          // 390px the old 24rem box left a chat 358px wide with the page
+          // showing round three sides of it, which is the width a keyboard
+          // and a booking card have to share. `fixed` takes it out of this
+          // column and gives it the screen; `sm:static` puts it back above
+          // the bubble on a laptop, where a corner panel is right.
+          'fixed inset-x-3 bottom-20 top-3 flex flex-col overflow-hidden',
+          'sm:static sm:inset-auto sm:h-[min(38rem,calc(100dvh-7rem))] sm:w-[26rem]',
+          'rounded-2xl border border-border bg-card shadow-2xl',
+          // Grown out of the bubble rather than switched on. `visibility` is
+          // what keeps a closed panel out of the tab order -- opacity alone
+          // leaves an invisible iframe a keyboard can still reach -- and it
+          // holds `visible` until the transition ends, so the close still
+          // fades. `motion-reduce` because a panel that flies at somebody is
+          // exactly what that setting is for.
+          'origin-bottom-right transition-all duration-200 ease-out motion-reduce:transition-none',
+          open
+            ? 'visible translate-y-0 scale-100 opacity-100'
+            : 'invisible translate-y-3 scale-95 opacity-0',
         )}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-2">
@@ -462,8 +478,12 @@ function Widget({
 
       <button
         onClick={() => setOpen(!open)}
-        className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg"
+        className={clsx(
+          'flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg',
+          'transition-transform duration-150 hover:scale-105 active:scale-95 motion-reduce:transition-none',
+        )}
         aria-label={open ? 'Close chat' : 'Chat with us'}
+        aria-expanded={open}
       >
         {open ? <span className="text-2xl leading-none">&times;</span> : <Icon name="chat" className="h-6 w-6" />}
       </button>

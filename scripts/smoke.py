@@ -3481,6 +3481,41 @@ def main() -> int:
             # would pass every check above while allowing everybody.
             check(f"{slug}: and a site it never named may not",
                   "*" not in got and "https://not-their-site.example" not in got, got)
+
+        # **The bubble a dealership pastes onto its own website.** A third
+        # widget, in plain JavaScript, because their page is somebody else's
+        # HTML with no build step of ours -- so what keeps the duplication
+        # honest is how little it may do: a button, a panel, and an iframe of
+        # the real `/chat`. Served out of `frontend/public/`, which means it
+        # only exists in a build, like everything else in this section.
+        loader_status, loader = status_of("GET", "/embed.js")
+        check("the embed loader is served", loader_status == 200 and "iframe" in loader,
+              str(loader_status))
+        # Byte-identical under a prefix: there is one file, and which store it
+        # opens is worked out in the browser from the URL it was fetched by.
+        check("and byte for byte the same under a store prefix",
+              status_of("GET", "/alsbou/embed.js")[1] == loader,
+              f"{len(loader)} bytes unprefixed")
+        # It is one file every dealership loads, so a dealer's name in it is
+        # the "Riverside Auto" bug at its most expensive -- the next
+        # dealership's buyers reading somebody else's name on their own site.
+        # The slug comes from the script's own URL instead.
+        named = [n for n in ("Riverside", "Alsbou", "Craig", "Landreth") if n in loader]
+        check("it names no dealership at all", not named, str(named))
+        check("and works out the store from its own src rather than a baked-in slug",
+              "currentScript" in loader and "embed.js" in loader)
+        # The one thing it must never become. A second chat *client* is how
+        # one surface quietly stops drawing the booking card -- every rule
+        # about what may be said lives on the far side of that iframe.
+        check("it is a frame around /chat, not a second chat client",
+              "/chat?embed=1" in loader and "fetch(" not in loader)
+        # Their stylesheet cannot reach our button and ours cannot touch their
+        # page. On a site we have never seen that is the difference between a
+        # widget and a bug report.
+        check("and it renders inside a shadow root, out of reach of their CSS",
+              "attachShadow" in loader)
+        check("small enough to be a tag on somebody's homepage",
+              len(loader) < 12000, f"{len(loader)} bytes")
     else:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
