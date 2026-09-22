@@ -56,6 +56,7 @@ from app.models import (
     Dealership,
     KnowledgeEntry,
     Lead,
+    User,
     Vehicle,
 )
 from app.recap import lead_recap
@@ -81,6 +82,7 @@ def brief(
     *,
     instruction: str,
     rewrite: str = "",
+    author: User | None = None,
 ) -> str:
     """Everything the draft may use, as one block appended to the prompt.
 
@@ -111,6 +113,9 @@ def brief(
             "to this buyer given where the conversation got to."
         )
 
+    shop = db.query(Dealership).first()
+    if author is not None:
+        parts.append(_author_block(author, shop))
     parts.append(_buyer_block(db, lead))
     parts.append(_dealership_block(db))
 
@@ -133,6 +138,48 @@ def brief(
         "rather than filling the gap."
     )
     return "\n\n".join(p for p in parts if p)
+
+
+#: How a role on the roster reads in a sentence a buyer sees. The stored
+#: values are the system's words (`rep`), not a job title anybody signs with.
+ROLE_TITLE = {"manager": "sales manager", "rep": "sales representative"}
+
+
+def _author_block(author: User, shop: Dealership | None) -> str:
+    """Who is writing: the person signed in, not the assistant.
+
+    **A drafted email goes out under the rep's name**, because the composer
+    that sends it is theirs and the sign-off appended to it is theirs
+    (`with_signature` with `user=`). The system prompt around this brief is
+    the buyer-facing assistant's -- "you are Liner" -- so without this the
+    draft spoke as Liner, or as "our team", above a rep's own signature: an
+    email in two voices, which a buyer reads as a template.
+    """
+    title = ROLE_TITLE.get(author.role, author.role or "member of the team")
+    where = f" at {shop.name}" if shop is not None and shop.name else ""
+    return (
+        "--- WHO IS WRITING ---\n"
+        f"{author.name}, {title}{where}. Write as them, in the first person "
+        "(\"I\", and \"we\" for the dealership), never as Liner or as an "
+        "assistant. They are a person the buyer can call back and ask for by "
+        "name."
+    )
+
+
+def split_subject(text: str) -> tuple[str, str]:
+    """`Subject: ...` off the first line of a draft, and the body under it.
+
+    Asked for in `loop.DRAFT_REQUEST`; read leniently because a model will
+    sometimes bold it or skip it. No subject line is not an error -- the body
+    comes back whole and the rep's subject box is left as it was.
+    """
+    lines = (text or "").strip().splitlines()
+    if lines:
+        first = lines[0].strip().strip("*").strip()
+        if first.lower().startswith("subject:"):
+            subject = first.split(":", 1)[1].strip().strip("*").strip()
+            return subject, "\n".join(lines[1:]).strip()
+    return "", (text or "").strip()
 
 
 def _buyer_block(db: Session, lead: Lead) -> str:
@@ -186,8 +233,8 @@ def _dealership_block(db: Session) -> str:
             f"Financing: {live.financing_mode}",
         ]
     lines.append(
-        "Do not sign the email. The system appends this dealership's own "
-        "sign-off, and a second one reads as a mistake."
+        "Do not sign the email. The sender's own sign-off is appended when it "
+        "is sent, and a second one reads as a mistake."
     )
     return "\n".join(lines)
 

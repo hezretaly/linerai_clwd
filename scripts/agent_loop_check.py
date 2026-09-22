@@ -487,8 +487,18 @@ def main() -> int:
         db.add(VehicleMention(conversation_id=drafted.id, vehicle_id=car.id))
         db.commit()
 
+        from app.models import User  # noqa: E402
+
+        writer = db.query(User).order_by(User.email).first()
         written = email_draft.brief(
-            db, buyer, drafted, instruction="Ask whether Saturday still works.")
+            db, buyer, drafted, instruction="Ask whether Saturday still works.", author=writer)
+        # **Written as the person who pressed the button.** It goes out under
+        # their name and their own sign-off, and the prompt around the brief is
+        # the buyer-facing assistant's -- so without this the draft spoke as
+        # Liner above a rep's signature, an email in two voices.
+        check("the draft is written as the signed-in person, by name",
+              "--- WHO IS WRITING ---" in written and writer.name in written,
+              writer.name)
         check("the brief carries the rep's own instruction",
               "Saturday still works" in written, written[:60])
         for block in ("THE BUYER", "THE DEALERSHIP, AND HOW IT SOUNDS",
@@ -506,9 +516,19 @@ def main() -> int:
         check("and a guessed field is labelled a guess, not stated as fact",
               "a guess, not confirmed" in written, "provenance was flattened")
 
-        drafter = FakeProvider([say("Hi Draft Buyer -- does Saturday still suit you?")])
+        drafter = FakeProvider([say(
+            "Subject: Saturday at the showroom\n\nHi Draft Buyer -- does Saturday still suit you?")])
         text, violations = loop.draft_text(db, drafted, brief=written, provider=drafter)
         check("a draft comes back", "Saturday" in text and not violations, text[:60])
+        # **And it comes with a subject.** The composer's subject box stayed
+        # empty after every draft; the model is asked for one fixed first line
+        # and the endpoint splits it off, so the body under it is the email.
+        _subject, _body = email_draft.split_subject(text)
+        check("with a subject line split off the top, and the body without it",
+              _subject == "Saturday at the showroom" and not _body.lower().startswith("subject"),
+              f"{_subject!r} / {_body[:30]!r}")
+        check("and a draft with no subject line keeps its whole body",
+              email_draft.split_subject("Hi there.\n\nSee you Saturday.") == ("", "Hi there.\n\nSee you Saturday."))
         # The whole guarantee, in one assertion: the model that wrote that was
         # never offered a tool, so it could not have booked, closed or
         # escalated anything.

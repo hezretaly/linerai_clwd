@@ -267,7 +267,15 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           />
           {/* Without a ceiling the composer reproduces the squeeze one edge
               lower: the email box is nine rows plus a subject plus a hint. */}
-          <div className="scroll-thin max-h-[45vh] overflow-y-auto p-4">
+          <div
+            className={clsx(
+              'scroll-thin overflow-y-auto p-4',
+              // An email is subject, a body worth reading, the draft controls
+              // and Send. At 45vh Send sat below the fold of the footer's own
+              // scroll, which read as a composer with no way to send.
+              mode === 'email' ? 'max-h-[75vh]' : 'max-h-[45vh]',
+            )}
+          >
             {mode === 'email' && lead ? (
               <EmailReply
                 lead={lead}
@@ -961,6 +969,11 @@ function EmailReply({
   const [instruction, setInstruction] = useState('')
   /** Why the guards refused a draft, shown rather than swallowed. */
   const [refused, setRefused] = useState<string[]>([])
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: { name: string; role: string } }>('/api/auth/me'),
+    staleTime: 5 * 60_000,
+  })
   /** Which built draft is in the box, if any. It decides the `kind` the send
    *  records -- a rep tidying the wording of a credit application has not
    *  turned it into something else. */
@@ -997,17 +1010,31 @@ function EmailReply({
    * the dealership's voice, keeping the rep's facts; with an empty box it
    * writes from the conversation, the car in focus, the captured fields and
    * the tone a manager set. The instruction steers either. */
+  /* Which subject the last draft wrote. A new draft replaces its own subject
+   * but never one the rep typed: the box is theirs once they have touched it. */
+  const [draftedSubject, setDraftedSubject] = useState('')
+
+  /* Two ways to ask, one endpoint. `rewrite` hands over what is in the box
+   * and gets it back in the dealership's voice with the rep's facts kept;
+   * `fresh` ignores it and writes a new draft from the conversation. Only the
+   * first existed, so after one draft the box always had text in it and every
+   * later press could only reword that text -- there was no way to ask again
+   * for something different. */
   const draft = useMutation({
-    mutationFn: () =>
-      api.post<{ body: string; violations: string[] }>(
+    mutationFn: (how: 'rewrite' | 'fresh') =>
+      api.post<{ subject: string; body: string; violations: string[] }>(
         `/api/leads/${lead.id}/draft-email`,
-        { instruction, rewrite: body.trim() },
+        { instruction, rewrite: how === 'rewrite' ? body.trim() : '' },
       ),
     onSuccess: (result) => {
       setRefused(result.violations ?? [])
       if (result.body) {
         setBody(result.body)
         setInstruction('')
+      }
+      if (result.subject && (!subject.trim() || subject === draftedSubject)) {
+        setSubject(result.subject)
+        setDraftedSubject(result.subject)
       }
     },
     onError: (err: unknown) => {
@@ -1084,7 +1111,10 @@ function EmailReply({
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        rows={4}
+        // Room to read and edit a whole draft. Four rows showed the greeting
+        // and a line of body, and the rest scrolled inside a box inside a
+        // scrolling footer -- editing it meant finding it first.
+        rows={10}
         placeholder="Write the reply..."
         className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
       />
@@ -1138,7 +1168,7 @@ function EmailReply({
             e.preventDefault()
             if (draft.isPending) return
             setProblem('')
-            draft.mutate()
+            draft.mutate(body.trim() ? 'rewrite' : 'fresh')
           }}
         >
           <label htmlFor="draft-instruction" className="text-xs font-medium">
@@ -1157,12 +1187,26 @@ function EmailReply({
               className="h-8 min-w-0 flex-1 text-sm"
             />
             <Button type="submit" size="sm" variant="secondary" disabled={draft.isPending}>
-              {draft.isPending ? 'Writing...' : body.trim() ? 'Rewrite' : 'Write draft'}
+              {draft.isPending ? 'Writing...' : body.trim() ? 'Rewrite mine' : 'Write draft'}
             </Button>
+            {/* Starting again is its own act. The box keeps what is in it
+                until the new draft lands, so nothing is lost to a mis-click. */}
+            {body.trim() && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={draft.isPending}
+                onClick={() => { setProblem(''); draft.mutate('fresh') }}
+              >
+                New draft
+              </Button>
+            )}
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Liner reads this conversation, the car and your dealership's answers. It fills the
-            email above and sends nothing -- you read it and press Send.
+            Liner writes it as you{me?.user.name ? `, ${me.user.name}` : ''}, from this conversation, the car
+            and your dealership's answers. It fills the email above and sends nothing -- edit it
+            as much as you like, then press Send.
           </p>
         </form>
       )}

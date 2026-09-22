@@ -655,10 +655,17 @@ def draft_email(
         db,
         convo,
         brief=email_draft.brief(
-            db, lead, convo, instruction=body.instruction, rewrite=body.rewrite
+            db, lead, convo, instruction=body.instruction, rewrite=body.rewrite,
+            # Written as the person pressing the button: it goes out under
+            # their name and their sign-off.
+            author=user,
         ),
     )
+    subject, text = email_draft.split_subject(text)
     return {
+        # Empty when the model gave none; the composer then leaves the rep's
+        # subject box alone rather than blanking it.
+        "subject": subject,
         "body": text,
         # Shown to the rep rather than swallowed. A draft the guards refused
         # twice is one carrying a claim nothing sourced, and the rep is the

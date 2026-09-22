@@ -938,6 +938,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   -- and `/reach` carries `email.draft`, from the same `have_model` the
   endpoint asks, so with no model the composer shows the reason instead of the
   control.
+  - **It is written as the person pressing the button.** The email goes out
+    under their name and their own sign-off, but the prompt around the brief
+    is the buyer-facing assistant's, so drafts spoke as Liner or "our team"
+    above a rep's signature. `email_draft._author_block` names them and their
+    role and says first person; roles are turned into words a buyer reads
+    (`rep` is nobody's job title).
+  - **It comes with a subject.** The model is asked for one fixed first line,
+    `Subject: ...`, and `split_subject` takes it off; one text rather than two
+    requests, so the guards read the subject with the body. A subject the rep
+    typed is never overwritten -- only one the last draft wrote.
+  - **Rewrite and start again are two buttons.** With one, the box always
+    had text after the first draft, so every later press could only reword
+    it and there was no way to ask for something different. The body is ten
+    rows and the footer grows to 75vh for an email, because at 45vh the Send
+    button sat below the fold of the footer's own scroll.
 - **A drafted email is written for a rep to read, and it cannot act.**
   `POST /api/leads/{id}/draft-email` hands back text and stores nothing — there
   is no Drafts tab because nothing stores a draft, and a model writing one does

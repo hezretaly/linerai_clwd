@@ -310,10 +310,18 @@ def draft_text(
 #: will do with the answer, because a model handed a transcript and nothing
 #: else writes the next message *to the buyer* -- and this one is read by a
 #: rep who has not decided to send anything yet.
+#: The last user turn of a draft. **A subject line is asked for** -- the
+#: composer's subject box stayed empty after every draft, so a rep sent a
+#: body under no subject or wrote one by hand every time -- and asked for in a
+#: fixed first line, `Subject: ...`, which `email_draft.split_subject` reads
+#: back off. One line in the same text rather than a second request, so the
+#: guards read the subject with the body: a price in a subject line is as
+#: sayable to a buyer as one in the email under it.
 DRAFT_REQUEST = (
-    "A member of the dealership's team has asked you to draft this email for "
-    "them. Write only the email body. Do not add a subject line, a greeting "
-    "header, or a sign-off with a name -- the system appends the dealership's "
-    "own sign-off. Do not say that you are an assistant, and do not promise "
-    "anything the team has not agreed to."
+    "Draft this email now, in the first person, as the team member named in "
+    "the brief -- it goes out under their name. Start with exactly one line "
+    "`Subject: ` followed by a short subject, then a blank line, then the "
+    "email body. No sign-off with a name after the body: their own sign-off "
+    "is appended when it is sent. Do not say that you are an assistant, and "
+    "do not promise anything the team has not agreed to."
 )
