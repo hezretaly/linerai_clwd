@@ -54,7 +54,17 @@ class Provider:
     name = ""
     model = ""
 
-    def complete(self, system: str, messages: list[dict]) -> Completion:
+    def complete(
+        self, system: str, messages: list[dict], *, offer_tools: bool = True
+    ) -> Completion:
+        """One completion. `offer_tools=False` sends no tool schema at all.
+
+        That is not a tidy-up: `tools.execute` dispatches to executors that
+        book appointments, close conversations and raise handoffs, so a path
+        that only wants *text* -- a draft a rep will read and decide on --
+        must make a tool call impossible rather than ignore one. Withholding
+        the schema is the only way to do that at the vendor.
+        """
         raise NotImplementedError
 
     def append_tool_round(
@@ -127,7 +137,9 @@ class OpenAIProvider(Provider):
         self.client = OpenAI(**kwargs)
         self.model = settings.openai_model
 
-    def complete(self, system: str, messages: list[dict]) -> Completion:
+    def complete(
+        self, system: str, messages: list[dict], *, offer_tools: bool = True
+    ) -> Completion:
         if not messages:
             # The API answers this with 'One of "input" or "previous_response_id"
             # ... must be provided', which reads as a client-library problem
@@ -141,7 +153,7 @@ class OpenAIProvider(Provider):
             # `instructions` is the Responses API's system prompt.
             "instructions": system,
             "input": messages,
-            "tools": _openai_tools(),
+            "tools": _openai_tools() if offer_tools else [],
             "max_output_tokens": settings.openai_max_output_tokens,
         }
         effort = (settings.openai_reasoning_effort or "").strip().lower()
@@ -217,12 +229,14 @@ class AnthropicProvider(Provider):
         self.client = Anthropic(api_key=settings.anthropic_api_key)
         self.model = settings.anthropic_model
 
-    def complete(self, system: str, messages: list[dict]) -> Completion:
+    def complete(
+        self, system: str, messages: list[dict], *, offer_tools: bool = True
+    ) -> Completion:
         response = self.client.messages.create(
             model=self.model,
             max_tokens=1024,
             system=system,
-            tools=tools.TOOL_DEFS,
+            tools=tools.TOOL_DEFS if offer_tools else [],
             messages=messages,
         )
         calls = [

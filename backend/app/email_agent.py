@@ -96,25 +96,40 @@ def enabled(db: Session, *, has_provider: bool = False) -> Verdict:
     switches = switched_on(db)
     if not switches.allowed:
         return switches
-    # **And there has to be a model.** The stub is a state machine over
-    # `conversations.stage` whose replies point at a booking card and a rail of
-    # chips -- correct on a screen and nonsense in an inbox, where there is
-    # neither. So email is live-only, and says so rather than sending
-    # something written for a different surface.
-    #
-    # This check is why it says so at all. Without it `run_turn` reached
-    # straight for a provider that is not configured, `NotConfigured` came back
-    # up through the background task, and the whole thing looked exactly like a
-    # buyer who had not written -- which is the failure the receipts exist to
-    # prevent, arriving through the one path that had no receipt for it.
-    # `has_provider` is an injected one, which *is* a model -- the same trick
-    # `run_turn` uses to be testable without a key. It is the only way the gate
-    # can drive a whole email turn offline, and it is not a way round the rule:
-    # nothing in the app ever passes one.
+    return have_model(has_provider=has_provider)
+
+
+def have_model(*, has_provider: bool = False) -> Verdict:
+    """Just "is there something that can write English", with no switches.
+
+    Separate from `enabled` because the two switches answer *may Liner send
+    this on its own*, and something else here asks a different question: the
+    **Draft with Liner** button on a buyer's page, where a rep asked for the
+    text and a rep decides whether it leaves. Asking `enabled` there refused
+    every draft on a deployment that had not turned the autonomous replies on
+    -- which is the default and the documented state -- with a message about
+    a switch that has nothing to do with the request.
+
+    **And there has to be a model.** The stub is a state machine over
+    `conversations.stage` whose replies point at a booking card and a rail of
+    chips -- correct on a screen and nonsense in an inbox, where there is
+    neither. So email is live-only, and says so rather than sending something
+    written for a different surface.
+
+    This check is why it says so at all. Without it `run_turn` reached
+    straight for a provider that is not configured, `NotConfigured` came back
+    up through the background task, and the whole thing looked exactly like a
+    buyer who had not written -- which is the failure the receipts exist to
+    prevent, arriving through the one path that had no receipt for it.
+    `has_provider` is an injected one, which *is* a model -- the same trick
+    `run_turn` uses to be testable without a key. It is the only way the gate
+    can drive a whole email turn offline, and it is not a way round the rule:
+    nothing in the app ever passes one.
+    """
     if not has_provider and settings.llm_mode != "live":
         return Verdict(
             False, "no_model",
-            "LLM_MODE is stub, so there is no model to write the reply. The "
+            "LLM_MODE is stub, so there is no model to write with. The "
             "scripted agent answers a screen -- it points at a booking card "
             "and rail chips, neither of which exists in an inbox. Set "
             "LLM_MODE=live and OPENAI_API_KEY.",

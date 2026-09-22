@@ -244,11 +244,13 @@ TOOL_DEFS: list[dict[str, Any]] = [
         "name": "request_details",
         "description": (
             "Put a short form on the buyer's screen asking for details, instead of "
-            "asking in prose. Use it the moment you want a way to reach them -- a "
-            "phone number is always included, because a rep can ring it. Do NOT ask "
-            "for the same things in your reply text: the boxes are already there, "
-            "and asking twice gets the question answered in the worse place. Say "
-            "what the details are for and stop."
+            "asking in prose. Use it the moment you want a way to reach them. A "
+            "phone number and an email box are always included -- the number is the "
+            "one they have to fill in, because a rep can ring it, and the address is "
+            "there for a buyer who would rather be written to. Do NOT ask for the "
+            "same things in your reply text: the boxes are already there, and asking "
+            "twice gets the question answered in the worse place. Say what the "
+            "details are for and stop."
         ),
         "input_schema": {
             "type": "object",

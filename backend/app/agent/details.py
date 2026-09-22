@@ -61,9 +61,13 @@ FIELDS: dict[str, Field] = {
         PHONE_KEY, "Phone number", kind="tel", placeholder="(502) 555-0134",
         hint="So someone here can call you back about it.",
     ),
+    # Offered on every card and never required. The label already carries the
+    # word "optional", so the hint says the *why* instead of repeating it: a
+    # buyer reading "Optional. Optional." twice on one box learns to skip the
+    # hints, and the hint on the number above it is the one that matters.
     "email": Field(
         "email", "Email", kind="email", placeholder="you@example.com",
-        hint="Optional. Only if you would rather we wrote.",
+        hint="If you would rather we wrote than rang.",
     ),
     "budget": Field(
         "budget", "Budget", placeholder="e.g. under $25,000, or $350 a month",
@@ -86,8 +90,20 @@ FIELDS: dict[str, Field] = {
 }
 
 #: Asked for unless the model names something else. A number and who it belongs
-#: to is the minimum that makes a lead worth a rep's time.
-DEFAULT_KEYS = ("name", PHONE_KEY)
+#: to is the minimum that makes a lead worth a rep's time; the address is beside
+#: them because a buyer who would rather be written to should not have to ask.
+DEFAULT_KEYS = ("name", PHONE_KEY, "email")
+
+#: Offered on every card, whatever was asked for. **Required and offered are
+#: different questions, and this is the one the card got wrong.** The number is
+#: the thing that makes a lead workable, so `REQUIRED_KEYS` refuses a card
+#: without it -- and because only the required one was forced back in, a card
+#: asking for a name and a number simply had no email box at all. A buyer who
+#: would rather be emailed than rung then had nowhere to say so, and their
+#: address was not asked for again: `request_details` is once-only. Optional is
+#: not a reason to leave a box out; it is a reason not to block the submit on
+#: it, which is what `required` on the field already does.
+ALWAYS_KEYS = (PHONE_KEY, "email")
 
 #: The card refuses to render without this one. The operator's rule: a phone
 #: number is the thing to get, because a rep can ring it -- an email cannot be
@@ -95,7 +111,10 @@ DEFAULT_KEYS = ("name", PHONE_KEY)
 REQUIRED_KEYS = (PHONE_KEY,)
 
 #: More than this on one card is a form, and a form in a chat window is a
-#: wall. Four boxes is the most somebody fills in without deciding not to.
+#: wall. Four boxes is the most somebody fills in without deciding not to --
+#: which with the contact three offered on every card leaves room for one
+#: qualifying question, and that is the right trade: the number is why the card
+#: exists and the budget can be asked in a sentence.
 MAX_FIELDS = 4
 
 
@@ -103,9 +122,18 @@ def wanted(keys) -> list[str]:
     """The keys to show, cleaned up. Unknown ones are dropped, not guessed at.
 
     A model asking for `phone_number` gets nothing rather than a ninth key in
-    the vocabulary this module exists to keep closed. The phone is put back if
-    it was left out: every card is allowed to ask for other things, and none
-    of them is allowed to skip the one that makes the lead workable.
+    the vocabulary this module exists to keep closed. The contact boxes are put
+    back if they were left out: every card is allowed to ask for other things,
+    and none of them is allowed to skip the ones it exists for.
+
+    **Rendered in this module's own order, not the order they were asked in.**
+    Two reasons, and the second is a bug that was live. Contact first is what
+    the card is for -- and `FIELDS` already states that order, so there is one
+    answer rather than one per caller. And the cap used to be applied to the
+    model's list *after* the phone was appended: four qualifying questions plus
+    the number is five, `[:4]` dropped the last one, and the box the card
+    refuses to render without was the box that went. Ordering first means the
+    cap can only ever trim a qualifying question.
     """
     seen: list[str] = []
     for raw in keys or ():
@@ -114,10 +142,10 @@ def wanted(keys) -> list[str]:
             seen.append(key)
     if not seen:
         seen = list(DEFAULT_KEYS)
-    for required in REQUIRED_KEYS:
-        if required not in seen:
-            seen.append(required)
-    return seen[:MAX_FIELDS]
+    for always in ALWAYS_KEYS:
+        if always not in seen:
+            seen.append(always)
+    return [key for key in FIELDS if key in seen][:MAX_FIELDS]
 
 
 def card(keys, reason: str = "") -> dict:

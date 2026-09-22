@@ -5,8 +5,17 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import matching, outreach_send, sms as sms_module, timeline
+from app import (
+    email_agent,
+    email_draft,
+    matching,
+    outreach_send,
+    sms as sms_module,
+    timeline,
+)
+from app.agent import loop
 from app.integrations import twilio_account
+from app.integrations.registry import get_email_sender
 from app.integrations.sms import twilio_sms
 from app.recap import lead_recap
 from app.api.deps import current_user, find_staff
@@ -479,29 +488,173 @@ class TextBody(BaseModel):
     to: str = ""
 
 
-@router.get("/{lead_id}/sms")
-def sms_state(
+@router.get("/{lead_id}/reach")
+def reach(
     lead_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
-    """Whether this buyer can be texted, and why not when they cannot.
+    """Every way this buyer can be reached, and why not where they cannot.
 
-    Asked before the composer opens rather than discovered on send: "no number
-    on file", "they texted STOP" and "Twilio is not set up" are three different
-    answers and only one of them is something the rep can fix by typing.
+    **One question, asked once.** The buyer page used to answer it in six
+    places in three different wordings -- `lead?.email ?` drew the Email
+    button, `if (!lead.email) return null` hid one composer, another drew a To
+    line for an empty address, and only the text button consulted whether the
+    provider was configured at all. That is the shape `lib/conversationFilters`,
+    `app/threads.py` and `app/escalations.py` each exist to prevent: a fact
+    written in one row and read from several, which drift.
+
+    Asked before the composer opens rather than discovered on send, because
+    "no address on file", "they texted STOP" and "Twilio is not set up" are
+    three different answers and only the first is about this buyer.
+
+    **`available` is what may be offered; `delivers` is whether anything
+    leaves the building.** They are separate on purpose. With the default
+    outbox sender an email is recorded and nothing is sent, and hiding the
+    composer for that would make the outbox untestable from the one page a
+    rep works from -- so the channel stays offered and the composer says so,
+    which is the rule `blocked_reason` already follows by not biting on a
+    sender that delivers nothing.
     """
     lead = _get(db, lead_id)
-    to = (lead.phone or "").strip()
+    address = (lead.email or "").strip()
+    number = (lead.phone or "").strip()
+    sender = get_email_sender()
+
+    texting_on = sms_module.offered()
+    sms_blocked = sms_module.blocked_reason(number) if number else ""
+
     return {
-        # Configured and switched on -- `TEXTING=false` reads as not offered
-        # here too, or this endpoint and /api/integrations disagree.
-        "configured": sms_module.offered(),
-        "to": to,
-        "opted_out": bool(to) and sms_module.opted_out(to),
-        "blocked": sms_module.blocked_reason(to) if to else "No number on file.",
-        "segment": twilio_sms.SEGMENT,
-        "max_body": twilio_sms.MAX_BODY,
+        "email": {
+            "to": address,
+            "available": bool(address),
+            "reason": "" if address else "No email address on file for this buyer.",
+            # Recorded either way; this says whether it also arrives.
+            "delivers": bool(getattr(sender, "delivers", False)),
+        },
+        "sms": {
+            "to": number,
+            # Three separate facts, deliberately not collapsed into one
+            # boolean: the deployment has not switched texting on, this buyer
+            # has no number, or this buyer said STOP. One boolean over the
+            # three sends a rep to the wrong place -- the same reason
+            # `/api/integrations` reports "switched off" and "not configured"
+            # as different things.
+            "available": bool(number) and texting_on and not sms_blocked,
+            "reason": (
+                "" if (number and texting_on and not sms_blocked)
+                else "No phone number on file for this buyer." if not number
+                else "Texting is not set up for this deployment yet."
+                if not texting_on else sms_blocked
+            ),
+            "segment": twilio_sms.SEGMENT,
+            "max_body": twilio_sms.MAX_BODY,
+        },
+        # **A call needs no provider, because nothing here places it.** The
+        # Twilio number this system holds is Liner's own -- `/ops/phone` rings
+        # prospects from it and `require_owner` guards that -- and a
+        # dealership has no outbound line of its own. So "call them" is the
+        # rep's own handset: a `tel:` link, available whenever there is a
+        # number to dial, and honest about being nothing more than that.
+        "call": {
+            "to": number,
+            "available": bool(number),
+            "reason": "" if number else "No phone number on file for this buyer.",
+        },
+    }
+
+
+class DraftBody(BaseModel):
+    #: The rep's one line: "ask if Saturday works", "answer their financing
+    #: question". Optional, because a draft with none is still the obvious
+    #: next message -- but it is what makes the feature repeatable rather
+    #: than one guess the rep rewrites by hand.
+    instruction: str = ""
+    #: The rep's own text, when they want it put into the dealership's voice
+    #: rather than written from scratch. Their facts are kept.
+    rewrite: str = ""
+    #: Which thread this is about. Defaults to the buyer's newest.
+    conversation_id: str = ""
+
+
+@router.post("/{lead_id}/draft-email")
+def draft_email(
+    lead_id: str,
+    body: DraftBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Write an email for this rep to read, edit and decide on.
+
+    **Nothing is sent and nothing is stored.** The draft goes back in the
+    response and lives in the rep's browser until they press send, which is
+    what every other dealership draft here does -- there is no Drafts tab
+    because nothing stores a draft, and a model writing one does not change
+    that. The send still goes through the composer and still through
+    `blocked_reason`.
+
+    **It cannot act.** `loop.draft_text` withholds the tool schema, so the
+    model that writes this cannot book the appointment it offers, close the
+    thread or raise a handoff. Reusing the buyer loop would have done all
+    three as a side effect of drafting -- and, through `may_reply`'s hourly
+    ceiling, could have thrown the email kill switch.
+
+    **The brakes that do not apply, and why.** `EMAIL_AGENT`, the runtime
+    flag, the cooldown, the per-correspondent gap and the hourly ceiling all
+    exist to stop Liner answering a buyer *on its own*. A person asked for
+    this and a person decides whether it leaves, so none of them is the
+    question here -- and asking `email_agent.enabled` anyway refused every
+    draft on a deployment that had simply not turned the autonomous replies
+    on, which is the default and the documented state, citing a switch the
+    rep had not touched. `have_model` is the one brake that does apply: with
+    `LLM_MODE=stub` there is nothing to write with, and the honest answer is
+    to say so rather than hand back a template the rep cannot tell from a
+    real draft.
+    """
+    lead = _get(db, lead_id)
+
+    verdict = email_agent.have_model()
+    if not verdict.allowed:
+        # Typed, and it names the setting. Same shape `/api/email/agent`
+        # answers with, because "why did nothing happen" is the question a
+        # person actually has.
+        raise HTTPException(503, detail={"reason": verdict.reason, "detail": verdict.detail})
+
+    convo = None
+    if body.conversation_id:
+        convo = (
+            db.query(Conversation)
+            .filter(Conversation.id == body.conversation_id, Conversation.lead_id == lead.id)
+            .one_or_none()
+        )
+    if convo is None:
+        convo = (
+            db.query(Conversation)
+            .filter(Conversation.lead_id == lead.id)
+            .order_by(Conversation.started_at.desc())
+            .first()
+        )
+    if convo is None:
+        raise HTTPException(
+            409,
+            "This buyer has no conversation yet, so there is nothing to draft from. "
+            "Write the first message yourself.",
+        )
+
+    text, violations = loop.draft_text(
+        db,
+        convo,
+        brief=email_draft.brief(
+            db, lead, convo, instruction=body.instruction, rewrite=body.rewrite
+        ),
+    )
+    return {
+        "body": text,
+        # Shown to the rep rather than swallowed. A draft the guards refused
+        # twice is one carrying a claim nothing sourced, and the rep is the
+        # person who can decide whether they know it to be true.
+        "violations": violations,
+        "conversation_id": convo.id,
     }
 
 

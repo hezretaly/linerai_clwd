@@ -524,6 +524,35 @@ of one first: `make capture URL=<a vehicle's own page>`. What the list does
 not name, Liner says a colleague will confirm — it never reasons it out from
 the model in general — and asks for a number so the answer can reach them.
 
+**One car's full story — its Carfax, its service history, the whole
+specification — is a file, not a column.** For the car a demo is going to be
+about, write it down once:
+
+```
+backend/fixtures/<dealership>/details/<VIN>.md      # e.g. alsbou/details/WA1VABF71JD050557.md
+```
+
+The filename is the VIN, upper or lower case. Plain markdown, laid out however
+reads best; `alsbou/details/WA1VABF71JD050557.md` (the 2018 Audi Q7) is the
+worked example. Then reseed that store and restart:
+
+```bash
+DEALERSHIP=alsbou make reset-db     # prints "loaded written detail for N vehicle(s)"
+make dev                            # a running server keeps the deleted database open
+```
+
+Liner reads it only when it looks that one car up, never in a search, and is
+told to answer from it and never go beyond it. Two things are worth doing when
+you write one:
+
+- **Keep what the listing claims apart from what is confirmed.** A dealer's
+  marketing copy often says a trim "typically comes with" a third row or a
+  360° camera. Put those under a heading like *Not confirmed on this car*, so
+  Liner says the listing mentions it and hands the buyer to a colleague,
+  rather than promising equipment that may not be there.
+- **A VIN the seed cannot find is reported, not guessed at.** The line says
+  which file it skipped — usually a car that has sold or a typo in the name.
+
 ---
 
 ## Step 5 — Rehearse

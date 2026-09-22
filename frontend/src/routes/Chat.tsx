@@ -629,12 +629,40 @@ async function resume(
     if (shown.length > 0) {
       rebuilt = withVehicles(rebuilt, `cars-${message.id}`, shown.slice(0, 3))
     }
+    /* **The form stays under the message that asked for it.**
+     *
+     * On the live stream it already does -- the server emits the text before
+     * the card and the client appends in arrival order. A refresh used to
+     * lose that: every card was pushed after the whole loop, so a form asked
+     * five messages ago reappeared below everything said since, detached
+     * from the sentence that explains it. The thread is one ordered list and
+     * anything the buyer was shown stays where it was shown; this was the
+     * one place that rule was broken.
+     *
+     * Read off the message's own tool calls, keyed on `fields` rather than
+     * on a tool name -- `escalate_to_human` draws this card too when a
+     * handoff would otherwise leave nobody to ring, and keying on the name
+     * is how that one became invisible to three readers at once.
+     */
+    const asked = message.tool_calls.find((c) => Boolean(c.result?.fields))
+    if (asked && payload.details) {
+      rebuilt.push({
+        kind: 'details',
+        id: `details-${message.id}`,
+        // The server's copy, not the transcript's: it is the one that knows
+        // whether the card is still unanswered, and it drops it entirely
+        // once `save_details` lands.
+        data: payload.details,
+      })
+    }
   }
   // Times are not replayed from the transcript -- the server looked them up
   // again, because a slot list from ten minutes ago may be gone.
-  // Only sent while it is unanswered -- the server drops it once `save_details`
-  // is in the transcript, so a refresh never re-asks for details already given.
-  if (payload.details) {
+  // A card whose asking message is not in the transcript -- a voice turn
+  // relays its tool calls through `/api/voice/tools` and writes no message
+  // row -- still belongs on screen, so it lands at the end rather than
+  // nowhere.
+  if (payload.details && !rebuilt.some((i) => i.kind === 'details')) {
     rebuilt.push({ kind: 'details', id: `details-${payload.id}`, data: payload.details })
   }
   if (payload.booking) {

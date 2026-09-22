@@ -357,6 +357,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     somebody holding a phone.
   - **Replayed on refresh, unlike availability** — "what is your number" does
     not go stale the way a slot list does — but only while unanswered.
+    **And under the message that asked for it**, not after the whole thread.
+    The rehydrate always carried the boxes on the asking message's own tool
+    call; the page pushed every card after the loop anyway, so a buyer who
+    asked something else and refreshed found a form sitting under a reply
+    that had nothing to do with it. A card whose asking message is not in
+    the transcript — a voice turn writes none — still lands at the end
+    rather than nowhere.
+  - **Email is offered on every card and required on none.** Only the
+    *required* key was forced back onto a card, so one asking for a name and
+    a number had no email box at all — and a buyer who would rather be
+    written to had nowhere to say so and was not asked again, because
+    `request_details` is once-only. Required and offered are different
+    questions: `ALWAYS_KEYS` answers the second, `REQUIRED_KEYS` the first.
+  - **Rendered in `FIELDS`' order, so the cap can only trim a question.** The
+    four-box cap was applied after the number was appended, so four
+    qualifying questions plus the number was five and `[:4]` dropped the one
+    box the card refuses to render without. Contact first, then questions,
+    then the cut.
+  - **The stub's own booking turn asks in boxes too.** `contact_capture`
+    asked for a name and a number in a sentence and called nothing, two
+    stages after the stub had learnt to call `request_details` — the one turn
+    whose whole purpose is collecting contact details drew no form.
 - **Liner follows up once when a buyer goes quiet, and the browser is what
   asks.** `/chat` has no socket and no poll, so a message written server-side
   into a thread nobody is watching would surface on refresh or *above* their
@@ -845,6 +867,63 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     one-liners, so nothing was ever clipped and the reader looked like overkill
     on the only data anybody sees. A one-line email is a chat message with a
     subject.
+- **How a buyer can be reached is asked once, and the footer is where a rep
+  chooses.** `GET /api/leads/{id}/reach` answers email, text and call, each
+  with `available` and a `reason` — the buyer page had answered that in six
+  places in three wordings, and only the Text button ever asked whether the
+  provider was set up. The page's footer is a picker over what that answer
+  offers, and the chosen composer *replaces* the reply box rather than
+  stacking above the timeline, where opening one squeezed the buyer's history
+  to nothing on a phone.
+  - **`available` and `delivers` are two answers.** With the outbox sender
+    an email is recorded and nothing leaves, and hiding the composer for that
+    would make the outbox untestable from the page a rep works from. The
+    channel stays offered and the picker says *recorded only*.
+  - **Text is three facts, never one boolean** — texting switched off, no
+    number, or they said STOP — for the reason `/api/integrations` reports
+    *switched off* and *not configured* apart.
+  - **A call is a `tel:` link, because nothing here places one.** The Twilio
+    number this system holds is Liner's own and `/ops/phone` rings from it; a
+    dealership has no outbound line. A button implying the system dials would
+    be a claim about a capability that does not exist.
+  - **The server's two built drafts are a source for the box, not a second
+    composer.** Follow-up and Credit application fill the same textarea
+    "Draft with Liner" does, and the send picks its endpoint by what the
+    message *is*: a built draft keeps its `kind`, which is what rewrites the
+    finance link to a countable `/r/<token>`. They were lost once in this
+    reorganisation — the only control that could send a credit application
+    lived in a component that stopped being rendered, so the overview counted
+    clicks on a link no screen could send — and `make smoke` now reads the
+    page for both.
+- **A drafted email is written for a rep to read, and it cannot act.**
+  `POST /api/leads/{id}/draft-email` hands back text and stores nothing — there
+  is no Drafts tab because nothing stores a draft, and a model writing one does
+  not change that. The rep's one line of steering ("ask if Saturday works") is
+  the point of it, and with text already in the box it rewrites that in the
+  dealership's voice instead, keeping the rep's facts.
+  - **`loop.draft_text`, never `run_turn`.** `tools.execute` books
+    appointments, closes conversations and raises handoffs, so reusing the
+    buyer loop would have done all three as a side effect of writing a
+    paragraph — and through `may_reply`'s hourly ceiling could have thrown the
+    email kill switch. `draft_text` sends the schema withheld
+    (`offer_tools=False`), which is a guarantee rather than a request, runs
+    the same reply guards with one corrective retry, and on a second refusal
+    hands the violations back to the rep rather than escalating: a draft
+    nobody has sent is not a buyer waiting on an answer.
+  - **Everything it knows is composed first, in `app/email_draft.py`** — the
+    recap, the car in focus through the assistant's own `_vehicle_payload`,
+    the captured fields *with their provenance in words*, the dealership's
+    tone and hours, and its knowledge table verbatim. The same decision
+    `app/recap.py` made: a model sent to find facts is a second place one can
+    be invented, and a brief can be printed and checked against the database.
+    `internal_note` is stripped, because this is a message to the buyer.
+  - **`have_model`, not `enabled`.** The autonomous-reply switches exist to
+    stop Liner answering on its own; a person asked for this and a person
+    decides whether it leaves. Asking `enabled` refused every draft on a
+    deployment that had simply not turned email replies on — the default and
+    the documented state — citing a switch the rep had not touched. With the
+    stub it is a typed 503 naming `LLM_MODE`, never a template the rep cannot
+    tell from a real draft.
 - **A sign-off is composed, and it is the sender's own.** The dealership's
   name, address and phone come from its row; a rep who has written their own
   gets theirs instead, and Liner's own replies always sign as the dealership —

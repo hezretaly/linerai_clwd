@@ -8,13 +8,12 @@ import { useDealership } from '../lib/dealership'
 import { PROVENANCE_LABEL, initials, money, relative } from '../lib/format'
 import type { BookingCardData } from '../components/BookingCard'
 import { BookingCard } from '../components/BookingCard'
-import type { Conversation, IntegrationsPayload, Lead, TeamMember } from '../lib/types'
+import type { Conversation, Lead, TeamMember } from '../lib/types'
 import { Button, Input, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
 import { EmailReader } from '../components/dashboard/EmailReader'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
-import { LeadComposers } from '../components/dashboard/LeadDrawer'
 import { AssignTo } from '../components/dashboard/AssignTo'
 import { CarPhoto } from '../components/CarPhoto'
 
@@ -62,8 +61,12 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
   const queryClient = useQueryClient()
   const [reply, setReply] = useState('')
   const [booking, setBooking] = useState(false)
-  const [emailing, setEmailing] = useState(false)
-  const [texting, setTexting] = useState(false)
+  /* **One channel at a time, and it is one value.** This was two booleans
+   * kept exclusive by hand -- `setEmailing(!emailing); setTexting(false)` at
+   * each of two call sites -- which is two things that can disagree, and a
+   * third channel would have made it three. The composer slot has room for
+   * one composer, so the state that drives it is one word. */
+  const [mode, setMode] = useState<Channel>('chat')
   // The email currently open in the reader, or null.
   const [reading, setReading] = useState<TimelineEntry | null>(null)
   const [channel, setChannel] = useState('')
@@ -87,11 +90,28 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
     queryFn: () => api.get<{ members: TeamMember[] }>('/api/team'),
   })
 
+  /* **How this buyer can be reached, asked once.** The page used to answer
+   * it in six places in three wordings -- and only the text button consulted
+   * whether the provider was set up at all, so Email was offered on a
+   * deployment that sends nothing and a phone-only buyer got an empty
+   * toolbar. `/reach` is the one answer; the server owns it because the
+   * provider, the TEXTING switch and an SMS opt-out are all facts the
+   * browser has no business re-deriving. */
+  // `/reach` is a fact about a buyer, and only the lead route has one in the
+  // URL -- a conversation with a lead redirects to it further down, and one
+  // without a lead has nobody to reach.
+  const leadId = of === 'lead' ? id : ''
+
+  const { data: reach } = useQuery({
+    queryKey: ['reach', leadId],
+    queryFn: () => api.get<Reach>(`/api/leads/${leadId}/reach`),
+    enabled: Boolean(leadId),
+  })
+
   useEffect(() => {
     setReply('')
     setChannel('')
-    setEmailing(false)
-    setTexting(false)
+    setMode('chat')
     setBooking(false)
   }, [id])
 
@@ -171,15 +191,10 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
       <section className="flex min-w-0 flex-1 flex-col">
         <Header
           name={name}
-          lead={lead}
           conversation={targetConvo}
           conversations={data.conversations}
           onDecline={() => decline.mutate()}
           onBook={() => setBooking(true)}
-          emailing={emailing}
-          onEmail={() => { setEmailing(!emailing); setTexting(false) }}
-          texting={texting}
-          onText={() => { setTexting(!texting); setEmailing(false) }}
         />
 
         {/* All is the sum of the tabs beside it, not the number of rows below.
@@ -207,37 +222,11 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           <RepBooking conversationId={target} onDone={() => { setBooking(false); invalidate() }} />
         )}
 
-        {/* Outreach hangs off the buyer, not off a thread, so it stays
-            available whether or not one is open -- a rep sending a follow-up
-            to someone mid-chat is the normal case, not an edge one. */}
-        {emailing && lead && (
-          <div className="shrink-0 border-b border-border bg-muted/40 p-4">
-            <LeadComposers
-              lead={lead}
-              onDone={() => { setEmailing(false); invalidate() }}
-            />
-            {/* **A new message, not a reply.** Answering a particular email
-                happens in the reader, where that email stays on screen while
-                it is being answered -- so this deliberately no longer takes
-                `answering`. Two controls that both reply, one of them blind to
-                what it is replying to, is how a rep answers the wrong message;
-                and the one where the buyer's words are visible should win. */}
-            <EmailReply
-              lead={lead}
-              answering={undefined}
-              onDone={() => { setEmailing(false); invalidate() }}
-            />
-          </div>
-        )}
-
-        {texting && lead && (
-          <div className="border-b border-border bg-card p-3">
-            <SmsComposer
-              lead={lead}
-              onDone={() => { setTexting(false); invalidate() }}
-            />
-          </div>
-        )}
+        {/* The composers used to sit here, between the header and the
+            timeline, as a `shrink-0` band above a `flex-1` list -- so opening
+            one squeezed the buyer's history to nothing on a page whose whole
+            job is showing that history. They are in the footer now, where
+            they replace the reply box rather than stacking on top of it. */}
 
         <div className="scroll-thin flex-1 overflow-y-auto bg-muted/30">
           {entries.length === 0 ? (
@@ -263,24 +252,51 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           />
         )}
 
-        <div className="shrink-0 border-t border-border bg-background p-4">
-          {target === null ? (
-            // Not a disabled box. Liner cannot open a chat with someone who is
-            // not on the site, so there is no thread to reply on -- what a
-            // dealer actually has is an email, and that is what is offered.
-            <ClosedFooter lead={lead} />
-          ) : targetConvo?.agent_paused === false ? (
-            <LockedComposer onTakeover={() => takeover.mutate()} />
-          ) : (
-            <Composer
-              name={name}
-              source={CHANNEL_LABEL[targetConvo?.channel ?? 'chat'] ?? 'Website chat'}
-              value={reply}
-              onChange={setReply}
-              onSend={() => send.mutate()}
-              sending={send.isPending}
-            />
-          )}
+        {/* **The reach-out slot.** One picker, one composer, and a ceiling on
+            how much of the page either may take. Replying is a choice here
+            rather than an assumption: a buyer who rang in and left a number
+            has no chat to reply on and may have no address either, and the
+            old footer told them "email is the way back" regardless. */}
+        <div className="shrink-0 border-t border-border bg-background">
+          <ChannelPicker
+            reach={reach}
+            mode={mode}
+            onPick={setMode}
+            hasThread={target !== null}
+            threadLabel={CHANNEL_LABEL[targetConvo?.channel ?? 'chat'] ?? 'Website chat'}
+          />
+          {/* Without a ceiling the composer reproduces the squeeze one edge
+              lower: the email box is nine rows plus a subject plus a hint. */}
+          <div className="scroll-thin max-h-[45vh] overflow-y-auto p-4">
+            {mode === 'email' && lead ? (
+              <EmailReply
+                lead={lead}
+                answering={undefined}
+                onDone={() => { setMode('chat'); invalidate() }}
+              />
+            ) : mode === 'sms' && lead ? (
+              <SmsComposer
+                lead={lead}
+                onDone={() => { setMode('chat'); invalidate() }}
+              />
+            ) : target === null ? (
+              // Not a disabled box. Liner cannot open a chat with someone who
+              // is not on the site, so there is no thread to reply on -- what
+              // a dealer has is whatever the picker above found.
+              <ClosedFooter lead={lead} reach={reach} onPick={setMode} />
+            ) : targetConvo?.agent_paused === false ? (
+              <LockedComposer onTakeover={() => takeover.mutate()} />
+            ) : (
+              <Composer
+                name={name}
+                source={CHANNEL_LABEL[targetConvo?.channel ?? 'chat'] ?? 'Website chat'}
+                value={reply}
+                onChange={setReply}
+                onSend={() => send.mutate()}
+                sending={send.isPending}
+              />
+            )}
+          </div>
         </div>
       </section>
     </div>
@@ -330,38 +346,23 @@ function ChannelStrip({
 
 function Header({
   name,
-  lead,
   conversation,
   conversations,
   onDecline,
   onBook,
-  emailing,
-  texting,
-  onText,
-  onEmail,
 }: {
   name: string
-  lead: Lead | null
   conversation: Conversation | null
   conversations: Conversation[]
   onDecline: () => void
   onBook: () => void
-  emailing: boolean
-  texting: boolean
-  onText: () => void
-  onEmail: () => void
 }) {
   const declined = conversations.some((c) => c.outcome === 'declined')
   const booked = conversations.some((c) => c.stage === 'booked')
-  // Whether texting is offered here at all. `TEXTING=false`, or no Twilio
-  // account, means no button rather than a composer that opens onto a
-  // refusal -- the same query the shell's banner reads, so the two agree.
-  const { data: health } = useQuery({
-    queryKey: ['integrations'],
-    queryFn: () => api.get<IntegrationsPayload>('/api/integrations'),
-    staleTime: 30_000,
-  })
-  const texting_offered = health?.integrations.some((i) => i.key === 'sms' && i.configured) ?? false
+  // **The channel buttons moved to the footer**, beside the composer they
+  // open, so the control and the thing it controls are in one place and the
+  // page has one answer to "how can this buyer be reached" instead of a
+  // header that asked `/api/integrations` and a footer that asked nothing.
 
   return (
     <div className="sticky top-14 z-10 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:static md:px-5">
@@ -387,40 +388,6 @@ function Header({
         </div>
       </div>
       <div className="ml-auto hidden shrink-0 items-center gap-2 lg:flex">
-        {lead?.email ? (
-          <button
-            onClick={onEmail}
-            className={clsx(
-              'inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium transition-colors',
-              emailing
-                ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-input bg-background hover:border-primary hover:bg-primary hover:text-primary-foreground',
-            )}
-          >
-            {emailing ? 'Cancel' : 'Email them'}
-          </button>
-        ) : (
-          lead && !lead.phone && (
-            <Unavailable
-              label="Email them"
-              size="sm"
-              why="No email and no number on file, so there is nothing to reach them on. A rep has to wait for them to get in touch."
-            />
-          )
-        )}
-        {lead?.phone && texting_offered && (
-          <button
-            onClick={onText}
-            className={clsx(
-              'inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium transition-colors',
-              texting
-                ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-input bg-background hover:border-primary hover:bg-primary hover:text-primary-foreground',
-            )}
-          >
-            {texting ? 'Cancel' : 'Text them'}
-          </button>
-        )}
         {conversation && (
           <>
           {declined ? (
@@ -634,26 +601,158 @@ function LeadRail({
  *  reply box: Liner cannot open a chat with someone who is not on the site, so
  *  a box that looked usable would be a lie. Email is what a dealer actually
  *  has left, and it is one button up in the header. */
-function ClosedFooter({ lead }: { lead: Lead | null }) {
+/** One buyer's reachable channels, from `GET /api/leads/{id}/reach`. */
+export interface Reach {
+  email: { to: string; available: boolean; reason: string; delivers: boolean }
+  sms: { to: string; available: boolean; reason: string; segment: number; max_body: number }
+  call: { to: string; available: boolean; reason: string }
+}
+
+export type Channel = 'chat' | 'email' | 'sms'
+
+/**
+ * Which way to reach this buyer, offering only the ways that exist.
+ *
+ * **A channel nobody can use is not drawn.** No address means no Email, no
+ * number means no Text and no Call, and a deployment that has not set Twilio
+ * up means no Text for anybody -- the three are different facts and the
+ * server keeps them apart, so the reason under an empty picker says which
+ * one it is rather than a shrug.
+ *
+ * **Call is a `tel:` link and nothing more.** The Twilio number this system
+ * holds is Liner's own -- `/ops/phone` rings prospects from it, behind
+ * `require_owner` -- and a dealership has no outbound line here. So this
+ * hands the number to the rep's own handset instead of implying a call this
+ * product would place.
+ */
+function ChannelPicker({
+  reach,
+  mode,
+  onPick,
+  hasThread,
+  threadLabel,
+}: {
+  reach: Reach | undefined
+  mode: Channel
+  onPick: (c: Channel) => void
+  hasThread: boolean
+  threadLabel: string
+}) {
+  const options: { key: Channel; label: string; hint: string }[] = []
+  if (hasThread) options.push({ key: 'chat', label: 'Reply', hint: threadLabel })
+  if (reach?.email.available) {
+    options.push({
+      key: 'email',
+      label: 'Email',
+      // The address, so a rep sees where it is going before they type.
+      hint: reach.email.to,
+    })
+  }
+  if (reach?.sms.available) options.push({ key: 'sms', label: 'Text', hint: reach.sms.to })
+
+  // Every reason the server gave, for the channels it did not offer. Shown
+  // only when there is nothing at all to offer: listed beside three working
+  // buttons it is noise, and with none it is the whole answer.
+  const why = [reach?.email.reason, reach?.sms.reason, reach?.call.reason].filter(Boolean)
+
+  if (!options.length && !reach?.call.available) {
+    return (
+      <div className="border-b border-border bg-muted/40 px-4 py-2.5">
+        <p className="text-sm font-medium">No way to reach this buyer</p>
+        {why.length > 0 && (
+          <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+            {why.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-muted/40 px-4 py-2">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          onClick={() => onPick(o.key)}
+          title={o.hint}
+          className={clsx(
+            'rounded-md border px-2.5 py-1 text-sm font-medium transition-colors',
+            mode === o.key
+              ? 'border-foreground bg-foreground text-background'
+              : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+      {reach?.call.available && (
+        // An anchor rather than a button, because it is not a mode: nothing
+        // opens in the slot below and this system places no call.
+        <a
+          href={`tel:${reach.call.to.replace(/[^\d+]/g, '')}`}
+          className="rounded-md border border-input bg-background px-2.5 py-1 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          title={`Dial ${reach.call.to} from your own phone`}
+        >
+          Call {reach.call.to}
+        </a>
+      )}
+      {reach?.email.available && !reach.email.delivers && (
+        // The warning is only shown where there is something to refuse --
+        // the rule `blocked_reason` already follows by not biting on a
+        // sender that delivers nothing.
+        <span className="ml-auto text-xs text-warning-foreground">
+          Recorded only — no mail provider is configured.
+        </span>
+      )}
+    </div>
+  )
+}
+
+function ClosedFooter({
+  lead,
+  reach,
+  onPick,
+}: {
+  lead: Lead | null
+  reach: Reach | undefined
+  onPick: (c: Channel) => void
+}) {
   if (!lead) {
     return (
       <p className="text-center text-sm text-muted-foreground">
-        This thread is closed, and there is no lead to email.
+        This thread is closed, and there is no buyer to reach.
       </p>
     )
   }
+  // **It used to say "Email is the way back" to everybody**, including a
+  // buyer who rang in and left a number and no address -- telling a rep to
+  // do the one thing they could not. What is offered is what the picker
+  // above actually found.
+  const ways: { key: Channel; label: string }[] = []
+  if (reach?.email.available) ways.push({ key: 'email', label: 'Write them an email' })
+  if (reach?.sms.available) ways.push({ key: 'sms', label: 'Send them a text' })
+
   return (
     <div className="mx-auto max-w-3xl">
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-input bg-muted/40 px-4 py-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
           <Icon name="lock" className="h-4 w-4" />
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">Every thread here is closed</div>
           <div className="text-xs text-muted-foreground">
-            Liner cannot start a chat. Email is the way back to this buyer.
+            {ways.length > 0
+              ? 'Liner cannot start a chat. Pick a way to reach them above.'
+              : reach?.call.available
+                ? 'Liner cannot start a chat, and there is no address on file. Their number is above.'
+                : 'Liner cannot start a chat, and there is no way to reach this buyer on file.'}
           </div>
         </div>
+        {ways.map((w) => (
+          <Button key={w.key} size="sm" variant="secondary" onClick={() => onPick(w.key)}>
+            {w.label}
+          </Button>
+        ))}
       </div>
     </div>
   )
@@ -791,19 +890,44 @@ export function LeadRedirect() {
 }
 
 
+/** The two drafts the *server* builds from a lead's state, by `kind`.
+ *
+ *  Not templates in the browser: `_lead_draft` reads whether this buyer has a
+ *  booked visit and names the slot, and `_credit_draft` refuses outright when
+ *  no application URL is configured rather than mailing somebody an invitation
+ *  to apply nowhere. The kind is also what makes the overview's credit-
+ *  application count possible, because the send rewrites the link to
+ *  `/r/<token>` and records which kind it was. */
+const PRESETS = [
+  ['followup', 'Follow-up'],
+  ['credit_application', 'Credit application'],
+] as const
+
+type Preset = '' | (typeof PRESETS)[number][0]
+
 /**
- * Answer the email a buyer actually sent.
+ * One email composer on the buyer page: reply, write, or load a built draft.
  *
- * Separate from `LeadComposers` above, which sends a *draft the server built*
- * from the lead's state -- a follow-up, a credit application. Those are right
- * for opening a conversation and wrong for continuing one: a buyer who asked
- * whether the Silverado is still there has not been answered by a templated
- * first touch.
+ * **Three ways to fill one box, and one Send.** These used to be two separate
+ * composers -- a band for the server's drafts and this one for a reply --
+ * stacked above the timeline, and the pick-one control was in the wrong place:
+ * a rep answering a buyer's email had to know which of two boxes was the one
+ * that knew what it was answering. So the presets are a *draft source* here,
+ * beside "Draft with Liner", and what leaves is whatever is in the box when
+ * Send is pressed. The band's own file went with it rather than being left
+ * exported and unrendered: it also carried a line telling a rep that SMS was
+ * out of scope and a call was the only way to reach a buyer, which stopped
+ * being true and would have been read as current.
  *
- * It goes through `/api/email/compose`, the same endpoint the mailbox uses, so
- * it obeys `blocked_reason` like every other send and files against the buyer.
- * `in_reply_to_outreach_id` is what makes their client keep one thread instead
- * of opening a second conversation about the same car.
+ * **The send picks its endpoint by what the message is, not by which button
+ * was pressed.** A reply or a hand-written note goes through
+ * `/api/email/compose`, the same endpoint the mailbox uses, and carries
+ * `in_reply_to_outreach_id` so the buyer's client keeps one thread instead of
+ * opening a second conversation about the same car. A preset goes through
+ * `POST /api/leads/{id}/outreach` with its `kind`, because that is where the
+ * credit application's link is rewritten to a countable one. Both go through
+ * `blocked_reason`: there is one guard against a rehearsal mailing a real
+ * prospect and neither path may skip it.
  */
 function EmailReply({
   lead,
@@ -822,19 +946,88 @@ function EmailReply({
   )
   const [body, setBody] = useState('')
   const [problem, setProblem] = useState('')
+  /** The rep's one line of steering: "ask if Saturday works". */
+  const [instruction, setInstruction] = useState('')
+  /** Why the guards refused a draft, shown rather than swallowed. */
+  const [refused, setRefused] = useState<string[]>([])
+  /** Which built draft is in the box, if any. It decides the `kind` the send
+   *  records -- a rep tidying the wording of a credit application has not
+   *  turned it into something else. */
+  const [preset, setPreset] = useState<Preset>('')
+
+  /* A built draft, fetched on demand rather than up front: `credit_application`
+   * refuses when no URL is configured, and a composer that asked for both on
+   * open would show that refusal to every rep writing an ordinary reply. */
+  const built = useMutation({
+    mutationFn: (kind: Preset) =>
+      api.get<{ subject: string; body: string }>(
+        `/api/leads/${lead.id}/outreach?draft=1&kind=${kind}`,
+      ),
+    onSuccess: (draftIn, kind) => {
+      setSubject(draftIn.subject)
+      setBody(draftIn.body)
+      setPreset(kind)
+      setRefused([])
+    },
+    // The typed `not_configured` names the setting and the page to change it
+    // on. That sentence is the whole answer to "why can I not send this".
+    onError: (err: unknown) => {
+      const payload = (err as ApiError)?.payload as { detail?: string } | undefined
+      setProblem(payload?.detail || String((err as Error)?.message ?? err))
+    },
+  })
+
+  /* **Liner writes it; the rep decides whether it goes.** Nothing is sent and
+   * nothing is stored -- the draft lands in this textarea and lives in the
+   * browser like every other dealership draft, and the send below is the same
+   * one a hand-typed message goes through, `blocked_reason` included.
+   *
+   * Two modes, one endpoint. With text already in the box it rewrites that in
+   * the dealership's voice, keeping the rep's facts; with an empty box it
+   * writes from the conversation, the car in focus, the captured fields and
+   * the tone a manager set. The instruction steers either. */
+  const draft = useMutation({
+    mutationFn: () =>
+      api.post<{ body: string; violations: string[] }>(
+        `/api/leads/${lead.id}/draft-email`,
+        { instruction, rewrite: body.trim() },
+      ),
+    onSuccess: (result) => {
+      setRefused(result.violations ?? [])
+      if (result.body) setBody(result.body)
+    },
+    onError: (err: unknown) => {
+      // The 503 for "no model configured" carries the setting to change, and
+      // that sentence is the whole answer to "why did nothing happen".
+      const payload = (err as ApiError)?.payload as
+        | { detail?: { detail?: string } }
+        | undefined
+      setProblem(payload?.detail?.detail || String((err as Error)?.message ?? err))
+    },
+  })
 
   const send = useMutation({
     mutationFn: () =>
-      api.post<{ status: string; error?: string; blocked?: boolean }>(
-        '/api/email/compose',
-        {
-          to: lead.email,
-          subject,
-          body,
-          lead_id: lead.id,
-          in_reply_to_outreach_id: answering?.id,
-        },
-      ),
+      preset
+        ? // A built draft keeps its kind, which is what rewrites the finance
+          // link to `/r/<token>` and lets the overview count the applications
+          // buyers actually opened. Answered here rather than in `compose`,
+          // which has no notion of a lead's outreach kinds.
+          api.post<{ status: string; error?: string }>(`/api/leads/${lead.id}/outreach`, {
+            subject,
+            body,
+            kind: preset,
+          })
+        : api.post<{ status: string; error?: string; blocked?: boolean }>(
+            '/api/email/compose',
+            {
+              to: lead.email,
+              subject,
+              body,
+              lead_id: lead.id,
+              in_reply_to_outreach_id: answering?.id,
+            },
+          ),
     onSuccess: (result) => {
       // A refusal comes back as a stored failed row rather than an error, and
       // the sentence names the setting that would lift it. Showing it beats a
@@ -845,6 +1038,7 @@ function EmailReply({
       }
       setBody('')
       setProblem('')
+      setPreset('')
       onDone()
     },
     onError: (err: unknown) => setProblem(String((err as Error)?.message ?? err)),
@@ -852,12 +1046,20 @@ function EmailReply({
 
   if (!lead.email) return null
   return (
-    <div className="mt-3 border-t border-border pt-3">
+    // No rule of its own: the footer's channel picker is the divider above
+    // this, and a second one drew two lines a few pixels apart on a phone.
+    <div>
       <div className="mb-2 text-xs text-muted-foreground">
         Reply to <span className="font-medium text-foreground">{lead.email}</span>
-        {answering
-          ? ` · under "${parent || '(no subject)'}"`
-          : ' · this starts a new thread in their inbox'}
+        {/* Which kind the send will record, said before it is pressed. A
+            credit application is counted on the overview and carries a
+            rewritten link, so "this is a follow-up" is a fact about the
+            message rather than a label on a button. */}
+        {preset
+          ? ` · sending as ${(PRESETS.find(([k]) => k === preset) ?? [, ''])[1].toLowerCase()}`
+          : answering
+            ? ` · under "${parent || '(no subject)'}"`
+            : ' · this starts a new thread in their inbox'}
       </div>
       <Input
         value={subject}
@@ -873,7 +1075,62 @@ function EmailReply({
         className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
       />
       {problem && <p className="mt-1.5 text-xs text-destructive">{problem}</p>}
-      <div className="mt-2 flex justify-end">
+      {/* **The guards refused it, and the rep is told why.** A draft carrying
+          a price nothing sourced is exactly as wrong as a chat bubble
+          carrying one -- but the person reading this may know the figure to
+          be true, so they get the complaint and the box, rather than a
+          silent empty answer. */}
+      {refused.length > 0 && (
+        <div className="mt-1.5 rounded-md border border-warning/30 bg-warning-muted p-2">
+          <p className="text-xs font-medium text-warning-foreground">
+            Liner could not source this, so the draft was not written:
+          </p>
+          <ul className="mt-0.5 text-xs text-warning-foreground/90">
+            {refused.map((v) => <li key={v}>{v}</li>)}
+          </ul>
+        </div>
+      )}
+      {/* The built drafts. A draft *source*, not a second composer: pressing
+          one fills the box above, and the rep edits and sends it from there. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">Start from</span>
+        {PRESETS.map(([kind, label]) => (
+          <Button
+            key={kind}
+            size="sm"
+            variant={preset === kind ? 'primary' : 'secondary'}
+            disabled={built.isPending}
+            onClick={() => { setProblem(''); built.mutate(kind) }}
+          >
+            {built.isPending && built.variables === kind ? 'Loading...' : label}
+          </Button>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Input
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          placeholder={body.trim() ? 'How should it change?' : 'What should it say?'}
+          className="h-8 min-w-0 flex-1 text-sm"
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={draft.isPending}
+          onClick={() => { setProblem(''); draft.mutate() }}
+          // Two verbs, one button: with text in the box it rewrites, with an
+          // empty one it writes. Saying which it will do beats a rep pressing
+          // Draft and losing what they had typed.
+          title={
+            body.trim()
+              ? "Rewrite what you have written, in the dealership's voice"
+              : 'Write a draft from this conversation'
+          }
+        >
+          {draft.isPending
+            ? 'Drafting...'
+            : body.trim() ? 'Tidy this up' : 'Draft with Liner'}
+        </Button>
         <Button
           size="sm"
           variant="primary"

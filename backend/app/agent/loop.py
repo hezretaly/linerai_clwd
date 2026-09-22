@@ -211,3 +211,109 @@ def run_turn(
         attempt += 1
         messages.append({"role": "assistant", "content": final_text or "(empty)"})
         messages.append({"role": "user", "content": guards.corrective_note(verdict.violations)})
+
+
+# --------------------------------------------------------------------------
+# Drafting for a person to read
+# --------------------------------------------------------------------------
+
+def draft_text(
+    db: Session,
+    convo: Conversation,
+    *,
+    brief: str,
+    provider: Provider | None = None,
+    channel: str = "email",
+) -> tuple[str, list[str]]:
+    """Write something a **rep** will read, decide on, and maybe send.
+
+    Returns `(text, violations)`. A non-empty `violations` means the guards
+    refused the draft twice and the rep is shown why instead of being handed
+    a claim nobody could source.
+
+    **No tools, and that is the whole safety property.** `run_turn` exists to
+    answer a buyer, and answering a buyer legitimately means *doing* things:
+    `tools.execute` dispatches to `book_appointment`, `close_conversation`,
+    `escalate_to_human` and `save_captured_fields`, which write rows, emit
+    events and mint leads through `attach_lead`. A draft is not an action --
+    nobody has agreed to anything yet -- so running the buyer loop to produce
+    one would book the appointment the draft merely *offers*. The schema is
+    withheld at the vendor (`offer_tools=False`) rather than the results
+    being ignored, because ignoring a tool call still means it ran.
+
+    **The guards are shared, and that is the other half.** This is not a
+    second turn loop: everything about vendors still lives in
+    `providers.py`, and `guards.run_guards` is the same call `run_turn`
+    makes, with the same corrective retry. A rep can send a draft, so a price
+    nothing sourced is exactly as wrong here as in a chat bubble. What is
+    deliberately *not* shared is the escalation on a second failure -- that
+    writes a handoff row, and a rep asking for a draft has not escalated
+    anything. They are told, and they can write it themselves.
+
+    The context comes in as `brief` rather than being fetched here: what a
+    draft should know is a product question -- the thread, the car in focus,
+    the captured fields, the dealership's own tone -- and `app/email_draft.py`
+    composes it from rows, deterministically, for the same reason
+    `app/recap.py` does.
+    """
+    provider = provider or get_provider()
+    dealership = db.query(Dealership).first()
+    system = build_system_prompt(
+        db, dealership, live_settings(db), channel=channel or "email"
+    )
+    system = f"{system}\n{brief.strip()}"
+
+    # The transcript, so the draft can refer to what was actually said. The
+    # instruction itself is the last user turn, which is what a model reads
+    # most recently -- the same reasoning as every addendum here.
+    messages = _history(db, convo)
+    messages.append({"role": "user", "content": DRAFT_REQUEST})
+
+    buyer_text = " ".join(
+        m["content"] for m in messages if isinstance(m, dict) and m.get("role") == "user"
+    )
+
+    attempt = 1
+    while True:
+        completion = provider.complete(system, messages, offer_tools=False)
+        text = (completion.text or "").strip()
+
+        verdict = guards.run_guards(
+            text,
+            # No tool results, because no tools ran. The grounding a draft
+            # gets is what the conversation was already told --
+            # `earlier_results` is the same set the voice guard reads, so a
+            # car found three turns ago is still a car this may mention.
+            [],
+            channel="email",
+            attempt=attempt,
+            assistant_turns=sum(1 for m in messages if _role_of(m) == "assistant"),
+            booked=convo.stage == "booked",
+            tool_inputs=[],
+            buyer_text=buyer_text,
+            makes=tools.known_makes(db),
+            prior_results=tools.earlier_results(db, convo),
+        )
+        if verdict.ok:
+            return verdict.text, []
+        if attempt > 1:
+            # Twice is enough. The rep sees the complaint rather than a draft
+            # carrying a claim the guard would not let a buyer read.
+            log.info("draft refused on conversation %s: %s", convo.id, verdict.violations)
+            return "", list(verdict.violations)
+        attempt += 1
+        messages.append({"role": "assistant", "content": text or "(empty)"})
+        messages.append({"role": "user", "content": guards.corrective_note(verdict.violations)})
+
+
+#: The last user turn on a draft request. It says who is asking and what they
+#: will do with the answer, because a model handed a transcript and nothing
+#: else writes the next message *to the buyer* -- and this one is read by a
+#: rep who has not decided to send anything yet.
+DRAFT_REQUEST = (
+    "A member of the dealership's team has asked you to draft this email for "
+    "them. Write only the email body. Do not add a subject line, a greeting "
+    "header, or a sign-off with a name -- the system appends the dealership's "
+    "own sign-off. Do not say that you are an assistant, and do not promise "
+    "anything the team has not agreed to."
+)

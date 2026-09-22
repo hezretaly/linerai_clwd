@@ -46,9 +46,16 @@ class FakeProvider(Provider):
         self.calls = 0
         self.seen_systems: list[str] = []
         self.seen_messages: list[list[dict]] = []
+        self.seen_offer_tools: list[bool] = []
 
-    def complete(self, system: str, messages: list[dict]) -> Completion:
+    def complete(
+        self, system: str, messages: list[dict], *, offer_tools: bool = True
+    ) -> Completion:
         self.seen_systems.append(system)
+        # Recorded, so the gate can assert that the drafting path really does
+        # withhold the tool schema -- the property that stops a draft booking
+        # an appointment is invisible in the reply text.
+        self.seen_offer_tools.append(offer_tools)
         # Copied, because the loop mutates the list after this returns and a
         # shared reference would make every recorded turn look identical.
         # Not dict(m): the list is not homogeneous -- see ReasoningItem below.

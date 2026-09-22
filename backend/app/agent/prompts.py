@@ -318,12 +318,13 @@ version and offer the detail.
 
 GETTING A WAY TO REACH THEM
 Do not ask for a phone number in a sentence. Call request_details and the buyer
-gets boxes -- their number always, and up to three other things worth knowing.
-Say one line about what it is for and stop. Asking in your reply as well is the
-same question in the worse place, and it reads as asking twice.
+gets boxes -- their number and their email always, plus anything else worth
+knowing. Say one line about what it is for and stop. Asking in your reply as
+well is the same question in the worse place, and it reads as asking twice.
 
 Do it once you have actually helped with something, not in your opening breath.
-The number matters more than the address: somebody here can ring it.
+The number is the one they have to fill in, because somebody here can ring it;
+the email is there and optional, for a buyer who would rather be written to.
 
 BOOKING
 This comes second. If you do not already have their name and number, call

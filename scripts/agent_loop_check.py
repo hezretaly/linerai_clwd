@@ -459,6 +459,92 @@ def main() -> int:
         check("a monthly payment is answered with cars, not a lecture",
               "$300 a month" in written and "not a reason to show them nothing" in written)
 
+        print("\n== a drafted email: composed from rows, and unable to act ==")
+        # **A rep presses Draft with Liner and reads what comes back.** The
+        # interesting question is what the draft gets to see, and the more
+        # interesting one is what it can *do*: `tools.execute` books
+        # appointments, closes conversations and raises handoffs, so reusing
+        # `run_turn` here would have done all three as a side effect of
+        # writing a paragraph -- and through `may_reply`'s hourly ceiling
+        # could have thrown the email kill switch. `draft_text` withholds the
+        # schema instead, which is a guarantee rather than a request.
+        from app import email_draft  # noqa: E402
+        from app.models import CapturedField, Lead, Message, VehicleMention  # noqa: E402
+
+        car = db.query(Vehicle).filter(Vehicle.status == "available").first()
+        kept_note = car.rule_note
+        car.rule_note = "No discount without Dana's approval."
+        buyer = Lead(name="Draft Buyer", email="draft.buyer@example.invalid",
+                     phone="+15025550188", source="chat")
+        db.add(buyer)
+        db.commit()
+        db.add(CapturedField(lead_id=buyer.id, key="budget", value="around $25,000",
+                             provenance="inferred"))
+        drafted = Conversation(channel="chat", stage="qualifying", lead_id=buyer.id,
+                               focus_vehicle_id=car.id)
+        db.add(drafted)
+        db.commit()
+        db.add(VehicleMention(conversation_id=drafted.id, vehicle_id=car.id))
+        db.commit()
+
+        written = email_draft.brief(
+            db, buyer, drafted, instruction="Ask whether Saturday still works.")
+        check("the brief carries the rep's own instruction",
+              "Saturday still works" in written, written[:60])
+        for block in ("THE BUYER", "THE DEALERSHIP, AND HOW IT SOUNDS",
+                      "THE CAR THIS IS ABOUT", "RULES FOR THIS DRAFT"):
+            check(f"and the {block.lower()} block is in it", f"--- {block} ---" in written)
+        check("the car it is about is the one the thread is looking at",
+              car.vin in written, car.vin)
+        # **A rule for the floor is not a line in a buyer's email.** Same cut
+        # `buyer_tool_calls` makes on the rehydrate, for the same reason: this
+        # is a message *to the buyer*, and a rep reads it before it goes.
+        check("but the rep's own note on the car does not travel",
+              "Dana's approval" not in written, "internal_note reached the draft")
+        # A rep may see that a field was guessed; prose cannot carry a badge,
+        # so the brief says which is which in words.
+        check("and a guessed field is labelled a guess, not stated as fact",
+              "a guess, not confirmed" in written, "provenance was flattened")
+
+        drafter = FakeProvider([say("Hi Draft Buyer -- does Saturday still suit you?")])
+        text, violations = loop.draft_text(db, drafted, brief=written, provider=drafter)
+        check("a draft comes back", "Saturday" in text and not violations, text[:60])
+        # The whole guarantee, in one assertion: the model that wrote that was
+        # never offered a tool, so it could not have booked, closed or
+        # escalated anything.
+        check("and the model was never offered a tool to act with",
+              drafter.seen_offer_tools == [False], str(drafter.seen_offer_tools))
+        check("nothing was written into the buyer's transcript",
+              db.query(Message).filter_by(conversation_id=drafted.id).count() == 0,
+              "a draft landed in the thread")
+
+        # **The guards run on a draft too.** A price nothing sourced is the
+        # same invention in an email as in a chat bubble -- and the rep is the
+        # one person who can say whether they know it to be true, so the
+        # violations go back with the text rather than being swallowed.
+        refused = FakeProvider([
+            say("It is $14,250 out the door."),
+            say("It is still $14,250, honestly."),
+        ])
+        bad, said_no = loop.draft_text(db, drafted, brief=written, provider=refused)
+        check("an unsourced price does not reach the rep as a draft",
+              "$14,250" not in bad, bad[:60])
+        check("and what the guard objected to is handed back, not swallowed",
+              any("14,250" in v for v in said_no), str(said_no))
+        # `escalate_to_human` is a side effect of the *buyer* loop's refusal
+        # path. A draft nobody has sent is not a buyer waiting on an answer,
+        # so a refused one must not put a rep in a queue.
+        check("a refused draft raises no escalation, because nobody is waiting",
+              db.query(Escalation).filter_by(conversation_id=drafted.id).count() == 0,
+              "a draft raised a handoff")
+
+        db.query(VehicleMention).filter_by(conversation_id=drafted.id).delete()
+        db.query(CapturedField).filter_by(lead_id=buyer.id).delete()
+        db.delete(drafted)
+        db.delete(buyer)
+        car.rule_note = kept_note
+        db.commit()
+
         print("\n== the voice session, as far as it can honestly be checked ==")
         # The mint call needs a key this environment does not have and must not
         # invent -- and api.openai.com is refused by the egress proxy besides.

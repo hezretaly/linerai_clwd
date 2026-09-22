@@ -513,6 +513,25 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
             convo.stage = "contact_capture"
             db.commit()
             when = f" for {_slot_label(chosen)}" if chosen else ""
+            # **Ask in a box, not only in prose.** This asked for a name and a
+            # number in a sentence and called nothing, so the one turn whose
+            # whole purpose is collecting contact details drew no form at all
+            # -- the buyer was left to type it into the composer, which is
+            # exactly what `request_details` exists to replace. The card is
+            # the ask a chip could never make: pre-written text would put a
+            # name in the buyer's mouth, and this one asks and they type.
+            #
+            # `request_details` is once-only on its own (`details_pending`),
+            # so a second card cannot land on top of an unanswered one.
+            result = call("request_details", {
+                "fields": ["name", details.PHONE_KEY],
+                "reason": "So someone here can confirm it with you.",
+            })
+            if result.get("fields"):
+                # The reply does not also list what the card is asking for.
+                # The same question asked twice gets answered in the worse
+                # place -- the rule the booking card's text already follows.
+                return (f"Perfect{when}. Just these and you are booked in.", calls)
             return (
                 f"Perfect{when}. Can I get your name and the best number for you? "
                 "That way someone here can confirm it with you.",

@@ -1143,9 +1143,22 @@ def seed(db: Session | None = None) -> None:
             # dealership, so the only rows here are the ones it actually
             # states. Said out loud because an empty lot on first run
             # otherwise reads as a seed that failed.
+            #
+            # **And it has to read the lot rather than the fixture flag.** It
+            # said "the lot is empty" whenever there was no showroom fixture,
+            # which stopped being true the moment a dealership's own CSV was
+            # seeded from their folder: the line above it reported 91 vehicles
+            # and this one said there were none, in the same breath. Two
+            # numbers for one question, and the wrong one is the one that
+            # tells somebody to go and run an import they do not need.
+            lot = db.query(Vehicle).count()
             print(
-                f"\n{raw['name']} carries no showroom fixture, so the lot is empty and\n"
-                "there is no demo history. Their cars come from their own site:\n"
+                f"\n{raw['name']} carries no showroom fixture, so there is no demo\n"
+                + ("history and the lot is empty. Their cars come from their own site:\n"
+                   if not lot else
+                   f"history -- no leads, no conversations, no appointments. The {lot}\n"
+                   "cars on the lot are their own, from their folder. To refresh them\n"
+                   "from their site:\n")
                 + (f"  {profile.inventory()['source_url']}\n"
                    "  Press Import on /app/inventory, review the run, then publish.\n"
                    if profile.inventory()["source_url"]

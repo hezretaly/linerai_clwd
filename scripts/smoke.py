@@ -813,6 +813,18 @@ def main() -> int:
     check("a second click does not count twice", again == after, f"{after} -> {again}")
     check("an unknown token is a 404, not a redirect to nowhere",
           follow(BASE + "/r/not-a-real-token")[0] == 404)
+    # **And a screen has to be able to reach it.** Everything above is the
+    # endpoint, which was always right; the one control that could send a
+    # credit application lived in a component that stopped being rendered, so
+    # the count on the overview was counting clicks on links no page could
+    # send. Same reason `SPA_PREFIXES` and the email-agent card are read out
+    # of the source: nothing else here tells a control that exists from one
+    # that used to.
+    _page_src = pathlib.Path("frontend/src/routes/LeadPage.tsx").read_text()
+    check("and the buyer page still offers both of the built drafts",
+          "'credit_application'" in _page_src and "'followup'" in _page_src
+          and "outreach?draft=1" in _page_src,
+          "the buyer page cannot send one")
 
     print("\n== an unclaimed lead can be opened from the overview ==")
     pool = call("GET", "/api/overview")["queues"]["unclaimed_leads"]
@@ -3677,9 +3689,13 @@ def main() -> int:
         # to reach them, so nobody could have confirmed anything.
         raised = _ex.escalate_to_human(
             _cdb, thread, {"rule_key": "vehicle_question", "reason": "three-row?"}, "smk-1")
+        # Asserted as *which boxes*, not as an exact list: the address is
+        # offered on every card now and pinning the list made adding it read as
+        # a regression here rather than as the change it was.
+        _raised_keys = [f["key"] for f in raised.get("fields") or []]
         check("an escalation with nobody to ring puts the boxes up itself",
-              [f["key"] for f in raised.get("fields") or []] == ["name", "phone"],
-              str([f.get("key") for f in raised.get("fields") or []]))
+              _raised_keys[:2] == ["name", "phone"] and "email" in _raised_keys,
+              str(_raised_keys))
         check("and says what they are for in the buyer's own terms",
               "colleague" in (raised.get("reason") or "").lower(), raised.get("reason"))
 
@@ -4090,6 +4106,25 @@ def main() -> int:
     check("the number is always one of them, since a rep can ring it",
           _details.PHONE_KEY in keys and _details.PHONE_KEY in (card or {}).get("required", []),
           str(keys))
+    # **Required and offered are different questions.** Only the required key
+    # was forced back onto every card, so a card asking for a name and a number
+    # had no email box at all -- and a buyer who would rather be written to had
+    # nowhere to say so and would not be asked again, because
+    # `request_details` is once-only. Optional is a reason not to block the
+    # submit, which `required` on the field already does; it is not a reason to
+    # leave the box out.
+    _email_box = next((f for f in (card or {}).get("fields", []) if f["key"] == "email"), None)
+    check("and the address is offered beside it, optional rather than absent",
+          _email_box is not None and not _email_box["required"]
+          and "email" not in (card or {}).get("required", []),
+          str(_email_box)[:70] if _email_box else "(no email box on the card)")
+    # The cap used to be applied after the required key was appended, so four
+    # qualifying questions plus the number was five and `[:4]` dropped the one
+    # the card refuses to render without.
+    _crowded = _details.wanted(["budget", "timeframe", "trade_in", "financing"])
+    check("and a crowded card trims a question, never the contact boxes",
+          _details.PHONE_KEY in _crowded and "email" in _crowded
+          and len(_crowded) <= _details.MAX_FIELDS, str(_crowded))
     # Asking in the reply as well is the same question in the worse place --
     # the booking card learnt this first, and here it reads as asking twice.
     check("and the reply does not ask for the same thing in prose",
@@ -4188,6 +4223,168 @@ def main() -> int:
         _cdb.commit()
     finally:
         _cdb.close()
+
+    print("\n== the turn that asks for contact details draws the boxes ==")
+    # **The one turn whose whole purpose is collecting a name and a number
+    # drew no form at all.** `contact_capture` asked for both in a sentence
+    # and called nothing, so the buyer was left to type them into the
+    # composer -- which is exactly what `request_details` exists to replace,
+    # and it was already wired up two stages earlier. Reported as "bring the
+    # info form down when the assistant says it needs their details".
+    ask_convo = call("POST", "/api/chat/sessions")
+    aid, arails = ask_convo["conversation_id"], ask_convo["rails"]
+    asked_card, ask_msg, ask_stage = None, "", "?"
+    # The booking chip says Saturday morning, and the two times
+    # `check_availability` happened to offer may not include one -- the stub
+    # then goes and looks rather than booking them into a slot they did not
+    # ask for, which lands back at `slot_offered`. So it is pressed until it
+    # takes, or this passes and fails with the lot's opening hours rather than
+    # with the thing being checked.
+    for words in (("third row",), ("tell me about",), ("see it this week",),
+                  ("works", "saturday"), ("works", "saturday"),
+                  ("works", "saturday")):
+        chip = pick(arails, *words)
+        if chip is None:
+            continue
+        reply, state, events = say(aid, rail_id=chip)
+        arails, ask_stage = state["rails"], state.get("stage", "?")
+        found = next((d for e, d in events if e == "details"), None)
+        if found:
+            asked_card, ask_msg = found, (reply or {}).get("content", "")
+            break
+    check("the stage that asks for a name and a number puts boxes on the screen",
+          asked_card is not None and bool((asked_card or {}).get("fields")),
+          str(asked_card)[:80] if asked_card
+          else f"(prose only, no card -- stuck at {ask_stage})")
+    # And it does not ask in prose as well. The same question twice gets
+    # answered in the worse place -- the booking card's text learnt this first.
+    check("and the reply points at them rather than asking again in words",
+          "number" not in ask_msg.lower(), ask_msg[:70])
+
+    # **A card keeps its place across a refresh.** The rehydrate carries the
+    # boxes on the message that drew them, so the browser can put the card
+    # back where the buyer saw it. It used to be readable only as one
+    # top-level `details`, which the page appended after the whole thread --
+    # so a buyer who asked something else afterwards came back to a form
+    # sitting under a reply that had nothing to do with it.
+    say(aid, content="Actually, what's your warranty like?")
+    back = call("GET", f"/api/chat/sessions/{aid}")
+    with_boxes = [
+        i for i, m in enumerate(back["messages"])
+        for c in m["tool_calls"] if (c.get("result") or {}).get("fields")
+    ]
+    check("a refresh knows which message the card belongs under",
+          bool(with_boxes) and with_boxes[-1] < len(back["messages"]) - 1,
+          f"card at {with_boxes} of {len(back['messages'])} messages")
+    check("and the card itself is still owed, since nobody filled it in",
+          bool((back.get("details") or {}).get("fields")),
+          str(back.get("details"))[:60])
+    # The browser is the only other place this can be got wrong, and a page
+    # can be wired to a correct endpoint and still render the wrong thing --
+    # which is how the bug above survived, with the API perfectly right.
+    _chat_src = pathlib.Path("frontend/src/routes/Chat.tsx").read_text()
+    _loop_at = _chat_src.find("for (const message of")
+    _anchored = _chat_src.find("id: `details-${message.id}`")
+    _fallback = _chat_src.find("!rebuilt.some((i) => i.kind === 'details')")
+    check("and the page rebuilds it under that message, not after the thread",
+          -1 < _loop_at < _anchored < _fallback,
+          f"loop={_loop_at} card={_anchored} fallback={_fallback}")
+
+    print("\n== one predicate for how a buyer can be reached ==")
+    # **Asked once, before the composer opens.** The buyer page answered this
+    # in six places in three wordings -- `lead?.email ?` drew a button,
+    # `if (!lead.email) return null` hid a composer, another drew a To line
+    # for an empty address, and only the text button consulted whether the
+    # provider was set up at all. Same shape `lib/conversationFilters`,
+    # `app/threads.py` and `app/escalations.py` each exist to prevent.
+    phone_only = call("GET", f"/api/leads/{saved['saved']['lead_id']}/reach")
+    check("a buyer with a number and no address cannot be emailed, and it says why",
+          not phone_only["email"]["available"]
+          and "email" in phone_only["email"]["reason"].lower(),
+          phone_only["email"]["reason"][:60])
+    # **A call needs no provider, because nothing here places one.** The
+    # Twilio number this system holds is Liner's own and `/ops/phone` rings
+    # from it; a dealership has no outbound line, so "call them" is the rep's
+    # own handset and is honest about being nothing more than that.
+    check("but they can be rung, with no provider involved at all",
+          phone_only["call"]["available"] and bool(phone_only["call"]["to"]),
+          phone_only["call"]["to"])
+    # Three separate facts, deliberately not one boolean: texting is switched
+    # off, this buyer has no number, or this buyer said STOP. One boolean over
+    # the three sends a rep to the wrong line of `.env` -- the same reason
+    # `/api/integrations` reports "switched off" and "not configured" apart.
+    check("and the text answer names which of the three facts it is",
+          bool(phone_only["sms"]["reason"]) or phone_only["sms"]["available"],
+          phone_only["sms"]["reason"][:60] or "available")
+
+    both = call("GET", f"/api/leads/{form['appointment']['lead_id']}/reach")
+    check("a buyer who gave an address can be emailed",
+          both["email"]["available"] and "@" in both["email"]["to"],
+          both["email"]["to"])
+    # **`available` is what may be offered; `delivers` is whether anything
+    # leaves the building.** Separate on purpose: with the outbox sender an
+    # email is recorded and nothing is sent, and hiding the composer for that
+    # would make the outbox untestable from the page a rep works from. So the
+    # channel stays offered and the composer says so -- the rule
+    # `blocked_reason` already follows by not biting on a sender that
+    # delivers nothing.
+    integrations = {r["key"]: r for r in call("GET", "/api/integrations")["integrations"]}
+    check("and whether it actually arrives is a second answer, not the same one",
+          both["email"]["delivers"] == integrations["email"]["configured"],
+          f"delivers={both['email']['delivers']} configured="
+          f"{integrations['email']['configured']}")
+    # The page reads that one answer. A second copy on the frontend is how
+    # the Email button and the composer start disagreeing about the same buyer.
+    # As a *request*, not anywhere in the file. The first version of this
+    # matched the comment explaining the fix and failed on its own
+    # explanation -- exactly what the `timeline` check above had to learn.
+    _lead_src = pathlib.Path("frontend/src/routes/LeadPage.tsx").read_text()
+    check("and the buyer page asks it rather than deciding for itself",
+          "/reach" in _lead_src and "'/api/integrations'" not in _lead_src,
+          "LeadPage.tsx still requests /api/integrations")
+
+    print("\n== the drafting assistant writes; it cannot act ==")
+    # **A rep presses Draft with Liner, reads what comes back and decides.**
+    # Nothing is stored -- there is no Drafts tab because nothing stores a
+    # draft, and a model writing one does not change that.
+    from app import email_agent as _agent
+    from app.db import SessionLocal as _DraftSession
+
+    # The gate runs on the stub (asserted at the top), so this is the refusal
+    # path -- typed and naming the setting, because "why did nothing happen"
+    # is the question a person actually has. Handing back a template the rep
+    # cannot tell from a real draft is the failure being avoided.
+    code, detail = status_of(
+        "POST", f"/api/leads/{form['appointment']['lead_id']}/draft-email",
+        {"instruction": "Ask whether Saturday still works."})
+    check("with no model it refuses and names the setting, rather than "
+          "handing back a template",
+          code == 503 and "LLM_MODE" in detail, f"{code} {detail[:70]}")
+    # **The autonomous-reply brakes are not this question.** `EMAIL_AGENT`,
+    # the runtime flag, the cooldown and the ceiling all exist to stop Liner
+    # answering a buyer *on its own*; a person asked for this draft and a
+    # person decides whether it leaves. Asking `enabled` anyway refused every
+    # draft on a deployment that had simply not switched the replies on --
+    # which is the default and the documented state -- citing a switch the
+    # rep had not touched.
+    _ddb = _DraftSession()
+    try:
+        check("and it does not ask the switch that governs Liner answering alone",
+              _agent.have_model(has_provider=True).allowed
+              and not _agent.enabled(_ddb, has_provider=True).allowed,
+              "have_model and enabled answer the same question")
+    finally:
+        _ddb.close()
+    # Reusing the buyer loop would have booked the appointment it offers,
+    # closed the thread and raised a handoff, as a side effect of drafting.
+    _draft_src = pathlib.Path("backend/app/agent/loop.py").read_text()
+    _draft_fn = _draft_src.split("def draft_text", 1)[-1]
+    check("the draft runs with the tool schema withheld",
+          "offer_tools=False" in _draft_fn,
+          "draft_text still offers the tools")
+    check("and it never writes a message row of its own",
+          "record_assistant_message" not in _draft_fn,
+          "draft_text writes to the transcript")
 
     print("\n== the dealership is served, never written into a page ==")
     import yaml as _yaml
