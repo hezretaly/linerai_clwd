@@ -31,6 +31,7 @@ from app.models.crm import (
     Outreach,
 )
 from app.models.dealership import (
+    AssistantPrompt,
     AssistantSettings,
     Dealership,
     HandoffRule,
@@ -62,6 +63,7 @@ __all__ = [
     "PROVENANCE",
     "STAGES",
     "Appointment",
+    "AssistantPrompt",
     "AssistantSettings",
     "CapturedField",
     "Conversation",

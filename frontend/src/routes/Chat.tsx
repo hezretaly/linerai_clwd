@@ -134,6 +134,22 @@ function withVehicles(prev: Item[], id: string, vehicles: VehicleCardData[]): It
   return [...prev, { kind: 'vehicles', id, vehicles: cars }]
 }
 
+/** The thread as drawn: an unanswered contact form always last.
+ *
+ *  **It follows the conversation down.** It used to stay under the message
+ *  that first asked for it, so a buyer who asked three more things about the
+ *  car had to scroll back up past them to find it -- while every reply
+ *  pointed at "the form on your screen" that was no longer on their screen.
+ *  State keeps arrival order; this is only where the card is drawn. There is
+ *  one at a time -- a later one replaces an earlier -- and it leaves the
+ *  thread when it is submitted, because the buyer's own message then carries
+ *  what they typed. */
+function contactLast(items: Item[]): Item[] {
+  const card = [...items].reverse().find((i) => i.kind === 'details')
+  if (!card) return items
+  return [...items.filter((i) => i.kind !== 'details'), card]
+}
+
 export function Chat() {
   // Who this instance is, and their colour. Read here rather than off the
   // session payload because the resume path returns before that payload
@@ -220,9 +236,6 @@ export function Chat() {
   // that have since moved on, and tapping it would submit a slot the buyer was
   // offered several turns ago.
   const liveBookingId = [...items].reverse().find((i) => i.kind === 'booking')?.id
-  // Same rule for the details card: an older one asks questions the buyer
-  // has already answered, and submitting it would re-ask them.
-  const liveDetailsId = [...items].reverse().find((i) => i.kind === 'details')?.id
 
   // While a booking card is up its own controls are the ask, so the stage
   // followups ("Saturday morning works") would be the same question posed a
@@ -257,7 +270,8 @@ export function Chat() {
     // to fill -- a message arriving under a half-finished form is an
     // interruption, not a follow-up.
     const last = items[items.length - 1]
-    if (last && (last.kind === 'booking' || last.kind === 'details')) return
+    if (last && last.kind === 'booking') return
+    if (items.some((i) => i.kind === 'details')) return
 
     const timer = setTimeout(() => {
       void (async () => {
@@ -433,7 +447,7 @@ export function Chat() {
       )}
 
       <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {items.map((item) => {
+        {contactLast(items).map((item) => {
           if (item.kind === 'text') {
             return (
               <div
@@ -535,7 +549,6 @@ export function Chat() {
               <DetailsCard
                 key={item.id}
                 data={item.data}
-                stale={item.id !== liveDetailsId}
                 submit={async (values) => {
                   const result = await api.post<{
                     buyer_message: ChatMessage
@@ -545,8 +558,11 @@ export function Chat() {
                   // Appended where the card sits, like every other entry --
                   // the transcript is one ordered list and what the buyer was
                   // shown stays where it was shown.
+                  // The card goes, and the buyer's message takes its place at
+                  // the bottom: it says what they typed, and a filled-in form
+                  // left in the thread is one more thing to scroll past.
                   setItems((prev) => [
-                    ...prev,
+                    ...prev.filter((i) => i.kind !== 'details'),
                     { kind: 'text', id: result.buyer_message.id, role: 'buyer',
                       content: result.buyer_message.content },
                     { kind: 'text', id: result.assistant_message.id, role: 'assistant',
@@ -685,40 +701,14 @@ async function resume(
     if (shown.length > 0) {
       rebuilt = withVehicles(rebuilt, `cars-${message.id}`, shown.slice(0, 3))
     }
-    /* **The form stays under the message that asked for it.**
-     *
-     * On the live stream it already does -- the server emits the text before
-     * the card and the client appends in arrival order. A refresh used to
-     * lose that: every card was pushed after the whole loop, so a form asked
-     * five messages ago reappeared below everything said since, detached
-     * from the sentence that explains it. The thread is one ordered list and
-     * anything the buyer was shown stays where it was shown; this was the
-     * one place that rule was broken.
-     *
-     * Read off the message's own tool calls, keyed on `fields` rather than
-     * on a tool name -- `escalate_to_human` draws this card too when a
-     * handoff would otherwise leave nobody to ring, and keying on the name
-     * is how that one became invisible to three readers at once.
-     */
-    const asked = message.tool_calls.find((c) => Boolean(c.result?.fields))
-    if (asked && payload.details) {
-      rebuilt.push({
-        kind: 'details',
-        id: `details-${message.id}`,
-        // The server's copy, not the transcript's: it is the one that knows
-        // whether the card is still unanswered, and it drops it entirely
-        // once `save_details` lands.
-        data: payload.details,
-      })
-    }
   }
   // Times are not replayed from the transcript -- the server looked them up
   // again, because a slot list from ten minutes ago may be gone.
-  // A card whose asking message is not in the transcript -- a voice turn
-  // relays its tool calls through `/api/voice/tools` and writes no message
-  // row -- still belongs on screen, so it lands at the end rather than
-  // nowhere.
-  if (payload.details && !rebuilt.some((i) => i.kind === 'details')) {
+  // An unanswered contact form comes back at the bottom, where it stays
+  // until it is filled in (`contactLast`). The server's copy, not the
+  // transcript's: it is the one that knows whether the form is still owed,
+  // and it is null once `save_details` lands.
+  if (payload.details) {
     rebuilt.push({ kind: 'details', id: `details-${payload.id}`, data: payload.details })
   }
   if (payload.booking) {

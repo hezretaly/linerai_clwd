@@ -670,6 +670,19 @@ def main() -> int:
         # conversation, so this is a bill as well as a behaviour.
         check("and the whole prompt stays short enough to be a brief",
               len(written) < 12_000, f"{len(written):,} chars")
+        # **A car's history is Liner's to give.** A real chat answered the
+        # Carfax summary in full, then told the buyer twice that it "cannot
+        # retrieve or provide" it and pushed the form -- because the rules
+        # said "cannot pull a Carfax" with no qualifier, and the model read
+        # that as a ban on the write-up it was already holding.
+        check("the rules say a car's own history write-up is given, not refused",
+              "A CAR'S HISTORY IS YOURS TO GIVE" in written
+              and "for a car whose record carries none" in written)
+        # And the form is the contact form. "Details" is what the model kept
+        # calling it -- "leave your details", "the details form" -- which is
+        # the one word that does not say what it is for.
+        check("and the form is called the contact form, never details",
+              "Call it the contact form" in written, "no contact-form wording")
         # A placeholder left in braces is one a model will eventually type at a
         # buyer -- "you were trying to get out of the {{CURRENT_CAR}}".
         for label, prompt in (("a call", spoken), ("a chat", written)):

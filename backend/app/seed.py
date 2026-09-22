@@ -24,6 +24,7 @@ from app.config import settings
 from app.db import SessionLocal, create_all, create_ops_all, ops_session, utcnow
 from app.models import (
     Appointment,
+    AssistantPrompt,
     AssistantSettings,
     CallBuyerTrack,
     CallRecording,
@@ -291,7 +292,7 @@ def _clear(db: Session) -> None:
         VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
         ConversationOnce, Conversation, Lead, IngestRun, Vehicle, Rail,
         KnowledgeEntry, HandoffRule,
-        AssistantSettings, User, Dealership, Event,
+        AssistantPrompt, AssistantSettings, User, Dealership, Event,
     ):
         db.query(model).delete()
     db.commit()

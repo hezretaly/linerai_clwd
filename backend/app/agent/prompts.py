@@ -224,6 +224,39 @@ def _variables(dealership: Dealership, row: AssistantSettings) -> dict[str, str]
     }
 
 
+#: The ceiling on a dealership's own brief and rules together. The product's
+#: pair is about 6,700 characters and `make agent-check` fails the whole prompt
+#: past 12,000; this leaves room for the facts, the knowledge table and the
+#: channel addendum that follow, so an edit cannot push every turn of every
+#: conversation over the line the gate exists to hold.
+OWN_PROMPT_MAX = 8000
+
+#: Every `{{NAME}}` a dealership may use in its own wording -- the ones `fill`
+#: answers. Anything else would reach the model in braces, and a model handed
+#: one eventually types it to a buyer.
+PLACEHOLDER = re.compile(r"\{\{([A-Z_, ]+)\}\}")
+
+
+def own_prompt(db: Session, settings_row: AssistantSettings) -> dict:
+    """This settings version's own brief and rules, "" where it uses ours."""
+    from app.models import AssistantPrompt
+
+    row = (
+        db.query(AssistantPrompt).filter_by(settings_id=settings_row.id).one_or_none()
+        if settings_row is not None and settings_row.id else None
+    )
+    return {
+        "brief": (row.brief or "").strip() if row else "",
+        "rules": (row.rules or "").strip() if row else "",
+    }
+
+
+def unknown_placeholders(text: str, dealership: Dealership, row: AssistantSettings) -> list[str]:
+    """The `{{NAME}}`s in `text` that `fill` would leave in braces."""
+    known = set(_variables(dealership, row))
+    return sorted({m for m in PLACEHOLDER.findall(text or "") if m not in known})
+
+
 def fill(text: str, dealership: Dealership, row: AssistantSettings) -> str:
     values = _variables(dealership, row)
     for key, value in values.items():
@@ -277,12 +310,18 @@ answer from it. If the list is there and does not, or the car has none, the
 record cannot answer -- treat it exactly as below. Never reason it out from
 what you know about that model in general: this is one specific car.
 
+A CAR'S HISTORY IS YOURS TO GIVE. Where get_vehicle returns a `detail` -- the
+dealership's own write-up of that car's history report: owners, accidents,
+service, recalls -- give it whenever they ask, in as much detail as they ask.
+Never say you cannot retrieve, access or provide it; call get_vehicle again if
+it is no longer in view. A question it answers is answered, never handed to a
+colleague, even while one is on the way about something else.
+
 A QUESTION THE RECORD CANNOT ANSWER is a lead, not a dead end. In the same
 turn: say once, in one sentence, that a colleague will confirm it, and call
-escalate_to_human with the question. That call puts the boxes asking for a
-number on their screen by itself when we have no way to reach them, so say
-what they are for in one line and do not ask for anything else in that
-message. Never promise a colleague will get back to them and leave the turn
+escalate_to_human with the question. That call puts the contact form on
+their screen by itself when we have no way to reach them, so say what it is
+for in one line and do not ask for anything else in that message. Never promise a colleague will get back to them and leave the turn
 without that call -- nobody can, and a refusal that asks for nothing is the
 whole conversation wasted. If they press the point, do not say again that the
 record does not show it: they heard you. Never restate the refusal.
@@ -297,7 +336,8 @@ nobody may pick the queue up for hours.
 WHAT YOU CANNOT DO, SO DO NOT OFFER IT: you cannot text -- a colleague here
 can, and you have no way to send one or to promise they will -- cannot shoot a
 walkaround video, cannot send the credit application, cannot pull a Carfax, a
-window sticker or a trade valuation, and cannot promise to follow up later --
+window sticker or a trade valuation for a car whose record carries none, and
+cannot promise to follow up later --
 there is no scheduler and a rep composes those. Collect what you can and hand
 it to a person.
 
@@ -318,9 +358,11 @@ version and offer the detail.
 
 GETTING A WAY TO REACH THEM
 Do not ask for a phone number in a sentence. Call request_details and the buyer
-gets boxes -- their number and their email always, plus anything else worth
-knowing. Say one line about what it is for and stop. Asking in your reply as
-well is the same question in the worse place, and it reads as asking twice.
+gets the contact form -- their number and their email always, plus anything
+else worth knowing. Call it the contact form, never "details". Say one line
+about what it is for and stop. Asking in your reply as well is the same
+question in the worse place, and it reads as asking twice. It stays at the
+bottom of their screen, under your latest reply, until they fill it in.
 
 Do it once you have actually helped with something, not in your opening breath.
 The number is the one they have to fill in, because somebody here can ring it;
@@ -438,14 +480,16 @@ def build_system_prompt(
     # reachable rather than deleted, because it is their document and one of
     # them may want it. Filled either way: a `{{VARIABLE}}` that reaches a
     # buyer is the same bug whichever text carries it.
+    custom = own_prompt(db, settings_row)
     opening = (
-        fill(METHOD, dealership, settings_row)
+        fill(custom["brief"], dealership, settings_row) if custom["brief"]
+        else fill(METHOD, dealership, settings_row)
         if profile.assistant()["sales_method"]
         else fill(BRIEF, dealership, settings_row)
     )
     return "\n".join([
         opening,
-        OPERATING_RULES,
+        fill(custom["rules"], dealership, settings_row) if custom["rules"] else OPERATING_RULES,
         f"""
 DEALERSHIP FACTS
 {dealership.name}, {dealership.address}. Phone {dealership.phone}.

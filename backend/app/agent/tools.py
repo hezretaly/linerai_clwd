@@ -243,14 +243,15 @@ TOOL_DEFS: list[dict[str, Any]] = [
     {
         "name": "request_details",
         "description": (
-            "Put a short form on the buyer's screen asking for details, instead of "
-            "asking in prose. Use it the moment you want a way to reach them. A "
+            "Put a short contact form on the buyer's screen, instead of asking in "
+            "prose -- call it the contact form. Use it the moment you want a way to "
+            "reach them. A "
             "phone number and an email box are always included -- the number is the "
             "one they have to fill in, because a rep can ring it, and the address is "
             "there for a buyer who would rather be written to. Do NOT ask for the "
-            "same things in your reply text: the boxes are already there, and asking "
+            "same things in your reply text: the form is already there, and asking "
             "twice gets the question answered in the worse place. Say what the "
-            "details are for and stop."
+            "form is for and stop."
         ),
         "input_schema": {
             "type": "object",
@@ -495,6 +496,8 @@ def _vehicle_payload(v: Vehicle, home: str = "", full: bool = True) -> dict:
             "The dealership's own written detail for this vehicle, including its "
             "history report. Answer from it and quote it; never go beyond it, and "
             "never fill a gap in it from what you know about the model in general. "
+            "It is in front of you, so never tell the buyer you cannot retrieve, "
+            "access or provide it -- give it in as much detail as they ask. "
             "Anything it marks as not confirmed must not be stated as fact -- say "
             "the listing mentions it and that a colleague will confirm. A question "
             "it does not cover is one for a colleague too."
@@ -1051,10 +1054,11 @@ def request_details(db: Session, convo: Conversation, args: dict) -> dict:
         return {
             "already_asked": True,
             "note": (
-                "The boxes are already on the buyer's screen, unanswered. No second "
-                "card is shown. Say in one line why filling them in gets them what "
-                "they asked for, then offer anything else you can help with -- and "
-                "do not repeat what the record cannot tell them."
+                "The contact form is already on the buyer's screen, unanswered, and "
+                "it stays at the bottom -- under whatever you write next. No second "
+                "one is drawn. If it helps, say in one line why filling it in gets "
+                "them what they asked for, then answer anything else they asked -- "
+                "and do not repeat what the record cannot tell them."
             ),
         }
     card = details.card(args.get("fields"), args.get("reason") or "")
@@ -1066,8 +1070,8 @@ def request_details(db: Session, convo: Conversation, args: dict) -> dict:
         # that lists the times as well gets the question answered in the worse
         # place, and here it reads as being asked twice for a phone number.
         "note": (
-            "The boxes are on the buyer's screen now. Say what they are for in one "
-            "line and stop -- do not ask for any of these fields in your reply."
+            "The contact form is on the buyer's screen now. Say what it is for in "
+            "one line and stop -- do not ask for any of these fields in your reply."
         ),
     }
 
@@ -1510,8 +1514,8 @@ def escalate_to_human(
         # an email in a sentence", which is what this said before -- and the
         # chat rules forbid exactly that, so the two instructions fought.
         guidance += (
-            " We have no way to reach this buyer, so the boxes asking for a number "
-            "are on their screen now. Say in one line what they are for and stop."
+            " We have no way to reach this buyer, so the contact form is on their "
+            "screen now. Say in one line what it is for and stop."
             if convo.channel != "voice" else
             " We have no way to reach this buyer, so ask for their number out loud "
             "now and read it back to check it. Save it with save_captured_fields."

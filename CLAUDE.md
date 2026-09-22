@@ -357,13 +357,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     somebody holding a phone.
   - **Replayed on refresh, unlike availability** — "what is your number" does
     not go stale the way a slot list does — but only while unanswered.
-    **And under the message that asked for it**, not after the whole thread.
-    The rehydrate always carried the boxes on the asking message's own tool
-    call; the page pushed every card after the loop anyway, so a buyer who
-    asked something else and refreshed found a form sitting under a reply
-    that had nothing to do with it. A card whose asking message is not in
-    the transcript — a voice turn writes none — still lands at the end
-    rather than nowhere.
+  - **It follows the conversation down, and it is the contact form.** It
+    stayed under the message that first drew it, so a buyer who asked three
+    more things about the car scrolled back up past them to find it while
+    every reply pointed at "the form on your screen". `contactLast` in
+    `Chat.tsx` draws an unanswered one last, live and after a refresh; one at
+    a time, and it leaves the thread on submit, since the buyer's own message
+    then says what they typed. The model called it "your details" and "the
+    details form", which does not say what it is for, so the prompt, the tool
+    results and the button all say contact.
   - **Email is offered on every card and required on none.** Only the
     *required* key was forced back onto a card, so one asking for a name and
     a number had no email box at all — and a buyer who would rather be
@@ -953,6 +955,17 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   -- and `/reach` carries `email.draft`, from the same `have_model` the
   endpoint asks, so with no model the composer shows the reason instead of the
   control.
+  - **The brief and the rules are editable, on the Advanced tab.**
+    `assistant_prompts` hangs off a settings *version*, so an edit is drafted
+    and published with everything else and reaches no buyer until a manager
+    publishes; `_ensure_draft` copies it into each new draft, or the next
+    unrelated edit would publish the default over it. Empty means ours, so an
+    untouched dealership follows every improvement to `BRIEF`. Manager only,
+    `{{NAME}}`s `fill` cannot answer are refused rather than sent in braces,
+    and `OWN_PROMPT_MAX` keeps the whole prompt under the gate's 12,000. What
+    it cannot change is said on the page: prices, sold cars, clashes and
+    provenance are executors and guards, so a rewrite changes how Liner
+    talks, never what it may claim.
   - **It is written as the person pressing the button.** The email goes out
     under their name and their own sign-off, but the prompt around the brief
     is the buyer-facing assistant's, so drafts spoke as Liner or "our team"
@@ -1800,6 +1813,12 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         backups is `make dump-ops`, which walks `ops.db` *and* every store —
         it has to, because the pre-split files still carry those tables with
         real rows in them, and nothing else will ever find them.
+      - **And every seeded store's, which was the next line missing.** Boot
+        called `create_all()` on the default store alone, so a table added
+        later existed in one dealership's file and no other -- the first
+        Alsbou chat turn after `assistant_prompts` arrived died on "no such
+        table" while the default store answered normally. The lifespan walks
+        `known_stores()` and builds each one `has_database` says exists.
       - **Boot builds both schemas, which is a line that was missing.** A
         second metadata is not built by `create_all()`, and at first only
         `seed.py` called `create_ops_all` — so an existing deployment that
@@ -3092,6 +3111,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **`get_vehicle` only, never a search.** One car's report is a page of
     text, and five of them sit in the conversation for every later turn —
     the same bill the options list is cut down for.
+  - **It is Liner's to give, and the rules have to say so.** A real chat gave
+    the Carfax summary in full, then told the buyer twice it "cannot retrieve
+    or provide the complete Carfax breakdown" and pushed the form -- because
+    `OPERATING_RULES` said "cannot pull a Carfax" with no qualifier, and the
+    model read a ban on what it was holding. It now says *for a car whose
+    record carries none*, a rule of its own says a history question the
+    write-up answers is answered, never handed to a colleague, and
+    `detail_note` says never to claim it cannot be retrieved.
   - **It never arrives without the rule for reading it.** Everything here
     about invented facts assumes the model answers from a tool result and
     nothing else, and a page of prose is the one place that could slip. So

@@ -50,6 +50,19 @@ def _report_dealership() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_all()
+    # **And every other store already on this host.** `create_all` adds a new
+    # table to an existing file only when somebody calls it on that file, and
+    # this called it on the default store alone -- so the day a table was
+    # added, every *other* dealership's file lacked it, and the first code to
+    # read it there failed: an Alsbou chat turn died on "no such table:
+    # assistant_prompts" while the default store answered normally. Only
+    # files that exist, because opening one creates it (`has_database`).
+    from app.db import has_database
+    from app.stores import known_stores
+
+    for slug in known_stores():
+        if has_database(slug):
+            create_all(slug)
     # And Liner's own database, which is a *second* metadata and so is not
     # built by the line above. Only `seed.py` called this at first, which meant
     # an existing deployment that upgraded and restarted without reseeding had

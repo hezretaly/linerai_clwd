@@ -12,7 +12,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_dealership, require_manager
 from app.db import get_db, utcnow
-from app.models import AssistantSettings, Dealership, HandoffRule, KnowledgeEntry, Rail, User
+from app.models import (
+    AssistantPrompt,
+    AssistantSettings,
+    Dealership,
+    HandoffRule,
+    KnowledgeEntry,
+    Rail,
+    User,
+)
 from app.schemas.serialize import handoff_rule_out, knowledge_out, rail_out, settings_out
 
 router = APIRouter(tags=["settings"])
@@ -52,7 +60,8 @@ def get_assistant_settings(
     return {
         "live": settings_out(live),
         "draft": settings_out(draft) if draft else None,
-        "has_unpublished_changes": unpublished(live, draft),
+        "has_unpublished_changes": unpublished(live, draft, db),
+        "prompt": _prompt_out(db, live, draft),
         # Read-only. "Here is literally what it was told" is a strong answer to
         # the control objection, and it costs nothing because we assemble this
         # string anyway (§18.3).
@@ -71,7 +80,7 @@ EDITABLE = (
 )
 
 
-def unpublished(live, draft) -> bool:
+def unpublished(live, draft, db: Session | None = None) -> bool:
     """Does the draft actually say something different from what is live?
 
     **Not `draft is not None`.** That is what it was, and a draft row exists
@@ -83,7 +92,68 @@ def unpublished(live, draft) -> bool:
     """
     if draft is None:
         return False
-    return any(getattr(live, f, None) != getattr(draft, f, None) for f in EDITABLE)
+    if any(getattr(live, f, None) != getattr(draft, f, None) for f in EDITABLE):
+        return True
+    # The wording is drafted and published like every field above, so an edit
+    # to it is an unpublished change -- and the one the banner matters most
+    # for, since it is what the model is actually told.
+    from app.agent.prompts import own_prompt
+
+    return db is not None and own_prompt(db, live) != own_prompt(db, draft)
+
+
+def _prompt_out(db: Session, live, draft) -> dict:
+    """The assistant's wording, as the setup page's Advanced tab edits it.
+
+    The product's own text is served beside the dealership's, unfilled, so
+    the box can start from it and "Reset to default" can say what it resets
+    to. `""` in `draft`/`live` means that version uses the default.
+    """
+    from app import profile
+    from app.agent import prompts
+
+    return {
+        "defaults": {
+            "brief": prompts.METHOD if profile.assistant()["sales_method"] else prompts.BRIEF,
+            "rules": prompts.OPERATING_RULES,
+        },
+        "live": prompts.own_prompt(db, live),
+        "draft": prompts.own_prompt(db, draft) if draft else prompts.own_prompt(db, live),
+        "max_chars": prompts.OWN_PROMPT_MAX,
+    }
+
+
+def _ensure_draft(db: Session) -> AssistantSettings:
+    """The draft every edit lands on, made from the live version if missing.
+
+    **The wording comes with it.** A new draft is minted after every publish,
+    and one that copied the fields and not the dealership's own brief would
+    publish the product default over it the next time anybody changed the
+    tone -- a rewrite undone by an unrelated edit, with nothing saying so.
+    """
+    draft = draft_settings(db)
+    if draft is not None:
+        return draft
+    live = live_settings(db)
+    draft = AssistantSettings(
+        version=live.version + 1, status="draft", tone=live.tone,
+        push_level=live.push_level, price_mode=live.price_mode,
+        discount_pct=live.discount_pct, financing_mode=live.financing_mode,
+        after_hours_mode=live.after_hours_mode, greeting=live.greeting,
+        booking_slot_length=live.booking_slot_length,
+        credit_application_url=live.credit_application_url,
+    )
+    db.add(draft)
+    db.flush()
+    theirs = db.query(AssistantPrompt).filter_by(settings_id=live.id).one_or_none()
+    if theirs is not None:
+        db.add(AssistantPrompt(settings_id=draft.id, brief=theirs.brief, rules=theirs.rules,
+                               updated_by=theirs.updated_by))
+        # Sessions here do not autoflush, so without this the caller's lookup
+        # for the draft's wording misses the row just added and inserts a
+        # second one for the same version.
+        db.flush()
+    return draft
 
 
 class SettingsPatch(BaseModel):
@@ -105,23 +175,72 @@ def patch_assistant_settings(
     user: User = Depends(current_user),
 ) -> dict:
     """Edits always land on a draft, never on the live row."""
-    draft = draft_settings(db)
-    if draft is None:
-        live = live_settings(db)
-        draft = AssistantSettings(
-            version=live.version + 1, status="draft", tone=live.tone,
-            push_level=live.push_level, price_mode=live.price_mode,
-            discount_pct=live.discount_pct, financing_mode=live.financing_mode,
-            after_hours_mode=live.after_hours_mode, greeting=live.greeting,
-            booking_slot_length=live.booking_slot_length,
-            credit_application_url=live.credit_application_url,
-        )
-        db.add(draft)
+    draft = _ensure_draft(db)
 
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(draft, key, value)
     db.commit()
     return {"draft": settings_out(draft)}
+
+
+class PromptBody(BaseModel):
+    brief: str = ""
+    rules: str = ""
+
+
+@router.put("/assistant-settings/prompt")
+def put_prompt(
+    body: PromptBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_manager),
+    dealership: Dealership = Depends(get_dealership),
+) -> dict:
+    """The dealership's own brief and rules, onto the draft.
+
+    **A manager's, like publishing.** This is the text every buyer
+    conversation starts from, so it is not something any rep changes on the
+    way past; and like every other field on the page it lands on the draft
+    and reaches nobody until it is published.
+
+    **What it cannot change is written down on the page too.** A price the
+    tools did not return, a car that is sold, a booking that clashes and a
+    typed field that was a guess are all refused by executors and guards, not
+    by this text -- so a rewrite changes how Liner talks and never what it may
+    claim. Empty restores the product's own wording.
+    """
+    from app.agent import prompts
+
+    brief, rules = body.brief.strip(), body.rules.strip()
+    # Saving the default verbatim stores nothing: an unchanged box should
+    # follow the product's own text as it improves, not freeze a copy of it.
+    if brief == prompts.BRIEF.strip():
+        brief = ""
+    if rules == prompts.OPERATING_RULES.strip():
+        rules = ""
+    if len(brief) + len(rules) > prompts.OWN_PROMPT_MAX:
+        raise HTTPException(
+            400,
+            f"The brief and rules come to {len(brief) + len(rules):,} characters; the "
+            f"limit is {prompts.OWN_PROMPT_MAX:,}. Every character is re-read on every "
+            "turn of every conversation.",
+        )
+    live = live_settings(db)
+    unknown = prompts.unknown_placeholders(f"{brief}\n{rules}", dealership, live)
+    if unknown:
+        raise HTTPException(
+            400,
+            "These are not placeholders Liner can fill, so they would reach the model "
+            "in braces: " + ", ".join("{{" + u + "}}" for u in unknown),
+        )
+
+    draft = _ensure_draft(db)
+    row = db.query(AssistantPrompt).filter_by(settings_id=draft.id).one_or_none()
+    if row is None:
+        row = AssistantPrompt(settings_id=draft.id)
+        db.add(row)
+    row.brief, row.rules, row.updated_by = brief, rules, user.id
+    db.commit()
+    return _prompt_out(db, live, draft)
 
 
 @router.post("/assistant-settings/publish")

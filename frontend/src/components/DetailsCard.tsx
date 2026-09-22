@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 
-/** A short form in the chat thread, asking the buyer for details in boxes.
+/** The contact form in the chat thread, asking the buyer for a way to reach
+ *  them in boxes.
  *
  *  Built entirely from a tool result -- `agent/details.py` decides which boxes
  *  exist and this draws exactly those, the same contract the booking card has.
@@ -154,7 +155,7 @@ export function DetailsCard({
             inches below, so two controls on one screen would read identically
             -- and identically to a screen reader, which announces the label
             and nothing else. */}
-        {saving ? 'Sending...' : 'Send details'}
+        {saving ? 'Sending...' : 'Send contact info'}
       </button>
     </div>
   )

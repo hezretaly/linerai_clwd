@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
 import { withStore } from '../lib/store'
 import type { AssistantSettings, HandoffRule, KnowledgeEntry, Rail } from '../lib/types'
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
@@ -13,6 +13,16 @@ interface SettingsPayload {
   draft: AssistantSettings | null
   has_unpublished_changes: boolean
   compiled_prompt: string
+  prompt: PromptPayload
+}
+
+/** The assistant's wording: ours, and this dealership's where it has its own.
+ *  `""` in `draft`/`live` means that version uses the default. */
+interface PromptPayload {
+  defaults: { brief: string; rules: string }
+  live: { brief: string; rules: string }
+  draft: { brief: string; rules: string }
+  max_chars: number
 }
 
 export function AssistantPage() {
@@ -120,7 +130,9 @@ export function AssistantPage() {
             {tab === 'handoff' && <HandoffRules />}
             {tab === 'knowledge' && <Knowledge />}
             {tab === 'rails' && <Rails />}
-            {tab === 'advanced' && <Advanced prompt={data.compiled_prompt} />}
+            {tab === 'advanced' && (
+              <Advanced prompt={data.compiled_prompt} wording={data.prompt} />
+            )}
           </div>
         </Card>
       </div>
@@ -354,16 +366,137 @@ function Rails() {
   )
 }
 
-function Advanced({ prompt }: { prompt: string }) {
+/** The assistant's own instructions, editable, and what they compile to.
+ *
+ *  **Two boxes, because they are two different things.** The brief is the
+ *  job -- who Liner is and what every turn is for -- and the rules are what
+ *  the tools cannot hold on their own. Both start from the product's text,
+ *  and emptying one (Reset to default) hands it back to that text, which
+ *  keeps improving; a saved copy would not.
+ *
+ *  Saved to the draft like everything else on this page, so nothing reaches
+ *  a buyer until it is published. And the page says plainly what no wording
+ *  here can change, because the answer to "can I make it quote a discount?"
+ *  is no, and that is a feature. */
+function Advanced({ prompt, wording }: { prompt: string; wording: PromptPayload }) {
+  const queryClient = useQueryClient()
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: { role: string } }>('/api/auth/me'),
+    staleTime: 5 * 60_000,
+  })
+  const manager = me?.user.role === 'manager'
+  const [brief, setBrief] = useState(wording.draft.brief || wording.defaults.brief.trim())
+  const [rules, setRules] = useState(wording.draft.rules || wording.defaults.rules.trim())
+  const [problem, setProblem] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const save = useMutation({
+    mutationFn: () => api.put('/api/assistant-settings/prompt', { brief, rules }),
+    onSuccess: () => {
+      setProblem('')
+      setSaved(true)
+      queryClient.invalidateQueries({ queryKey: ['assistant-settings'] })
+    },
+    onError: (err: unknown) => {
+      setSaved(false)
+      const payload = (err as ApiError)?.payload as { detail?: string } | undefined
+      setProblem(payload?.detail || String((err as Error)?.message ?? err))
+    },
+  })
+
+  const used = (brief === wording.defaults.brief.trim() ? 0 : brief.trim().length)
+    + (rules === wording.defaults.rules.trim() ? 0 : rules.trim().length)
+  const box = (
+    label: string,
+    hint: string,
+    value: string,
+    set: (v: string) => void,
+    fallback: string,
+  ) => (
+    <div className="min-w-0">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <label className="text-sm font-medium">{label}</label>
+        {value.trim() !== fallback.trim() ? (
+          <button
+            type="button"
+            disabled={!manager}
+            onClick={() => { set(fallback.trim()); setSaved(false) }}
+            className="text-xs text-primary hover:underline disabled:opacity-50"
+          >
+            Reset to default
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">Liner&apos;s default</span>
+        )}
+      </div>
+      <p className="mb-1.5 text-xs text-muted-foreground">{hint}</p>
+      <textarea
+        value={value}
+        readOnly={!manager}
+        onChange={(e) => { set(e.target.value); setSaved(false) }}
+        rows={14}
+        className="w-full resize-y rounded-md border border-input bg-background p-2 font-mono text-xs leading-relaxed outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+      />
+    </div>
+  )
+
   return (
     <>
       <p className="mb-3 text-sm text-muted-foreground">
-        Read-only. This is literally what the assistant is told, assembled from the settings
-        above plus your knowledge base.
+        What Liner is told at the start of every conversation. Changes are saved to the draft
+        and reach buyers when the draft is published.
+        {!manager && ' Only a manager can change it.'}
       </p>
-      <pre className="max-h-[32rem] overflow-auto rounded-lg bg-muted p-4 text-xs leading-relaxed whitespace-pre-wrap">
-        {prompt}
-      </pre>
+      <div className="mb-3 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        What no wording here can change: Liner still quotes only prices and cars its tools
+        return, never offers a sold car, never books a clashing time, and marks anything a buyer
+        did not say as a guess. Those are enforced in code, so a rewrite changes how Liner
+        talks, not what it may claim. Placeholders such as {'{{DEALER_NAME}}'} are filled in.
+      </div>
+      <div className="grid grid-cols-1 gap-4">
+        {box(
+          'Brief',
+          'The job: who Liner is and what every turn is for.',
+          brief, setBrief, wording.defaults.brief,
+        )}
+        {box(
+          'Operating rules',
+          'What Liner must and must not do here, beyond what the tools enforce.',
+          rules, setRules, wording.defaults.rules,
+        )}
+      </div>
+      {problem && <p className="mt-2 text-xs text-destructive">{problem}</p>}
+      {manager && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+          <span
+            className={
+              used > wording.max_chars ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'
+            }
+          >
+            {used > 0
+              ? `${used.toLocaleString()} of ${wording.max_chars.toLocaleString()} characters of your own`
+              : "Using Liner's default wording"}
+          </span>
+          {saved && <span className="text-xs text-muted-foreground">Saved to the draft</span>}
+          <Button size="sm" variant="primary" onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? 'Saving...' : 'Save to draft'}
+          </Button>
+        </div>
+      )}
+
+      <details className="mt-6">
+        <summary className="cursor-pointer text-sm font-medium">
+          The whole prompt Liner is running on now
+        </summary>
+        <p className="mb-2 mt-2 text-xs text-muted-foreground">
+          The published version, assembled from the wording above plus the dealership&apos;s facts,
+          its settings and its knowledge base. Read-only.
+        </p>
+        <pre className="max-h-[32rem] overflow-auto rounded-lg bg-muted p-4 text-xs leading-relaxed whitespace-pre-wrap">
+          {prompt}
+        </pre>
+      </details>
     </>
   )
 }

@@ -883,6 +883,60 @@ def main() -> int:
           and "outreach?draft=1" in _page_src,
           "the buyer page cannot send one")
 
+    print("\n== the assistant's own wording, edited on the setup page ==")
+    # A manager can rewrite the brief and the rules Liner starts every
+    # conversation from. Four things make that safe, and each is checked:
+    # only a manager, only placeholders `fill` can answer, a ceiling that
+    # keeps the prompt under the gate's 12,000, and the draft/live split --
+    # an edit reaches nobody until it is published.
+    marker = f"SMOKE-BRIEF-{secrets.token_hex(4)}"
+    call("POST", "/api/auth/login", REP_LOGIN)
+    denied = status_of("PUT", "/api/assistant-settings/prompt", {"brief": marker})[0]
+    call("POST", "/api/auth/login", LOGIN)
+    check("a rep cannot rewrite what Liner is told", denied == 403, str(denied))
+    code, why = status_of("PUT", "/api/assistant-settings/prompt",
+                          {"brief": "You work at {{DEALER_NAME}}. Mention {{MADE_UP}}."})
+    check("a placeholder Liner cannot fill is refused and named",
+          code == 400 and "MADE_UP" in why and "DEALER_NAME" not in why, why[:120])
+    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"brief": "x" * 9000})
+    check("and so is a rewrite past the ceiling", code == 400 and "limit" in why, why[:100])
+    try:
+        saved = call("PUT", "/api/assistant-settings/prompt",
+                     {"brief": f"You are the assistant at {{{{DEALER_NAME}}}}. {marker}.",
+                      "rules": ""})
+        state = call("GET", "/api/assistant-settings")
+        check("an edit lands on the draft", marker in saved["draft"]["brief"])
+        check("and reaches nobody until it is published",
+              marker not in state["compiled_prompt"] and state["has_unpublished_changes"],
+              str(state["has_unpublished_changes"]))
+        call("POST", "/api/assistant-settings/publish")
+        state = call("GET", "/api/assistant-settings")
+        check("published, it is what Liner is told, placeholders filled",
+              marker in state["compiled_prompt"]
+              and "{{DEALER_NAME}}" not in state["compiled_prompt"]
+              and "You are the assistant at " in state["compiled_prompt"])
+        check("and the rules box left empty still carries the product's rules",
+              "HOW THIS PLACE ACTUALLY WORKS" in state["compiled_prompt"])
+        # A new draft is minted after every publish. One that copied the
+        # fields and not the wording would publish the default over a rewrite
+        # the next time anybody changed the tone.
+        call("PATCH", "/api/assistant-settings", {"tone": state["live"]["tone"]})
+        again = call("GET", "/api/assistant-settings")
+        check("an unrelated edit afterwards keeps the rewrite in the new draft",
+              marker in again["prompt"]["draft"]["brief"] and not again["has_unpublished_changes"],
+              str(again["prompt"]["draft"])[:80])
+    finally:
+        call("PUT", "/api/assistant-settings/prompt", {"brief": "", "rules": ""})
+        call("POST", "/api/assistant-settings/publish")
+    state = call("GET", "/api/assistant-settings")
+    check("and emptying it hands Liner back its default wording",
+          marker not in state["compiled_prompt"]
+          and state["prompt"]["live"] == {"brief": "", "rules": ""},
+          str(state["prompt"]["live"]))
+    check("the setup page offers the boxes, not only the compiled text",
+          "/api/assistant-settings/prompt" in
+          pathlib.Path("frontend/src/routes/Assistant.tsx").read_text())
+
     print("\n== an unclaimed lead can be opened from the overview ==")
     pool = call("GET", "/api/overview")["queues"]["unclaimed_leads"]
     check("the queue carries a thread to open, not just a name",
@@ -4360,34 +4414,25 @@ def main() -> int:
     check("and the reply points at them rather than asking again in words",
           "number" not in ask_msg.lower(), ask_msg[:70])
 
-    # **A card keeps its place across a refresh.** The rehydrate carries the
-    # boxes on the message that drew them, so the browser can put the card
-    # back where the buyer saw it. It used to be readable only as one
-    # top-level `details`, which the page appended after the whole thread --
-    # so a buyer who asked something else afterwards came back to a form
-    # sitting under a reply that had nothing to do with it.
+    # **The contact form follows the conversation down.** It used to stay
+    # under the message that first drew it, so a buyer who asked three more
+    # things had to scroll back up past them to find it while every reply
+    # pointed at "the form on your screen". It is drawn last until it is
+    # filled in, on the live stream and after a refresh alike.
     say(aid, content="Actually, what's your warranty like?")
     back = call("GET", f"/api/chat/sessions/{aid}")
-    with_boxes = [
-        i for i, m in enumerate(back["messages"])
-        for c in m["tool_calls"] if (c.get("result") or {}).get("fields")
-    ]
-    check("a refresh knows which message the card belongs under",
-          bool(with_boxes) and with_boxes[-1] < len(back["messages"]) - 1,
-          f"card at {with_boxes} of {len(back['messages'])} messages")
-    check("and the card itself is still owed, since nobody filled it in",
+    check("a refresh still owes the form, since nobody filled it in",
           bool((back.get("details") or {}).get("fields")),
           str(back.get("details"))[:60])
     # The browser is the only other place this can be got wrong, and a page
-    # can be wired to a correct endpoint and still render the wrong thing --
-    # which is how the bug above survived, with the API perfectly right.
+    # can be wired to a correct endpoint and still render the wrong thing.
     _chat_src = pathlib.Path("frontend/src/routes/Chat.tsx").read_text()
-    _loop_at = _chat_src.find("for (const message of")
-    _anchored = _chat_src.find("id: `details-${message.id}`")
-    _fallback = _chat_src.find("!rebuilt.some((i) => i.kind === 'details')")
-    check("and the page rebuilds it under that message, not after the thread",
-          -1 < _loop_at < _anchored < _fallback,
-          f"loop={_loop_at} card={_anchored} fallback={_fallback}")
+    check("and the page draws an unanswered form last, below every later reply",
+          "contactLast(items).map" in _chat_src
+          and "prev.filter((i) => i.kind !== 'details')" in _chat_src,
+          "the form stays where it was first drawn")
+    check("and it asks for contact, not for details",
+          "Send contact info" in pathlib.Path("frontend/src/components/DetailsCard.tsx").read_text())
 
     print("\n== one predicate for how a buyer can be reached ==")
     # **Asked once, before the composer opens.** The buyer page answered this
@@ -5144,6 +5189,11 @@ def main() -> int:
     lifespan = main_src.split("async def lifespan")[1].split("yield")[0]
     check("boot builds Liner's schema as well as the dealership's",
           "create_ops_all()" in lifespan and "create_all()" in lifespan)
+    # And in every seeded store, not the default one alone: a table added
+    # later was missing from every other dealership's file, and the first
+    # Alsbou chat turn after the upgrade died on "no such table".
+    check("and boot builds the schema in every seeded store, not only the default",
+          "for slug in known_stores()" in lifespan and "create_all(slug)" in lifespan)
 
     # Their livery. `surface` picks a stylesheet class rather than carrying a
     # value into one, so an unknown word must never reach the DOM -- and it is

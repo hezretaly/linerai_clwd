@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, utcnow
@@ -60,6 +60,34 @@ class AssistantSettings(Base):
     credit_application_url: Mapped[str] = mapped_column(String(500), default="")
     published_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class AssistantPrompt(Base):
+    """A dealership's own wording of the assistant's brief and rules.
+
+    **Per settings version, so it is drafted and published with everything
+    else.** An edit lands on the draft's row and reaches a buyer only when a
+    manager publishes -- the rule this page is built on, and the one that
+    matters most for the text the model is actually told. A table rather than
+    two columns on `assistant_settings` because `create_all` adds a table to a
+    database that already exists and never a column.
+
+    Empty means the product's own text (`prompts.BRIEF`, `OPERATING_RULES`),
+    so a dealership that has never touched it follows every improvement to the
+    default, and "Reset to default" is emptying the box rather than pasting a
+    copy that then goes stale.
+    """
+
+    __tablename__ = "assistant_prompts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    settings_id: Mapped[str] = mapped_column(
+        ForeignKey("assistant_settings.id"), unique=True, index=True
+    )
+    brief: Mapped[str] = mapped_column(Text, default="")
+    rules: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
