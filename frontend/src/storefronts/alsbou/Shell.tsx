@@ -4,8 +4,8 @@ import clsx from 'clsx'
 import { Icon } from '../../components/Icon'
 import { possessive } from '../../lib/dealership'
 import { withStore } from '../../lib/store'
-import { rebuiltHere } from '../_shared/links'
 import { AssistantContext, ChatFrame, askAboutText, useAssistant, type Assistant } from '../_shared/assistant'
+import { arrivedFromChat, rebuiltHere } from '../_shared/links'
 
 /** Re-exported so this folder's pages import it from their own shell. */
 export { useAssistant }
@@ -64,7 +64,10 @@ export function StorefrontShell({
   search: { draft: string; setDraft: (v: string) => void; submit: () => void }
   children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
+  // Open from the first frame when the buyer got here by pressing a car in
+  // the chat: the conversation carries on on this page, and a widget they
+  // have to find and reopen reads as the conversation having ended.
+  const [open, setOpen] = useState(arrivedFromChat)
   const [ask, setAsk] = useState('')
   const site: Site | undefined = shop?.site
   const chrome = chromeClass(shop)

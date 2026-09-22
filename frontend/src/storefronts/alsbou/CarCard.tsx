@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 
 import { money } from '../../lib/format'
 import { CarPhoto } from '../../components/CarPhoto'
+import { carPath } from '../_shared/links'
 import type { Car } from '../_shared/types'
 
 /** How many columns the card's specification grid gets, by how many cells it
@@ -45,7 +47,6 @@ export function CarCard({
   priceNote: string
   onAsk: (car: Car) => void
 }) {
-  const [showPricing, setShowPricing] = useState(false)
   /* Their disclosure only has something to disclose when the export stated a
      figure behind the headline one, or the dealer wrote the sentence. Drawn
      unconditionally it is a control that opens onto nothing. */
@@ -53,17 +54,23 @@ export function CarCard({
 
   return (
     <article className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
-      <div className="aspect-[4/3] w-full overflow-hidden bg-muted">
+      {/* The photo and the title open the car's own page, which is what their
+          card does. A router link, so the store prefix comes with it. */}
+      <Link to={carPath(car.vin)} className="block aspect-[4/3] w-full overflow-hidden bg-muted">
         <CarPhoto
           vin={car.vin}
           photoUrl={car.photo_url}
           alt={car.title}
           className="h-full w-full object-cover"
         />
-      </div>
+      </Link>
 
       <div className="flex min-w-0 flex-1 flex-col p-3">
-        <h3 className="truncate text-sm font-semibold uppercase">{car.title}</h3>
+        <h3 className="truncate text-sm font-semibold uppercase">
+          <Link to={carPath(car.vin)} className="hover:underline">
+            {car.title}
+          </Link>
+        </h3>
         {car.trim && <p className="truncate text-xs font-bold">{car.trim}</p>}
 
         <div className="mt-1 flex min-w-0 items-end justify-between gap-3">
@@ -113,35 +120,7 @@ export function CarCard({
 
         {pricing && (
           <div className="mt-1 text-right text-xs text-muted-foreground">
-            <button
-              onClick={() => setShowPricing((v) => !v)}
-              aria-expanded={showPricing}
-              className="underline underline-offset-2"
-            >
-              Pricing details
-            </button>
-            {showPricing && (
-              <div className="mt-1 space-y-1 text-left">
-                {car.advertised_price != null && (
-                  <div className="flex items-baseline justify-between gap-4">
-                    {/* Their own word again, the same one over the headline
-                        figure. Written out here, one dealer's phrasing for
-                        their own price would appear on the next dealership's
-                        storefront -- which is exactly what serving the label
-                        exists to prevent, and it was written out here first.
-                        The fallback is deliberately nobody's wording rather
-                        than a plausible one. */}
-                    <span>{priceLabel || 'Price before fees'}</span>
-                    <span className="tnum">{money(car.advertised_price)}</span>
-                  </div>
-                )}
-                {priceNote && <p className="leading-snug">{priceNote}</p>}
-                <div className="flex items-baseline justify-between gap-4 border-t border-border pt-1 font-semibold text-foreground">
-                  <span>Total price</span>
-                  <span className="tnum">{money(car.price)}</span>
-                </div>
-              </div>
-            )}
+            <PricingDetails car={car} priceLabel={priceLabel} priceNote={priceNote} />
           </div>
         )}
 
@@ -213,5 +192,55 @@ export function CarCard({
         </div>
       </div>
     </article>
+  )
+}
+
+
+/** Their "Pricing details" disclosure: the figure before fees, their own
+ *  sentence about what the price includes, and the total. Shared by the card
+ *  and the car's own page, so the two cannot word one price two ways. It
+ *  states and never computes -- see the note on `CarCard`. */
+export function PricingDetails({
+  car,
+  priceLabel,
+  priceNote,
+}: {
+  car: Car
+  priceLabel: string
+  priceNote: string
+}) {
+  const [showPricing, setShowPricing] = useState(false)
+  return (
+    <>
+      <button
+        onClick={() => setShowPricing((v) => !v)}
+        aria-expanded={showPricing}
+        className="underline underline-offset-2"
+      >
+        Pricing details
+      </button>
+      {showPricing && (
+        <div className="mt-1 space-y-1 text-left">
+          {car.advertised_price != null && (
+            <div className="flex items-baseline justify-between gap-4">
+              {/* Their own word again, the same one over the headline
+                  figure. Written out here, one dealer's phrasing for
+                  their own price would appear on the next dealership's
+                  storefront -- which is exactly what serving the label
+                  exists to prevent, and it was written out here first.
+                  The fallback is deliberately nobody's wording rather
+                  than a plausible one. */}
+              <span>{priceLabel || 'Price before fees'}</span>
+              <span className="tnum">{money(car.advertised_price)}</span>
+            </div>
+          )}
+          {priceNote && <p className="leading-snug">{priceNote}</p>}
+          <div className="flex items-baseline justify-between gap-4 border-t border-border pt-1 font-semibold text-foreground">
+            <span>Total price</span>
+            <span className="tnum">{money(car.price)}</span>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

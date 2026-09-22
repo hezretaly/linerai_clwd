@@ -89,6 +89,7 @@ createRoot(document.getElementById('root')!).render(
               root and never ours. `make smoke` asserts both. */}
           <Route path="/" element={<StorefrontPage kind="landing" />} />
           <Route path="/showroom" element={<StorefrontPage kind="showroom" />} />
+          <Route path="/showroom/:vin" element={<StorefrontPage kind="vehicle" />} />
           <Route path="/chat" element={<BuyerTheme><Chat /></BuyerTheme>} />
           <Route path="/call" element={<BuyerTheme><Call /></BuyerTheme>} />
           <Route path="/login" element={<Login />} />

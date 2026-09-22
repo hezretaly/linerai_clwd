@@ -83,6 +83,22 @@ OPS = ["/ops", "/ops/mail", "/ops/phone"]
 # Reps and managers work from phones, so a route that overflows there is a real
 # break, not a cosmetic one. 390x844 is an iPhone 13/14/15 logical viewport --
 # the narrowest width worth designing for in 2026.
+def car_page(slug: str) -> str:
+    """The first car on a store's lot, as its page's path, or '' for an empty
+    lot. Asked of the API rather than written down, because the car pages are
+    the ones most likely to overflow at 390px -- a long engine line in a
+    two-column table -- and a hardcoded VIN goes stale the day it sells."""
+    import json as _json
+    import urllib.request as _req
+
+    try:
+        with _req.urlopen(f"{BASE}/{slug}/api/showroom?limit=1", timeout=10) as r:
+            cars = _json.load(r).get("vehicles") or []
+    except Exception:
+        return ""
+    return f"/{slug}/showroom/{cars[0]['vin']}" if cars else ""
+
+
 def stores_with_a_file() -> list[str]:
     """Every store slug whose database exists -- asked of the file, never by
     opening it. Same guard `make smoke` uses, for the same reason: connecting
@@ -509,6 +525,11 @@ async def main() -> int:
         for slug in stores_with_a_file():
             await shot(f"/{slug}")
             await shot(f"/{slug}/showroom")
+            # One car's own page, discovered rather than listed: a VIN written
+            # here is a car that sells and turns the shot into a 404 page.
+            car = car_page(slug)
+            if car:
+                await shot(car)
 
         print("\nsigning in...")
         await page.goto(BASE + "/login", wait_until="networkidle")
@@ -573,7 +594,10 @@ async def main() -> int:
         phone = True
         await page.set_viewport_size(PHONE)
         print(f"\nmobile ({PHONE['width']}px):")
-        store_pages = [p for slug in stores_with_a_file() for p in (f"/{slug}", f"/{slug}/showroom")]
+        store_pages = [
+            p for slug in stores_with_a_file()
+            for p in (f"/{slug}", f"/{slug}/showroom", car_page(slug)) if p
+        ]
         for route in ["/chat", "/showroom", *store_pages, *routes]:
             await shot(route)
 

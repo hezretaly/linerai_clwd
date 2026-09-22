@@ -530,6 +530,15 @@ def nudge_quiet_buyer(conversation_id: str, db: Session = Depends(get_db)) -> di
     # most droppable turn there is.
     if ratelimit.turn_wait(active_store(), conversation_id):
         return {"sent": False, "reason": "busy"}
+    # **Switched off by default**, after the allowance and the budget have been
+    # read and before anything is spent. Named so a person asking "why did it
+    # not follow up" is told the setting rather than left to guess, and typed
+    # so the page can stop asking for the rest of the session.
+    if not settings.chat_follow_up:
+        return {
+            "sent": False, "reason": "switched_off",
+            "detail": "CHAT_FOLLOW_UP is off, so Liner does not follow up on a quiet buyer.",
+        }
     ratelimit.count_turn(active_store(), conversation_id)
 
     try:

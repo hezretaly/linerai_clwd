@@ -5,7 +5,7 @@ import { Icon } from '../../components/Icon'
 import { possessive } from '../../lib/dealership'
 import { withStore } from '../../lib/store'
 import { AssistantContext, ChatFrame, askAboutText, type Assistant } from '../_shared/assistant'
-import { rebuiltHere } from '../_shared/links'
+import { arrivedFromChat, rebuiltHere } from '../_shared/links'
 import { telHref, type Dealership } from '../_shared/types'
 
 /**
@@ -30,7 +30,10 @@ export function Frame({
   search: { draft: string; setDraft: (v: string) => void; submit: () => void }
   children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
+  // Open from the first frame when the buyer got here by pressing a car in
+  // the chat: the conversation carries on on this page, and a widget they
+  // have to find and reopen reads as the conversation having ended.
+  const [open, setOpen] = useState(arrivedFromChat)
   // The frame is mounted on the first open and kept through closes: a
   // reopen used to reload its document and rebuild the thread every time.
   // Never from first paint -- that would start a conversation for every

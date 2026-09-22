@@ -379,6 +379,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     asked for a name and a number in a sentence and called nothing, two
     stages after the stub had learnt to call `request_details` — the one turn
     whose whole purpose is collecting contact details drew no form.
+- **The quiet-buyer follow-up is switched off, and kept.** `CHAT_FOLLOW_UP`
+  defaults off on request: a real thread showed it restating the answer the
+  buyer had just read -- *"It had two owners..."* and a minute later *"The Audi
+  had two owners..."* -- which reads as a bot that did not notice it had
+  spoken. The endpoint refuses with `switched_off` and names the setting, the
+  page stops asking for the rest of the session once told, and the budget is
+  read *before* the switch so the shared-budget check still means something.
+  Everything below still holds when it is turned on, and `make smoke` drives
+  it in-process with the switch thrown, because a mechanism nobody exercises
+  is one that is broken the day somebody wants it back.
 - **Liner follows up once when a buyer goes quiet, and the browser is what
   asks.** `/chat` has no socket and no poll, so a message written server-side
   into a thread nobody is watching would surface on refresh or *above* their
@@ -895,6 +905,39 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     lived in a component that stopped being rendered, so the overview counted
     clicks on a link no screen could send — and `make smoke` now reads the
     page for both.
+- **A car has its own page, and the chat's cards lead to it.**
+  `/<store>/showroom/<vin>` -- the VIN because it is unique, stable across a
+  re-import and already in every sentence the chat writes about a car. Each
+  design folder draws it (Alsbou's from their own car page's capture); the
+  payload is `/api/showroom/vehicle/<vin>`.
+  - **Through `offerable`, so a sold or do-not-discuss car is a 404.** The chat
+    can link to a car it found a minute ago; a page for one the assistant now
+    refuses to discuss is the failure `offerable` exists to prevent.
+  - **Composed, never copied from the row.** `raw_json` carries `detail_doc`,
+    the history write-up written for the *assistant*, and the row carries
+    `rule_note`; the page gets the card's fields, the whole options list and
+    two tables built key by key. `make smoke` reads the payload for both.
+  - **Their description is left out on purpose.** It is marketing copy no
+    export carries, and on the Q7 it quotes $19,999 against an advertised
+    $18,608 -- two prices on one page.
+  - **The chat card links out only where the page around it is ours.**
+    Standalone `/chat`, or our storefront framing it on the same origin, gets
+    a link (`target="_top"` from the frame). A dealer's own site framing it
+    through `embed.js` is another origin, and a `_top` link there would take
+    their buyer off their site onto a demo copy of it -- so reading
+    `top.location` throwing is the test, and it lands on *no link*.
+  - **The conversation carries on there.** The link carries `?chat=1`; every
+    storefront shell opens its widget on arrival when it sees it, and the
+    widget is the same `/chat` reading the same per-store conversation id from
+    `localStorage`, so the buyer sees the thread they were in.
+- **Draft with Liner is a form, and it is offered only where it can work.**
+  The instruction box sat beside a button with nothing saying the box was the
+  prompt, and Enter did nothing; on a stub deployment the button was pressed
+  and then refused. The prompt is a labelled form now -- Enter or the button
+  sends it, and the button says *Write draft* or *Rewrite* before it is pressed
+  -- and `/reach` carries `email.draft`, from the same `have_model` the
+  endpoint asks, so with no model the composer shows the reason instead of the
+  control.
 - **A drafted email is written for a rep to read, and it cannot act.**
   `POST /api/leads/{id}/draft-email` hands back text and stores nothing — there
   is no Drafts tab because nothing stores a draft, and a model writing one does

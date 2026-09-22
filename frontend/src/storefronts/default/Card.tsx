@@ -1,6 +1,9 @@
+import { Link } from 'react-router-dom'
+
 import { CarPhoto } from '../../components/CarPhoto'
 import { money } from '../../lib/format'
 import { useAssistant } from '../_shared/assistant'
+import { carPath } from '../_shared/links'
 import type { Car } from '../_shared/types'
 
 /** The default design's card: picture, title, price, the specifications the
@@ -11,11 +14,15 @@ export function Card({ car }: { car: Car }) {
   const assistant = useAssistant()
   return (
     <article className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
-      <div className="aspect-[4/3] w-full overflow-hidden bg-muted">
+      <Link to={carPath(car.vin)} className="block aspect-[4/3] w-full overflow-hidden bg-muted">
         <CarPhoto vin={car.vin} photoUrl={car.photo_url} alt={car.title} className="h-full w-full object-cover" />
-      </div>
+      </Link>
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-4">
-        <h3 className="truncate text-sm font-semibold">{car.title}</h3>
+        <h3 className="truncate text-sm font-semibold">
+          <Link to={carPath(car.vin)} className="hover:underline">
+            {car.title}
+          </Link>
+        </h3>
         {car.trim && <p className="truncate text-xs text-muted-foreground">{car.trim}</p>}
         {car.price ? (
           <p className="mt-1 text-lg font-semibold text-primary">{money(car.price)}</p>

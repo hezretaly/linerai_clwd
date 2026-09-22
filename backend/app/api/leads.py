@@ -522,6 +522,7 @@ def reach(
     sender = get_email_sender()
 
     texting_on = sms_module.offered()
+    drafting = email_agent.have_model()
     sms_blocked = sms_module.blocked_reason(number) if number else ""
 
     return {
@@ -531,6 +532,15 @@ def reach(
             "reason": "" if address else "No email address on file for this buyer.",
             # Recorded either way; this says whether it also arrives.
             "delivers": bool(getattr(sender, "delivers", False)),
+            # Whether **Draft with Liner** can write anything, asked here with
+            # the same `have_model` the draft endpoint refuses on. Offering the
+            # control and discovering the answer only after it is pressed was
+            # a button that did nothing a rep could see -- so the composer is
+            # told first, and says why in place of the control.
+            "draft": {
+                "available": drafting.allowed,
+                "reason": "" if drafting.allowed else drafting.detail,
+            },
         },
         "sms": {
             "to": number,

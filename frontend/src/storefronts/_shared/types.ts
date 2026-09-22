@@ -14,6 +14,11 @@ import type { Dealership, Site } from '../../lib/dealership'
 export interface Car {
   vin: string
   title: string
+  year: number
+  /** Cased for display, which is what the breadcrumb and a make filter link
+   *  read. */
+  make: string
+  model: string
   trim: string
   price: number | null
   mileage: number | null
@@ -106,3 +111,17 @@ export function cityOf(address: string | undefined): string {
 /** The keyword box's placeholder, shared so the header's and the hero's ask
  *  for the same things. */
 export const SEARCH_PLACEHOLDER = 'Search by year, make, model, VIN, stock #'
+
+/** One car's own page: the card's fields, the whole options list, and the two
+ *  tables a listing prints under the photo. Composed server-side row by row,
+ *  and a table the export stated nothing for is not sent at all. */
+export interface CarDetail extends Car {
+  sections: { title: string; rows: { label: string; value: string }[] }[]
+}
+
+export interface VehiclePayload {
+  dealership: Dealership
+  vehicle: CarDetail
+  similar: Car[]
+  channels: { chat: boolean; voice: boolean }
+}

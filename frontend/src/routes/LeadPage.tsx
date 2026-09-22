@@ -271,6 +271,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
             {mode === 'email' && lead ? (
               <EmailReply
                 lead={lead}
+                drafting={reach?.email.draft}
                 answering={undefined}
                 onDone={() => { setMode('chat'); invalidate() }}
               />
@@ -603,7 +604,14 @@ function LeadRail({
  *  has left, and it is one button up in the header. */
 /** One buyer's reachable channels, from `GET /api/leads/{id}/reach`. */
 export interface Reach {
-  email: { to: string; available: boolean; reason: string; delivers: boolean }
+  email: {
+    to: string
+    available: boolean
+    reason: string
+    delivers: boolean
+    /** Whether Draft with Liner can write anything on this deployment. */
+    draft: { available: boolean; reason: string }
+  }
   sms: { to: string; available: boolean; reason: string; segment: number; max_body: number }
   call: { to: string; available: boolean; reason: string }
 }
@@ -931,10 +939,13 @@ type Preset = '' | (typeof PRESETS)[number][0]
  */
 function EmailReply({
   lead,
+  drafting,
   answering,
   onDone,
 }: {
   lead: Lead
+  /** From `/reach`: whether a model is there to draft with, and why not. */
+  drafting?: { available: boolean; reason: string }
   answering: TimelineEntry | undefined
   onDone: () => void
 }) {
@@ -994,7 +1005,10 @@ function EmailReply({
       ),
     onSuccess: (result) => {
       setRefused(result.violations ?? [])
-      if (result.body) setBody(result.body)
+      if (result.body) {
+        setBody(result.body)
+        setInstruction('')
+      }
     },
     onError: (err: unknown) => {
       // The 503 for "no model configured" carries the setting to change, and
@@ -1106,31 +1120,53 @@ function EmailReply({
           </Button>
         ))}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Input
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          placeholder={body.trim() ? 'How should it change?' : 'What should it say?'}
-          className="h-8 min-w-0 flex-1 text-sm"
-        />
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={draft.isPending}
-          onClick={() => { setProblem(''); draft.mutate() }}
-          // Two verbs, one button: with text in the box it rewrites, with an
-          // empty one it writes. Saying which it will do beats a rep pressing
-          // Draft and losing what they had typed.
-          title={
-            body.trim()
-              ? "Rewrite what you have written, in the dealership's voice"
-              : 'Write a draft from this conversation'
-          }
+      {/* **Ask Liner to write it.** A form of its own, so Enter sends the
+          prompt as well as the button does -- the one-line box used to sit
+          beside a button with nothing saying the box was the prompt, and Enter
+          did nothing at all. With text already in the email it rewrites that
+          instead, and the button says which it will do before it is pressed.
+          Where there is no model the control is replaced by the reason, from
+          `/reach`, rather than offered and then refused. */}
+      {drafting && !drafting.available ? (
+        <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+          Draft with Liner is unavailable here: {drafting.reason}
+        </p>
+      ) : (
+        <form
+          className="mt-3 rounded-md border border-border bg-muted/40 p-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (draft.isPending) return
+            setProblem('')
+            draft.mutate()
+          }}
         >
-          {draft.isPending
-            ? 'Drafting...'
-            : body.trim() ? 'Tidy this up' : 'Draft with Liner'}
-        </Button>
+          <label htmlFor="draft-instruction" className="text-xs font-medium">
+            {body.trim() ? 'Ask Liner to rewrite what you have written' : 'Ask Liner to write it'}
+          </label>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <Input
+              id="draft-instruction"
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              placeholder={
+                body.trim()
+                  ? 'e.g. make it shorter and friendlier (optional)'
+                  : 'e.g. ask if Saturday still works (optional)'
+              }
+              className="h-8 min-w-0 flex-1 text-sm"
+            />
+            <Button type="submit" size="sm" variant="secondary" disabled={draft.isPending}>
+              {draft.isPending ? 'Writing...' : body.trim() ? 'Rewrite' : 'Write draft'}
+            </Button>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Liner reads this conversation, the car and your dealership's answers. It fills the
+            email above and sends nothing -- you read it and press Send.
+          </p>
+        </form>
+      )}
+      <div className="mt-3 flex justify-end">
         <Button
           size="sm"
           variant="primary"

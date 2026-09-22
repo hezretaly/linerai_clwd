@@ -411,3 +411,102 @@ def dealership(db: Session = Depends(get_db)) -> dict:
     on the wire before anybody has signed in.
     """
     return identity(db)
+
+
+#: How many other cars a car's own page offers underneath it. Their page
+#: prints three, and three is what fits one row of the grid.
+SIMILAR = 3
+
+# The two tables their car page prints under the photo, in their order and
+# with their labels. Composed here for the reason `_specs` is: a page and a
+# sentence about the same car must not disagree about a value's casing, and a
+# row the export did not state is dropped rather than drawn empty.
+BASICS = (("Stock #", "stock_number"), ("Paint color", "exterior_color"),
+          ("Interior color", "interior_color"))
+PERFORMANCE = (("Transmission", "transmission"), ("Engine", "engine"),
+               ("Drive", "drivetrain"), ("Fuel", "fuel_type"))
+
+
+def _rows(pairs, raw: dict) -> list[dict]:
+    rows = []
+    for label, key in pairs:
+        value = str(raw.get(key) or "").strip()
+        if value:
+            # A stock number is an identifier, not a word, and stays as sent.
+            rows.append({"label": label, "value": value if key == "stock_number" else cased(value)})
+    return rows
+
+
+@router.get("/vehicle/{vin}")
+def vehicle_page(vin: str, db: Session = Depends(get_db)) -> dict:
+    """One car's own page: `/<store>/showroom/<vin>`.
+
+    **Through `offerable`, like every other car a buyer sees.** A sold car or
+    a do-not-discuss one is a 404 here rather than a page -- the chat can link
+    to a car it found a minute ago, and by the time somebody presses it the car
+    may have sold; the page saying so is the honest answer, and a page showing
+    a car the assistant now refuses to discuss is the failure `offerable`
+    exists to prevent.
+
+    **Composed, never filtered from the row.** `_car` is the card's payload and
+    this adds what a car page prints beyond a card -- the whole options list
+    and the two tables -- key by key. `raw_json` also carries `detail_doc`, the
+    history write-up handed to the *assistant*, whose rules for reading it are
+    written for a model; a serializer that copied `raw` and had to remember to
+    drop that key would one day forget.
+
+    The VIN is the address because it is the one value that is unique, stable
+    across a re-import, and already in every sentence the chat writes about a
+    car. Matched case-insensitively: a VIN typed or pasted in lower case is the
+    same car.
+    """
+    car = (
+        offerable(db.query(Vehicle))
+        .filter(func.upper(Vehicle.vin) == vin.strip().upper())
+        .one_or_none()
+    )
+    if car is None:
+        raise HTTPException(404, "That car is not on the lot any more.")
+
+    home = home_location(db)
+    raw = loads(car.raw_json or "{}", {})
+    detail = _car(car, home)
+    # The whole list here: a card prints four lines, a car's page prints them
+    # all -- which is what their page's SPECIFICATIONS section is.
+    detail["features"] = loads(car.features_json, [])
+    detail["sections"] = [
+        s for s in (
+            {"title": "Basics", "rows": [{"label": "VIN", "value": car.vin}]
+             + ([{"label": "Odometer", "value": f"{car.mileage:,} miles"}] if car.mileage is not None else [])
+             + _rows(BASICS, raw)
+             + ([{"label": "Type", "value": cased(car.body_style.upper())}] if car.body_style else [])},
+            {"title": "Performance", "rows": _rows(PERFORMANCE, raw)},
+        ) if s["rows"]
+    ]
+
+    # Similar: the same body style where the lot records one, else the same
+    # make, nearest in price. Their page offers three under the car, and a
+    # buyer who has just opened a car's page is asking "what else is like
+    # this" -- nearest in price is the honest reading of that, with no model
+    # and no guess about what the buyer wants.
+    others = offerable(db.query(Vehicle)).filter(Vehicle.id != car.id)
+    if car.body_style:
+        others = others.filter(func.lower(Vehicle.body_style) == car.body_style.lower())
+    else:
+        others = others.filter(func.lower(Vehicle.make) == (car.make or "").lower())
+    if car.price is not None:
+        others = others.filter(Vehicle.price.isnot(None)).order_by(
+            func.abs(Vehicle.price - car.price), Vehicle.vin.asc()
+        )
+    else:
+        others = others.order_by(Vehicle.vin.asc())
+
+    return {
+        "dealership": identity(db),
+        "vehicle": detail,
+        "similar": [_car(v, home) for v in others.limit(SIMILAR).all()],
+        "channels": {
+            "chat": True,
+            "voice": bool(settings.voice_provider) and settings.calling,
+        },
+    }

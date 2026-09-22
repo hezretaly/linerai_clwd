@@ -35,18 +35,22 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 export interface StorefrontDesign {
   Landing: LazyExoticComponent<ComponentType>
   Showroom: LazyExoticComponent<ComponentType>
+  /** One car's own page, `/showroom/<vin>`. */
+  Vehicle: LazyExoticComponent<ComponentType>
 }
 
 const DESIGNS: Record<string, StorefrontDesign> = {
   alsbou: {
     Landing: lazy(() => import('./alsbou/Landing').then((m) => ({ default: m.Landing }))),
     Showroom: lazy(() => import('./alsbou/Showroom').then((m) => ({ default: m.Showroom }))),
+    Vehicle: lazy(() => import('./alsbou/Vehicle').then((m) => ({ default: m.Vehicle }))),
   },
 }
 
 const DEFAULT: StorefrontDesign = {
   Landing: lazy(() => import('./default/Landing').then((m) => ({ default: m.Landing }))),
   Showroom: lazy(() => import('./default/Showroom').then((m) => ({ default: m.Showroom }))),
+  Vehicle: lazy(() => import('./default/Vehicle').then((m) => ({ default: m.Vehicle }))),
 }
 
 /** The design for a store slug, or the default for one with no folder. */

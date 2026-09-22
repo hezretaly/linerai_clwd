@@ -3,7 +3,7 @@ import clsx from 'clsx'
 
 import { applyBrand } from '../lib/brand'
 import { api, ApiError, streamMessages } from '../lib/api'
-import { STORE } from '../lib/store'
+import { STORE, withStore } from '../lib/store'
 import { useDealership } from '../lib/dealership'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
@@ -69,6 +69,33 @@ const SEARCH_TOOLS = new Set(['search_inventory', 'get_vehicle'])
 
 /** Mirrors _vehicles_from on the server: a search returns a list, a lookup
  *  returns one car. */
+/**
+ * Where a car card in the thread may take the buyer: that car's own page on
+ * this dealership's storefront, or nowhere.
+ *
+ * **Only where the page around the chat is ours.** Standalone `/chat` has
+ * nothing around it, and our storefront frames it on the same origin -- both
+ * can open the car's page, and the storefront's widget reopens on arrival on
+ * the same conversation (the `?chat=1` it reads). Framed on a dealer's *own*
+ * site by `embed.js` the parent is another origin, and a link with
+ * `target="_top"` would take the buyer off the dealer's site onto a demo copy
+ * of it -- so there the card stays what it was. Reading `top.location` across
+ * origins throws, which is the test.
+ */
+function carPageHost(): 'top' | 'self' | null {
+  try {
+    if (window.top === window.self) return 'self'
+    return window.top!.location.origin === window.location.origin ? 'top' : null
+  } catch {
+    return null
+  }
+}
+
+/** The car's page, carrying the flag that has the storefront open the chat. */
+function carPageHref(vin: string): string {
+  return withStore(`/showroom/${encodeURIComponent(vin)}?chat=1`)
+}
+
 function vehiclesFrom(result: Record<string, unknown>): VehicleCardData[] {
   if (Array.isArray(result.vehicles)) return result.vehicles as VehicleCardData[]
   if (result.vin) return [result as unknown as VehicleCardData]
@@ -122,6 +149,8 @@ export function Chat() {
    * transcript, the rails and the composer are the same in both. */
   const query = new URLSearchParams(window.location.search)
   const embedded = query.get('embed') === '1'
+  // Decided once: the frame's parent does not change while the page is open.
+  const [linkTarget] = useState(carPageHost)
   /* Same flag `/call` takes, and for the same reason: the scripted-assistant
    * banner below names this deployment's unset environment variables, and
    * this page is the one that goes in an iframe on a dealership's public
@@ -148,6 +177,10 @@ export function Chat() {
    * one tap. */
   const [draft, setDraft] = useState(() => (query.get('ask') || '').slice(0, 200))
   const [typing, setTyping] = useState(false)
+  /** The deployment has the follow-up switched off (`CHAT_FOLLOW_UP`). Told
+   *  once, the page stops asking for the rest of the session rather than
+   *  sending a request after every silence that can only be refused. */
+  const [followUpOff, setFollowUpOff] = useState(false)
   // What the server says is missing, rather than a vendor name written here.
   // This used to hardcode ANTHROPIC_API_KEY and went stale the day the default
   // provider changed, telling a tester to set a key the system no longer uses.
@@ -210,7 +243,7 @@ export function Chat() {
   // being restarted by a reload, or running twice in two tabs, therefore
   // cannot buy a second follow-up.
   useEffect(() => {
-    if (!conversationId || typing) return
+    if (!conversationId || typing || followUpOff) return
     // The last thing *said*, not the last thing in the list. After a search
     // the newest entry is the row of cars, so testing `items[len - 1]` for an
     // assistant reply never matched -- which is every turn that shows
@@ -233,7 +266,9 @@ export function Chat() {
             sent: boolean
             assistant_message?: ChatMessage
             rails?: Rail[]
+            reason?: string
           }>(`/api/chat/sessions/${conversationId}/nudge`, {})
+          if (result.reason === 'switched_off') setFollowUpOff(true)
           if (!result.sent || !result.assistant_message) return
           setItems((prev) => [
             ...prev,
@@ -252,7 +287,7 @@ export function Chat() {
       })()
     }, QUIET_MS)
     return () => clearTimeout(timer)
-  }, [items, typing, conversationId])
+  }, [items, typing, conversationId, followUpOff])
 
   const send = async (payload: { content?: string; rail_id?: string }, label: string) => {
     if (!conversationId || typing) return
@@ -427,7 +462,10 @@ export function Chat() {
                 {item.vehicles.map((vehicle) => (
                   <article
                     key={vehicle.vin}
-                    className="flex gap-3 rounded-2xl border border-border bg-card p-3 animate-fade-up"
+                    className={clsx(
+                      'relative flex gap-3 rounded-2xl border border-border bg-card p-3 animate-fade-up',
+                      linkTarget && 'transition-colors hover:border-primary',
+                    )}
                   >
                     <CarPhoto
                       vin={vehicle.vin}
@@ -436,7 +474,22 @@ export function Chat() {
                     />
                     <div className="min-w-0">
                       <p className="text-sm font-semibold">
-                        {vehicle.year} {vehicle.make} {vehicle.model}
+                        {/* **The whole card opens the car's page.** The title
+                            is the real link and its `after:` box stretches
+                            over the card, so there is one anchor and no
+                            anchor nested inside another -- the enquiry link
+                            below sits above it on its own layer. */}
+                        {linkTarget ? (
+                          <a
+                            href={carPageHref(vehicle.vin)}
+                            target={linkTarget === 'top' ? '_top' : '_self'}
+                            className="after:absolute after:inset-0 after:rounded-2xl hover:underline"
+                          >
+                            {vehicle.year} {vehicle.make} {vehicle.model}
+                          </a>
+                        ) : (
+                          <>{vehicle.year} {vehicle.make} {vehicle.model}</>
+                        )}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {/* No published price is a listing state the dealer
@@ -452,7 +505,7 @@ export function Chat() {
                             href={vehicle.inquiry_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="font-medium text-primary underline-offset-4 hover:underline"
+                            className="relative z-10 font-medium text-primary underline-offset-4 hover:underline"
                           >
                             Ask for a price
                           </a>
@@ -462,6 +515,9 @@ export function Chat() {
                         {vehicle.mileage ? ` -- ${vehicle.mileage.toLocaleString()} mi` : ''}
                         {vehicle.location ? ` -- ${vehicle.location}` : ''}
                       </p>
+                      {linkTarget && (
+                        <p className="mt-0.5 text-xs font-medium text-primary">See this car ›</p>
+                      )}
                       {/* No options line. The card is the car's name, price,
                           mileage and where it is -- three lines of the
                           dealer's hundred-line options block under every

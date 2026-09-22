@@ -5,8 +5,8 @@ import { STORE } from '../lib/store'
 import { designFor } from '../storefronts'
 
 /**
- * The two public routes a dealership has -- `/` and `/showroom` under its
- * prefix -- resolved to that dealership's own design.
+ * The public routes a dealership has -- `/`, `/showroom` and one car's page
+ * at `/showroom/<vin>`, under its prefix -- resolved to that dealership's own design.
  *
  * The store comes off the URL the same way every API call's prefix does. A
  * dealership with a folder in `storefronts/` gets its pages; one without gets
@@ -24,9 +24,9 @@ import { designFor } from '../storefronts'
  * rather than the dealer's, because their brand arrives with the payload
  * that failed.
  */
-export function StorefrontPage({ kind }: { kind: 'landing' | 'showroom' }) {
+export function StorefrontPage({ kind }: { kind: 'landing' | 'showroom' | 'vehicle' }) {
   const design = designFor(STORE)
-  const Page = kind === 'landing' ? design.Landing : design.Showroom
+  const Page = kind === 'landing' ? design.Landing : kind === 'vehicle' ? design.Vehicle : design.Showroom
   return (
     <Unavailable store={STORE}>
       <Suspense fallback={<div className="min-h-full bg-background" />}>

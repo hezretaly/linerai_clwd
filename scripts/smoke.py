@@ -3820,57 +3820,84 @@ def main() -> int:
     finally:
         _cdb.close()
 
-    print("\n== one follow-up when a buyer goes quiet ==")
-    # **The allowance is the server's, and that is the whole check.** The clock
-    # lives in the browser -- it is the only thing that can tell the buyer is
-    # still on the page -- but a client can be reloaded, opened twice, or
-    # simply lie, and none of those may buy a second follow-up. `nudge.allowed`
-    # reads the transcript, which cannot be reset from a page.
+    print("\n== one follow-up when a buyer goes quiet -- switched off ==")
+    # **Off by default, on request.** A real thread showed the follow-up
+    # restating the answer the buyer had just read -- "It had two owners..."
+    # and a minute later "The Audi had two owners..." -- so `CHAT_FOLLOW_UP`
+    # defaults off and the endpoint says so by name. Asserted on the class
+    # default as well as over HTTP: a flipped default is invisible in a diff.
+    from app.config import Settings as _QuietSettings
+    from app.config import settings as _quiet_cfg
+
+    check("the follow-up is off unless a deployment turns it on",
+          _QuietSettings.model_fields["chat_follow_up"].default is False)
     quiet = call("POST", "/api/chat/sessions")["conversation_id"]
-    cold = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
-    check("a thread nobody has spoken in is not followed up",
-          not cold["sent"] and "Nothing has been said" in cold["reason"], str(cold))
-
     say(quiet, content="What do you have under $30,000?")
-    first = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
-    check("after Liner's reply, a quiet buyer gets one message",
-          first["sent"] and bool(first["assistant_message"]["content"]),
-          (first.get("assistant_message") or {}).get("content", str(first))[:70])
-    # Never this. It says nothing and answers nothing, and it is the one
-    # follow-up guaranteed to be unwelcome.
-    check("and it offers a next step rather than asking if they are there",
-          "still there" not in first["assistant_message"]["content"].lower(),
-          first["assistant_message"]["content"][:70])
+    off = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
+    check("switched off, it refuses and names the setting",
+          not off["sent"] and off.get("reason") == "switched_off"
+          and "CHAT_FOLLOW_UP" in off.get("detail", ""), str(off)[:90])
 
-    again = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
-    check("but only one -- a reload cannot buy a second",
-          not again["sent"] and "already been followed up" in again["reason"],
-          str(again))
-
-    # The buyer speaking resets it, which is the behaviour wanted: quiet, one
-    # prompt, then silence until they say something. A tab left open all
-    # afternoon costs one turn, not one every two minutes for ever.
-    say(quiet, content="Tell me more about the first one.")
-    third = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
-    check("and the buyer typing earns the next one",
-          third["sent"], str(third)[:70])
-
-    # A rep pressing Take over owns the thread. Their silence is a person
-    # deciding what to write, not a gap for Liner to fill.
+    # **The mechanism is kept, so it stays tested.** Driven in-process through
+    # the endpoint's own function with the switch thrown, because the server
+    # this script talks to runs with it off. The allowance is the server's --
+    # the clock lives in the browser, but a client can be reloaded, opened
+    # twice or simply lie, and none of those may buy a second follow-up.
+    from app.api.chat import nudge_quiet_buyer as _nudge
     from app.db import SessionLocal as _QuietSession
     from app.models import Conversation as _QuietConvo
 
-    _qdb = _QuietSession()
+    def _nudge_now(convo_id: str) -> dict:
+        _ndb = _QuietSession()
+        try:
+            return _nudge(convo_id, _ndb)
+        finally:
+            _ndb.close()
+
+    _was_on = _quiet_cfg.chat_follow_up
+    _quiet_cfg.chat_follow_up = True
     try:
-        row = _qdb.query(_QuietConvo).filter_by(id=quiet).one()
-        row.agent_paused = True
-        _qdb.commit()
+        cold_id = call("POST", "/api/chat/sessions")["conversation_id"]
+        cold = _nudge_now(cold_id)
+        check("a thread nobody has spoken in is not followed up",
+              not cold["sent"] and "Nothing has been said" in cold["reason"], str(cold))
+
+        first = _nudge_now(quiet)
+        check("after Liner's reply, a quiet buyer gets one message",
+              first["sent"] and bool(first["assistant_message"]["content"]),
+              (first.get("assistant_message") or {}).get("content", str(first))[:70])
+        # Never this. It says nothing and answers nothing, and it is the one
+        # follow-up guaranteed to be unwelcome.
+        check("and it offers a next step rather than asking if they are there",
+              "still there" not in first["assistant_message"]["content"].lower(),
+              first["assistant_message"]["content"][:70])
+
+        again = _nudge_now(quiet)
+        check("but only one -- a reload cannot buy a second",
+              not again["sent"] and "already been followed up" in again["reason"],
+              str(again))
+
+        # The buyer speaking resets it: quiet, one prompt, then silence until
+        # they say something. A tab left open all afternoon costs one turn.
+        say(quiet, content="Tell me more about the first one.")
+        third = _nudge_now(quiet)
+        check("and the buyer typing earns the next one", third["sent"], str(third)[:70])
+
+        # A rep pressing Take over owns the thread. Their silence is a person
+        # deciding what to write, not a gap for Liner to fill.
+        _qdb = _QuietSession()
+        try:
+            row = _qdb.query(_QuietConvo).filter_by(id=quiet).one()
+            row.agent_paused = True
+            _qdb.commit()
+        finally:
+            _qdb.close()
+        held = _nudge_now(quiet)
+        check("a rep who has taken over is not talked over",
+              not held["sent"] and "taken this conversation over" in held["reason"],
+              str(held))
     finally:
-        _qdb.close()
-    held = call("POST", f"/api/chat/sessions/{quiet}/nudge", {})
-    check("a rep who has taken over is not talked over",
-          not held["sent"] and "taken this conversation over" in held["reason"],
-          str(held))
+        _quiet_cfg.chat_follow_up = _was_on
 
     print("\n== the roster, and handing a buyer to somebody on it ==")
     # **A floor, not a token pair.** Assignment, reassignment, the per-rep
@@ -4318,6 +4345,14 @@ def main() -> int:
           phone_only["sms"]["reason"][:60] or "available")
 
     both = call("GET", f"/api/leads/{form['appointment']['lead_id']}/reach")
+    # **Whether Liner can draft is told to the composer before anybody presses
+    # anything.** The control used to be offered and then refused, which read
+    # as a button that did nothing. Same `have_model` the endpoint asks, so the
+    # two cannot disagree; on this stub run it is unavailable and names why.
+    check("the composer is told up front whether drafting can work, and why not",
+          both["email"]["draft"]["available"] is False
+          and "LLM_MODE" in both["email"]["draft"]["reason"],
+          str(both["email"]["draft"])[:80])
     check("a buyer who gave an address can be emailed",
           both["email"]["available"] and "@" in both["email"]["to"],
           both["email"]["to"])
@@ -7033,6 +7068,80 @@ def _stores_section(before: set[str]) -> None:
     check("and every car picture in the app goes through CarPhoto",
           not raw, f"raw <img src>: {raw}")
 
+    print("\n== a car's own page, and the chat's way to it ==")
+    # `/<store>/showroom/<vin>`: the page a chat card opens, and the one a
+    # storefront card's photo and title open. Public, so the same two rules as
+    # the list: only what `offerable` returns, and only fields composed for a
+    # buyer.
+    lot_car = call("GET", "/api/showroom?limit=1")["vehicles"][0]
+    page_car = call("GET", f"/api/showroom/vehicle/{lot_car['vin']}")
+    check("a car on the lot has a page, with the tables and the options list",
+          page_car["vehicle"]["vin"] == lot_car["vin"]
+          and isinstance(page_car["vehicle"]["sections"], list)
+          and isinstance(page_car["vehicle"]["features"], list),
+          page_car["vehicle"]["title"])
+    code, _ = status_of("GET", f"/api/showroom/vehicle/{lot_car['vin'].lower()}")
+    check("and a VIN in lower case is the same car", code == 200, str(code))
+    check("with others like it underneath, never itself",
+          lot_car["vin"] not in [c["vin"] for c in page_car["similar"]],
+          str([c["vin"] for c in page_car["similar"]]))
+    # **Composed, never copied from the row.** `raw_json` carries the history
+    # write-up handed to the *assistant*, and `rule_note` is the floor's own
+    # note on the car ("no discount without Dana's approval").
+    _page_json = json.dumps(page_car)
+    _page_leaks = [k for k in ("detail_doc", "rule_note", "internal_note", "mention_count")
+                   if f'"{k}"' in _page_json]
+    check("and nothing on it is the assistant's or the floor's",
+          not _page_leaks, ", ".join(_page_leaks) or "clean")
+    code, _ = status_of("GET", "/api/showroom/vehicle/NOTAVIN0000000000")
+    check("a VIN that is not on the lot is a 404", code == 404, str(code))
+
+    # **A car the assistant will not discuss has no page either.** The chat
+    # can link to a car it found a minute ago; a page for one it now refuses
+    # to talk about is the failure `offerable` exists to prevent.
+    from app.db import SessionLocal as _PageSession
+    from app.models import Vehicle as _PageVehicle
+
+    _pdb = _PageSession()
+    try:
+        _row = _pdb.query(_PageVehicle).filter_by(vin=lot_car["vin"]).one()
+        _was = _row.rule_discuss
+        _row.rule_discuss = False
+        _pdb.commit()
+        try:
+            code, _ = status_of("GET", f"/api/showroom/vehicle/{lot_car['vin']}")
+            check("a do-not-discuss car's page is a 404, not a page", code == 404, str(code))
+        finally:
+            _row.rule_discuss = _was
+            _pdb.commit()
+    finally:
+        _pdb.close()
+
+    # The route exists, under the prefix the SPA already serves.
+    _main_src = pathlib.Path("frontend/src/main.tsx").read_text()
+    check("the car page is a route of its own",
+          'path="/showroom/:vin"' in _main_src, "no /showroom/:vin route")
+    # **The chat card links out only where the page around it is ours.** On a
+    # dealer's own site `embed.js` frames the chat on another origin, and a
+    # `_top` link would take their buyer off their site onto a demo copy of
+    # it. Reading `top.location` across origins throws, and that throw is the
+    # whole test -- so it must land on "no link", never on a default.
+    _chat_src = pathlib.Path("frontend/src/routes/Chat.tsx").read_text()
+    _host_fn = _chat_src.split("function carPageHost", 1)[-1].split("\n}\n", 1)[0]
+    check("the chat's car card opens the car's page, through the store prefix",
+          "withStore(`/showroom/${encodeURIComponent(vin)}?chat=1`)" in _chat_src,
+          "carPageHref missing or unprefixed")
+    check("and only when the page around the chat is ours",
+          "catch {\n    return null" in _host_fn, "a cross-origin frame would link out")
+    # And arriving from it opens the widget on the same thread, in every
+    # design -- a shell that forgot would drop the buyer on a page with the
+    # conversation hidden, which reads as it having ended.
+    _shells = {name: pathlib.Path(f"frontend/src/storefronts/{name}").read_text()
+               for name in ("alsbou/Shell.tsx", "default/Frame.tsx")}
+    check("and every storefront shell opens the chat for a buyer who came from it",
+          all("useState(arrivedFromChat)" in src for src in _shells.values()),
+          str([n for n, src in _shells.items() if "useState(arrivedFromChat)" not in src]))
+
     # **A raw `href` or `src` does not go through the router, so it does not
     # get the basename.** Which makes every hardcoded `/chat`, `/call`, `/app`
     # or `/api/...` in a dealership-scoped component a document load into the
@@ -7166,8 +7275,11 @@ def _stores_section(before: set[str]) -> None:
     # a message and a follow-up gets twice what the ceiling allows -- but
     # refuses in this endpoint's own idiom, which is 200 with a reason.
     nudged = call("POST", f"/api/chat/sessions/{rl_session}/nudge")
+    # `busy`, not `switched_off`: the budget is read before the switch, so this
+    # still proves the shared budget with the follow-up turned off.
     check("a follow-up comes out of the same budget, and says no without erroring",
-          nudged.get("sent") is False, json.dumps(nudged)[:90])
+          nudged.get("sent") is False and nudged.get("reason") == "busy",
+          json.dumps(nudged)[:90])
 
     # **A limited conversation must not be a limited dealership.** The three
     # ceilings are deliberately at different heights, and the per conversation

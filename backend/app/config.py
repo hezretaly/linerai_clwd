@@ -283,6 +283,14 @@ class Settings(BaseSettings):
     # this decides whether that sends anything. The composer (`buyer_summary`)
     # is real and unchanged: a deployment that wants the mail sets one line.
     buyer_summary_email: bool = False
+    # The one unprompted follow-up on a buyer who has gone quiet in the chat.
+    # Off, on request: a real thread showed it restating the answer the buyer
+    # had just been given -- "It had two owners..." followed a minute later by
+    # "The Audi had two owners..." -- which reads as a bot that did not notice
+    # it had already spoken. The mechanism (`agent/nudge.py`, the one-per-
+    # silence allowance, the shared turn budget) is kept and still gated;
+    # `CHAT_FOLLOW_UP=true` is the one line that brings it back.
+    chat_follow_up: bool = False
     # The method's signature move (section 13) is a personalized walkaround
     # video. Nothing in this system records, stores or sends one, so it is off
     # -- and the gate in the method text turns into an instruction never to

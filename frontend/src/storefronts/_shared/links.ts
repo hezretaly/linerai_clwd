@@ -27,3 +27,24 @@ export function rebuiltHere(href: string, site: string | undefined): string {
     return ''
   }
 }
+
+/** A car's own page on this storefront. The VIN is the address: unique,
+ *  stable across a re-import, and already in every sentence the chat writes
+ *  about a car. A router path, relative to the store's basename. */
+export function carPath(vin: string): string {
+  return `/showroom/${encodeURIComponent(vin)}`
+}
+
+/** The query flag that says the buyer arrived from the chat, so the page opens
+ *  the widget on the same conversation rather than making them find it again.
+ *  One name for the link that writes it and the shells that read it. */
+export const FROM_CHAT = 'chat'
+
+/** Did this page load because somebody pressed a car in the chat? */
+export function arrivedFromChat(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get(FROM_CHAT) === '1'
+  } catch {
+    return false
+  }
+}
