@@ -30,7 +30,8 @@ from app.agent.rail_actions import SHOWN
 from app.agent.tools import when_label
 from app.api.settings import live_settings
 from app.config import settings
-from app.db import SessionLocal, get_db
+from app import ratelimit
+from app.db import SessionLocal, active_store, get_db
 from app.profile import brand
 from app.events import emit
 from app.integrations.base import NotConfigured
@@ -68,6 +69,12 @@ def _conversation(db: Session, conversation_id: str) -> Conversation:
 
 @router.post("/sessions")
 def start_session(channel: str = "chat", db: Session = Depends(get_db)) -> dict:
+    # Public, and on a dealership's own website once the chat is an iframe --
+    # so a script can mint conversations as fast as it can post. Per store,
+    # because every one of those is a fresh conversation id and a ceiling
+    # keyed below the store cannot see them. `ratelimit` has the reasoning.
+    ratelimit.new_conversation(active_store())
+
     convo = Conversation(channel=channel, status="active", stage="opening")
     db.add(convo)
     db.commit()
@@ -237,6 +244,13 @@ async def send_message(
     conversation_id: str, body: BuyerMessage, db: Session = Depends(get_db)
 ) -> StreamingResponse:
     convo = _conversation(db, conversation_id)
+
+    # Before any work, and before the stream opens: this is the endpoint that
+    # costs a model call, and a 429 has to be a refused request rather than a
+    # stream that starts and then stops. Checked after `_conversation` so an
+    # unknown id is still a 404 -- a limit that answered 429 to a conversation
+    # that does not exist would be telling a stranger which ids are real.
+    ratelimit.turn(active_store(), conversation_id)
 
     text = (body.content or "").strip()
     rail_id = body.rail_id
@@ -508,6 +522,15 @@ def nudge_quiet_buyer(conversation_id: str, db: Session = Depends(get_db)) -> di
     may, why = nudge.allowed(db, convo)
     if not may:
         return {"sent": False, "reason": why}
+
+    # A follow-up is a model turn like any other, so it comes out of the same
+    # budget: without this, a script alternating a message and a nudge doubles
+    # what the ceiling was set to allow. In this endpoint's idiom rather than
+    # a 429 -- nothing has gone wrong, and a follow-up nobody asked for is the
+    # most droppable turn there is.
+    if ratelimit.turn_wait(active_store(), conversation_id):
+        return {"sent": False, "reason": "busy"}
+    ratelimit.count_turn(active_store(), conversation_id)
 
     try:
         message = run_nudge_turn(db, convo)

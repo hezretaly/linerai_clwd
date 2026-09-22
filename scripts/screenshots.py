@@ -370,6 +370,74 @@ async def main() -> int:
         for route in PUBLIC:
             await shot(route)
 
+        # **The buyer's call page must not read like a console.**
+        #
+        # `/call` is one route serving two audiences -- a car buyer and
+        # whoever is setting the line up -- because two call pages is how one
+        # of them quietly stops doing the hard part (`silence()` before
+        # teardown, the AudioContext inside the click gesture, ordered chunk
+        # upload, the consent line). `?diagnostics=1` *adds* panels and the
+        # buyer's version is the default.
+        #
+        # Asserted on what is **rendered**, not on the source: the guard is a
+        # `diagnostics &&` in JSX and a reader cannot tell by eye which branch
+        # a string ends up in. Voice is unconfigured on this box, which is
+        # what makes it checkable with no key at all -- the "not configured"
+        # panel is itself one of the four leaks, and it printed
+        # `OPENAI_API_KEY` in a warning box on a dealership's own site.
+        print("\nthe call page's two audiences:")
+        INTERNALS = ["VOICE_TRANSCRIBE", "VOICE_PROVIDER", "OPENAI_API_KEY"]
+
+        async def call_text(query: str) -> str:
+            """The call page after pressing Start, which is when it says
+            anything at all about how it is configured.
+
+            The button is pressed because the "not configured" panel does not
+            exist until a session is attempted -- loading the route and
+            reading it proves nothing, which is what the first version of this
+            check did. It needs no microphone and no key: `POST
+            /api/voice/sessions` is awaited *before* `getUserMedia`, so on a
+            box with voice unconfigured the refusal is the first thing back.
+            """
+            await page.goto(BASE + "/call" + query, wait_until="networkidle")
+            await page.wait_for_timeout(400)
+            await page.click("button:text-is('Start a call')")
+            await page.wait_for_timeout(900)
+            return await page.inner_text("body")
+
+        plain = await call_text("")
+        leaked = [name for name in INTERNALS if name in plain]
+        if leaked:
+            failures.append(
+                f"/call: a buyer is shown this deployment's internals: {', '.join(leaked)}"
+            )
+        # Not vacuous: the buyer has to be told the line is unavailable, or
+        # "no internals" is satisfied by a page that said nothing at all.
+        if "not available" not in plain.lower():
+            failures.append(
+                "/call: a buyer pressed Start on an unconfigured line and was "
+                "told nothing -- the refusal has to say something they can act on"
+            )
+        # `text-transform: uppercase` reaches `inner_text`, so the badge comes
+        # back DIAGNOSTICS however it is written in the JSX. Compared folded,
+        # or this check fails on a CSS class.
+        if "diagnostics" in plain.lower():
+            failures.append("/call: the buyer's page is wearing the diagnostics badge")
+
+        flagged = await call_text("?diagnostics=1")
+        # The other direction, or the check passes by the panel having been
+        # deleted rather than moved -- the failure mode a one-sided assertion
+        # always drifts into.
+        if not any(name in flagged for name in INTERNALS):
+            failures.append(
+                f"/call?diagnostics=1: names none of {INTERNALS} -- the panel "
+                "was removed rather than gated behind the flag"
+            )
+        if "diagnostics" not in flagged.lower():
+            failures.append("/call?diagnostics=1: nothing says which page this is")
+        print(f"  buyer    {len(plain.strip()):>5} chars, no internals")
+        print(f"  flagged  {len(flagged.strip()):>5} chars, names them")
+
         # **A dealership's own two pages, under its prefix.** `/` unprefixed is
         # Liner's marketing document and `/showroom` unprefixed is the default
         # store's list, so neither exercises the front page a prospect is

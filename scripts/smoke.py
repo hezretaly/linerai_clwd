@@ -146,6 +146,31 @@ def status_of(
         return exc.code, exc.read().decode()
 
 
+def _prof_origins(slug: str) -> list[str]:
+    """What one store's profile declares as allowed to frame its assistant.
+
+    Read through `mailboxes.using` like every other per-store profile read, so
+    the gate asks the question the request path asks rather than whichever
+    profile the process booted as.
+    """
+    from app import mailboxes as _mb, profile as _pf
+
+    with _mb.using(slug):
+        return _pf.embed_origins()
+
+
+def header_of(path: str, name: str) -> str:
+    """One response header, for the checks that are about the header rather
+    than the body -- `frame-ancestors` is invisible in the document it
+    protects, so nothing that reads the HTML can see it at all."""
+    request = urllib.request.Request(BASE + path, method="GET")
+    try:
+        with opener.open(request, timeout=30) as response:
+            return response.headers.get(name, "")
+    except urllib.error.HTTPError as exc:
+        return exc.headers.get(name, "")
+
+
 def upload_audio(convo: str, content_type: str, blob: bytes, duration_ms: int = 0,
                  *, complete: bool = True, seq: int = 0, track: str = "call") -> dict:
     """Post one slice of call audio the way the buyer's browser does.
@@ -3424,6 +3449,38 @@ def main() -> int:
                   status_of("GET", f"/{reserved}/nothing-here")[0] == 404)
         check("and a mistyped path still says so instead of returning a page",
               status_of("GET", "/notaroute")[0] == 404)
+
+        # **Who may put these pages in an iframe.** Framing was allowed by
+        # *omission* -- neither shipped nginx config sets `X-Frame-Options` or
+        # a CSP -- so every page here could be framed by anyone, and the next
+        # person to add a security-header block would have broken every
+        # dealership's embedded assistant with a blank white frame and nothing
+        # in any log we own. Both halves are decided in the app now.
+        #
+        # Checked against the **built bundle** and nowhere else, for the
+        # reason `SPA_PREFIXES` is: in development Vite serves these documents
+        # and this header does not exist at all, so a browser gate against
+        # :5173 would pass whatever the app does.
+        with_boxes = [s for s in with_file if _prof_origins(s)]
+        dash = header_of("/app", "Content-Security-Policy")
+        check("a dealer page may be framed by nothing but ourselves",
+              dash == "frame-ancestors 'self'", dash or "no header at all")
+        chat_default = header_of("/chat", "Content-Security-Policy")
+        check("and a store that has declared no site is the same -- absent is not open",
+              chat_default == "frame-ancestors 'self'", chat_default or "no header at all")
+        for slug in with_boxes:
+            declared = _prof_origins(slug)
+            got = header_of(f"/{slug}/chat", "Content-Security-Policy")
+            check(f"{slug}: its own site may frame its assistant",
+                  all(origin in got for origin in declared), f"{got} vs {declared}")
+            check(f"{slug}: and its dashboard still may not",
+                  header_of(f"/{slug}/app", "Content-Security-Policy")
+                  == "frame-ancestors 'self'",
+                  header_of(f"/{slug}/app", "Content-Security-Policy"))
+            # The other direction, or a header reading `frame-ancestors *`
+            # would pass every check above while allowing everybody.
+            check(f"{slug}: and a site it never named may not",
+                  "*" not in got and "https://not-their-site.example" not in got, got)
     else:
         print("  [skip] no frontend/dist -- run `make build` to check the served paths")
 
@@ -6769,6 +6826,73 @@ def _stores_section(before: set[str]) -> None:
     unknown = status_of("GET", "/nosuchdealership/api/showroom")[0]
     check("an unknown prefix is not a store and does not answer as one",
           unknown == 404, str(unknown))
+
+    print("\n== what one dealership's chat may cost in five minutes ==")
+    # `/chat` is public by design and, as an iframe on a dealership's own
+    # website, is a page any stranger can load and any script can post to.
+    # Every turn is a model call on somebody's key, so the ceiling is the
+    # difference between a busy afternoon and their bill.
+    #
+    # Driven against the running server rather than the window objects, so
+    # what is asserted is the 429 a caller actually gets -- the limit could be
+    # perfectly correct in `ratelimit.py` and never reached from the endpoint,
+    # which is the half that was missing.
+    from app.config import settings as _cfg_rl
+
+    limit = _cfg_rl.chat_max_turns_per_conversation
+    rl_session = call("POST", "/api/chat/sessions")["conversation_id"]
+    refused_at, retry_after = 0, ""
+    for n in range(limit + 2):
+        code, detail = status_of(
+            "POST", f"/api/chat/sessions/{rl_session}/messages", {"content": "hi"}
+        )
+        if code == 429:
+            refused_at, retry_after = n, detail
+            break
+    check("a conversation cannot take unlimited model turns",
+          refused_at == limit, f"refused at {refused_at}, limit is {limit}")
+    check("and the refusal is something a buyer can act on, not a status code",
+          "try again" in retry_after.lower() and "rate" not in retry_after.lower(),
+          retry_after[:90])
+    # A buyer did nothing wrong, so the 429 names a wait rather than blaming
+    # them -- and a `Retry-After` because a client that does not know how long
+    # to wait retries immediately, which is the behaviour being limited.
+    head_code, head_detail = status_of(
+        "POST", f"/api/chat/sessions/{rl_session}/messages", {"content": "again"}
+    )
+    check("a caller who keeps trying does not push their own unlock further away",
+          head_code == 429 and head_detail == retry_after, head_detail[:90])
+    # An unknown conversation is still a 404. A limit that answered 429 to an
+    # id that does not exist would tell a stranger which ids are real.
+    missing_code, _ = status_of(
+        "POST", "/api/chat/sessions/does-not-exist/messages", {"content": "hi"}
+    )
+    check("and an id that does not exist is still a 404, never a 429",
+          missing_code == 404, str(missing_code))
+    # The nudge spends from the same budget -- otherwise a script alternating
+    # a message and a follow-up gets twice what the ceiling allows -- but
+    # refuses in this endpoint's own idiom, which is 200 with a reason.
+    nudged = call("POST", f"/api/chat/sessions/{rl_session}/nudge")
+    check("a follow-up comes out of the same budget, and says no without erroring",
+          nudged.get("sent") is False, json.dumps(nudged)[:90])
+
+    # **A limited conversation must not be a limited dealership.** The three
+    # ceilings are deliberately at different heights, and the per conversation
+    # one is by far the lowest -- so one buyer pasting into the box has to
+    # leave every other buyer on that forecourt able to talk. Asserted with a
+    # second conversation rather than by resetting the window: the limiter
+    # lives in the *server's* process, so a reset here would clear the gate's
+    # own copy and assert nothing, which is exactly the shape of check that
+    # passes for years while testing nothing.
+    #
+    # This is the last section for the same reason -- the turns it spends are
+    # real ones against the store's ceiling, and a run that stranded them
+    # would surface as a failure somewhere unrelated.
+    other = call("POST", "/api/chat/sessions")["conversation_id"]
+    fresh, _ = status_of("POST", f"/api/chat/sessions/{other}/messages",
+                         {"content": "do you have anything under $20k?"})
+    check("one buyer hitting the ceiling does not silence the whole forecourt",
+          fresh == 200, str(fresh))
 
 
 def report() -> int:

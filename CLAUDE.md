@@ -1274,6 +1274,40 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   connection fires the state change that calls it. A closed tab beacons only
   the unsent slice and the end marker, which is small enough to fit where a
   whole call never was.
+- **`/call` serves two audiences on one route, and `?diagnostics=1` *adds*
+  panels.** The buyer's version is the default. It was not: a car buyer was
+  shown `VOICE_TRANSCRIBE is off`, told this browser "will not mix in the
+  reply", handed a byte count for the recording, and — on any deployment
+  where the line is not set up — a list of missing environment variables in
+  `<code>`, in a warning box on a dealership's own site.
+  - **One route rather than two, and that is the whole decision.** A second
+    call page is how one of them quietly stops doing the hard part, which
+    here is four things that are subtle, invisible when wrong, and would
+    drift: `silence()` running before teardown so Liner does not talk over
+    the red button, the `AudioContext` built inside the click gesture, ordered
+    chunk upload, and the recording-consent line. A parallel "customer" page
+    would lose one and the symptom would be a finished call with no audio and
+    nothing in any log. Same argument as `agent/loop.py` never naming a vendor.
+  - **What the flag reveals is the caller's own call** — their transcript,
+    their microphone, the variables this deployment has not set. A cosmetic
+    reveal rather than a way to read somebody else's data, which is what lets
+    it be a query parameter instead of a second authenticated surface.
+  - **Consent is reworded for the buyer, never hidden from them.** Both
+    versions answer the one question consent is for — is my voice being
+    recorded. What moves behind the flag is *why*: "will not mix in the reply"
+    is a fact about `MediaRecorder`, not about their privacy.
+  - **The dealer's way in is a button on the Liner setup page**, carrying the
+    flag, because `?diagnostics=1` is exactly the kind of thing that gets
+    written in a runbook and then goes stale.
+  - `make shots` presses **Start a call** and asserts on what is *rendered*,
+    both ways. Pressing it is the point: the "not configured" panel does not
+    exist until a session is attempted, so loading the route and reading it
+    proves nothing — which is what the first version of the check did. It
+    needs no microphone and no key, because `POST /api/voice/sessions` is
+    awaited *before* `getUserMedia`. Both directions are asserted, or the
+    check passes by the panel having been deleted rather than moved. And the
+    badge is compared case-folded: `text-transform: uppercase` reaches
+    `inner_text`, so it comes back `DIAGNOSTICS` however the JSX writes it.
 - **Recording a call is somebody's voice, so three things are fixed.** The
   buyer is told before the microphone opens — the line is on `/call`, above the
   button, and several US states require every party to consent, which is a
@@ -1959,6 +1993,66 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the 401s. A correct password clears the count, so four mistypes and a
   success do not leave somebody four attempts from a lockout. In process like
   `events.py`, for the same reason: one worker is already required.
+- **The chat has ceilings too, and they are about cost rather than access.**
+  Login protects a password; `/chat` protects a *bill* — it is public by
+  design, a buyer has no account and never will, and as an iframe on a
+  dealership's own website it is a page any stranger can load and any script
+  can post to, where every turn is a model call on somebody's key.
+  - **Three, because one cannot see all three abuses.** A per-conversation
+    cap stops one thread being hammered and is walked straight past by a
+    script minting a fresh conversation per message, which has a fresh key
+    every time; a per-store session cap catches exactly that and says nothing
+    about a hundred conversations sending two messages each. The turn ceiling
+    is the backstop over both and the one that maps to the bill.
+  - **Per store and per conversation, never per IP**, for the reason above it:
+    behind a proxy every request carries the proxy's address, so an IP key
+    refuses every real buyer at once the moment one script runs. The cost is
+    that an attacker inside the ceiling is absorbed by it along with everyone
+    else — a busy afternoon rather than a runaway bill, which is the trade.
+  - **The follow-up comes out of the same budget**, or a script alternating a
+    message and a nudge gets twice what the ceiling allows. It refuses in that
+    endpoint's own idiom — 200 with a reason, not a 429 — because nothing has
+    gone wrong when a follow-up nobody asked for does not happen.
+  - **An unknown conversation is still a 404, never a 429.** A limit that
+    answered 429 to an id that does not exist would tell a stranger which ids
+    are real.
+  - The windows live in `ratelimit.py` beside the login one, so "what does
+    this deployment refuse, and after how many" is one file rather than a
+    search. `make smoke` drives the refusal over HTTP rather than against the
+    window objects: the limit can be perfectly correct and never reached from
+    the endpoint, which is the half that was missing.
+- **Who may frame these pages is decided here, not left to omission.** Neither
+  shipped nginx config sets `X-Frame-Options` or a CSP, so every page of this
+  app could be framed by anyone — and the next person to add a security-header
+  block would have broken every dealership's embedded assistant with a blank
+  white frame and nothing in any log we own. `static.py` sets
+  `Content-Security-Policy: frame-ancestors` on every document it serves.
+  - **`'self'` is the default and the dealer pages never get more.** A
+    dashboard has no business being framed anywhere, and a login form inside
+    somebody else's page is the classic clickjack. Only `/chat` and `/call`
+    can be widened, by a profile's `embed_origins:` — a dealership's own
+    domains are a fact about that dealership, so they live where its brand
+    and its mailbox do, read per request.
+  - **Bare https origins, validated.** A browser matches the origin and
+    ignores any path, so a path written there would promise a narrowing that
+    does not exist; and the value lands in a security header, which is why it
+    is validated as hard as the accent is validated to a hex. Both spellings
+    of the host, because a dealer whose canonical host is `www` still serves
+    pages from the apex and an embed that works on one and shows a blank frame
+    on the other is the worst way for this to fail.
+  - **It is a browser control, not a security boundary, and the two are not
+    substitutes.** It stops another dealer or a phishing page standing an
+    assistant up as their own; it does nothing about a script posting straight
+    to `/chat/sessions`, where nothing is framed and no origin is sent. That
+    is what the ceilings above are for.
+  - **Only `frame-ancestors`.** A full CSP over this SPA is real work — a
+    nonce or hashes for every inline style Vite emits — and shipping a broad
+    one now (`default-src *` with a frame rule bolted on) would read like a
+    policy while being none.
+  - Asserted against the **built bundle** only, for the reason `SPA_PREFIXES`
+    is: in development Vite serves these documents and the header does not
+    exist at all, so a browser gate against `:5173` passes whatever the app
+    does.
 - **A timestamp on the wire says which of two kinds it is.** ECMAScript parses
   a bare date-time as *browser-local*, and `utcnow()` is naive UTC, so
   `isoformat()` alone put an unmarked instant on the wire: every relative time

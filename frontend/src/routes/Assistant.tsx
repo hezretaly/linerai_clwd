@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '../lib/api'
+import { withStore } from '../lib/store'
 import type { AssistantSettings, HandoffRule, KnowledgeEntry, Rail } from '../lib/types'
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
 import { AgentSwitch } from '../components/AgentSwitch'
@@ -65,6 +66,35 @@ export function AssistantPage() {
             have to already know about. */}
         <div className="mb-6">
           <AgentSwitch />
+        </div>
+
+        {/* The way in to the buyer's own surfaces, from the page that decides
+            how they behave. A button rather than a URL somebody has to
+            remember -- `?diagnostics=1` is exactly the kind of thing that
+            gets written in a runbook and then goes stale.
+            `withStore` because a raw href never passes through the router, so
+            without it both of these open the *default* store's assistant. */}
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <span className="text-sm text-muted-foreground">Try it as a buyer:</span>
+          <a
+            href={withStore('/chat')}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Open the chat
+          </a>
+          {/* Carries the flag: a manager checking setup wants the transcript
+              and, if the line is not answering, the variables that are unset.
+              A buyer opening the same page gets neither. */}
+          <a
+            href={withStore('/call?diagnostics=1')}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Try a call (with diagnostics)
+          </a>
         </div>
 
         <Card>

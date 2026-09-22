@@ -21,9 +21,45 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import profile
 from app.db import current_store
 
 DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+# The buyer surfaces, which are the only ones a dealership has any reason to
+# put in an iframe on its own website. Everything else -- the dashboard, our
+# own ops pages, the login form -- gets `'self'` and nothing more: a dealer
+# page has no business being framed anywhere, and a login form inside somebody
+# else's page is the classic clickjack.
+EMBEDDABLE = ("/chat", "/call")
+
+
+def _frame_ancestors(path: str) -> str:
+    """Who may put this document in an iframe.
+
+    **Framing was allowed here by omission, not by decision**, which is the
+    state worth naming: neither shipped nginx config sets `X-Frame-Options` or
+    a CSP, so every page of this app could be framed by anyone, and the next
+    person to add a security-header block would have broken every dealership's
+    embedded assistant with a blank white frame and nothing in any log we own.
+    Deciding it in the app settles both halves at once.
+
+    Per store, read from the profile per request like the brand is -- a
+    dealership's own domains are a fact about that dealership.
+    """
+    allowed = ["'self'"]
+    if any(path.startswith(prefix) for prefix in EMBEDDABLE):
+        allowed += profile.embed_origins()
+    return "frame-ancestors " + " ".join(allowed)
+
+
+def _framed(response: FileResponse, path: str) -> FileResponse:
+    """Set it on a document. Only `frame-ancestors`, deliberately: a full CSP
+    over this SPA is a real piece of work (hashes or a nonce for every inline
+    style Vite emits) and shipping a broad one now -- `default-src *` with a
+    frame rule bolted on -- would read like a policy while being none."""
+    response.headers["Content-Security-Policy"] = _frame_ancestors(path)
+    return response
 
 # Paths the SPA owns. Anything else that is not a real file is a 404, rather
 # than index.html -- a mistyped API path should say so, not return a page.
@@ -66,8 +102,8 @@ def mount_frontend(app: FastAPI) -> bool:
         # `make smoke` asserts; the prefixed one is the SPA, whose `/` route
         # is the dealership's front page.
         if current_store.get():
-            return FileResponse(index)
-        return FileResponse(landing)
+            return _framed(FileResponse(index), "/")
+        return _framed(FileResponse(landing), "/")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> FileResponse:
@@ -81,7 +117,7 @@ def mount_frontend(app: FastAPI) -> bool:
             return FileResponse(candidate)
 
         if any(("/" + full_path).startswith(prefix) for prefix in SPA_PREFIXES):
-            return FileResponse(index)
+            return _framed(FileResponse(index), "/" + full_path)
         raise HTTPException(404, "Not found")
 
     return True

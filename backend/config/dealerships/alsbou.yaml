@@ -28,6 +28,24 @@ website_url: "https://www.alsboucars.com/"
 # same string or the mail is dropped in Cloudflare with no receipt anywhere.**
 mailbox: alsbou
 
+# The sites allowed to put this dealership's assistant in an iframe. It
+# becomes `Content-Security-Policy: frame-ancestors` on `/chat` and `/call`,
+# so another dealer -- or a phishing page -- cannot stand Alsbou's assistant
+# up as their own. Our own storefront is covered by `'self'` and needs no
+# entry; this list is for *their* website.
+#
+# Bare origins, https only: a browser matches the origin and ignores any path,
+# so a path written here would promise a narrowing that does not exist. Both
+# spellings of the host, because a dealer whose canonical host is `www` will
+# still have pages served from the apex, and an embed that works on one and
+# shows a blank frame on the other is the worst way for this to fail.
+#
+# **Leaving it out is not "allow everyone" -- it is `'self'`.** So the day
+# they paste the snippet onto their own site, this is the line to add.
+embed_origins:
+  - https://www.alsboucars.com
+  - https://alsboucars.com
+
 # Mon-Sat 10-8, Sun 10-6. Open seven days, so there is no `null` here -- and
 # Sunday's earlier close is kept exact rather than rounded into the others,
 # because `check_availability` builds the slots Liner offers a buyer straight

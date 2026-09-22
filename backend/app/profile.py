@@ -124,6 +124,41 @@ def _link(value) -> str:
     return text if text.startswith(("https://", "/")) else ""
 
 
+#: A bare origin -- scheme, host, optional port, and nothing after it. A path
+#: is not part of an origin and a browser ignores one, so accepting it here
+#: would let a profile promise a narrowing that does not exist.
+_ORIGIN_RE = re.compile(r"^https://[a-z0-9.-]+(:\d{1,5})?$")
+
+
+def embed_origins() -> list[str]:
+    """The sites allowed to put this dealership's assistant in an iframe.
+
+    **This is a browser control, not a security boundary, and the difference
+    matters.** It becomes `Content-Security-Policy: frame-ancestors`, which a
+    browser honours when deciding whether to render our page inside somebody
+    else's -- so it stops another dealer, or a phishing page, standing this
+    assistant up as their own. It does nothing whatsoever about a script
+    posting straight to `/chat/sessions`: nothing is framed there, and no
+    origin is sent. That case is what the ceilings in `ratelimit.py` are for,
+    and the two are not substitutes.
+
+    Empty means the profile has not said, which leaves `'self'` -- our own
+    storefront still frames its own widget, and nobody else can. Opening it
+    up is a deliberate line in a profile rather than the default, because the
+    default is the one that gets shipped by accident.
+
+    Validated hard for the reason the accent is validated to a hex: this comes
+    from a file an operator edits and it lands in a security header, where a
+    stray space or a `*` would widen it silently.
+    """
+    out: list[str] = []
+    for item in (_section_list("embed_origins") or [])[:12]:
+        origin = str(item or "").strip().lower().rstrip("/")
+        if _ORIGIN_RE.match(origin) and origin not in out:
+            out.append(origin)
+    return out
+
+
 def _links(raw, limit: int) -> list[dict]:
     out = []
     for item in (raw or [])[:limit]:

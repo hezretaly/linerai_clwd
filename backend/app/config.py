@@ -396,6 +396,35 @@ class Settings(BaseSettings):
     login_max_attempts: int = 8
     login_window_seconds: int = 300
 
+    # --- What one dealership's chat may cost in five minutes ----------------
+    # `/chat` is public by design -- a buyer has no account and never will --
+    # and once it is an iframe on a dealership's own website it is a page any
+    # stranger can load and any script can post to. Every turn is a model
+    # call on somebody's key, so an unthrottled `/messages` is their bill.
+    #
+    # **Three limits because one cannot see all three abuses.** A per
+    # conversation cap stops one thread being hammered and is walked straight
+    # past by a script that mints a fresh conversation per message; a per
+    # store session cap stops exactly that and says nothing about a hundred
+    # conversations sending two messages each. The turn ceiling is the
+    # backstop over both, and it is the one that maps to the bill.
+    #
+    # **Per store and per conversation, never per IP.** The reason is the one
+    # written on `login_max_attempts`: behind nginx or Cloudflare every
+    # request carries the proxy's address unless `--proxy-headers` is set, so
+    # an IP key would refuse every real buyer at once the moment one script
+    # ran. The cost of this choice is that a determined attacker inside the
+    # ceiling is not singled out -- they are absorbed by it along with
+    # everyone else, which is a busy afternoon rather than a runaway bill.
+    #
+    # Sized so a real dealership never meets them. A fast buyer types perhaps
+    # fifteen messages in five minutes; a busy forecourt might see a dozen
+    # conversations opened in the same window, nowhere near sixty.
+    chat_window_seconds: int = 300
+    chat_max_sessions_per_store: int = 60
+    chat_max_turns_per_conversation: int = 30
+    chat_max_turns_per_store: int = 300
+
     # --- Who outbound email may reach ---------------------------------------
     # One setting whose name is the rule. Three ways to write it:
     #

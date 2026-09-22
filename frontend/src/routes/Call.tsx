@@ -168,11 +168,39 @@ function clock(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+/** `?diagnostics=1` *adds* panels; it never takes anything away.
+ *
+ *  This page is two audiences on one route, and the reason it is one route
+ *  rather than two is the reason `agent/loop.py` never names a vendor: a
+ *  second call page is how one of them quietly stops doing the hard part.
+ *  Four things here are subtle, invisible when wrong, and would drift --
+ *  `silence()` running before teardown so Liner does not talk over the red
+ *  button, the `AudioContext` built inside the click gesture, ordered chunk
+ *  upload, and the recording-consent line. A parallel "customer" page would
+ *  lose one of them and the symptom would be a finished call with no audio
+ *  and nothing in any log.
+ *
+ *  So the buyer's version is the default and the flag reveals the rest. What
+ *  it reveals is this caller's own call -- their transcript, their microphone,
+ *  the variables this deployment has not set -- so it is a cosmetic reveal
+ *  rather than a way to read somebody else's data, which is what lets it be a
+ *  query parameter instead of a second authenticated surface.
+ *
+ *  Three strings were the argument for doing it at all: a buyer was being
+ *  shown `VOICE_TRANSCRIBE is off`, told this browser "will not mix in the
+ *  reply", and handed a list of missing environment variables in `<code>`. */
+function wantsDiagnostics(): boolean {
+  return new URLSearchParams(window.location.search).get('diagnostics') === '1'
+}
+
 export function Call() {
   // Their name and their colour, on load rather than on connect. Applied from
   // the voice session it only arrived once the buyer had already pressed Call,
   // so the page they decide on was the one still wearing our livery.
   const dealership = useDealership()
+  // Read once: a caller cannot change it mid-call, and re-reading per render
+  // would make the page's audience a thing that can change under it.
+  const [diagnostics] = useState(wantsDiagnostics)
   const [error, setError] = useState<ApiError | null>(null)
   const [failed, setFailed] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
@@ -997,6 +1025,15 @@ export function Call() {
     <div className="flex h-full items-center justify-center bg-muted/40 px-4 py-6">
       <Card className="flex max-h-[calc(100dvh-3rem)] w-full max-w-md flex-col p-6">
         <div className="text-center">
+          {/* So a screenshot says which of the two pages it is. Without it the
+              buyer's version and the diagnostic one are told apart only by
+              what happens to be on screen at that second, and "the transcript
+              was missing" is a bug report somebody would file. */}
+          {diagnostics && (
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Diagnostics
+            </p>
+          )}
           <h1 className="text-lg font-semibold">Call {dealership?.name || 'the dealership'}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {phase === 'live'
@@ -1020,16 +1057,23 @@ export function Call() {
           </p>
         )}
 
-        {phase === 'live' && !transcribed && (
+        {diagnostics && phase === 'live' && !transcribed && (
           /* A one-sided transcript is the most confusing thing this page can
              show without explaining itself: Liner's half alone reads exactly
-             like an assistant holding a conversation with nobody. */
+             like an assistant holding a conversation with nobody. It is only
+             confusing where the transcript is drawn, though, which is here --
+             and this is the panel that named an environment variable at a car
+             buyer, so it belongs on the same side of the flag as the thing it
+             is explaining. */
           <p className="-mt-2 mb-2 text-center text-xs text-muted-foreground">
             Only Liner&apos;s side is written down -- VOICE_TRANSCRIBE is off.
           </p>
         )}
 
-        {lines.length > 0 && (
+        {/* Nobody on a phone call reads a transcript of it. This is a demo and
+            debugging affordance: it is how you see that the buyer's half is
+            arriving at all, and mis-decoded when it is not. */}
+        {diagnostics && lines.length > 0 && (
           <div
             ref={transcript}
             className="scroll-thin mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border bg-background p-3 text-left"
@@ -1120,24 +1164,42 @@ export function Call() {
             place a buyer would ever read it. */}
         {phase !== 'ended' && (
           <p className="mt-3 text-center text-xs text-muted-foreground">
+            {/* Both versions have to answer the one question consent is for --
+                is my voice being recorded -- so this is reworded for the buyer
+                rather than hidden from them. What moves behind the flag is why
+                (`will not mix in the reply` is a fact about MediaRecorder, not
+                about their privacy), never whether. */}
             {phase === 'live' && recording === 'off'
               // Said out loud rather than discovered afterwards on an empty
               // player. A browser that cannot record is a fact about the
               // browser, not a fault in the call.
-              ? 'This browser cannot record audio, so this call is transcript only.'
+              ? diagnostics
+                ? 'This browser cannot record audio, so this call is transcript only.'
+                : 'This browser cannot record audio, so only a written record is kept.'
               : phase === 'live' && recording === 'mic'
-                ? 'Recording your side only -- this browser will not mix in the reply.'
+                ? diagnostics
+                  ? 'Recording your side only -- this browser will not mix in the reply.'
+                  : 'Your side of the call is recorded so the team can follow up accurately.'
                 : 'Calls are recorded so the team can follow up accurately.'}
           </p>
         )}
 
+        {/* A buyer is told the line is not available and pointed at the chat,
+            which is the whole of what they can act on. The deployment's
+            unset variable names are for whoever can set them -- printing
+            `OPENAI_API_KEY` in a warning box on a dealership's own site tells
+            a customer nothing and tells a stranger what we run on. */}
         {missing && (
           <div className="mt-5 rounded-lg bg-warning-muted p-4 text-left">
             <p className="text-sm font-semibold text-warning-foreground">
-              Voice is not configured
+              {diagnostics ? 'Voice is not configured' : 'Calling is not available right now'}
             </p>
-            <p className="mt-1 text-sm text-warning-foreground/90">{missing.detail}</p>
-            {missing.missing.length > 0 && (
+            <p className="mt-1 text-sm text-warning-foreground/90">
+              {diagnostics
+                ? missing.detail
+                : 'You can still get an answer straight away in the chat.'}
+            </p>
+            {diagnostics && missing.missing.length > 0 && (
               <p className="mt-2 text-xs text-warning-foreground/80">
                 Missing:{' '}
                 {missing.missing.map((key) => (
@@ -1148,7 +1210,11 @@ export function Call() {
           </div>
         )}
 
-        {saved && (
+        {/* A byte count, "the browser gave the recorder silence" and a raw API
+            error are status about our own storage. The buyer was told the call
+            is recorded *before* it started, which is the part that is theirs;
+            what became of the file afterwards is ours. */}
+        {diagnostics && saved && (
           <p className="mt-3 text-center text-xs text-muted-foreground">{saved}</p>
         )}
 

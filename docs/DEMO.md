@@ -552,6 +552,60 @@ back.
 
 ---
 
+## Step 6 — Putting the chat on their own website
+
+The assistant goes on a dealer's site as an iframe of the real `/chat`, which
+is the same thing their storefront here already does. One line:
+
+```html
+<iframe src="https://linerai.us/alsbou/chat?embed=1"
+        style="border:0;width:400px;height:620px"
+        title="Chat with us"></iframe>
+```
+
+**The store slug is not optional.** `/chat` without `/alsbou` loads the
+*default* store's assistant, so their buyer is answered out of another
+dealership's inventory — and from their page it looks completely normal. That
+exact bug reached a real deployment once already.
+
+Nothing about CORS needs configuring, and that is worth knowing rather than
+discovering: the iframe loads *our* document, so every request it makes is
+same-origin and our backend never sees their domain on any API call. It also
+means no third-party cookie is involved — the conversation id lives in
+`localStorage`, which browsers partition per *(their site × our origin)*, so a
+visitor's thread is scoped to the dealer site they are on and is not shared
+with our own storefront. That is the isolation you want, and it is free.
+
+Three things to set or check:
+
+- **`embed_origins:` in their profile.** Until it names their site, the page
+  refuses to be framed anywhere but here — `frame-ancestors 'self'`, and the
+  browser renders a blank frame. Both spellings of the host (`www` and the
+  apex), because a dealer serves pages from both and an embed that works on
+  one and is blank on the other is the worst way for this to fail. Apply it
+  with a restart; `make smoke` asserts it against a real build.
+- **A CSP on *their* side**, if they have one, needs `frame-src
+  https://linerai.us`. Dealer platforms usually do not set one, but it is the
+  first thing to check if the frame comes up empty.
+- **`allow="microphone"`** on the iframe, and only if `CALLING=true`.
+  Without it the Call button inside the frame fails silently.
+
+**What we do not have is a drop-in bubble.** A bare iframe is a rectangle in
+their page layout, not a corner button that opens a panel — fine for a test
+they drop into a page they control, not the thing to promise on a call. The
+corner bubble on their own site would be a small loader script served from
+our origin, and it is worth writing the day a dealer says yes rather than to
+get one test in front of them.
+
+**The ceilings are what stands between a public embed and their model bill.**
+`/chat` is public by design, so once it is on a live site a script can post to
+it; `chat_max_*` in `backend/app/config.py` are sized so a real dealership
+never meets them. `frame-ancestors` is a *browser* control and does not touch
+that case at all — anyone can post straight to the endpoint — so the two are
+not substitutes for each other.
+
+---
+
 ## What stays unavailable, and says so
 
 Nothing below is a bug. Each reports itself rather than simulating a result,
