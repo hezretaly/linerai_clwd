@@ -51,10 +51,15 @@ const CHANNEL_ICON: Record<string, IconName> = {
   sms: 'chat',
 }
 
-type Tab = 'campaigns' | 'mailbox'
+type Tab = 'mailbox' | 'campaigns'
 
+/* The mailbox is first and it is what opens, because it is the daily work:
+ * mail arriving is the one thing on this dashboard nobody clicked for, and a
+ * rep comes here to read it far more often than to start a campaign. Writing
+ * to forty people is a decision somebody makes now and then; answering the
+ * buyer who wrote this morning is the job. */
 export function CampaignsPage() {
-  const [tab, setTab] = useState<Tab>('campaigns')
+  const [tab, setTab] = useState<Tab>('mailbox')
 
   const { data, isLoading } = useQuery({
     queryKey: ['campaigns'],
@@ -67,13 +72,20 @@ export function CampaignsPage() {
 
   return (
     <main className="p-4 md:p-6">
+      {/* One heading, following the tab. The mailbox renders its own when it
+          is the whole page, which it no longer is anywhere -- two stacked
+          headings on the screen somebody lands on reads as a broken layout. */}
       <PageIntro
-        title="Campaigns"
-        subtitle="Going back to buyers who already talked to you, and the mail that comes with it."
+        title={tab === 'mailbox' ? 'Mail' : 'Campaigns'}
+        subtitle={
+          tab === 'mailbox'
+            ? 'Everything sent and received. Out through Resend, back through Cloudflare.'
+            : 'Going back to buyers who already talked to you, and the mail that comes with it.'
+        }
       />
 
       <div className="mb-6 flex flex-wrap gap-1.5">
-        {([['campaigns', 'Campaigns'], ['mailbox', 'Mailbox']] as [Tab, string][]).map(
+        {([['mailbox', 'Mailbox'], ['campaigns', 'Campaigns']] as [Tab, string][]).map(
           ([key, label]) => (
             <button
               key={key}
@@ -93,9 +105,9 @@ export function CampaignsPage() {
 
       {tab === 'mailbox' ? (
         // The whole mailbox, unchanged -- it is a section here rather than a
-        // page of its own. Its own PageIntro renders below this one, which is
-        // the honest seam: the two are different things sharing a route.
-        <EmailSetupPage />
+        // page of its own, so the heading above stands in for the one it
+        // would draw.
+        <EmailSetupPage heading={false} />
       ) : isLoading || !data ? (
         <Spinner />
       ) : (

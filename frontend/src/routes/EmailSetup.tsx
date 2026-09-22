@@ -186,7 +186,11 @@ const OUTCOME_TONE: Record<string, string> = {
   malformed: 'border-destructive/30 bg-destructive/10 text-destructive',
 }
 
-export function EmailSetupPage() {
+/** `heading` is false where this is a *section* rather than the page -- which
+ * is everywhere now, since `/app/email` redirects and Campaigns is the only
+ * caller. It renders its own `PageIntro` otherwise, and two stacked headings
+ * on the screen somebody lands on reads as a page that failed to lay out. */
+export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
   const queryClient = useQueryClient()
   const [to, setTo] = useState('')
   const [target, setTarget] = useState('')
@@ -285,10 +289,12 @@ export function EmailSetupPage() {
 
   return (
     <main className="p-4 md:p-6">
-      <PageIntro
-        title="Email"
-        subtitle="Everything sent and received. Out through Resend, back through Cloudflare."
-      />
+      {heading && (
+        <PageIntro
+          title="Email"
+          subtitle="Everything sent and received. Out through Resend, back through Cloudflare."
+        />
+      )}
 
       {/* ---- who this dealership is talking to ----
           The list below is messages, which is what you want when hunting a

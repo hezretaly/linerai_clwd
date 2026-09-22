@@ -28,10 +28,12 @@ const NAV = [
   // dashboard's word for something going wrong.
   { to: '/app/conversations', label: 'Conversations', icon: 'inbox', group: 'Today',
     badge: 'conversations', tone: 'primary' },
-  // Going back to buyers who already talked to this dealership, and the
-  // mailbox that carries it. Under Today because reading the mail is daily
-  // work; the campaigns half is the reason to write in the first place.
-  { to: '/app/campaigns', label: 'Campaigns', icon: 'mail', group: 'Today',
+  // The mailbox, and under it the campaigns that are a reason to write. Under
+  // Today because reading the mail is daily work -- and labelled for the
+  // mailbox, which is the tab that opens: a nav item saying Campaigns over a
+  // page that lands on the inbox is a control that does not say what it does.
+  // The route stays /app/campaigns, so every bookmark and link still works.
+  { to: '/app/campaigns', label: 'Mail', icon: 'mail', group: 'Today',
     badge: null, tone: 'muted' },
   { to: '/app/calendar', label: 'Calendar', icon: 'calendar', group: 'Today',
     badge: 'appointments', tone: 'muted' },
