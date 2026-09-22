@@ -2221,7 +2221,7 @@ def main() -> int:
           landed.get("matched_by") == "reply_token", str(landed.get("matched_by")))
 
     print("\n== one mailbox per dealership, and mail to it lands in that store ==")
-    # `alsboucars@linerai.us` is Alsbou's, declared in its profile, and the
+    # `alsbou@linerai.us` is Alsbou's, declared in its profile, and the
     # Worker posts to one URL with no store in the path -- so the envelope is
     # what routes a delivery on a host serving several dealerships. Without
     # this every dealership's mail landed in whichever store `DEALERSHIP=`
@@ -2230,8 +2230,13 @@ def main() -> int:
     from app.db import SessionLocal as _Store2
     from app.models import InboundEmail as _Inbound, Lead as _Lead2, Outreach as _Sent
     boxes = _boxes.mailboxes()
+    # Alsbou's is *written in* rather than derived -- the derivation off
+    # `alsboucars.com` would give `alsboucars`, and the entry their mail is
+    # kept by at Cloudflare says `alsbou@`. Those two being the same string is
+    # the whole routing, so the shorter one is asserted by name here and the
+    # agreement with the Worker's list is asserted further down.
     check("every seeded dealership with a website declares a mailbox",
-          "alsboucars" in boxes and boxes["alsboucars"] == "alsbou", str(boxes))
+          "alsbou" in boxes and boxes["alsbou"] == "alsbou", str(boxes))
     check("the fixture, which has no website, declares none",
           "" not in boxes and _boxes.mailbox_for("") == "", str(boxes))
     # Two profiles naming one mailbox would route by slug order, silently.
@@ -2330,7 +2335,7 @@ def main() -> int:
     routed_id = f"<worker-{run}-routed@outlook.com>"
     routed_from = f"alsbou.buyer.{run}@example.invalid"
     inbound(worker_payload(
-        messageId=routed_id, to="alsboucars@linerai.us", conversationId="",
+        messageId=routed_id, to="alsbou@linerai.us", conversationId="",
         subject="Is the Q7 still available?", **{"from": routed_from, "fromAddress": routed_from},
     ), path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
     filed = None
@@ -2411,7 +2416,7 @@ def main() -> int:
     finally:
         _cfg2.sending_domain = kept_domain
     check("a dealership's mail goes out from its own mailbox on the shared domain",
-          "<alsboucars@linerai.us>" in alsbou_from and "Alsbou" in alsbou_from, alsbou_from)
+          "<alsbou@linerai.us>" in alsbou_from and "Alsbou" in alsbou_from, alsbou_from)
     check("and the fixture, with no mailbox, keeps the deployment's sales@",
           "<sales@linerai.us>" in default_from, default_from)
 
@@ -5426,7 +5431,7 @@ def main() -> int:
                 _adb.commit()
                 their_envelope = _In(
                     outcome="accepted", message_id=f"<alsbou-waits-{stamp}@mail>",
-                    from_address=theirs_buyer.email, to_address="alsboucars@linerai.us",
+                    from_address=theirs_buyer.email, to_address="alsbou@linerai.us",
                     subject="Q7", body="Is it still there?", lead_id=theirs_buyer.id,
                 )
                 their_note = _Sent(

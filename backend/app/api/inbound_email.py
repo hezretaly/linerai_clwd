@@ -235,7 +235,7 @@ async def receive(
 
     # **Which dealership this is for.** The Worker posts to one URL with no
     # store in the path, so on a host serving several dealerships the
-    # envelope decides: `alsboucars@` is Alsbou's mailbox and `reply+<token>@`
+    # envelope decides: `alsbou@` is Alsbou's mailbox and `reply+<token>@`
     # was minted by exactly one store's send. Everything else stays with the
     # default store, which is what it always was. The request's own session
     # is the default store's, so a routed delivery opens the right one here

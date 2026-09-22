@@ -46,7 +46,7 @@ def drain(*, provider=None) -> list[dict]:
 
     done: list[dict] = []
     # **Every store, not only the default one.** A reply is queued in the
-    # store the envelope routed to -- `alsboucars@` fills Alsbou's queue --
+    # store the envelope routed to -- `alsbou@` fills Alsbou's queue --
     # and a drainer that opened only the default store's file left every
     # other dealership's replies due for ever. The default store is walked
     # first and by its own name, because `known_stores()` lists the profiles

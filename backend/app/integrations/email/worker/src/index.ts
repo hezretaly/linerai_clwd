@@ -36,6 +36,17 @@ interface Env {
  *
  * Overridable with ALLOWED_RECIPIENTS so a third person is a `wrangler
  * secret`/var away rather than a code change and a redeploy.
+ *
+ * **The var WINS over this list when it is set, and wrangler.jsonc sets it.**
+ * So editing the constant on a deployment whose var is set changes nothing:
+ * the mail is still dropped, still with a console.log and still with no
+ * receipt on our side, which is the one failure mode that looks exactly like
+ * nobody having written. Add a new mailbox to ALLOWED_RECIPIENTS in
+ * wrangler.jsonc, not here -- this list is Liner's own addresses, which every
+ * deployment publishes, while a dealership's mailbox belongs to one host.
+ * `make smoke` pins both halves: every published address of ours is in here,
+ * every profile's `mailbox:` is in the var, and the var carries everything
+ * this list does so setting it cannot silently drop `founder@`.
  */
 const DEFAULT_PREFIXES = [
 	"support@",

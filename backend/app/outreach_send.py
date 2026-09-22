@@ -74,7 +74,7 @@ def dealership_from(db: Session, sender: EmailSender) -> str:
 
     The address is the dealership's own mailbox on the deployment's verified
     domain and the name is the dealership's own, read from the row -- `Craig
-    and Landreth Cars <craigsbestcars@linerai.us>`, the shape every product's
+    and Landreth Cars <craigandlandreth@linerai.us>`, the shape every product's
     transactional mail uses. A dealership with no mailbox in its profile
     (the fixture) sends from `SENDING_FROM`, or `sales@` on the domain.
 

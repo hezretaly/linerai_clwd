@@ -314,14 +314,17 @@ _MAILBOX_RE = re.compile(r"^(?!reply$)[a-z0-9][a-z0-9._-]{0,63}$")
 
 def mailbox() -> str:
     """The dealership's own mailbox on the shared sending domain -- the local
-    part only. `alsboucars` for `alsboucars@linerai.us`.
+    part only. `alsbou` for `alsbou@linerai.us`.
 
     From the profile's `mailbox:` when it says, else the host of their
     `website_url` with `www.` and the last label dropped: `alsboucars.com`
-    becomes `alsboucars`. A dealership can be given a different name
-    (`craigsbestcars` for craigandlandrethcars.com) by writing it in. A
-    profile with neither -- the fixture -- gets "", and the deployment's
-    `SENDING_FROM` / `sales@` stands in, exactly as before.
+    becomes `alsboucars`. A dealership can be given a shorter or different
+    name by writing it in -- Alsbou's profile says `mailbox: alsbou`, which
+    is what their entry in the Worker's recipient list carries, and **those
+    two have to be the same string or the mail is dropped in Cloudflare with
+    no receipt anywhere.** A profile with neither -- the fixture -- gets "",
+    and the deployment's `SENDING_FROM` / `sales@` stands in, exactly as
+    before.
     """
     stated = str(_top("mailbox") or "").strip().lower()
     if stated:

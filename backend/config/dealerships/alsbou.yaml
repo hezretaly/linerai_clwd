@@ -21,9 +21,12 @@ phone: (951) 366-4755
 website_url: "https://www.alsboucars.com/"
 # Their mailbox on Liner's sending domain -- the local part of the
 # address their buyers write to and their mail goes out from:
-# `alsboucars@<SENDING_DOMAIN>`. Mail arriving for it is filed in this store.
-# Left out, it is derived from the website's host without its last label.
-mailbox: alsboucars
+# `alsbou@<SENDING_DOMAIN>`. Mail arriving for it is filed in this store.
+# Left out, it is derived from the website's host without its last label,
+# which would give `alsboucars`; the shorter one is written in because it is
+# what the Worker's recipient list carries, and **those two have to be the
+# same string or the mail is dropped in Cloudflare with no receipt anywhere.**
+mailbox: alsbou
 
 # Mon-Sat 10-8, Sun 10-6. Open seven days, so there is no `null` here -- and
 # Sunday's earlier close is kept exact rather than rounded into the others,

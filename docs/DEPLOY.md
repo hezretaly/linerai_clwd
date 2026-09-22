@@ -793,7 +793,7 @@ DEALERSHIP=<slug> make seed-demo         # optional demo buyers
 
 And give their mailbox to the Cloudflare Worker, or their mail is dropped at
 the edge before it reaches us: add `<mailbox>@` (the profile's `mailbox:`,
-e.g. `alsboucars@`) to `ALLOWED_RECIPIENTS` in
+e.g. `alsbou@`) to `ALLOWED_RECIPIENTS` in
 `backend/app/integrations/email/worker/wrangler.jsonc` and run
 `wrangler deploy`. `make smoke` fails on a profile whose mailbox is missing
 from that list.

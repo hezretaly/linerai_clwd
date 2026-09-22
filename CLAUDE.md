@@ -42,7 +42,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make ingest` | **Crawl the dealership's own site, every step narrated.** `ARGS=--publish` applies it |
-| `make mail-check` | **Why a message to one of our addresses did not arrive**: `TO=alsboucars@linerai.us`. Which store that mailbox routes to, whether it is seeded, whether this checkout's Worker would keep it, and every receipt for it across every store. *No receipt at all* is the answer that matters — it means Cloudflare or the Worker, not this app |
+| `make mail-check` | **Why a message to one of our addresses did not arrive**: `TO=alsbou@linerai.us`. Which store that mailbox routes to, whether it is seeded, whether this checkout's Worker would keep it, and every receipt for it across every store. *No receipt at all* is the answer that matters — it means Cloudflare or the Worker, not this app |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
 | `make build` | Build the frontend into `frontend/dist` (the API serves it in production) |
@@ -1795,8 +1795,8 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       that routes an answer back into the buyer's timeline — not a header a
       rep's own address may take over.
   - **One mailbox per dealership on the shared domain, and the envelope
-    routes the mail.** `alsboucars@linerai.us` is Alsbou's and
-    `craigsbestcars@linerai.us` is Craig and Landreth's: the `mailbox:` in
+    routes the mail.** `alsbou@linerai.us` is Alsbou's and
+    `craigandlandreth@linerai.us` is Craig and Landreth's: the `mailbox:` in
     each profile (derived from the website's host when it is not written
     in; the fixture, with no site, has none and keeps `sales@`). The
     provider verifies the domain, so every mailbox on it sends on one key

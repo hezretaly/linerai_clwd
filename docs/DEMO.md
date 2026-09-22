@@ -247,11 +247,13 @@ Five things, and each breaks differently:
   the `Reply-To: reply+<token>@` that routes a buyer's answer back into their
   timeline.
 - **Each dealership has its own mailbox on that domain, from its profile.**
-  `mailbox: alsboucars` in `alsbou.yaml` makes Alsbou's mail go out as
-  `Alsbou Motors <alsboucars@linerai.us>`, and mail *to* that address is
-  filed in Alsbou's store — `craigsbestcars@linerai.us` likewise for Craig
+  `mailbox: alsbou` in `alsbou.yaml` makes Alsbou's mail go out as
+  `Alsbou Motors <alsbou@linerai.us>`, and mail *to* that address is
+  filed in Alsbou's store — `craigandlandreth@linerai.us` likewise for Craig
   and Landreth. Left out, the local part is the website's host without its
-  last label (`alsboucars.com` → `alsboucars`). The provider verifies the
+  last label (`alsboucars.com` → `alsboucars`), which is exactly why Alsbou's
+  is written in: the shorter `alsbou` is what the Worker's list carries, and
+  the two have to be the same string. The provider verifies the
   domain, so every mailbox on it sends on the one key: a new dealership is
   a line in its profile, **plus** an entry in the Worker's
   `ALLOWED_RECIPIENTS` in `wrangler.jsonc` and a `wrangler deploy`, or
@@ -260,8 +262,8 @@ Five things, and each breaks differently:
   - **No new Cloudflare rule per dealership**, as long as the catch-all
     route to the Worker is in place — and it has to be anyway, because
     `reply+<token>@` addresses are minted per send and cannot be enumerated
-    as rules. So the catch-all already carries `alsboucars@` and
-    `craigsbestcars@` to the Worker; what decides whether they are *kept* is
+    as rules. So the catch-all already carries `alsbou@` and
+    `craigandlandreth@` to the Worker; what decides whether they are *kept* is
     `ALLOWED_RECIPIENTS`, which is a Worker deploy and not a dashboard edit.
     That filter runs before any receipt is written, so an address missing
     from it leaves no trace anywhere — the `founder@` failure, one

@@ -26,7 +26,7 @@ SENDING_DOMAIN=linerai.us
 # Optional, and an address rather than a header -- a display name written
 # here is dropped, because the name is served per realm (the dealership's own
 # for its buyers, "Liner" for /ops). It is the fallback for a dealership with
-# no `mailbox:` in its profile; one that has (alsboucars@) sends from that.
+# no `mailbox:` in its profile; one that has (alsbou@) sends from that.
 # Never support@: `is_ours` routes anything addressed there into /ops.
 SENDING_FROM=sales@linerai.us
 

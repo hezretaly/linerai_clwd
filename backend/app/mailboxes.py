@@ -1,7 +1,7 @@
 """Which dealership an email is for, on a host that serves several.
 
-One sending domain, one mailbox per dealership: `alsboucars@linerai.us`
-writes to Alsbou, `craigsbestcars@linerai.us` to Craig and Landreth. The
+One sending domain, one mailbox per dealership: `alsbou@linerai.us`
+writes to Alsbou, `craigandlandreth@linerai.us` to Craig and Landreth. The
 provider verifies the *domain*, so every mailbox on it is legal to send from
 on one key -- the same fact that lets `founder@` and `cto@` share it -- and a
 new dealership is a line in its profile, not a new credential.
@@ -67,7 +67,7 @@ def using(slug: str) -> Iterator[None]:
 
 
 def local_part(address: str) -> str:
-    """`Name <alsboucars@linerai.us>` -> `alsboucars`."""
+    """`Name <alsbou@linerai.us>` -> `alsbou`."""
     bare = (address or "").strip()
     if "<" in bare and ">" in bare:
         bare = bare[bare.index("<") + 1:bare.index(">")]

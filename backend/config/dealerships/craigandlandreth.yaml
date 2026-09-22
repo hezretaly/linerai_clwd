@@ -20,9 +20,12 @@ phone: 502-447-3450
 website_url: "https://www.craigandlandrethcars.com/"
 # Their mailbox on Liner's sending domain -- the local part of the
 # address their buyers write to and their mail goes out from:
-# `craigsbestcars@<SENDING_DOMAIN>`. Mail arriving for it is filed in this store.
-# Left out, it is derived from the website's host without its last label.
-mailbox: craigsbestcars
+# `craigandlandreth@<SENDING_DOMAIN>`. Mail arriving for it is filed in this
+# store. Left out, it is derived from the website's host without its last
+# label, which would give `craigandlandrethcars`; this is written in because it
+# is what the Worker's recipient list carries, and **those two have to be the
+# same string or the mail is dropped in Cloudflare with no receipt anywhere.**
+mailbox: craigandlandreth
 
 # From the "Our Hours" table on their own home page. Note Friday and Saturday
 # close an hour earlier than Mon-Thu -- worth keeping exact rather than

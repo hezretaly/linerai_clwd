@@ -87,7 +87,7 @@ class EmailSender:
 
         **Two realms, two mailboxes, and the split is not cosmetic.** A
         dealership's buyer mail goes out from its own mailbox on the sending
-        domain -- `alsboucars@`, from its profile -- or from `sales@` when
+        domain -- `alsbou@`, from its profile -- or from `sales@` when
         it has none; Liner's own support replies go out from `support@`. It
         was `support@` for both, and the
         cost was a real misroute rather than an odd-looking header: `is_ours`
@@ -117,7 +117,7 @@ class EmailSender:
         # dealerships one `SENDING_FROM` cannot be right for all of them, and
         # `sales@` on the shared domain would put every store's buyer mail in
         # one envelope with no way to route the answer back. The profile's
-        # mailbox (`alsboucars@linerai.us`) is that store's, and the intake
+        # mailbox (`alsbou@linerai.us`) is that store's, and the intake
         # routes mail to it into that store. A profile with none -- the
         # fixture -- falls through to what the deployment configured.
         from app import profile

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Why a message sent to one of our addresses did not arrive.
 
-    make mail-check TO=alsboucars@linerai.us
+    make mail-check TO=alsbou@linerai.us
 
 **Sending breaks loudly and receiving breaks silently.** A send quotes the
 provider's own error on the next attempt; a delivery that never arrives looks
@@ -83,7 +83,7 @@ def receipts(address: str) -> list[tuple[str, InboundEmail]]:
 def main() -> int:
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         print(__doc__)
-        print("Usage: make mail-check TO=alsboucars@linerai.us")
+        print("Usage: make mail-check TO=alsbou@linerai.us")
         return 2
     address = sys.argv[1].strip().lower()
     local = address.partition("@")[0]
