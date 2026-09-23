@@ -28,6 +28,25 @@ interface VehicleCardData {
    *  Derived server-side, so the card can only ever offer a link the tool
    *  result carried -- the same rule the booking card follows. */
   inquiry_url?: string
+  /** The dealer's own vehicle history report -- a Carfax link, in every
+   *  export so far. Nothing here can fetch it, but the buyer's browser can, so
+   *  the link is the answer to "is there a Carfax?". */
+  history_url?: string
+}
+
+/** The card a finance application arrives as. The server names it and the
+ *  browser builds the link: through the counted hop, so the overview's Credit
+ *  applications card sees a press from the chat as it sees one from the
+ *  storefront, and never a URL a model was shown. */
+const FINANCE_CARD = 'credit_application'
+
+function financeHref(): string {
+  return withStore('/r/site/credit-application?from=chat')
+}
+
+/** "Carfax report" where it is one, and nothing claimed where it is not. */
+function historyLabel(url: string): string {
+  return /carfax\./i.test(url) ? 'Carfax report' : 'History report'
 }
 
 /** The transcript is one ordered list, and a card is an entry in it.
@@ -49,6 +68,7 @@ type Item =
   | { kind: 'vehicles'; id: string; vehicles: VehicleCardData[] }
   | { kind: 'booking'; id: string; data: BookingCardData }
   | { kind: 'details'; id: string; data: DetailsCardData }
+  | { kind: 'finance'; id: string }
 
 interface ChatMessage {
   id: string
@@ -368,6 +388,8 @@ export function Chat() {
             ...prev,
             { kind: 'details', id: `details-${Date.now()}`, data: data as unknown as DetailsCardData },
           ])
+        } else if (event === 'finance') {
+          setItems((prev) => [...prev, { kind: 'finance', id: `finance-${Date.now()}` }])
         } else if (event === 'rails') {
           setRails(data.rails as Rail[])
         }
@@ -532,6 +554,18 @@ export function Chat() {
                       {linkTarget && (
                         <p className="mt-0.5 text-xs font-medium text-primary">See this car ›</p>
                       )}
+                      {/* Above the card-wide link, like the enquiry link: a
+                          separate anchor on its own layer, never nested. */}
+                      {vehicle.history_url && (
+                        <a
+                          href={vehicle.history_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="relative z-10 mt-0.5 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline"
+                        >
+                          {historyLabel(vehicle.history_url)} ›
+                        </a>
+                      )}
                       {/* No options line. The card is the car's name, price,
                           mileage and where it is -- three lines of the
                           dealer's hundred-line options block under every
@@ -540,6 +574,28 @@ export function Chat() {
                     </div>
                   </article>
                 ))}
+              </div>
+            )
+          }
+
+          if (item.kind === 'finance') {
+            return (
+              <div key={item.id} className="flex justify-start">
+                <div className="max-w-[80%] rounded-2xl border border-border bg-card p-3 animate-fade-up">
+                  <p className="text-sm font-semibold">Finance application</p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    A few minutes, on the dealership's own secure page. Nothing is decided by
+                    filling it in.
+                  </p>
+                  <a
+                    href={financeHref()}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                  >
+                    Start the application
+                  </a>
+                </div>
               </div>
             )
           }
@@ -700,6 +756,11 @@ async function resume(
       .flatMap((c) => vehiclesFrom(c.result))
     if (shown.length > 0) {
       rebuilt = withVehicles(rebuilt, `cars-${message.id}`, shown.slice(0, 3))
+    }
+    // The finance button comes back where it was offered. Unlike a slot
+    // list it does not go stale: the link is read from the setting on press.
+    if (message.tool_calls.some((c) => c.result?.card === FINANCE_CARD)) {
+      rebuilt.push({ kind: 'finance', id: `finance-${message.id}` })
     }
   }
   // Times are not replayed from the transcript -- the server looked them up

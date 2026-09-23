@@ -359,6 +359,17 @@ TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "offer_credit_application",
+        "description": (
+            "Put the dealership's own finance application on the buyer's screen as a "
+            "button. Use it whenever they bring up financing, payments, credit or "
+            "getting approved: applying before the visit is the next best thing to "
+            "booking one. Say one line about why it helps -- nothing is decided by "
+            "filling it in -- and stop."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "escalate_to_human",
         "description": (
             "Stop and hand the conversation to a person. Use for out-the-door price "
@@ -402,6 +413,16 @@ def inquiry_url(v: Vehicle) -> str:
         return ""
     joiner = "&" if "?" in v.listing_url else "?"
     return f"{v.listing_url}{joiner}{INQUIRY_QUERY}"
+
+
+def history_url(raw: dict) -> str:
+    """The car's history report link, only where it is an https URL.
+
+    It lands in an `href` on a buyer's screen and comes from a file a dealer
+    edits, so the rule is the one `showroom._https` applies to the same field.
+    """
+    url = str(raw.get("vehicle_history_url") or "").strip()
+    return url if url.startswith("https://") else ""
 
 
 def home_location(db: Session) -> str:
@@ -464,6 +485,15 @@ def _vehicle_payload(v: Vehicle, home: str = "", full: bool = True) -> dict:
                 "Say so before offering a time, and check with a person that it can "
                 "be seen there."
             )
+    # The dealer's own vehicle history report -- a Carfax link, in every export
+    # seen so far. We cannot fetch it (their provider will not serve a server),
+    # but the buyer's browser can, so the link *is* the answer to "is there a
+    # Carfax?": it goes on the car's card and the prompt says to point at it
+    # rather than hand the question to a colleague. On a search too, because
+    # it is one short string and the history question arrives about any car.
+    history = history_url(raw)
+    if history:
+        payload["history_url"] = history
     link = inquiry_url(v)
     if link:
         payload["inquiry_url"] = link
@@ -1666,8 +1696,71 @@ def lookup_knowledge(db: Session, question: str) -> KnowledgeEntry | None:
     return best if best_score >= 3.0 else None
 
 
+#: What the details and booking cards are for a finance application: the
+#: result names the card, and the browser draws the button. The stream, the
+#: rehydrate and `buyer_tool_calls` all key on this, never on the tool's name,
+#: for the reason a details card is keyed on `fields`.
+CREDIT_CARD = "credit_application"
+
+
+def offer_credit_application(db: Session, convo: Conversation, args: dict) -> dict:
+    """The dealership's finance application, as a button on the buyer's screen.
+
+    **It was the one thing the assistant was told it could not do.** The link
+    is a setting, the storefront already counts presses on it, and a buyer who
+    asks about payments at nine at night is exactly who should be starting it
+    -- but the prompt said "cannot send the credit application" and escalated,
+    so the answer arrived the next morning, from a rep, as an email.
+
+    In chat the result carries no URL at all, only the card: the browser draws
+    a button through `/r/site/credit-application`, which counts the press and
+    forwards to the configured page. A model that is never shown the address
+    cannot paste a mistyped one into a sentence. By email the link has to be in
+    the words, so it is handed over -- the counted hop where this deployment
+    knows its own public address, the dealer's page where it does not.
+    """
+    from app.api.redirect import site_hop
+    from app.api.settings import live_settings
+    from app.config import settings as app_settings
+
+    url = (live_settings(db).credit_application_url or "").strip()
+    if not url:
+        return {
+            "available": False,
+            "guidance": (
+                "This dealership has not set up an online finance application. Say a "
+                "colleague will go through financing with them, and escalate_to_human "
+                "with rule_key financing_trouble -- never invent a link."
+            ),
+        }
+    if convo.channel == "voice":
+        return {
+            "available": False,
+            "guidance": (
+                "There is nothing to press on a call. Say the finance application is on "
+                "the dealership's website, and never read a URL out."
+            ),
+        }
+    if convo.channel == "email":
+        base = (app_settings.public_base_url or "").rstrip("/")
+        return {
+            "available": True,
+            "link": f"{base}{site_hop(CREDIT_CARD)}" if base else url,
+            "guidance": "Put this link in your reply, on a line of its own.",
+        }
+    return {
+        "available": True,
+        "card": CREDIT_CARD,
+        "guidance": (
+            "A button for their finance application is on the buyer's screen, under "
+            "your reply. Point at it in one line; do not write a URL."
+        ),
+    }
+
+
 EXECUTORS = {
     "answer_from_knowledge": answer_from_knowledge,
+    "offer_credit_application": offer_credit_application,
     "search_inventory": search_inventory,
     "get_vehicle": get_vehicle,
     "check_availability": check_availability,

@@ -678,6 +678,20 @@ def main() -> int:
         check("the rules say a car's own history write-up is given, not refused",
               "A CAR'S HISTORY IS YOURS TO GIVE" in written
               and "for a car whose record carries none" in written)
+        # **A Carfax is a link, and the application is a button.** Both were
+        # handed to a colleague: the history report because nothing could
+        # fetch it, the application because the rules said Liner "cannot send"
+        # it -- so a buyer asking at nine at night got their answer from a rep
+        # the next morning. The link is on the car's card and the application
+        # is a tool, and the rules have to say so or the model escalates anyway.
+        check("the rules point at a car's history link rather than escalating it",
+              "A CARFAX IS A LINK" in written and "history_url" in written)
+        check("and the finance application is an objective with its own tool",
+              "Start their finance application" in written
+              and "offer_credit_application" in written
+              and "cannot send the credit application" not in written)
+        check("and a price only a person gives asks for a way to reach them",
+              "A PERSON'S NUMBER" in written and "Out-the-door" in written)
         # And the form is the contact form. "Details" is what the model kept
         # calling it -- "leave your details", "the details form" -- which is
         # the one word that does not say what it is for.
@@ -710,7 +724,7 @@ def main() -> int:
         # application or shoot a walkaround, and every one of those is a
         # promise nobody here can keep.
         for label, prompt in (("a chat", written), ("a call", spoken)):
-            for lacks in ("cannot text", "cannot shoot a", "cannot send the",
+            for lacks in ("cannot text", "cannot shoot a", "cannot produce a Carfax",
                           "cannot promise to follow up later"):
                 check(f"{label}: {lacks!r} is refused rather than left open",
                       lacks in prompt)

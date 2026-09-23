@@ -206,9 +206,10 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **A capability this system lacks is refused, not merely unmentioned.**
     These used to answer the method where it asked for them; nothing asks now,
     which makes them matter more rather than less. A model with no instruction
-    will happily offer to text a buyer, send them the credit application, shoot
-    a walkaround video or promise to follow up next week, and every one of
-    those is a promise nobody here can keep.
+    will happily offer to text a buyer, shoot a walkaround video or promise to
+    follow up next week, and every one of those is a promise nobody here can
+    keep. The credit application was on that list and is not any more: it is
+    a tool now (below).
 - **The greeting is already on the buyer's screen, and the prompt has to say
   so.** It is client-side only and never a message row, so the model cannot
   see that anything was said — and the method's own section 1 tells it to
@@ -3191,6 +3192,31 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     takes for a question the record cannot answer. **One car on a lot of 91
     has one**, which is also the honest demo — the contrast between a car
     with a report and a car without is the product working, not a gap.
+- **A Carfax is a link, and the finance application is a button.** Both
+  used to go to a colleague -- the report because nothing here can fetch it,
+  the application because the rules said Liner "cannot send" it -- so a buyer
+  asking at nine at night heard back from a rep next morning. The objectives
+  are now the operator's four: book them, start their application, get a
+  number for anything only a person can answer (out-the-door price, a better
+  number, trade value), and otherwise help.
+  - **`history_url` rides every car result and every chat card.** It is the
+    export's `vehicle_history_url` (`carfax_url` is an alias), https only,
+    and the card reads *Carfax report* where it is one. The rule tells the
+    model to point at it and never escalate it; the provider will not serve
+    this box, but the buyer's browser can open it.
+  - **`offer_credit_application` hands the chat no URL.** Its result names a
+    card and the browser draws a button through `/r/site/credit-application
+    ?from=chat` -- the storefront's counted hop, so the overview's Credit
+    applications card counts a press from the chat like one from the site,
+    filed `source="chat"` (`redirect.SOURCES` is closed). A model never shown
+    the address cannot mistype it into a sentence. By email the link is in
+    the result, because there it has to be in the words; on a call it says
+    the application is on their website. With no link set it draws nothing
+    -- a button leading to a 410 is worse than none.
+  - **The link has a Save button.** It saved on blur and said nothing, so a
+    manager pasting it looked for a way to keep it and found none. It says
+    *Saved to the draft* now, because like every field there it reaches a
+    buyer only once published.
 - **A question the record cannot answer is a lead, not a dead end — and it
   is refused once.** A real transcript: a buyer asked whether a Durango was a
   three-row, was told the listing did not say, pressed twice, and was told

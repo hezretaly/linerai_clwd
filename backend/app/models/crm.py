@@ -489,7 +489,8 @@ class LinkClick(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     #: What was opened. Closed vocabulary in `api/redirect.py`'s `COUNTED`.
     kind: Mapped[str] = mapped_column(String(40), index=True)
-    #: Where the press came from: `website` for the storefront.
+    #: Where the press came from: `website` for the storefront, `chat` for the
+    #: assistant's application button. Closed in `redirect.SOURCES`.
     source: Mapped[str] = mapped_column(String(20), default="website")
     created_at: Mapped[datetime] = created()
 

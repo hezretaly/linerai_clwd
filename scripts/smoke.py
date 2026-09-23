@@ -838,6 +838,19 @@ def main() -> int:
     # kind of lie as inventing one.
     check("the card says why rather than leaving the number unexplained",
           card["unavailable"] and "link" in card["window"], card["window"])
+    # And the assistant draws no button: one leading to a 410 is worse than
+    # none, and the guidance says never to invent a link instead.
+    from types import SimpleNamespace as _NS0
+    from app.agent.tools import offer_credit_application as _offer
+    from app.db import SessionLocal as _NoLinkSession
+    _ndb = _NoLinkSession()
+    try:
+        refused = _offer(_ndb, _NS0(channel="chat"), {})
+    finally:
+        _ndb.close()
+    check("with no link the assistant offers no application button",
+          refused["available"] is False and "card" not in refused
+          and "never invent a link" in refused["guidance"], str(refused)[:100])
 
     call("PATCH", "/api/assistant-settings",
          {"credit_application_url": "https://riverside.example/finance"})
@@ -898,6 +911,51 @@ def main() -> int:
     # wearing the dealership's name.
     check("and a hop for anything but a named kind is a 404, not a forward",
           follow(BASE + "/r/site/https%3A%2F%2Fevil.example")[0] == 404)
+
+    # **The chat's half.** The assistant used to be told it "cannot send the
+    # credit application" and escalated, so a buyer asking about payments at
+    # nine at night heard back from a rep in the morning. It is a tool now,
+    # and in chat its card is a button through this same hop -- counted on
+    # the same card, filed as the chat's.
+    from types import SimpleNamespace as _NS
+    from app.agent import tools as _credit_tools
+    from app.api.chat import buyer_tool_calls as _buyer_calls
+    from app.models import LinkClick as _Click
+    from app.db import SessionLocal as _ChatHopSession
+
+    code, location = follow(BASE + "/r/site/credit-application?from=chat")
+    check("the chat's application button lands on the dealership's application",
+          code == 302 and location == "https://riverside.example/finance",
+          f"{code} -> {location}")
+    _cdb = _ChatHopSession()
+    try:
+        newest = _cdb.query(_Click).order_by(_Click.created_at.desc()).first()
+        check("and the press is filed as the chat's", newest and newest.source == "chat",
+              newest and newest.source)
+        follow(BASE + "/r/site/credit-application?from=anything-at-all")
+        newest = _cdb.query(_Click).order_by(_Click.created_at.desc()).first()
+        check("while a source nobody defined is filed as the website's, never as typed",
+              newest.source == "website", newest.source)
+
+        chat_card = _credit_tools.offer_credit_application(_cdb, _NS(channel="chat"), {})
+        check("in chat the tool draws the button and hands the model no URL",
+              chat_card.get("card") == _credit_tools.CREDIT_CARD
+              and "riverside.example" not in json.dumps(chat_card), str(chat_card)[:120])
+        check("and the buyer's copy of that call is the card's name and nothing else",
+              _buyer_calls([{"name": "offer_credit_application", "result": chat_card}])
+              == [{"name": "offer_credit_application",
+                   "result": {"card": _credit_tools.CREDIT_CARD}}])
+        by_mail = _credit_tools.offer_credit_application(_cdb, _NS(channel="email"), {})
+        check("by email the link is in the result, because it has to be in the words",
+              by_mail.get("available") is True
+              and (by_mail.get("link") == "https://riverside.example/finance"
+                   or by_mail.get("link", "").endswith("/r/site/credit-application")),
+              str(by_mail)[:120])
+        spoken = _credit_tools.offer_credit_application(_cdb, _NS(channel="voice"), {})
+        check("and on a call there is nothing to press, so it says so",
+              spoken["available"] is False and "never read a URL" in spoken["guidance"])
+    finally:
+        _cdb.close()
 
     from app.api import showroom as _showroom_mod
     from app.api.redirect import store_path as _store_path
@@ -6932,6 +6990,23 @@ def main() -> int:
           "never say a URL on a call" in note["no_price_note"])
     check("a priced car carries neither", "no_price_note" not in _payload(1, "", "")
           and "inquiry_url" not in _payload(1, "", ""))
+
+    # **A Carfax is a link.** Their provider will not serve this box, but the
+    # buyer's browser can open it -- so the link is the answer to "is there a
+    # Carfax?", on the car's card, and the question stops going to a colleague.
+    from app.agent.tools import history_url as _history
+    from app.api.chat import buyer_vehicles as _card_of
+    carfax = "https://www.carfax.com/vehiclehistory/ar20/abc"
+    check("a car's history report link reaches the model and the card",
+          _history({"vehicle_history_url": carfax}) == carfax
+          and _card_of([{"vin": "X", "history_url": carfax}])[0].get("history_url") == carfax)
+    check("but only an https link -- it lands in an href on a buyer's screen",
+          _history({"vehicle_history_url": "javascript:alert(1)"}) == ""
+          and _history({"vehicle_history_url": "/carfax"}) == "" and _history({}) == "")
+    check("and the committed Alsbou export carries one for most of its lot",
+          sum(1 for r in csv.DictReader(io.StringIO(pathlib.Path(
+              "backend/fixtures/alsbou/inventory.csv").read_text()))
+              if _history({"vehicle_history_url": r.get("vehicle_history_url")})) > 50)
 
     # Their lot is 240 cars in Louisville and 246 between two other stores, and
     # the appointment Liner books is at the one address in `dealerships`. A note

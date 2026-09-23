@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
@@ -199,20 +199,74 @@ function Behaviour({ data }: { data: SettingsPayload }) {
           to send, so the action on a lead says so rather than mailing an invitation
           to apply nowhere -- and the overview's Credit applications card says the same.
         </p>
-        <input
-          type="url"
-          defaultValue={current.credit_application_url}
-          placeholder="https://..."
-          onBlur={(e) => {
-            const next = e.target.value.trim()
-            if (next !== current.credit_application_url) {
-              patch.mutate({ credit_application_url: next })
-            }
-          }}
-          className="mt-2 h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
+        <CreditLink saved={current.credit_application_url} />
       </div>
     </div>
+  )
+}
+
+/** The finance application link, with a button that says it saved.
+ *
+ *  It used to save on blur and say nothing, so a manager who pasted a link
+ *  and looked for a way to keep it found none -- and whether it had been kept
+ *  was invisible until the assistant did or did not offer the application.
+ *  Saved into the draft like every other field here, which is why the line
+ *  under it says so: a buyer sees it once it is published. */
+function CreditLink({ saved }: { saved: string }) {
+  const queryClient = useQueryClient()
+  const [value, setValue] = useState(saved)
+  const [done, setDone] = useState(false)
+  useEffect(() => setValue(saved), [saved])
+
+  const save = useMutation({
+    mutationFn: (next: string) =>
+      api.patch('/api/assistant-settings', { credit_application_url: next }),
+    onSuccess: () => {
+      setDone(true)
+      queryClient.invalidateQueries({ queryKey: ['assistant-settings'] })
+    },
+  })
+
+  const next = value.trim()
+  const valid = next === '' || /^https:\/\/\S+$/i.test(next)
+  const changed = next !== saved
+
+  return (
+    <form
+      className="mt-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (valid && changed) save.mutate(next)
+      }}
+    >
+      <div className="flex gap-2">
+        <input
+          type="url"
+          aria-label="Credit application link"
+          value={value}
+          placeholder="https://..."
+          onChange={(e) => {
+            setValue(e.target.value)
+            setDone(false)
+          }}
+          className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <Button type="submit" size="sm" disabled={!valid || !changed || save.isPending}>
+          {save.isPending ? 'Saving...' : 'Save'}
+        </Button>
+      </div>
+      {!valid ? (
+        <p className="mt-1.5 text-xs text-destructive">Use a full https:// address.</p>
+      ) : save.isError ? (
+        <p className="mt-1.5 text-xs text-destructive">
+          Not saved: {save.error instanceof Error ? save.error.message : 'the request failed'}
+        </p>
+      ) : done && !changed ? (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          Saved to the draft. Publish to put it in front of buyers.
+        </p>
+      ) : null}
+    </form>
   )
 }
 

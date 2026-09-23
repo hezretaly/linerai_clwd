@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -105,8 +105,13 @@ def site_hop(kind: str) -> str:
     return store_path(f"/r/site/{slug}")
 
 
+#: Where a counted press can come from. Closed, because it is written straight
+#: into a row from a query string anybody can type.
+SOURCES = {"website", "chat"}
+
+
 @router.get("/r/site/{what}")
-def follow_site(what: str) -> RedirectResponse:
+def follow_site(what: str, source: str = Query("website", alias="from")) -> RedirectResponse:
     """A storefront visitor opening the dealer's finance page, counted.
 
     **The website half of Credit applications.** Their Financing banner, nav
@@ -128,7 +133,9 @@ def follow_site(what: str) -> RedirectResponse:
                 "This dealership has not set up its finance application link. "
                 "Call them and they will send it to you.",
             )
-        db.add(LinkClick(kind=kind, source="website"))
+        # The chat's application button comes through here too -- the same
+        # act, so the same card on the overview, told apart by `source`.
+        db.add(LinkClick(kind=kind, source=source if source in SOURCES else "website"))
         db.commit()
         return RedirectResponse(destination, status_code=302)
     finally:

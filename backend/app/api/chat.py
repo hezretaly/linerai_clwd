@@ -180,7 +180,7 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
 #: model's view -- rules, notes, guidance -- and the card is the buyer's.
 BUYER_CAR_KEYS = (
     "vin", "year", "make", "model", "trim", "price", "mileage", "photo_url",
-    "location", "inquiry_url",
+    "location", "inquiry_url", "history_url",
 )
 
 
@@ -224,6 +224,10 @@ def buyer_tool_calls(calls: list[dict]) -> list[dict]:
             # line above them: an escalation's own reason, its id and the
             # model's guidance stay on this side.
             kept = {k: result.get(k) for k in ("fields", "reason", "required") if k in result}
+        elif result.get("card") == tools.CREDIT_CARD:
+            # The finance button: its name and nothing else. The browser builds
+            # the counted link itself, so there is no URL here to leak.
+            kept = {"card": tools.CREDIT_CARD}
         out.append({"name": name, "result": kept})
     return out
 
@@ -389,6 +393,15 @@ async def send_message(
             )
             if asked and asked.get("fields"):
                 yield _sse("details", asked)
+
+            # The finance application button. Drawn only when the tool said
+            # the card is there -- with no link configured it says so instead,
+            # and a button leading to a 410 is worse than none.
+            if any(
+                (call.get("result") or {}).get("card") == tools.CREDIT_CARD
+                for call in payload["tool_calls"]
+            ):
+                yield _sse("finance", {"card": tools.CREDIT_CARD})
 
             session.refresh(convo_local)
             yield _sse("rails", {
