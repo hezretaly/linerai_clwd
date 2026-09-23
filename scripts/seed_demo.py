@@ -51,6 +51,8 @@ from app.models import (  # noqa: E402
     CapturedField,
     Conversation,
     Dealership,
+    EmailAttachment,
+    EmailEnvelope,
     Escalation,
     InboundEmail,
     Lead,
@@ -655,7 +657,175 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
         created_at=now - timedelta(minutes=6),
     ))
     made["vehicle_mentions"] += 1
+
+    # ---- 6. an email the way people actually send one ---------------------
+    # Two people on it, formatting in it and a file attached -- which is what
+    # a real buyer's email is and what every hand-written row above is not.
+    # Without one the reader, Reply all and the attachment list have nothing
+    # to show on a seeded dashboard, and a feature nobody can see on the demo
+    # is one nobody believes exists.
+    for key, value in _full_email(db, now, car, staff(0), buyer).items():
+        made[key] = made.get(key, 0) + value
     db.commit()
+    return made
+
+
+def _demo_pdf(lines: list[str]) -> bytes:
+    """A real one-page PDF, so the attachment opens rather than erroring.
+
+    Written by hand because it is five objects, and a dependency to produce a
+    fixture file is more code than the file. It says on its face that it is a
+    demo document: a fixture that could be mistaken for somebody's real
+    payoff statement is the one kind of fake this codebase refuses.
+    """
+    def esc(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    shown = " ".join(f"({esc(line)}) '" for line in lines)
+    stream = f"BT /F1 12 Tf 16 TL 72 740 Td {shown} ET".encode("latin-1")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    ).encode()
+    return bytes(out)
+
+
+def _full_email(db, now, car, owner, buyer) -> dict[str, int]:
+    """A buyer writes with their partner copied and a document attached,
+    and the rep answers everybody.
+
+    Filed exactly the way the intake files one -- a receipt, the inbound
+    `outreach` row the timeline shows, the envelope on the receipt and the
+    file on disk under the store's folder -- so the reader, the download and
+    Reply all are exercising the real paths rather than a demo shortcut.
+    """
+    from app import email_addresses, email_files
+    from app.email_html import text_from_html
+    from app.integrations.registry import get_email_sender
+    from app.db import active_store
+
+    made = {"leads": 0, "outreach": 0, "inbound_emails": 0, "conversations": 0, "messages": 0}
+    mailbox = get_email_sender().default_address("dealership")
+    renee = email_addresses.Recipient("Renee Castillo", "renee.castillo@example.invalid")
+    marco = email_addresses.Recipient("Marco Castillo", "marco.castillo@example.invalid")
+    lead = buyer(renee.name, renee.address, "+15550100206", "email", now - timedelta(hours=5), owner)
+    made["leads"] += 1
+    model = f"{car.year} {car.make} {car.model}"
+
+    arrived = now - timedelta(hours=4, minutes=40)
+    html = (
+        "<p>Hi,</p>"
+        f"<p>My husband Marco (copied) and I are interested in the <b>{model}</b> "
+        "and would like to trade in our current car. A few things before we come in:</p>"
+        "<ul>"
+        "<li>Can you give us a rough idea of the trade-in process?</li>"
+        "<li>We still owe on it -- the lender's payoff letter is <b>attached</b>.</li>"
+        "<li>Is a weekday evening possible for a test drive?</li>"
+        "</ul>"
+        "<p>Thanks,<br>Renee Castillo<br>+1 555 010 0206</p>"
+    )
+    text = text_from_html(html)
+    message_id = f"<renee-trade-{lead.id[:8]}@example.invalid>"
+    received = Outreach(
+        lead_id=lead.id, channel="email", direction="in", kind="reply",
+        to_address=renee.address, subject=f"Trade-in and the {car.make} {car.model}",
+        body=text, provider="inbound", provider_message_id=message_id,
+        status="sent", sent_at=arrived, created_at=arrived,
+    )
+    db.add(received)
+    db.flush()
+    receipt = InboundEmail(
+        outcome="accepted", message_id=message_id,
+        from_address=renee.header(), to_address=mailbox,
+        subject=received.subject, body=text, matched_by="from_address",
+        lead_id=lead.id, outreach_id=received.id,
+        detail="Demo row: written by make seed-demo, filed the way the intake files one.",
+        created_at=arrived,
+    )
+    db.add(receipt)
+    db.flush()
+    made["outreach"] += 1
+    made["inbound_emails"] += 1
+    envelope = EmailEnvelope(
+        receipt_id=receipt.id, rfc_message_id=message_id,
+        from_name=renee.name, from_address=renee.address,
+        to_json=email_addresses.dumps([email_addresses.Recipient("", mailbox)]),
+        cc_json=email_addresses.dumps([marco]),
+        html=html, dated_at=arrived, created_at=arrived,
+    )
+    db.add(envelope)
+    db.flush()
+    pdf = _demo_pdf([
+        "DEMO DOCUMENT - generated by make seed-demo",
+        "",
+        "Payoff statement",
+        f"Borrower: {renee.name}",
+        "Payoff amount: $8,412.00, good through the end of the month",
+        "",
+        "Not a real lender and not a real account.",
+    ])
+    digest, relative = email_files.store(email_files.scope_for(active_store()), pdf)
+    db.add(EmailAttachment(
+        envelope_id=envelope.id, filename="payoff-letter.pdf",
+        content_type="application/pdf", size=len(pdf), sha256=digest, path=relative,
+        created_at=arrived,
+    ))
+
+    # The buyer's email sits in their thread the way `remember_inbound` puts
+    # it there: mirrored, carrying the outreach id, so the timeline folds the
+    # two into one entry instead of showing the email twice.
+    convo = Conversation(lead_id=lead.id, channel="email", stage="vehicle_focus",
+                         status="active", started_at=arrived, summary=text[:200])
+    db.add(convo)
+    db.flush()
+    made["conversations"] += 1
+    db.add(Message(conversation_id=convo.id, role="buyer", content=text,
+                   tool_calls_json=json.dumps([{"name": "outreach", "outreach_id": received.id}]),
+                   created_at=arrived))
+    made["messages"] += 1
+
+    answered = now - timedelta(hours=3, minutes=55)
+    reply_html = (
+        "<p>Hi Renee and Marco,</p>"
+        f"<p>Thanks for the payoff letter -- that is exactly what we need. For the trade:</p>"
+        "<ol>"
+        "<li>Bring the car, its title or lender details, and both keys.</li>"
+        "<li>We appraise it while you drive the {model} -- about twenty minutes.</li>"
+        "<li>The payoff is handled with the lender as part of the paperwork.</li>"
+        "</ol>"
+        "<p>Weekday evenings are fine. Tell me which one suits and I will hold it.</p>"
+    ).replace("{model}", model)
+    sent = Outreach(
+        lead_id=lead.id, sent_by_user_id=owner, channel="email", direction="out",
+        kind="reply", to_address=renee.address, subject=f"Re: {received.subject}",
+        body=text_from_html(reply_html), provider="outbox", status="sent",
+        in_reply_to=message_id, sent_at=answered, created_at=answered,
+    )
+    db.add(sent)
+    db.flush()
+    made["outreach"] += 1
+    db.add(EmailEnvelope(
+        outreach_id=sent.id, in_reply_to=message_id, references=message_id,
+        from_address=mailbox, to_json=email_addresses.dumps([renee]),
+        cc_json=email_addresses.dumps([marco]), html=reply_html,
+        dated_at=answered, created_at=answered,
+    ))
     return made
 
 

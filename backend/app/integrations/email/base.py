@@ -9,10 +9,35 @@ from app.config import settings
 @dataclass
 class SendResult:
     provider: str
+    #: The provider's own id for the send. Not an RFC 5322 Message-ID --
+    #: Resend's is a UUID -- and never to be put in an `In-Reply-To`.
     message_id: str | None
     thread_id: str | None
     status: str  # sent | failed
     detail: str = ""
+    #: The `Message-ID` header the message actually went out with, where the
+    #: provider reported it or this system wrote it. "" when unknown, which is
+    #: always better than a guess: a wrong one threads a reply under a
+    #: stranger's message.
+    rfc_message_id: str = ""
+
+
+@dataclass(frozen=True)
+class OutgoingAttachment:
+    """One file to send, bytes in hand.
+
+    `content_id` (no angle brackets) marks an inline image an HTML body refers
+    to as `cid:<content_id>`; everything else is an ordinary attachment.
+    """
+
+    filename: str
+    content_type: str
+    data: bytes
+    content_id: str = ""
+
+    @property
+    def inline(self) -> bool:
+        return bool(self.content_id)
 
 
 def bare_address(address: str) -> str:

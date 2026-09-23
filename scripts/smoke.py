@@ -242,6 +242,45 @@ def upload(path: str, filename: str, content: bytes) -> dict:
         raise AssertionError(f"POST {path} -> {exc.code}: {exc.read().decode()[:300]}") from None
 
 
+def upload_as(path: str, filename: str, content: bytes,
+              content_type: str = "application/octet-stream") -> tuple[int, dict | str]:
+    """A file from a person's computer, and whatever the endpoint says about it.
+
+    `upload()` above is for XML and treats a refusal as a failure; an
+    attachment upload has refusals that are the point -- an `.exe`, a file
+    over the limit -- so this returns the status and lets the check decide.
+    """
+    boundary = "----linersmokefile"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+    request = urllib.request.Request(
+        BASE + path, data=body, method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with opener.open(request, timeout=60) as response:
+            return response.status, json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode()
+        try:
+            return exc.code, json.loads(text)
+        except ValueError:
+            return exc.code, text[:300]
+
+
+def fetch(path: str) -> tuple[int, dict[str, str], bytes]:
+    """GET something that is not JSON -- a download -- with its headers."""
+    request = urllib.request.Request(BASE + path, method="GET")
+    try:
+        with opener.open(request, timeout=60) as response:
+            return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, {k.lower(): v for k, v in exc.headers.items()}, exc.read()
+
+
 # Matches config.DEV_WEBHOOK_SECRET. The inbound endpoint is the only one no
 # session guards, so the shared secret is the entire door -- and it gets a
 # development default precisely so the door can be tested rather than shipped
@@ -282,6 +321,33 @@ def inbound(
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode()[:120]
+
+
+def drop_envelopes(db, params: dict, *, receipts: str = "", outreach: str = "") -> None:
+    """Delete what an email carried, before the rows it hangs off.
+
+    `email_envelopes` points at `inbound_emails` and at `outreach`, and
+    `email_attachments` points at the envelope, so a teardown that deletes a
+    buyer's receipts or sends without this first trips a foreign key -- and
+    in a `finally` that is a buyer left behind in somebody's store, the
+    `Smoke Stranger` leak again. `receipts` and `outreach` are WHERE clauses
+    over those two tables, sharing `params`.
+    """
+    from sqlalchemy import text as _t
+
+    parts = []
+    if receipts:
+        parts.append(f"receipt_id IN (SELECT id FROM inbound_emails WHERE {receipts})")
+    if outreach:
+        parts.append(f"outreach_id IN (SELECT id FROM outreach WHERE {outreach})")
+    if not parts:
+        return
+    where = " OR ".join(parts)
+    db.execute(_t(
+        "DELETE FROM email_attachments WHERE envelope_id IN "
+        f"(SELECT id FROM email_envelopes WHERE {where})"
+    ), params)
+    db.execute(_t(f"DELETE FROM email_envelopes WHERE {where}"), params)
 
 
 def settled(message_id: str, tries: int = 40) -> dict:
@@ -2536,10 +2602,13 @@ def main() -> int:
                               "messages", "vehicle_mentions"):
                     _adb.execute(_sql(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": cid})
             _adb.execute(_sql("DELETE FROM email_replies_due WHERE lead_id = :l"), {"l": lid})
+            drop_envelopes(_adb, {"l": lid}, receipts="lead_id = :l", outreach="lead_id = :l")
             for table in ("inbound_emails", "appointments", "captured_fields",
                           "lead_addresses", "outreach", "conversations"):
                 _adb.execute(_sql(f"DELETE FROM {table} WHERE lead_id = :l"), {"l": lid})
             _adb.execute(_sql("DELETE FROM leads WHERE id = :l"), {"l": lid})
+        drop_envelopes(_adb, {"m": routed_id, "t": their_token},
+                       receipts="message_id = :m", outreach="reply_token = :t")
         _adb.execute(_sql("DELETE FROM inbound_emails WHERE message_id = :m"), {"m": routed_id})
         _adb.execute(_sql("DELETE FROM outreach WHERE reply_token = :t"), {"t": their_token})
         _adb.commit()
@@ -4191,10 +4260,21 @@ def main() -> int:
     from app.integrations.email.outbox import OutboxSender as _Outbox
     from app.integrations.email.gmail import GmailSender as _Gmail
 
-    for sender_cls in (_Outbox, _Gmail, _Resend):
+    from app.integrations.email.outbox import ConsoleSender as _Console
+
+    for sender_cls in (_Outbox, _Console, _Gmail, _Resend):
         check(f"{sender_cls.__name__} accepts the html tail rather than raising",
               "html_tail" in _inspect.signature(sender_cls.send).parameters,
               str(sorted(_inspect.signature(sender_cls.send).parameters)))
+        # The same argument for everything a full email carries. The one
+        # send path always passes them; a sender that does not take one
+        # raises inside the send, where it reads as mail that failed.
+        params = _inspect.signature(sender_cls.send).parameters
+        wanted = ("cc", "bcc", "html", "attachments", "references", "headers")
+        check(f"{sender_cls.__name__} takes every part of a full email, keyword-only",
+              all(k in params and params[k].kind is _inspect.Parameter.KEYWORD_ONLY
+                  for k in wanted),
+              str({k: str(params[k].kind) if k in params else "missing" for k in wanted}))
 
     print("\n== campaigns: reaching a group, not answering one ==")
     # **The audiences are real or they are nothing.** A campaign list with
@@ -5982,6 +6062,8 @@ def main() -> int:
                                       "vehicle_mentions"):
                             _adb.execute(_sql2(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": cid})
                     _adb.execute(_sql2("DELETE FROM email_replies_due WHERE lead_id = :l"), {"l": their_lead_id})
+                    drop_envelopes(_adb, {"l": their_lead_id},
+                                   receipts="lead_id = :l", outreach="lead_id = :l")
                     for table in ("inbound_emails", "appointments", "captured_fields",
                                   "lead_addresses", "outreach", "conversations"):
                         _adb.execute(_sql2(f"DELETE FROM {table} WHERE lead_id = :l"), {"l": their_lead_id})

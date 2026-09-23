@@ -362,6 +362,114 @@ class Outreach(Base):
     created_at: Mapped[datetime] = created()
 
 
+class EmailEnvelope(Base):
+    """Everything an email carries beyond one address, one subject and a body.
+
+    `outreach` and `inbound_emails` were built for one counterparty and a
+    plain-text body, and neither can gain a column -- `create_all` adds a
+    table to an existing database and never a column. So the rest of what a
+    real email is lives here: every To, Cc and Bcc, Reply-To, the HTML, the
+    threading headers and the importance flag. One row per message, beside
+    the row that already exists for it, which keeps "one message is one
+    `outreach` row" true for the timeline, the counts and the threads.
+
+    **Exactly one of the two parents is set, and which one is the point.** An
+    outbound send hangs off its `outreach` row. An inbound message hangs off
+    its *receipt*, because the receipt is the durable record: it exists for
+    mail nobody could place, which has no `outreach` row at all, and it
+    survives a reseed that deletes the dealership's rows around it. So the
+    reseed empties outbound envelopes with the outreach they describe and
+    leaves inbound ones with the receipt they describe.
+
+    Recipient lists are JSON text of `{name, address}` rather than a table of
+    their own: nothing queries "every message Cc'd to x", and a list read and
+    written whole is one place for the order, the display names and the
+    de-duplication to live.
+    """
+
+    __tablename__ = "email_envelopes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    outreach_id: Mapped[str | None] = mapped_column(
+        ForeignKey("outreach.id"), nullable=True, unique=True, index=True
+    )
+    receipt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("inbound_emails.id"), nullable=True, unique=True, index=True
+    )
+    #: The RFC 5322 Message-ID, where one is known for certain: every inbound
+    #: message, and outbound only when this system wrote it into the header or
+    #: the provider reported it back. A provider's own API id is not one and
+    #: is never stored here.
+    rfc_message_id: Mapped[str] = mapped_column(String(255), default="")
+    in_reply_to: Mapped[str] = mapped_column(String(255), default="")
+    #: The whole chain, space separated, oldest first (RFC 5322 section
+    #: 3.6.4), so a reply to this message can extend it rather than restart it.
+    references: Mapped[str] = mapped_column(Text, default="")
+    from_name: Mapped[str] = mapped_column(String(255), default="")
+    from_address: Mapped[str] = mapped_column(String(320), default="")
+    to_json: Mapped[str] = mapped_column(Text, default="[]")
+    cc_json: Mapped[str] = mapped_column(Text, default="[]")
+    #: Outbound only. A Bcc is never on the copy anybody receives, so on an
+    #: inbound message there is nothing to record -- and on our own sends it
+    #: is shown to staff and never carried into a reply.
+    bcc_json: Mapped[str] = mapped_column(Text, default="[]")
+    reply_to_json: Mapped[str] = mapped_column(Text, default="[]")
+    #: Outbound: the cleaned HTML exactly as it was sent. Inbound: the sender's
+    #: HTML as it arrived, untouched -- it is cleaned when a rep opens it, so a
+    #: better sanitiser tomorrow applies to mail that arrived today.
+    html: Mapped[str] = mapped_column(Text, default="")
+    #: normal | high. From `Importance` / `X-Priority` on the way in, and set
+    #: by the rep on the way out.
+    importance: Mapped[str] = mapped_column(String(10), default="normal")
+    #: The `Date:` header, naive UTC. When the author pressed send, which is
+    #: not when this system happened to file it.
+    dated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: Inbound: the original message on disk, relative to `var/mail/`, when
+    #: the relay forwarded the raw bytes. The authoritative copy.
+    raw_path: Mapped[str] = mapped_column(String(500), default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = created()
+
+
+class EmailAttachment(Base):
+    """A file on a message, or uploaded for one that has not been sent yet.
+
+    **The bytes are on disk, never in the database**: under
+    `var/attachments/<store>/`, named by their SHA-256, so the same file
+    forwarded three times is stored once and a table does not grow by
+    megabytes a row. `envelope_id` is empty between the upload and the send.
+
+    `refused` is the reason the bytes were not kept, when they were not: a
+    type no mail provider will carry (`.exe`, `.js`), or a relay that
+    forwarded only the file's name. The row is kept either way, because "they
+    sent a file and we did not keep it" is a fact a rep needs, and a list that
+    silently drops it reads as a message with nothing attached.
+    """
+
+    __tablename__ = "email_attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    envelope_id: Mapped[str | None] = mapped_column(
+        ForeignKey("email_envelopes.id"), nullable=True, index=True
+    )
+    #: Who uploaded it, for an attachment not yet sent. Deliberately not a
+    #: foreign key: `users` is emptied by a reseed and an orphaned upload is
+    #: cleared by age, not by that.
+    uploaded_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    path: Mapped[str] = mapped_column(String(500), default="")
+    #: Set for an inline image an HTML body refers to as `cid:<content_id>`,
+    #: without the angle brackets.
+    content_id: Mapped[str] = mapped_column(String(255), default="")
+    #: attachment | inline
+    disposition: Mapped[str] = mapped_column(String(12), default="attachment")
+    refused: Mapped[str] = mapped_column(String(300), default="")
+    created_at: Mapped[datetime] = created()
+
+
 class LinkClick(Base):
     """One press of a counted link on the dealership's own storefront.
 

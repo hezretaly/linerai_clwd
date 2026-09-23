@@ -137,7 +137,8 @@ def release() -> None:
         from app.db import SessionLocal
         from app.models import (
             Appointment, CallBuyerTrack, CallRecording, CallSegment, CallUsage, CapturedField,
-            Conversation, Escalation, InboundEmail, Lead, Message, Outreach,
+            Conversation, EmailAttachment, EmailEnvelope, Escalation, InboundEmail,
+            Lead, Message, Outreach,
             VehicleMention,
         )
 
@@ -151,6 +152,23 @@ def release() -> None:
                 db.query(model).filter(
                     model.conversation_id.in_(threads or [""])
                 ).delete(synchronize_session=False)
+            # What an email carried hangs off its receipt or its send, so it
+            # goes first or the foreign keys refuse the two deletes below.
+            envelopes = [
+                e.id for e in db.query(EmailEnvelope).filter(
+                    EmailEnvelope.outreach_id.in_(
+                        db.query(Outreach.id).filter_by(lead_id=lead_id)
+                    ) | EmailEnvelope.receipt_id.in_(
+                        db.query(InboundEmail.id).filter_by(lead_id=lead_id)
+                    )
+                ).all()
+            ]
+            db.query(EmailAttachment).filter(
+                EmailAttachment.envelope_id.in_(envelopes or [""])
+            ).delete(synchronize_session=False)
+            db.query(EmailEnvelope).filter(
+                EmailEnvelope.id.in_(envelopes or [""])
+            ).delete(synchronize_session=False)
             for model in (Appointment, Outreach, CapturedField):
                 db.query(model).filter_by(lead_id=lead_id).delete(synchronize_session=False)
             db.query(InboundEmail).filter_by(lead_id=lead_id).delete(synchronize_session=False)

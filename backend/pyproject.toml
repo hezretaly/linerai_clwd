@@ -31,6 +31,11 @@ dependencies = [
     # breaks the day uvicorn switches to wsproto. Declared because it is a
     # dependency of ours.
     "websockets>=12",
+    # HTML in email, both directions: a rep's formatted message is cleaned to
+    # an allowlist before it is sent, and a buyer's HTML is cleaned before a
+    # rep's browser draws it. The Rust ammonia sanitiser; bleach, the usual
+    # answer, stopped being maintained in 2026 and says so on its own page.
+    "nh3>=0.3.7",
 ]
 
 [project.optional-dependencies]

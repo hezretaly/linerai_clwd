@@ -10,6 +10,8 @@ replays with ``?since={event_id}`` and needs a monotonic cursor. That maps to
 from app.models.crm import (
     EmailReplyDue,
     LeadAddress,
+    EmailAttachment,
+    EmailEnvelope,
     LinkClick,
     RuntimeFlag,
     UserSignature,
@@ -45,6 +47,8 @@ from app.models.inventory import IngestRun, Vehicle, VehicleMention
 from app.models.ops import (
     OPS_TABLES,
     DemoRequest,
+    OpsMailAttachment,
+    OpsMailEnvelope,
     OpsMailState,
     OpsMessage,
     OpsUser,
@@ -53,6 +57,10 @@ from app.models.ops import (
 )
 
 __all__ = [
+    "EmailAttachment",
+    "EmailEnvelope",
+    "OpsMailAttachment",
+    "OpsMailEnvelope",
     "LinkClick",
     "OPS_TABLES",
     "OpsMailState",

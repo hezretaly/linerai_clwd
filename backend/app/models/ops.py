@@ -180,6 +180,61 @@ class OpsMessage(OpsBase):
     trashed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
 
+class OpsMailEnvelope(OpsBase):
+    """What an `ops_messages` row carries beyond one To and a text body.
+
+    The same facts `email_envelopes` holds for a dealership's mail -- every
+    recipient, the HTML, the threading headers -- in our own database, for the
+    reason every `ops_` table is here: this is Liner's mail, and nothing about
+    it belongs in a dealership's file. A table rather than columns because
+    `ops_messages` already exists on every deployment and `create_all` never
+    adds a column.
+    """
+
+    __tablename__ = "ops_mail_envelopes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("ops_messages.id"), unique=True, index=True
+    )
+    to_json: Mapped[str] = mapped_column(Text, default="[]")
+    cc_json: Mapped[str] = mapped_column(Text, default="[]")
+    bcc_json: Mapped[str] = mapped_column(Text, default="[]")
+    html: Mapped[str] = mapped_column(Text, default="")
+    #: The `Message-ID` the message went out with, where the provider reported
+    #: it. `ops_messages.provider_message_id` is the provider's own API id and
+    #: cannot go in a reply's `In-Reply-To`.
+    rfc_message_id: Mapped[str] = mapped_column(String(255), default="")
+    in_reply_to: Mapped[str] = mapped_column(String(255), default="")
+    references: Mapped[str] = mapped_column(Text, default="")
+    importance: Mapped[str] = mapped_column(String(10), default="normal")
+    created_at: Mapped[datetime] = created()
+
+
+class OpsMailAttachment(OpsBase):
+    """A file on a message we wrote, stored as `email_attachments` stores one.
+
+    On disk under `var/attachments/ops/`, never in the database -- `make
+    dump-ops` writes every ops row to JSON, and bytes in a column would come
+    out of that mangled. `message_id` is empty between upload and send, and a
+    draft keeps its files the way it keeps its words.
+    """
+
+    __tablename__ = "ops_mail_attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ops_messages.id"), nullable=True, index=True
+    )
+    uploaded_by: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    path: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = created()
+
+
 class OpsMailState(OpsBase):
     """Read and trash marks for mail we did *not* write.
 
@@ -311,6 +366,8 @@ OPS_TABLES = (
     OpsUser.__tablename__,
     DemoRequest.__tablename__,
     OpsMessage.__tablename__,
+    OpsMailEnvelope.__tablename__,
+    OpsMailAttachment.__tablename__,
     OpsMailState.__tablename__,
     PhoneCall.__tablename__,
     SmsOptOut.__tablename__,

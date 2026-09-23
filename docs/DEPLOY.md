@@ -559,8 +559,12 @@ Three things in the full file are load-bearing:
   assistant hanging.
 - **`Upgrade`/`Connection` headers on `/ws/`** — without them the dashboard
   falls into its 2s reconnect loop and never updates live.
-- **`client_max_body_size 8m`** — ADF drops and inventory CSVs are uploads, and
-  nginx's 1 MB default would 413 before the app's own limit ever ran.
+- **`client_max_body_size 32m`** — ADF drops, inventory CSVs and email
+  attachments (15 MB a file) are uploads, and the Cloudflare Worker posts every
+  received message whole (Cloudflare accepts up to 25 MiB). nginx's 1 MB default
+  would 413 before the app's own limit ever ran; each endpoint still enforces
+  its own, smaller one. A config left at the old `8m` loses any received email
+  over 8 MB — the Worker rejects it back to the sender, but it never arrives.
 
 **TLS is not optional.** The session cookie is set `Secure` whenever
 `ENV=production`, so over plain HTTP nobody can stay logged in. It fails loudly

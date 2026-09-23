@@ -38,6 +38,8 @@ from app.db import create_ops_all, ops_session  # noqa: E402
 from app.models.ops import (  # noqa: E402
     DemoRequest,
     OpsMailState,
+    OpsMailAttachment,
+    OpsMailEnvelope,
     OpsMessage,
     OpsUser,
     PhoneCall,
@@ -56,6 +58,8 @@ ORDER = [
     (OpsUser.__tablename__, OpsUser),
     (DemoRequest.__tablename__, DemoRequest),
     (OpsMessage.__tablename__, OpsMessage),
+    (OpsMailEnvelope.__tablename__, OpsMailEnvelope),
+    (OpsMailAttachment.__tablename__, OpsMailAttachment),
     (OpsMailState.__tablename__, OpsMailState),
     (PhoneCall.__tablename__, PhoneCall),
     (SmsOptOut.__tablename__, SmsOptOut),
