@@ -6,9 +6,10 @@
  * copies of that predicate is how a bell saying 2 sits above a list showing 3.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
+import type { EmailSummary, MailContent } from '../../lib/email'
 
 export interface OpsSummary {
   unread: number
@@ -78,6 +79,10 @@ export interface MailMessage {
   reply_to?: string
   author?: string
   mine?: boolean
+  /** Everyone on it, its files and its importance -- what the one address
+   *  above cannot say. Empty lists for a form, which is not an email. Absent
+   *  only from a server older than this page. */
+  email?: EmailSummary
 }
 
 export interface MailBox {
@@ -132,6 +137,38 @@ export function useMailMark() {
 /** What `kind` the mark endpoints want for a row of this source. */
 export function markKind(message: MailMessage): string {
   return message.source === 'ours' ? 'ours' : message.source
+}
+
+/** Where a file for a message of ours is uploaded, and removed from while it
+ *  is still pending. Ours, never per store -- this is Liner's mail. */
+export const OPS_ATTACHMENTS = '/api/ops/mail/attachments'
+
+/**
+ * One message, whole: every recipient, the cleaned HTML, its files, and who
+ * Reply, Reply all and Forward start out addressed to.
+ *
+ * Its own key rather than one under `ops-mail`, because every mark and every
+ * send invalidates `ops-mail` and a message does not change when it is marked
+ * read -- refetching the open one each time would redraw its frame for
+ * nothing. `images` is part of the key so "Show images" is a second read
+ * rather than a mutation of the first -- with the first kept on screen while
+ * it loads, rather than the message blinking out to a spinner.
+ *
+ * A 4xx is not retried: a message that is not there, or a server older than
+ * this page, answers the same way the second time, and the reader falls back
+ * to what the list row carried rather than waiting on it.
+ */
+export function useMailContent(message: MailMessage, images: boolean) {
+  return useQuery({
+    queryKey: ['ops-mail-read', message.source, message.id, images],
+    queryFn: () =>
+      api.get<MailContent>(
+        `/api/ops/mail/read/${message.source}/${encodeURIComponent(message.id)}${images ? '?images=1' : ''}`,
+      ),
+    placeholderData: keepPreviousData,
+    retry: (failures, error) =>
+      failures < 1 && !(error instanceof ApiError && error.status >= 400 && error.status < 500),
+  })
 }
 
 /**

@@ -72,7 +72,7 @@ development default.
 
 ```bash
 cd backend/app/integrations/email/worker
-npm install                          # postal-mime; wrangler cannot resolve it otherwise
+npm install                          # wrangler only: the Worker has no runtime dependencies
 wrangler secret put WEBHOOK_SECRET   # same value as the backend's
 wrangler deploy
 ```
@@ -83,13 +83,47 @@ other way round: whatever `wrangler.jsonc` declares *replaces* what is in the
 dashboard, so a `WEBHOOK_URL` set by hand and absent from this file is lost
 silently on the next deploy. It is declared here for exactly that reason.
 
-Deploy after **any** source change — the recipient filter and the payload
-shape are compiled into the bundle, and no runtime variable can alter them.
+Deploy after **any** source change — the recipient filter and the size limit
+are compiled into the bundle, and no runtime variable can alter them.
 Confirm the new code is live by opening the Worker's URL: it answers with a
 plain-text status, where an older bundle answers `No fetch handler!`.
 
-`WEBHOOK_URL` in `wrangler.jsonc` must be the **public** origin. The Worker
-runs on Cloudflare's edge and cannot reach a private address.
+`WEBHOOK_URL` and `WEBHOOK_RAW_URL` in `wrangler.jsonc` must be the **public**
+origin. The Worker runs on Cloudflare's edge and cannot reach a private
+address. This Worker posts to `WEBHOOK_RAW_URL`, and derives it as
+`WEBHOOK_URL` + `/raw` when it is not set.
+
+## What the Worker sends
+
+**The message itself, and nothing it worked out.** Each accepted message is
+posted once (plus retries) to `WEBHOOK_RAW_URL`:
+
+| | |
+|---|---|
+| Body | The raw message, byte for byte, as the mail server delivered it to Cloudflare. |
+| `Content-Type` | `message/rfc822` |
+| `X-Envelope-To` | `message.to` — the SMTP recipient. This is what carries `reply+<token>@` and decides which dealership's store the message is filed in. |
+| `X-Envelope-From` | `message.from` — the SMTP sender. The *route*, not the person: an SRS rewrite on forwarded mail, a bounce address on a mailing service. Kept on the receipt for diagnostics; the backend identifies the sender by the header `From`. |
+| `X-Webhook-Secret` | The shared secret. |
+
+It does not parse the message. An earlier version did, with postal-mime, and
+posted a JSON digest: one sender address, no Cc, no Reply-To, and file names
+whose bytes never left Cloudflare. Parsing also spent CPU the free plan's
+ten milliseconds cannot spare. The backend now reads the message with
+Python's own parser, keeps the original under `backend/var/mail/`, and stores
+every recipient, the HTML and every file.
+
+The body is read into one buffer before the first attempt and the same bytes
+are re-posted on every retry, because a message with no `Message-ID` is
+de-duplicated on a digest of exactly those bytes.
+
+**Size.** Cloudflare refuses inbound mail over 25 MiB before any Worker runs.
+The Worker's own `MAX_RAW` and the backend's are both 30 MiB, under nginx's
+`client_max_body_size 32m`, so the app — not the proxy — is what refuses a
+message too large. A message over the limit, or one the backend answers with
+413, is **bounced** with `message.setReject()` and a reason the sender can
+read. That is the one case that bounces: see *Status* below for why every
+other failure is only logged.
 
 ## Which auth header
 
@@ -109,9 +143,10 @@ other wrong value — the receipts are where you find out, not the response.
 
 ## Paths and the response
 
-`/api/emails/inbound` and `/api/inbound-email` reach the same handler. The
-first is what the deployed Worker posts to; the second is what this app
-documented first.
+`/api/emails/inbound` and `/api/inbound-email` reach the same JSON handler, and
+the same two paths with `/raw` on the end reach the raw one. The JSON path is
+what the previous Worker posted to and is kept for as long as it may still be
+deployed; files it names without their bytes are kept as rows saying so.
 
 The endpoint **answers before it files the mail**. It returns
 `{"outcome": "received", "receipt_id": ...}` in a few milliseconds and resolves
@@ -122,8 +157,11 @@ costs a buyer a duplicate attempt rather than a delivery.
 The claim is written *before* the response, not after, and that ordering is
 load-bearing. A plain "return 200, process later" loses its own dedupe: a
 retry arriving mid-processing finds nothing accepted yet and files the reply a
-second time. Bodies over 10 MB are refused with a 413, matching the Worker's
-own limit.
+second time. The JSON path refuses a body over 10 MB with a 413 — a digest
+with no file bytes in it never approaches that, and the old Worker set no limit
+of its own, whatever an earlier line here said. The raw path's limit is 30 MB,
+the whole message included, and its bytes are on disk before the answer goes
+back: once the Worker has a 200 it forgets the message.
 
 **The schema is never stricter than the wire.** A Worker writes
 `inReplyTo: parsed.inReplyTo ?? null` because that is the obvious way to say
@@ -133,13 +171,15 @@ Worker its payload is wrong and to stop trying, so a schema quibble becomes a
 buyer's reply that is gone for good rather than delayed. `make smoke` posts the
 deployed Worker's payload field for field.
 
-**A message with no `Message-ID` header still dedupes.** `JSON.stringify` drops
-the key when postal-mime found none, and the retry above would then file the
-same reply twice. The digest of the exact request bytes stands in — exact
-rather than heuristic, because a retry re-posts the identical body while two
-real emails differ in the `receivedAt` the Worker stamps per invocation. Such
-an id is written `sha256:…` on the receipt and never leaves the building: put
-in an outgoing `In-Reply-To` it would name a message that never existed.
+**A message with no `Message-ID` header still dedupes.** Without one the
+retry above would file the same reply twice, so the digest of the exact request
+bytes stands in — exact rather than heuristic. On the raw path a retry re-posts
+the identical message, and two real emails differ in their own `Received`
+lines and `Date`; on the JSON path they differ in the `receivedAt` the old
+Worker stamped per invocation (and `JSON.stringify` dropped the `messageId`
+key when postal-mime found none). Such an id is written `sha256:…` on the
+receipt and never leaves the building: put in an outgoing `In-Reply-To` it
+would name a message that never existed.
 
 ## Checking it
 
@@ -173,7 +213,8 @@ ones where the app cannot tell you anything, because nothing reached it.
    upstream, in Cloudflare, and none of it can leave a row here.
 3. **The Worker log.** `Ignored mail to ...` means the recipient filter
    dropped it, and the line names what it would have had to start with.
-   `Inbound: ...` means it was parsed and posted; a `CRM rejected payload` or
+   `Rejected ...` means it was over the size limit and bounced to the sender.
+   `Inbound: ...` means it was posted; a `CRM rejected the message` or
    `DELIVERY FAILED` line after it names the status the backend returned.
 4. **No Worker log line at all → Email Routing never called it.** The MX
    records, the catch-all rule, or the address is not routed to this Worker.
@@ -208,36 +249,55 @@ Worker forwards the envelope recipient verbatim, and the backend resolves:
    field) and folded into the address, so a Worker that already extracted it
    needs no edit. A hint that disagrees with the address loses; the address is
    what the mail server actually delivered to.
-2. `In-Reply-To` against a stored provider message id. **This rung rarely fires
-   with Resend.** Resend runs on SES, so the id a client quotes back is
-   `<...@email.amazonses.com>` while `provider_message_id` holds the UUID
-   Resend's API returned — two different identifiers for one message. Rungs 1
-   and 3 carry the load; this one is here for a provider that returns the id it
-   actually put in the header.
-3. The From address through the shared lead matcher — email exact, phone by its
-   last ten digits. **A name is never part of it**, so a stranger stays a
-   stranger rather than being filed under whoever shares one.
-4. Otherwise **stored unresolved**, never dropped. Someone really wrote in.
+2. `In-Reply-To`, then the rest of `References` newest first, against the
+   `Message-ID` **our own send actually went out with** — the envelope's
+   `rfc_message_id`, which the send stores when the provider reports it.
+   `provider_message_id` holds Resend's API UUID, which no mail client ever
+   sees, so matching on it alone only ever found the buyer's *own* earlier
+   messages. A match on one of those is still used, last and weakest: it must
+   never win over one of ours.
+3. The **header** From address through the shared lead matcher — email exact,
+   phone by its last ten digits. The header, not the envelope sender, which on
+   forwarded or relayed mail is not the person. **A name is never part of
+   it**, so a stranger stays a stranger rather than being filed under whoever
+   shares one.
+4. Otherwise **stored unresolved**, never dropped — recipients, HTML and files
+   included. Someone really wrote in.
 
 A reply also arrives with the entire message it is answering quoted underneath
 it. Only the buyer's own words are stored on the timeline — the untrimmed body
 stays on the receipt, so a quote marker that ever fires wrongly costs
 presentation and not the message.
 
-Liner does not answer email. A reply lands as an activity on the buyer's
-timeline and reopens an escalation a rep had already claimed — a buyer
-answering the question a rep asked is the rep's turn again.
+A reply lands as an activity on the buyer's timeline and reopens an escalation
+a rep had already claimed — a buyer answering the question a rep asked is the
+rep's turn again. Liner answers it only when every brake in
+`app/email_agent.py` says so, and by default none does.
+
+## Files and the original
+
+Every file on a received message is kept as a row, whether or not its bytes
+are: a type no mail provider carries (`.exe`, `.js`) is kept as its name and
+the reason, with no download, and a forwarded message is kept whole as an
+`.eml`. Bytes live under `backend/var/attachments/<store>/`, named by their
+SHA-256; the original message under `backend/var/mail/<store>/<receipt>.eml`.
+Nothing is virus-scanned, and the page does not pretend otherwise.
 
 ## Status
 
-The Worker source here matches what is deployed, but nothing in this repository
-can run or verify it. The endpoint it posts to **is** verified: `make smoke`
-drives both auth schemes, both paths, the dedupe, every rung of the resolution
-ladder, the reopen, and the deployed Worker's payload field for field.
+Nothing in this repository can run or verify the Worker. The endpoints it
+posts to **are** verified: `make smoke` drives both auth schemes, every path,
+the dedupe, every rung of the resolution ladder, the reopen, and the previous
+Worker's JSON payload field for field. **Deploy this source to receive files,
+Cc and HTML** — until then the deployed Worker keeps posting the JSON digest,
+which still works and records each file as a name it could not keep.
 
 One deliberate gap on the Worker side: a delivery that fails all three attempts
 is logged and dropped rather than bounced with `message.setReject()`. Rejecting
 is the honest failure — the buyer learns their reply did not arrive — but it
-turns one bad deploy into a wave of bounces at real prospects. The cost of the
-choice is that the only evidence is a `DELIVERY FAILED` line in
-`wrangler tail`, so that line is the alarm.
+turns one bad deploy (a rotated secret, a backend that is down) into a wave of
+bounces at real prospects. The cost of the choice is that the only evidence is
+a `DELIVERY FAILED` line in `wrangler tail`, so that line is the alarm. A
+message **too large** is the exception, and is bounced: that is a fact about
+the message rather than about our deploy, and every retry would fail the same
+way.

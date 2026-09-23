@@ -208,7 +208,7 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
             .order_by(Outreach.created_at.desc())
             .all()
         )
-        out["outreach"] = [outreach_out(o) for o in reach]
+        out["outreach"] = outreach_many(db, reach)
         # Other addresses a rep has said are theirs. On the detail payload
         # only: a link is a fact about one buyer, and the list has no room to
         # say it. Without it the button that makes one has no visible effect,
@@ -305,15 +305,57 @@ def appointment_out(a: Appointment, db: Session | None = None) -> dict:
             db.query(User).filter_by(id=a.assigned_user_id).one_or_none()
             if a.assigned_user_id else None
         )
-        out["outreach"] = [
-            outreach_out(o)
-            for o in db.query(Outreach).filter_by(appointment_id=a.id)
-            .order_by(Outreach.created_at.desc()).all()
-        ]
+        out["outreach"] = outreach_many(
+            db,
+            db.query(Outreach).filter_by(appointment_id=a.id)
+            .order_by(Outreach.created_at.desc()).all(),
+        )
     return out
 
 
-def outreach_out(o: Outreach) -> dict:
+def outreach_out(o: Outreach, *, email: dict | None = None) -> dict:
+    """One `outreach` row as the API serves it.
+
+    `email` is the envelope summary (`email_envelopes.summary`): every To, Cc
+    and Bcc, Reply-To, whether there is HTML, importance and the files. Passed
+    in rather than looked up, because a list of rows must load its envelopes
+    in one query (`outreach_many`) and a serializer that queried per row
+    would make every list an N+1. Absent when not given, so every existing
+    caller's shape is unchanged.
+    """
+    out = _outreach_fields(o)
+    if email is not None:
+        out["email"] = email
+    return out
+
+
+def outreach_many(db: Session, rows: list[Outreach]) -> list[dict]:
+    """`outreach_out` for a list, with each email row's envelope batch-loaded.
+
+    Three queries for the whole list whatever its length -- envelopes (and
+    the receipts an inbound one hangs off), then their files. An SMS or a
+    logged call has no envelope and gets no `email` key.
+    """
+    from app import email_envelopes
+
+    envelopes = email_envelopes.for_outreach_many(db, rows)
+    files = email_envelopes.attachments_of(db, [e.id for e in envelopes.values()])
+    out = []
+    for o in rows:
+        if o.channel != "email":
+            out.append(outreach_out(o))
+            continue
+        env = envelopes.get(o.id)
+        out.append(outreach_out(
+            o,
+            email=email_envelopes.summary(
+                env, files.get(env.id, []) if env else [], include_bcc=True,
+            ),
+        ))
+    return out
+
+
+def _outreach_fields(o: Outreach) -> dict:
     return {
         "id": o.id,
         "appointment_id": o.appointment_id,

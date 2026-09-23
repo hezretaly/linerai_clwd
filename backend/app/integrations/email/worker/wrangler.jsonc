@@ -9,7 +9,14 @@
 		// The path is aliased in the backend, so /api/inbound-email reaches the
 		// same handler. Whichever you use, it must be the public origin -- the
 		// Worker runs on Cloudflare's edge and cannot see a private address.
+		// This is the JSON intake the previous Worker posted to; it is kept
+		// because this Worker derives the raw URL from it when the next line
+		// is missing, and because a deploy overwrites vars it does not name.
 		"WEBHOOK_URL": "https://linerai.us/api/emails/inbound",
+		// Where this Worker posts: the message itself, as message/rfc822,
+		// with the SMTP envelope in X-Envelope-From / X-Envelope-To. Same
+		// host, same secret. /api/inbound-email/raw is the same handler.
+		"WEBHOOK_RAW_URL": "https://linerai.us/api/emails/inbound/raw",
 		// Every local part the intake accepts. The first five are Liner's own
 		// and the reply tokens; after them, **one mailbox per dealership** --
 		// the `mailbox:` in each profile under backend/config/dealerships/.

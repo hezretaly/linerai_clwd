@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import matching, outreach_send
+from app import email_envelopes, email_outbound, matching, outreach_send
 from app.api.deps import current_user
 from app.api.inbound_email import signature_for
 from app.config import settings
@@ -27,8 +27,7 @@ from app.email_intake import is_ours
 from app.email_threads import EXCHANGE_THRESHOLD
 from app.email_threads import threads as email_threads_for
 from app.events import emit
-from app.integrations.registry import get_email_sender
-from app.schemas.serialize import iso, outreach_out, stamp
+from app.schemas.serialize import iso, stamp
 from app.models import EmailReplyDue, InboundEmail, Lead, Outreach, User
 
 router = APIRouter(tags=["email"])
@@ -199,13 +198,39 @@ def messages(
     # far down it goes.
     start = max(offset, 0)
     end = start + max(min(limit, CEILING), 1)
+    page = shown[start:end]
+    _with_envelopes(db, page, {r.id: r for r in rows})
     return {
-        "messages": shown[start:end],
+        "messages": page,
         "counts": counts,
         "matching": len(shown),
         "offset": start,
         "has_more": end < len(shown),
     }
+
+
+def _with_envelopes(db: Session, page: list[dict], outreach_by_id: dict[str, Outreach]) -> None:
+    """Put `email` -- every recipient, the files, importance -- on the rows
+    actually being returned.
+
+    For the page, not the whole mailbox: the counts are computed from up to
+    `CEILING` rows, and loading envelopes and files for five thousand messages
+    to show a hundred of them is work nobody sees. Batched either way, so a
+    page costs a fixed handful of queries rather than one per row. `address`
+    stays the one string it always was; the lists are the new key.
+    """
+    placed = [outreach_by_id[m["id"]] for m in page if m["kind"] == "message" and m["id"] in outreach_by_id]
+    receipts = [m["id"] for m in page if m["kind"] == "unmatched"]
+    by_outreach = email_envelopes.for_outreach_many(db, placed)
+    by_receipt = email_envelopes.for_receipts_many(db, receipts)
+    files = email_envelopes.attachments_of(
+        db, [e.id for e in [*by_outreach.values(), *by_receipt.values()]]
+    )
+    for m in page:
+        env = (by_outreach if m["kind"] == "message" else by_receipt).get(m["id"])
+        m["email"] = email_envelopes.summary(
+            env, files.get(env.id, []) if env else [], include_bcc=True,
+        )
 
 
 def _in_box(m: dict, box: str) -> bool:
@@ -437,50 +462,31 @@ def test_send(
     the same reply token is minted, the same row is written. A test that took a
     shortcut would prove the shortcut works.
     """
-    sender = get_email_sender()
-    token = outreach_send.mint_reply_token(db)
-    record = Outreach(
-        lead_id=None, sent_by_user_id=user.id, channel="email", kind="test",
-        to_address=body.to, subject="Liner test message",
-        body="This is a test from the Liner dashboard. Replying to it proves the "
-             "round trip works: the reply address on this message routes back "
-             "into the system.",
-        provider=sender.name, status="queued", reply_token=token,
-    )
-    db.add(record)
-    db.commit()
-
-    blocked = outreach_send.blocked_reason(sender, body.to)
-    if blocked:
-        record.status = "failed"
-        record.error = blocked
-        db.commit()
-        return {"status": "failed", "error": blocked, "provider": sender.name}
-
     try:
-        result = sender.send(
-            body.to, record.subject, record.body,
-            reply_to=outreach_send.reply_to_address(token),
-            from_address=outreach_send.dealership_from(db, sender),
+        message = email_outbound.build(
+            db, to=body.to, subject="Liner test message",
+            body="This is a test from the Liner dashboard. Replying to it proves the "
+                 "round trip works: the reply address on this message routes back "
+                 "into the system.",
         )
-    except Exception as exc:  # NotConfigured, or anything the provider raised
-        record.status = "failed"
-        record.error = str(exc)
-        db.commit()
-        return {"status": "failed", "error": str(exc), "provider": sender.name}
-
-    record.provider_message_id = result.message_id
-    record.status = result.status
-    record.error = result.detail if result.status != "sent" else ""
-    record.sent_at = utcnow()
-    db.commit()
+    except email_outbound.OutboundError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    # No event: a test is not outreach to anybody, and a dashboard reacting to
+    # it as though a buyer had been written to would be the one false signal
+    # on the page.
+    sent = email_outbound.send(
+        db, message, kind="test", lead_id=None, sent_by_user_id=user.id,
+        announce_event=False,
+    )
+    if sent.result is None:
+        return {"status": "failed", "error": sent.detail, "provider": sent.sender.name}
     return {
-        "status": result.status,
-        "error": result.detail,
-        "provider": result.provider,
+        "status": sent.result.status,
+        "error": sent.result.detail,
+        "provider": sent.result.provider,
         # Without a domain there is no Reply-To at all, which is worth saying:
         # the mail may go out and still be unreplyable.
-        "reply_to": outreach_send.reply_to_address(token),
+        "reply_to": outreach_send.reply_to_address(sent.record.reply_token or ""),
     }
 
 
@@ -510,13 +516,17 @@ def test_inbound(
         raise HTTPException(404, "No such send, or it carries no reply token.")
 
     domain = settings.sending_domain or "example.invalid"
+    # What a real reply would quote back: the Message-ID the send went out
+    # with, where one is known. A provider's own id is what this used to
+    # send, and no mail client would ever have put that in a header.
+    parent = email_outbound.thread_under_outreach(db, sent).in_reply_to
     payload = {
         "messageId": f"<test-{sent.reply_token}-{utcnow().isoformat()}>",
         "from": sent.to_address,
         "to": f"reply+{sent.reply_token}@{domain}",
         "subject": f"Re: {sent.subject}",
         "text": "This is a test reply posted from the Liner dashboard.",
-        "inReplyTo": sent.provider_message_id or "",
+        "inReplyTo": parent or sent.provider_message_id or "",
         "receivedAt": utcnow().isoformat(),
     }
     raw = json.dumps(payload).encode()
@@ -571,10 +581,34 @@ def recipients(
     }
 
 
+#: What a recipient field accepts: the one string every composer used to send
+#: -- which may itself hold several addresses, comma or semicolon separated --
+#: or a list of strings or `{name, address}` objects.
+Addresses = str | list[str | dict] | None
+
+
+class ForwardOf(BaseModel):
+    #: `message` (an `outreach` row) or `unmatched` (a delivery nobody placed).
+    kind: str
+    id: str
+
+
 class Compose(BaseModel):
-    to: str
-    subject: str
-    body: str
+    to: Addresses
+    cc: Addresses = None
+    bcc: Addresses = None
+    subject: str = ""
+    #: The text half. Ignored when `html` is given: the text is then written
+    #: from the HTML, so the two halves cannot say different things.
+    body: str = ""
+    #: The rep's formatted body, from the rich editor. Cleaned to the
+    #: composer's allowlist before anything is stored or sent.
+    html: str = ""
+    #: Uploads from `POST /api/email/attachments`, and files of a message
+    #: being forwarded.
+    attachment_ids: list[str] | None = None
+    #: normal | high.
+    importance: str = "normal"
     # Set when the rep pressed Reply on a message that already has a buyer.
     # Without it the address is put through the matcher, which is right for a
     # cold compose and wrong for a reply that arrived from a second address
@@ -583,6 +617,13 @@ class Compose(BaseModel):
     # The message being answered, so the buyer's client threads it under the
     # original instead of opening a second conversation in their inbox.
     in_reply_to_outreach_id: str | None = None
+    # The same, for a delivery nobody could place -- a stranger who wrote to
+    # sales@ has a receipt and no outreach row.
+    in_reply_to_receipt_id: str | None = None
+    # Forwarding: whose files come along. With no `attachment_ids` every file
+    # it carried is attached; with them, exactly those -- the rep may have
+    # taken some off.
+    forward_of: ForwardOf | None = None
 
 
 @router.post("/email/compose")
@@ -601,96 +642,118 @@ def compose(
 
     What it will not do is skip `blocked_reason`. A composer is exactly where a
     rehearsal reaches a real prospect, so it goes through the same one guard as
-    every other send; a refusal is recorded as a failed row and returned
-    verbatim rather than raised, because the rep needs to see the sentence that
-    names the setting.
-    """
-    to = (payload.to or "").strip()
-    if not to or "@" not in to:
-        raise HTTPException(400, "A recipient address is required.")
-    if not (payload.subject or "").strip() and not (payload.body or "").strip():
-        raise HTTPException(400, "An empty email is not worth sending.")
+    every other send -- over every To, Cc and Bcc -- and a refusal is recorded
+    as a failed row and returned verbatim rather than raised, because the rep
+    needs to see the sentence that names the setting.
 
+    Reply, reply-all and forward are all this endpoint: a reply names the
+    message it answers (`in_reply_to_outreach_id`, or `in_reply_to_receipt_id`
+    for mail nobody placed) so it threads under it; a forward names the
+    message whose files come along. Which addresses go in To and Cc is the
+    composer's to fill in -- the reader offers them -- and this checks and
+    sends what it is given.
+    """
     lead = None
     if payload.lead_id:
         lead = db.query(Lead).filter_by(id=payload.lead_id).one_or_none()
         if lead is None:
             raise HTTPException(404, "No such buyer.")
-    else:
-        # The one matcher -- email exact, phone by its last ten digits, and a
-        # name never. An address that belongs to nobody stays nobody's: the
-        # send is still made and still listed here, it simply has no timeline
-        # to sit on, and the composer says so before the rep presses send.
-        lead = matching.match_lead(db, to, "")
 
     answering = None
     if payload.in_reply_to_outreach_id:
         answering = (
             db.query(Outreach).filter_by(id=payload.in_reply_to_outreach_id).one_or_none()
         )
+    receipt = None
+    if payload.in_reply_to_receipt_id:
+        receipt = _unplaced(db, payload.in_reply_to_receipt_id)
+    forwarded = _forwarded_files(db, payload.forward_of) if payload.forward_of else []
 
-    sender = get_email_sender()
-    record = Outreach(
-        lead_id=lead.id if lead else None,
-        sent_by_user_id=user.id,
-        channel="email",
-        direction="out",
-        kind="reply" if answering is not None else "manual",
-        to_address=to,
-        subject=(payload.subject or "").strip(),
-        # The dealership's sign-off, appended here rather than typed. Stored on
-        # the row as well as sent, so the timeline shows what actually went out
-        # -- a body that reads differently on the buyer's page from what landed
-        # in their inbox is the one thing a record must never do.
-        # **This rep's own sign-off**, or the dealership's where they have not
-        # written one. Stored on the row as well as sent -- a body that reads
-        # differently on the buyer's page from what landed in their inbox is
-        # the one thing a record must never do.
-        body=outreach_send.with_signature(db, payload.body or "", user=user),
-        provider=sender.name,
-        status="queued",
-        reply_token=outreach_send.mint_reply_token(db),
-        in_reply_to=(answering.provider_message_id if answering else None) or None,
+    # The message it answers decides where it threads -- its Message-ID, never
+    # a provider's id, which is what used to go in this header.
+    thread = (
+        email_outbound.thread_under_outreach(db, answering) if answering is not None
+        else email_outbound.thread_under_receipt(db, receipt)
     )
-    db.add(record)
-    db.commit()
-
-    blocked = outreach_send.blocked_reason(sender, to)
-    if blocked:
-        record.status = "failed"
-        record.error = blocked
-        db.commit()
-        return {**outreach_out(record), "blocked": True}
-
     try:
-        result = sender.send(
-            to, record.subject, record.body,
-            reply_to=outreach_send.reply_to_address(record.reply_token),
-            in_reply_to=record.in_reply_to or "",
-            from_address=outreach_send.dealership_from(db, sender),
-            # The image half of this rep's sign-off. HTML only, because plain
-            # text cannot carry a picture -- a sender that delivers text alone
-            # ignores it and the reader still gets the words, which is the
-            # right way for this to degrade. Built here rather than taken from
-            # the request: it is markup going into somebody's inbox.
-            html_tail=outreach_send.signature_html(db, user, str(request.base_url)),
+        message = email_outbound.build(
+            db,
+            to=payload.to, cc=payload.cc, bcc=payload.bcc,
+            subject=payload.subject, body=payload.body, html=payload.html,
+            attachment_ids=(
+                payload.attachment_ids if payload.attachment_ids is not None else forwarded
+            ),
+            importance=payload.importance,
+            thread=thread,
+            # **This rep's own sign-off**, or their name over the dealership's
+            # where they have not written one, appended here rather than
+            # typed. Stored on the row as well as sent -- a body that reads
+            # differently on the buyer's page from what landed in their inbox
+            # is the one thing a record must never do. The image half rides
+            # the HTML only, built from a token we minted, never from the
+            # request: it is markup going into somebody's inbox.
+            sign=True, signer=user, base_url=str(request.base_url),
+            uploader_id=user.id,
         )
-    except Exception as exc:  # NotConfigured, or anything the provider raised
-        record.status = "failed"
-        record.error = str(exc)
-        db.commit()
-        return {**outreach_out(record), "blocked": False}
+    except email_outbound.OutboundError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
 
-    record.provider_message_id = result.message_id
-    record.provider_thread_id = result.thread_id
-    record.status = result.status
-    record.error = result.detail if result.status != "sent" else ""
-    record.sent_at = utcnow()
-    db.commit()
+    if lead is None:
+        # The one matcher -- email exact, phone by its last ten digits, and a
+        # name never -- on the first To. An address that belongs to nobody
+        # stays nobody's: the send is still made and still listed here, it
+        # simply has no timeline to sit on, and the composer says so before
+        # the rep presses send. A reply to a buyer's own message stays on
+        # their timeline even from an address the matcher does not know.
+        lead = matching.match_lead(db, message.primary, "") or (
+            db.query(Lead).filter_by(id=answering.lead_id).one_or_none()
+            if answering is not None and answering.lead_id else None
+        )
 
-    emit(db, "outreach.sent", {
-        "outreach_id": record.id, "appointment_id": None,
-        "lead_id": record.lead_id, "to": to, "provider": record.provider,
-        "delivered_externally": sender.delivers, "conversation_id": None,
-    })
-    return {**outreach_out(record), "blocked": False}
+    kind = (
+        "forward" if payload.forward_of
+        else "reply" if (answering is not None or receipt is not None)
+        else "manual"
+    )
+    sent = email_outbound.send(
+        db, message, kind=kind, lead_id=lead.id if lead else None,
+        sent_by_user_id=user.id,
+    )
+    return {**sent.out(), "blocked": bool(sent.blocked)}
+
+
+def _unplaced(db: Session, receipt_id: str) -> InboundEmail:
+    """A delivery a rep may answer from the mailbox, or a 404.
+
+    The same rule the list follows: mail addressed to *us* is Liner's, listed
+    at `/ops`, and not on a dealership's page to read or to answer.
+    """
+    row = db.query(InboundEmail).filter_by(id=receipt_id).one_or_none()
+    if row is None or is_ours(row.to_address):
+        raise HTTPException(404, "No such message.")
+    return row
+
+
+def _forwarded_files(db: Session, of: ForwardOf) -> list[str]:
+    """Every file the forwarded message carried, by id, or a 404.
+
+    Only files with their bytes: one that was refused on arrival has nothing
+    to send, and listing it would make the forward fail on a file the rep
+    never chose. Inline images are part of the body they came in, which the
+    composer's HTML cannot carry, so they are left behind with it.
+    """
+    if of.kind == "message":
+        row = db.query(Outreach).filter_by(id=of.id).one_or_none()
+        if row is None or row.channel != "email":
+            raise HTTPException(404, "No such message.")
+        env = email_envelopes.for_outreach(db, row)
+    elif of.kind == "unmatched":
+        env = email_envelopes.for_receipt(db, _unplaced(db, of.id).id)
+    else:
+        raise HTTPException(400, "forward_of.kind is 'message' or 'unmatched'.")
+    if env is None:
+        return []
+    return [
+        a.id for a in email_envelopes.attachments_of(db, [env.id]).get(env.id, [])
+        if a.path and not a.refused and not (a.disposition == "inline" and a.content_id)
+    ]

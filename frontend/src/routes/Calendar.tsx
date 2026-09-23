@@ -5,8 +5,27 @@ import clsx from 'clsx'
 import { api, ApiError } from '../lib/api'
 import { dateTime, isOpenOn, money, openWindow, time } from '../lib/format'
 import { useNow, zonedParts } from '../lib/clock'
-import type { Appointment, Overview, TeamMember } from '../lib/types'
-import { Badge, Button, Card, Empty, Field, Input, Sheet, Spinner } from '../components/ui'
+import type { Appointment, Outreach, Overview, TeamMember } from '../lib/types'
+import {
+  addrList,
+  otherRecipients,
+  splitRecipients,
+  textToHtml,
+  type Attachment,
+} from '../lib/email'
+import {
+  Badge,
+  Button,
+  Card,
+  Empty,
+  Field,
+  FieldGroup,
+  Input,
+  Sheet,
+  Spinner,
+} from '../components/ui'
+import { AttachmentPicker, CopyFields, RichEditor } from '../components/email'
+import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/dashboard/AppShell'
 import { CarPhoto } from '../components/CarPhoto'
 
@@ -565,11 +584,37 @@ function Agenda({
   )
 }
 
+/** The reach-out email being written, and which appointment it is for.
+ *
+ *  Held by the drawer rather than the form, as the subject and body always
+ *  were: the drawer stays mounted while the sheet opens and closes, so a rep
+ *  who closes it by accident comes back to what they wrote. `for` keeps one
+ *  appointment's email from reappearing in the next one's drawer. */
+interface ReachDraft {
+  for: string
+  subject: string
+  /** The editor's HTML, "" when empty. */
+  html: string
+  /** And its text, which is what decides whether there is anything to send. */
+  text: string
+  cc: string
+  bcc: string
+  files: Attachment[]
+}
+
+/** Throw away uploads nothing will send. Pending files belong to nobody until
+ *  a send claims them, so a draft that is abandoned leaves them behind unless
+ *  somebody says otherwise; a failure here is only an orphan, never an error
+ *  worth showing. */
+function discard(files: Attachment[]) {
+  for (const f of files) {
+    api.del(`/api/email/attachments/${encodeURIComponent(f.id)}`).catch(() => {})
+  }
+}
+
 function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => void }) {
   const queryClient = useQueryClient()
-  const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
-  const [composing, setComposing] = useState(false)
+  const [reach, setReach] = useState<ReachDraft | null>(null)
 
   const { data: appointment } = useQuery({
     queryKey: ['appointments', id],
@@ -596,24 +641,35 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
     onSuccess: invalidate,
   })
   const draft = useMutation({
-    mutationFn: () =>
-      api.get<{ subject: string; body: string }>(`/api/appointments/${id}/outreach?draft=1`),
-    onSuccess: (data) => {
-      setSubject(data.subject)
-      setBody(data.body)
-      setComposing(true)
-    },
-  })
-  const send = useMutation({
-    mutationFn: () => api.post(`/api/appointments/${id}/outreach`, { subject, body }),
-    onSuccess: () => {
-      setComposing(false)
-      invalidate()
-      void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    mutationFn: (forId: string) =>
+      api
+        .get<{ subject: string; body: string }>(`/api/appointments/${forId}/outreach?draft=1`)
+        .then((data) => ({ ...data, forId })),
+    onSuccess: ({ subject, body, forId }) => {
+      // Drafting again replaces the words, as it always did; who is copied in
+      // and what is attached were chosen by the rep and stay. A draft for a
+      // different appointment replaces the lot, and its files go with it --
+      // outside the updater, which React may run twice.
+      if (reach && reach.for !== forId) discard(reach.files)
+      setReach((prev) => {
+        const kept = prev && prev.for === forId ? prev : null
+        return {
+          for: forId,
+          subject,
+          // The draft is plain text and the editor holds HTML: converted
+          // once, here, and the editor reports back the pair it holds.
+          html: textToHtml(body),
+          text: body,
+          cc: kept?.cc ?? '',
+          bcc: kept?.bcc ?? '',
+          files: kept?.files ?? [],
+        }
+      })
     },
   })
 
   const reps = team?.members.filter((m) => m.role === 'rep') ?? []
+  const writing = reach !== null && reach.for === id ? reach : null
 
   return (
     <Sheet
@@ -671,13 +727,16 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
             <Button onClick={() => assign.mutate({ auto: true })} disabled={assign.isPending}>
               Auto-assign
             </Button>
-            <Button onClick={() => draft.mutate()} disabled={draft.isPending}>
+            <Button onClick={() => draft.mutate(appointment.id)} disabled={draft.isPending}>
               Draft outreach
             </Button>
           </div>
 
           {assign.isError && (
             <p className="text-sm text-destructive">{(assign.error as ApiError).message}</p>
+          )}
+          {draft.isError && (
+            <p className="text-sm text-destructive">{(draft.error as ApiError).message}</p>
           )}
 
           <section>
@@ -707,34 +766,21 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
             </ul>
           </section>
 
-          {composing && (
-            <section className="space-y-3 rounded-lg border border-border p-3">
-              <h3 className="text-sm font-semibold">Reach out</h3>
-              <Field label="To">
-                <Input value={appointment.lead?.email ?? ''} readOnly />
-              </Field>
-              <Field label="Subject">
-                <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
-              </Field>
-              <Field label="Message">
-                <textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  rows={10}
-                  className="w-full rounded-lg border border-input bg-background p-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </Field>
-              <div className="flex items-center gap-2">
-                <Button variant="primary" onClick={() => send.mutate()} disabled={send.isPending}>
-                  Send email
-                </Button>
-                <Button onClick={() => setComposing(false)}>Cancel</Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Email delivery is not configured, so this is recorded locally and mirrored into
-                the buyer's chat thread. No mail leaves the machine.
-              </p>
-            </section>
+          {writing && (
+            <ReachOut
+              appointment={appointment}
+              draft={writing}
+              // Functional, because the editor, the file picker and the Cc box
+              // each report on their own schedule, and a copy of the draft
+              // from one render would let the second undo the first.
+              update={(patch) => setReach((d) => (d ? { ...d, ...patch } : d))}
+              colleagues={team?.members ?? []}
+              onDone={() => setReach(null)}
+              onSent={() => {
+                invalidate()
+                void queryClient.invalidateQueries({ queryKey: ['conversations'] })
+              }}
+            />
           )}
 
           <section>
@@ -744,23 +790,35 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
             {appointment.outreach?.length ? (
               <ul className="mt-2 space-y-2">
                 {appointment.outreach.map((item) => (
-                  <li key={item.id} className="rounded-lg border border-border p-3">
+                  <li key={item.id} className="min-w-0 rounded-lg border border-border p-3">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium">{item.subject}</p>
-                      <Badge tone={item.status === 'sent' ? 'success' : 'primary'}>
+                      <p className="min-w-0 break-words text-sm font-medium">{item.subject}</p>
+                      {/* Red for a send that did not happen and nothing else:
+                          a queued row is not a failure. */}
+                      <Badge
+                        tone={
+                          item.status === 'sent'
+                            ? 'success'
+                            : item.status === 'failed' || item.status === 'bounced'
+                              ? 'destructive'
+                              : 'primary'
+                        }
+                      >
                         {item.status}
                       </Badge>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {item.to_address} -- {dateTime(item.sent_at ?? item.created_at)}
-                    </p>
-                    {!item.delivered_externally && item.channel === 'email' && (
+                    <OutreachLine item={item} />
+                    {/* Only on a send that went. A refused one was never
+                        recorded as mail at all, and "in the local outbox"
+                        beside it reads as though it nearly left. */}
+                    {!item.delivered_externally && item.channel === 'email'
+                      && item.status === 'sent' && (
                       <p className="mt-1 text-xs text-warning-foreground">
                         Recorded in the local outbox. No mail was delivered.
                       </p>
                     )}
                     {item.error && (
-                      <p className="mt-1 text-xs text-destructive">{item.error}</p>
+                      <p className="mt-1 break-words text-xs text-destructive">{item.error}</p>
                     )}
                   </li>
                 ))}
@@ -772,5 +830,199 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
         </div>
       )}
     </Sheet>
+  )
+}
+
+/** A box's text as the list the server reads, without the trailing ", " the
+ *  recipient box leaves while an address is still being typed. */
+function tidy(value: string): string {
+  return splitRecipients(value).join(', ')
+}
+
+/** The appointment email, written and sent from the drawer.
+ *
+ *  **To is the buyer, and is not a field.** The endpoint sends to the address
+ *  on file, which is what a confirmation for *their* visit is for; somebody
+ *  else who should see it is a Cc, and a colleague is the likeliest one, so
+ *  the team is what the Cc box suggests.
+ *
+ *  **No sign-off preview, on purpose.** The draft already ends with the rep's
+ *  name and the dealership's, written into the text being edited, and this
+ *  endpoint appends nothing -- a preview of a block that is not added would be
+ *  a promise the send does not keep.
+ *
+ *  **Whether it arrives is asked, not assumed.** This said "Email delivery is
+ *  not configured" whatever the deployment's sender was, so on a box that
+ *  really mails buyers it told the rep nothing would leave. `/reach` answers
+ *  `delivers` from the sender itself -- the same answer the buyer page gives. */
+function ReachOut({
+  appointment,
+  draft,
+  update,
+  colleagues,
+  onDone,
+  onSent,
+}: {
+  appointment: Appointment
+  draft: ReachDraft
+  update: (patch: Partial<ReachDraft>) => void
+  colleagues: TeamMember[]
+  onDone: () => void
+  onSent: () => void
+}) {
+  const { subject, html, text, cc, bcc, files } = draft
+  const [problem, setProblem] = useState('')
+
+  const leadId = appointment.lead_id
+  const address = appointment.lead?.email ?? ''
+  const { data: reach } = useQuery({
+    // The buyer page's key, so either screen's answer serves the other.
+    queryKey: ['reach', leadId],
+    queryFn: () => api.get<{ email: { delivers: boolean } }>(`/api/leads/${leadId}/reach`),
+    enabled: Boolean(leadId),
+  })
+
+  const send = useMutation({
+    mutationFn: () =>
+      api.post<Outreach>(`/api/appointments/${appointment.id}/outreach`, {
+        subject,
+        body: text,
+        // Omitted rather than empty, so a plain message is exactly the
+        // `{subject, body}` this endpoint has always taken.
+        html: html || undefined,
+        cc: tidy(cc) || undefined,
+        bcc: tidy(bcc) || undefined,
+        attachment_ids: files.length ? files.map((f) => f.id) : undefined,
+      }),
+    onSuccess: (sent) => {
+      onSent()
+      // A refusal comes back as a row, not an error: `OUTBOUND_ONLY_TO`, a
+      // provider that said no. It used to close the form either way, so the
+      // one sentence that named the setting to change was never on screen --
+      // and the text the rep would need to try again went with it.
+      if (sent.status === 'sent') {
+        onDone()
+        return
+      }
+      setProblem(sent.error ? `${sent.status}: ${sent.error}` : `Not sent (${sent.status}).`)
+    },
+    onError: (e) => setProblem((e as ApiError).message),
+  })
+
+  const cancel = () => {
+    // Files picked here and never sent are uploads nothing else will claim.
+    discard(files)
+    onDone()
+  }
+
+  const blank = !subject.trim() && !text.trim() && files.length === 0
+  const suggestions = colleagues
+    .filter((m) => m.email)
+    .map((m) => ({ name: m.name, email: m.email }))
+
+  return (
+    <section className="min-w-0 space-y-3 rounded-lg border border-border p-3">
+      <h3 className="text-sm font-semibold">Reach out</h3>
+      <Field label="To">
+        <Input value={address} readOnly />
+      </Field>
+      {!address && (
+        <p className="text-xs text-muted-foreground">
+          No email on file for this buyer, so there is nobody to send this to. Add one on their
+          page, or log a call instead.
+        </p>
+      )}
+      <CopyFields
+        cc={cc}
+        bcc={bcc}
+        onCc={(next) => update({ cc: next })}
+        onBcc={(next) => update({ bcc: next })}
+        suggestions={suggestions}
+      />
+      <Field label="Subject">
+        <Input value={subject} onChange={(e) => update({ subject: e.target.value })} />
+      </Field>
+      {/* A group, not `Field`: that is a label, and a label hands a click on
+          its caption to the toolbar's first button. */}
+      <FieldGroup label="Message">
+        <RichEditor
+          value={html}
+          onChange={(nextHtml, nextText) => update({ html: nextHtml, text: nextText })}
+          ariaLabel="Message"
+          minHeight={200}
+        />
+      </FieldGroup>
+      <AttachmentPicker
+        value={files}
+        onChange={(next) => update({ files: next })}
+        disabled={send.isPending}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="primary"
+          onClick={() => {
+            setProblem('')
+            send.mutate()
+          }}
+          disabled={send.isPending || blank || !address}
+        >
+          {send.isPending ? 'Sending...' : 'Send email'}
+        </Button>
+        <Button onClick={cancel} disabled={send.isPending}>
+          Cancel
+        </Button>
+      </div>
+      {problem && (
+        <p className="whitespace-pre-wrap break-words text-xs text-destructive">{problem}</p>
+      )}
+      {reach && (
+        <p className="text-xs text-muted-foreground">
+          {reach.email.delivers
+            ? "Mailed to the buyer from the dealership's address, and copied into their chat thread when they have one."
+            : "Recorded only -- no mail provider is configured. It is kept here, and copied into the buyer's chat thread when they have one; nothing leaves the machine."}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/** Who a send went to, when, and what it carried. It wraps rather than
+ *  widening a drawer that is the full width of a phone. */
+function OutreachLine({ item }: { item: Outreach }) {
+  const primary = item.to_address.toLowerCase()
+  const others = otherRecipients(item.email, item.to_address)
+  const files = item.email?.attachments.length ?? 0
+  // Named in full on hover: "+2" says there is more to the envelope, and a
+  // rep deciding whether a colleague saw it needs to know who.
+  const alsoTo = item.email
+    ? [...item.email.to, ...item.email.cc].filter((a) => a.address.toLowerCase() !== primary)
+    : []
+  const bcc = item.email?.bcc ?? []
+  const who = [
+    alsoTo.length ? `Also to ${addrList(alsoTo)}` : '',
+    bcc.length ? `Bcc ${addrList(bcc)}` : '',
+  ].filter(Boolean).join('. ')
+
+  return (
+    <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+      <span className="min-w-0 break-all">{item.to_address}</span>
+      {others > 0 && (
+        <span className="tnum shrink-0 rounded border border-border px-1" title={who}>
+          +{others}
+        </span>
+      )}
+      <span className="shrink-0">-- {dateTime(item.sent_at ?? item.created_at)}</span>
+      {files > 0 && (
+        <span
+          className="inline-flex shrink-0 items-center gap-0.5"
+          title={item.email?.attachments.map((a) => a.filename).join(', ')}
+        >
+          <Icon name="paperclip" className="h-3 w-3" />
+          <span className="tnum">{files}</span>
+          <span className="sr-only">{files === 1 ? 'file' : 'files'}</span>
+        </span>
+      )}
+      {item.email?.importance === 'high' && <Badge tone="warning">High importance</Badge>}
+    </p>
   )
 }

@@ -25,14 +25,13 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app import email_agent, outreach_send
+from app import email_agent, email_envelopes, email_outbound
 from app.config import settings
 from datetime import timedelta
 
 from app.db import utcnow
 from app.email_intake import just_the_reply
 from app.events import emit
-from app.integrations.registry import get_email_sender
 from app.models import (
     Conversation, EmailReplyDue, InboundEmail, Lead, Message, Outreach,
 )
@@ -197,69 +196,81 @@ def answer(
             ),
         }
 
-    sender = get_email_sender()
-    to = claim.from_address or lead.email
     subject = claim.subject or "Your enquiry"
-    record = Outreach(
-        lead_id=lead.id,
+    # Under the message it answers: its Message-ID, then the chain above it --
+    # from the receipt, which is the durable record of what arrived, and from
+    # the row it was filed as where the receipt has nothing to say.
+    thread = email_outbound.thread_under_receipt(db, claim)
+    if not thread.in_reply_to:
+        thread = email_outbound.thread_under_outreach(db, received)
+    try:
+        message = email_outbound.build(
+            db,
+            to=answer_to(db, claim, lead),
+            subject=subject if subject.lower().startswith("re:") else f"Re: {subject}",
+            body=reply,
+            thread=thread,
+            # Same sign-off a rep's reply gets, from the same place -- the
+            # dealership's, because nobody here wrote it. The model is no
+            # longer asked to write one: an improvised sign-off drifts between
+            # emails and is a second place the dealership's phone number could
+            # be invented, which is what `answer_from_knowledge` exists to
+            # prevent everywhere else.
+            sign=True, signer=None,
+            # RFC 3834: an automatic answer says so, and the buyer's own
+            # vacation responder then does not answer it back. The same header
+            # `email_intake` refuses to answer is the one we send.
+            headers={"Auto-Submitted": "auto-replied"},
+        )
+    except email_outbound.OutboundError as exc:
+        return {"sent": False, "reason": "no_address", "detail": str(exc)}
+
+    sent = email_outbound.send(
+        db, message, kind="reply", lead_id=lead.id,
         # NULL, and that is the whole author test -- a rep's send carries their
         # id. The cooldown, the pause and every "did a person answer" question
         # read this rather than a column added for them.
         sent_by_user_id=None,
-        channel="email",
-        direction="out",
-        kind="reply",
-        to_address=to,
-        subject=subject if subject.lower().startswith("re:") else f"Re: {subject}",
-        # Same sign-off a rep's reply gets, from the same place. The model is
-        # no longer asked to write one: an improvised sign-off drifts between
-        # emails and is a second place the dealership's phone number could be
-        # invented, which is what `answer_from_knowledge` exists to prevent
-        # everywhere else.
-        body=outreach_send.with_signature(db, reply),
-        provider=sender.name,
-        status="queued",
-        reply_token=outreach_send.mint_reply_token(db),
-        in_reply_to=received.provider_message_id or None,
+        conversation_id=convo.id,
+        event={"by_liner": True},
     )
-    db.add(record)
-    db.commit()
-
-    blocked = outreach_send.blocked_reason(sender, to)
-    if blocked:
-        record.status = "failed"
-        record.error = blocked
-        db.commit()
-        return {"sent": False, "reason": "blocked", "detail": blocked,
-                "outreach_id": record.id}
-
-    try:
-        result = sender.send(
-            to, record.subject, record.body,
-            reply_to=outreach_send.reply_to_address(record.reply_token),
-            in_reply_to=record.in_reply_to or "",
-            from_address=outreach_send.dealership_from(db, sender),
-        )
-    except Exception as exc:  # NotConfigured, or anything the provider raised
-        record.status = "failed"
-        record.error = str(exc)
-        db.commit()
-        return {"sent": False, "reason": "provider", "detail": str(exc),
-                "outreach_id": record.id}
-
-    record.provider_message_id = result.message_id
-    record.status = result.status
-    record.error = result.detail if result.status != "sent" else ""
-    record.sent_at = utcnow()
-    db.commit()
-    emit(db, "outreach.sent", {
-        "outreach_id": record.id, "appointment_id": None, "lead_id": lead.id,
-        "to": to, "provider": record.provider,
-        "delivered_externally": sender.delivers, "conversation_id": convo.id,
-        "by_liner": True,
-    })
-    return {"sent": True, "reason": "", "outreach_id": record.id,
+    if sent.blocked:
+        return {"sent": False, "reason": "blocked", "detail": sent.blocked,
+                "outreach_id": sent.record.id}
+    if not sent.ok:
+        # Refused by the provider or never reached it: either way the row
+        # says failed and why, and a send that did not happen is not reported
+        # as one that did.
+        return {"sent": False, "reason": "provider", "detail": sent.detail,
+                "outreach_id": sent.record.id}
+    return {"sent": True, "reason": "", "outreach_id": sent.record.id,
             "conversation_id": convo.id, "body": reply}
+
+
+def answer_to(db: Session, claim: InboundEmail, lead: Lead) -> list:
+    """Who Liner's answer goes to: where the message asked, else who wrote it.
+
+    The received message's `Reply-To` when it had one (RFC 5322 section
+    3.6.3), because that is the sender saying where answers belong -- a
+    buyer writing from a work account with their own address in Reply-To.
+    Otherwise the person in `From`, then the address on file. **Never one of
+    ours**: a Reply-To pointing at our own mailbox would have Liner writing to
+    itself, which is a loop with a cooldown for a brake.
+
+    Parsed leniently, as received mail is: the address delivered, so a
+    stricter check than the one that delivered it is not a reason to leave a
+    buyer unanswered.
+    """
+    from app.email_addresses import Recipient, from_header_value, loads
+
+    env = email_envelopes.for_receipt(db, claim.id)
+    replying = email_envelopes.without_ours(loads(env.reply_to_json) if env else [])
+    if replying:
+        return replying
+    sender = email_envelopes.without_ours(from_header_value(claim.from_address))
+    if sender:
+        return sender[:1]
+    return email_envelopes.without_ours([Recipient("", lead.email)] if lead.email else [])
 
 
 def _hand_over(db: Session, lead: Lead, why: str) -> None:

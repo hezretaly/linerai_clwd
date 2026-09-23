@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from email.utils import formataddr, parseaddr
 
@@ -66,6 +67,102 @@ def domain_of(address: str) -> str:
     return domain.strip().lower()
 
 
+def address_list(value) -> list[str]:  # noqa: ANN001 -- str | Sequence[str | Recipient] | None
+    """What a sender puts in To, Cc or Bcc: one string per recipient.
+
+    A caller may hand over one string -- the old single-address `to`, or a
+    box's text with several addresses in it -- or a list. A string is split on
+    the separators a person types, outside quotes and angle brackets, so
+    `"Doe, Jane" <jane@x.com>` stays one recipient. Nothing is validated here:
+    that happened in `email_addresses.parse` before the send was built, and a
+    sender that second-guessed it would refuse a message the rep was already
+    told was fine.
+    """
+    from app.email_addresses import Recipient, split_entries
+
+    if not value:
+        return []
+    # **One string is a box's text; a list is already one entry per person.**
+    # Splitting list items as well cut `Two, Person <two@x>` into `Two` and
+    # `Person <two@x>` -- two recipients the provider rejects or, worse,
+    # delivers to one of. So only the single-string form is split, and each
+    # list item is kept whole with its name re-quoted.
+    if isinstance(value, str):
+        out = split_entries(value)
+    else:
+        out = []
+        for item in value:
+            if isinstance(item, Recipient):
+                out.append(_quoted(item.name, item.address))
+            elif isinstance(item, str):
+                named = _NAMED.match(item.strip())
+                out.append(
+                    _quoted(named.group(1).strip().strip('"'), named.group(2).strip())
+                    if named else item
+                )
+    return [header_value(v) for v in out if header_value(v)]
+
+
+#: `Name <address>` with anything, commas included, before the brackets.
+_NAMED = re.compile(r"^(.*?)\s*<([^<>\s]+@[^<>\s]+)>$", re.S)
+
+
+def _quoted(name: str, address: str) -> str:
+    """`"Name" <address>`, quoted when it needs to be and never encoded.
+
+    Quoted rather than RFC 2047-encoded because a JSON API builds its own
+    headers and would show `=?utf-8?b?...?=` as the name; each sender encodes
+    for its own wire (Gmail's `EmailMessage` does it on assignment).
+    """
+    name = header_value(name)
+    if not name:
+        return address
+    if name.isascii():
+        return formataddr((name, address))
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + f'" <{address}>'
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+
+#: Headers a caller may not set through `headers=`: each is built by the
+#: sender from its own argument, and a second copy in the extras is how a
+#: message ends up with two `To` lines or a `From` the provider never checked.
+STRUCTURAL_HEADERS = frozenset({
+    "from", "to", "cc", "bcc", "subject", "reply-to", "sender", "date",
+    "message-id", "in-reply-to", "references", "content-type",
+    "content-transfer-encoding", "mime-version",
+})
+
+
+def header_value(value: str | None) -> str:
+    """A header value on one line.
+
+    `References` and `In-Reply-To` come from a *received* message, which is
+    whatever its sender wrote; a CR or LF left in one is a header of their own
+    choosing in our outgoing mail. Python's SMTP policy refuses such a value
+    with an exception, which would fail the send rather than clean it.
+    """
+    return re.sub(r"\s+", " ", _CONTROL.sub(" ", value or "")).strip()
+
+
+def extra_headers(headers: dict | None) -> dict[str, str]:
+    """The caller's extra headers -- `Importance`, `Auto-Submitted` -- cleaned,
+    with anything a sender builds itself dropped."""
+    out: dict[str, str] = {}
+    for name, value in (headers or {}).items():
+        key = header_value(str(name))
+        if not key or ":" in key or " " in key or key.lower() in STRUCTURAL_HEADERS:
+            continue
+        cleaned = header_value(str(value))
+        if cleaned:
+            out[key] = cleaned
+    return out
+
+
+def recipient_count(to, cc=None, bcc=None) -> int:  # noqa: ANN001
+    return len(address_list(to)) + len(address_list(cc)) + len(address_list(bcc))
+
+
 class EmailSender:
     """One interface, several implementations. Swapping is a config value."""
 
@@ -75,15 +172,52 @@ class EmailSender:
 
     def send(
         self,
-        to: str,
+        to: str | list[str],
         subject: str,
         body: str,
         reply_to: str = "",
         in_reply_to: str = "",
         from_address: str = "",
         html_tail: str = "",
+        *,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        html: str = "",
+        attachments: list[OutgoingAttachment] | None = None,
+        references: str = "",
+        headers: dict[str, str] | None = None,
+        idempotency_key: str = "",
     ) -> SendResult:
-        """`in_reply_to` is a provider message id, not a header value.
+        """Put one message on the wire, or say why not.
+
+        **The positional order is frozen**; everything a full email carries
+        beyond the first seven arguments is keyword-only. Callers and the gate
+        still pass `(to, subject, body, reply_to, in_reply_to, from_address,
+        html_tail)` by position, and a new argument slotted in among them would
+        silently put a signature image where a From belongs.
+
+        `to` is one string (which may hold several addresses, as a person
+        types them) or a list; `cc` and `bcc` are lists. Header forms (`Name
+        <a@b>`) are fine in all three. `reply_to` stays a single address: it is
+        the `reply+<token>@` route home, and one is the whole of it.
+
+        `body` is the text/plain half and is always sent. `html` is a complete,
+        **already cleaned** HTML body -- `email_html.clean_outbound` -- and
+        replaces the paragraphs a sender would otherwise derive from `body`.
+        Cleaning is the caller's job and happens once, before the row is
+        written, so the stored copy and the sent copy are the same markup.
+
+        `in_reply_to` is an RFC 5322 Message-ID, never a provider's API id,
+        and `references` is the whole chain, oldest first. With no chain,
+        `References` is `in_reply_to` alone -- the one link that can honestly
+        be claimed. `headers` is for the few a message may carry beyond those
+        (`Importance`, `Auto-Submitted`); anything a sender builds itself is
+        dropped from it. `idempotency_key` is the row id, so a retried request
+        cannot send the same message twice where the vendor supports it.
+
+        `SendResult.rfc_message_id` is the Message-ID the message really went
+        out with, where it is known -- never a guess, because a wrong one
+        threads the buyer's answer under a stranger's message.
 
         `html_tail` is markup appended to the HTML half only, and the one thing
         it carries today is a signature image. **Plain text cannot hold an
@@ -92,10 +226,10 @@ class EmailSender:
         rather than a broken attachment. It is markup by necessity and is
         therefore built here, never taken from a request body.
 
-        Each implementation maps it to whatever its vendor wants -- Resend
-        takes a `headers` object, Gmail wants MIME headers on the raw
-        message. Passing a rendered header string instead would push one
-        vendor's wire format into every caller, which is the thing this
+        Each implementation maps the threading ids to whatever its vendor
+        wants -- Resend takes a `headers` object, Gmail wants MIME headers on
+        the raw message. Passing a rendered header string instead would push
+        one vendor's wire format into every caller, which is the thing this
         interface exists to prevent.
 
         `from_address` is empty for almost every send: mail from the dealership

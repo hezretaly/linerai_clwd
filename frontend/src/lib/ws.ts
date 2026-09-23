@@ -40,8 +40,14 @@ const INVALIDATES: Record<string, string[]> = {
   // is the one thing that must not wait for a click. `email-receipts` is here
   // as well as `email-messages` because a reply nobody could place has no
   // outreach row -- it exists only as a receipt, and it is exactly the
-  // delivery a manager needs to notice.
-  'email.received': ['email-messages', 'email-receipts', 'timeline', 'leads', 'conversations'],
+  // delivery a manager needs to notice. The ops keys as well: a delivery
+  // nobody could place is listed in *our* inbox, and the Unmatched box and
+  // the unread count sat stale until somebody clicked, on the one dashboard
+  // where mail arriving is the whole point of having it open.
+  'email.received': [
+    'email-messages', 'email-receipts', 'timeline', 'leads', 'conversations',
+    'ops-mail', 'ops-summary',
+  ],
   // Ours, not a dealership's: somebody asking Liner for a demo. Every ops
   // surface reads the same three keys, so a booking made while the calendar is
   // open moves the badge, the day and the inbox together.

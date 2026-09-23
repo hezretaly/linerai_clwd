@@ -18,7 +18,9 @@ import glob
 import pathlib
 import re
 import sys
+import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
@@ -27,6 +29,26 @@ BASE = "http://localhost:5173"
 API = "http://localhost:8000"
 SHOTS = pathlib.Path(".artifacts/ops")
 SHOTS.mkdir(parents=True, exist_ok=True)
+
+#: The composer's body. A rich-text editor is a `contenteditable`, not a
+#: `<textarea>`, and Playwright's `fill` types into either -- replacing what
+#: was there, which on a reply is the quoted message.
+EDITOR = '[contenteditable="true"]'
+
+#: The file the copies-and-files step attaches. A fixed name, because the
+#: picker's row and the reader's list are both found by it.
+ATTACHMENT = "ops-check.txt"
+
+#: Every address this script ever sends to. The reply in step 11 answers
+#: whichever unmatched message is on top, which is a smoke fixture -- so that
+#: one accumulated a row a run too, from before sends were recorded at all.
+RUN_ADDRESSES = (
+    "draft.check@example.invalid",
+    "first.contact@example.invalid",
+    "copies.check@example.invalid",
+    "nobody@nowhere.invalid",
+    "stranger@nowhere.invalid",
+)
 
 step = 0
 made: list[str] = []
@@ -77,35 +99,68 @@ def wait_for_badge(page, want: int) -> None:
     raise AssertionError(f"badge stuck at {badge(page)}, wanted {want}")
 
 
-def _clear_run_mail() -> int:
-    """Delete the ops_messages rows this run composed, by their fixed address.
+def _clear_run_mail(started: datetime) -> int:
+    """Delete the ops_messages rows this run composed, and what hangs off them.
 
     Straight at the database rather than through an endpoint, because there is
     no delete endpoint and there should not be: Trash is a timestamp precisely
     so nobody can destroy a message somebody wrote. A test clearing up after
     itself is a different act from a person binning their mail.
+
+    **By address, and by what this run wrote to a test domain.** The fixed
+    addresses are the ones this script types. The reply in step 11 goes to
+    whoever is on top of Unmatched, which is whichever smoke fixture arrived
+    last -- `stranger.<stamp>@nowhere.invalid`, `no-reply@billing.example` --
+    and no list can name those in advance, so each run used to leave that
+    one behind. What the founder wrote during this run to an RFC 2606 domain
+    is this run's by definition: nobody's real mail goes to `.invalid`.
+
+    **Children first.** A message's envelope and its files point at it, and
+    the database refuses to delete a row something still points at. A file
+    this run uploaded and never sent -- a run that failed between the pick
+    and the send -- goes too, rather than waiting out the server's own
+    clear-up of stale uploads.
     """
     sys.path.insert(0, "backend")
     # Liner's own database: `ops_messages` moved out of the stores, so a
     # dealership session no longer carries the table.
+    from sqlalchemy import and_, false, or_
     from app.db import ops_session
-    from app.models import OpsMessage
+    from app.models import OpsMailAttachment, OpsMailEnvelope, OpsMessage, OpsUser
 
     with ops_session() as db:
+        me = db.query(OpsUser).filter(OpsUser.email == "founder@linerai.us").one_or_none()
+        written_now = (
+            and_(
+                OpsMessage.author_id == me.id,
+                OpsMessage.created_at >= started,
+                or_(
+                    OpsMessage.to_address.like("%.invalid"),
+                    OpsMessage.to_address.like("%.example"),
+                ),
+            )
+            if me is not None
+            else false()
+        )
         rows = (
             db.query(OpsMessage)
-            # Every address this script ever sends to. The reply in step 11
-            # answers whichever unmatched message is on top, which is a smoke
-            # fixture -- so that one accumulated a row a run too, from before
-            # sends were recorded at all.
-            .filter(OpsMessage.to_address.in_((
-                "draft.check@example.invalid",
-                "first.contact@example.invalid",
-                "nobody@nowhere.invalid",
-                "stranger@nowhere.invalid",
-            )))
+            .filter(or_(OpsMessage.to_address.in_(RUN_ADDRESSES), written_now))
             .all()
         )
+        ids = [row.id for row in rows]
+        if ids:
+            db.query(OpsMailAttachment).filter(
+                OpsMailAttachment.message_id.in_(ids)
+            ).delete(synchronize_session=False)
+            db.query(OpsMailEnvelope).filter(
+                OpsMailEnvelope.message_id.in_(ids)
+            ).delete(synchronize_session=False)
+        if me is not None:
+            db.query(OpsMailAttachment).filter(
+                OpsMailAttachment.message_id.is_(None),
+                OpsMailAttachment.uploaded_by == me.id,
+                OpsMailAttachment.created_at >= started,
+            ).delete(synchronize_session=False)
         for row in rows:
             db.delete(row)
         db.commit()
@@ -114,6 +169,9 @@ def _clear_run_mail() -> int:
 
 def main() -> int:
     client = httpx.Client(base_url=API, timeout=20)
+    # Naive UTC like every stored timestamp, a little early so a row written
+    # in the first second of the run is not missed by the clear-up.
+    started = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(
@@ -259,7 +317,8 @@ def main() -> int:
             # every one of them is also an ordinary English word that turns up
             # in somebody's mail -- send, close, write, sent.
             page.click('button:text-is("Reply")')
-            page.fill("textarea", "Checking the composer path.")
+            # The editor opens on the quoted message; `fill` replaces it.
+            page.fill(EDITOR, "Checking the composer path.")
             page.click('button:text-is("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
             print(f"      {page.locator('text=Not delivered').first.inner_text()}")
@@ -281,7 +340,7 @@ def main() -> int:
             )
             fields.first.fill("first.contact@example.invalid")
             fields.nth(1).fill("About Liner")
-            page.fill("textarea", "Reaching out about a demo.")
+            page.fill(EDITOR, "Reaching out about a demo.")
             page.click('button:text-is("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
             page.screenshot(path=SHOTS / "08b-write-outbox.png")
@@ -324,7 +383,7 @@ def main() -> int:
             fields = page.locator("input")
             fields.first.fill("draft.check@example.invalid")
             fields.nth(1).fill("Half a thought")
-            page.fill("textarea", "Started this, will finish later.")
+            page.fill(EDITOR, "Started this, will finish later.")
             page.click('button:text-is("Save draft")')
             page.wait_for_selector("text=Draft kept", timeout=8000)
             page.wait_for_timeout(1200)   # the sidebar counts refetch after the save
@@ -358,6 +417,78 @@ def main() -> int:
             page.wait_for_timeout(1200)
             assert box_count("Trash") == trash_before, "restore should put it back"
 
+            say("a message carries a copy and a file, and Reply answers who it went to")
+            # Cc is behind a link *after* Subject, so To and Subject stay the
+            # first two fields every step above finds them as; the file goes
+            # through the picker's own input, exactly as a person's pick does.
+            page.click('button:text-is("Write")')
+            page.wait_for_selector("text=New message", timeout=5000)
+            fields = page.locator("input")
+            assert fields.first.input_value() == "", "Write opened prefilled"
+            fields.first.fill("copies.check@example.invalid")
+            fields.nth(1).fill("Two people and a file")
+            page.click('button:text-is("Cc")')
+            page.locator('input[aria-label="Cc"]').fill("second.person@example.invalid")
+            page.fill(EDITOR, "One for you both, with a file.")
+            with tempfile.TemporaryDirectory() as scratch:
+                upload = pathlib.Path(scratch) / ATTACHMENT
+                upload.write_text("A small file the ops browser check attaches.\n")
+                page.locator('input[type="file"]').first.set_input_files(str(upload))
+                # Uploaded when it is picked, not when the message is sent --
+                # so Send pressed before its row appears goes without it.
+                page.wait_for_selector(f'[aria-label="Remove {ATTACHMENT}"]', timeout=10000)
+            page.click('button:text-is("Send")')
+            page.wait_for_selector("text=Not delivered", timeout=10000)
+            page.screenshot(path=SHOTS / "08d-copies-and-file.png", full_page=True)
+            # One composer at a time: the reply below opens its own, and two
+            # on the page would be two To boxes.
+            page.click('button:text-is("Close")')
+            page.wait_for_timeout(400)
+
+            page.click('button:text-is("Sent")')
+            # Waited for rather than slept on: the box may draw what it held
+            # before the send for a moment while it refetches.
+            page.wait_for_selector(
+                'ul li:first-child button:has-text("copies.check@example.invalid")',
+                timeout=10000,
+            )
+            row = page.locator("ul li button").first
+            listed = row.inner_text()
+            assert "copies.check@example.invalid" in listed, (
+                f"the newest Sent row should be the message just sent: {listed!r}"
+            )
+            # The row is one line per message however many people and files
+            # it carries, so it has to say so itself.
+            assert row.locator('[aria-label="1 attached file"]').count() == 1, (
+                f"the Sent row should say it carries a file: {listed!r}"
+            )
+            assert "+1" in listed, f"and that somebody else was on it: {listed!r}"
+
+            row.click()
+            page.wait_for_selector(f"text={ATTACHMENT}", timeout=10000)
+            # The reply to a message *of ours* goes to the people it went to.
+            # It used to be addressed to the row's sender -- which on a Sent
+            # message is us, so answering a thread we started wrote to
+            # ourselves.
+            page.click('button:text-is("Reply")')
+            to_box = page.get_by_role("group", name="To", exact=True)
+            to_box.wait_for(timeout=5000)
+            addressed = to_box.inner_text()
+            assert "copies.check@example.invalid" in addressed, (
+                f"Reply on a Sent message should go to its recipient: {addressed!r}"
+            )
+            for ours in ("founder@linerai.us", "cto@linerai.us"):
+                assert ours not in addressed, f"Reply on a Sent message wrote to us: {addressed!r}"
+            page.click('button:text-is("Close")')
+            page.wait_for_timeout(300)
+            # Reply all keeps the Cc -- and is only offered because there is one.
+            page.click('button:text-is("Reply all")')
+            page.wait_for_selector(
+                '[aria-label="Remove second.person@example.invalid"]', timeout=5000
+            )
+            page.screenshot(path=SHOTS / "08e-reply-all.png", full_page=True)
+            page.click('button:text-is("Close")')
+
             say("390px: neither page scrolls sideways")
             phone = browser.new_context(
                 viewport={"width": 390, "height": 844},
@@ -381,11 +512,12 @@ def main() -> int:
         if made:
             print(f"\nCancelled {len(made)} demo request(s) held by this run.")
         # And the mail this run wrote. Every run composes a draft and sends
-        # it, so without this Drafts and Sent grow by two a run -- and the
+        # it, and sends three more, so without this Drafts and Sent grow with
+        # every run -- and the
         # counts these very assertions read drift further from a fresh
         # database each time, which is how a check starts failing for a reason
         # that has nothing to do with the change being tested.
-        binned = _clear_run_mail()
+        binned = _clear_run_mail(started)
         if binned:
             print(f"Removed {binned} message(s) this run composed.")
         client.close()

@@ -286,6 +286,25 @@ def _clear(db: Session) -> None:
     # reseed died on the same bare `DELETE FROM outreach` FOREIGN KEY error as
     # before, with the table sitting right there in the list looking correct.
     # Anything holding a foreign key must be emptied before what it points at.
+    #
+    # **What an email carried goes with the send it describes -- and only
+    # that.** An outbound envelope hangs off its `outreach` row, and its files
+    # off the envelope, so both are emptied first, files first. An inbound
+    # envelope hangs off its delivery receipt instead, which a reseed detaches
+    # rather than deletes (`_unplace_inbound`), so the envelope and the files
+    # of mail somebody really sent us stay with the receipt that records it.
+    # Uploads nobody sent have no envelope and are cleared by age.
+    from sqlalchemy import select
+
+    from app.models import EmailAttachment, EmailEnvelope
+
+    outbound = select(EmailEnvelope.id).where(EmailEnvelope.outreach_id.is_not(None))
+    db.query(EmailAttachment).filter(
+        EmailAttachment.envelope_id.in_(outbound)
+    ).delete(synchronize_session=False)
+    db.query(EmailEnvelope).filter(
+        EmailEnvelope.outreach_id.is_not(None)
+    ).delete(synchronize_session=False)
     for model in (
         CallSegment, CallUsage, CallBuyerTrack, CallRecording,
         EmailReplyDue, LeadAddress, RuntimeFlag, UserSignature,

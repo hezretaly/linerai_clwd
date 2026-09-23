@@ -124,11 +124,42 @@ def parse_one(entry: str) -> Recipient | None:
     address = (mailbox.addr_spec or "").strip()
     if not address or "@" not in address:
         return None
-    try:
-        checked = validate_email(address, check_deliverability=False)
-    except EmailNotValidError:
+    normalized = _validated(address)
+    if not normalized:
         return None
-    return Recipient(name=(mailbox.display_name or "").strip(), address=checked.normalized)
+    return Recipient(name=(mailbox.display_name or "").strip(), address=normalized)
+
+
+#: RFC 2606 / RFC 6761 names that exist so that mail to them cannot leave the
+#: building. `email-validator` refuses every special-use domain outright, which
+#: is right for a sign-up form and wrong here: the fixture's buyers, every
+#: rehearsal address and the gate's strangers are `@example.invalid` and
+#: `@riversideauto.example` precisely because nothing can deliver to them, and
+#: a composer that refused them would make the one safe way to test a send the
+#: one address it will not take.
+RESERVED_TLDS = frozenset({"invalid", "test", "example", "localhost"})
+
+
+def _validated(address: str) -> str:
+    """`address` normalised, or "" when it is not a syntactically valid one.
+
+    A reserved domain is checked by standing a real one in for it: the local
+    part and the labels still have to be well formed, only the top-level name
+    is let through. A bare `x@localhost`, with no dot, is still refused.
+    """
+    try:
+        return validate_email(address, check_deliverability=False).normalized
+    except EmailNotValidError:
+        pass
+    local, _, domain = address.rpartition("@")
+    head, dot, tld = domain.rpartition(".")
+    if not dot or not head or tld.lower() not in RESERVED_TLDS:
+        return ""
+    try:
+        stand_in = validate_email(f"{local}@{head}.com", check_deliverability=False)
+    except EmailNotValidError:
+        return ""
+    return f"{stand_in.local_part}@{domain.lower()}"
 
 
 def parse(values: str | Sequence[str] | None) -> tuple[list[Recipient], list[str]]:

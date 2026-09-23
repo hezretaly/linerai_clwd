@@ -73,37 +73,76 @@ def unresolved_count() -> int:
     )
 
 
+#: Where the ops mailbox downloads a file that arrived on a delivery nobody
+#: could place. The reader and the list both hand it out, so it is one
+#: constant rather than two spellings of one path.
+ATTACHMENT_URL = "/api/ops/mail/attachments/email"
+
+
 def unresolved(limit: int = 300) -> list[dict]:
     """Every unplaced delivery, newest first, as plain dicts.
 
     `store` rides along on each row because an id is only unique within the
     file it came from, and a read or trash mark has to be able to find it
     again.
+
+    Each row also carries what the ops composer needs to answer it properly
+    -- the `message_id` a reply threads under (never the dedupe digest, which
+    names no message), its `in_reply_to` and `references`, the sender's name
+    off the header From -- and `email`, the envelope summary the list draws
+    Cc and files from. The envelope is read in the store the delivery landed
+    in, in one query per store rather than one per row.
     """
     rows: list[dict] = []
-    for slug, found in _each(
-        lambda db: [
-            {
-                "id": m.id,
-                "from_address": m.from_address,
-                "to_address": m.to_address or "",
-                "subject": m.subject or "",
-                "body": m.body or "",
-                "created_at": m.created_at,
-                "outcome": m.outcome,
-            }
-            for m in db.query(InboundEmail)
-            .filter(InboundEmail.outcome == "unresolved")
-            .order_by(InboundEmail.created_at.desc())
-            .limit(limit)
-            .all()
-        ]
-    ):
+    for slug, found in _each(lambda db: _unresolved_in(db, limit)):
         for row in found:
             row["store"] = slug
             rows.append(row)
     rows.sort(key=lambda r: r["created_at"], reverse=True)
     return rows[:limit]
+
+
+def _unresolved_in(db, limit: int) -> list[dict]:  # noqa: ANN001 -- a store's Session
+    from app import email_envelopes
+    from app.email_intake import display_name
+
+    receipts = (
+        db.query(InboundEmail)
+        .filter(InboundEmail.outcome == "unresolved")
+        .order_by(InboundEmail.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    try:
+        envelopes = email_envelopes.for_receipts_many(db, [m.id for m in receipts])
+        files = email_envelopes.attachments_of(db, [e.id for e in envelopes.values()])
+    except OperationalError:
+        # A store file from before envelopes were kept, on a box that has not
+        # restarted since. Its mail still lists; it just has nothing more.
+        db.rollback()
+        envelopes, files = {}, {}
+
+    out = []
+    for m in receipts:
+        env = envelopes.get(m.id)
+        message_id = (env.rfc_message_id if env else "") or m.message_id or ""
+        out.append({
+            "id": m.id,
+            "from_address": m.from_address,
+            "from_name": ((env.from_name if env else "") or display_name(m.from_address or "")),
+            "to_address": m.to_address or "",
+            "subject": m.subject or "",
+            "body": m.body or "",
+            "created_at": m.created_at,
+            "outcome": m.outcome,
+            "message_id": "" if message_id.startswith("sha256:") else message_id,
+            "in_reply_to": (env.in_reply_to if env else "") or m.in_reply_to or "",
+            "references": (env.references if env else "") or "",
+            "email": email_envelopes.summary(
+                env, files.get(env.id, []) if env else [], base=ATTACHMENT_URL,
+            ),
+        })
+    return out
 
 
 def exists(inbound_id: str) -> bool:

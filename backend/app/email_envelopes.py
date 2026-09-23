@@ -122,28 +122,31 @@ def attachments_of(db: Session, envelope_ids: Iterable[str]) -> dict[str, list[E
     return out
 
 
-def by_rfc_message_id(db: Session, message_id: str) -> EmailEnvelope | None:
+def by_rfc_message_id(db: Session, message_id: str, *, outbound: bool = False) -> EmailEnvelope | None:
     """The envelope a `Message-ID` names, for threading a reply under it.
 
     Compared as written and without angle brackets, because one mail client
     quotes `<abc@x>` back and a hand-built header may say `abc@x`.
+
+    `outbound=True` asks only about our own sends. A copy of one of our
+    messages can come back in -- a reply-all that includes our own address --
+    carrying the very same Message-ID, and the intake deciding whose reply
+    this is must find the send, never that copy.
     """
     mid = (message_id or "").strip()
     if not mid:
         return None
     bare = mid.strip("<>")
-    return db.scalar(
-        select(EmailEnvelope)
-        .where(EmailEnvelope.rfc_message_id.in_([mid, bare, f"<{bare}>"]))
-        .order_by(EmailEnvelope.created_at.desc())
-        .limit(1)
-    )
+    query = select(EmailEnvelope).where(EmailEnvelope.rfc_message_id.in_([mid, bare, f"<{bare}>"]))
+    if outbound:
+        query = query.where(EmailEnvelope.outreach_id.is_not(None))
+    return db.scalar(query.order_by(EmailEnvelope.created_at.desc()).limit(1))
 
 
 # -------------------------------------------------------------- serializers
 
 
-def attachment_out(a: EmailAttachment, *, base: str = "/api/email/attachments") -> dict:
+def attachment_out(a, *, base: str = "/api/email/attachments") -> dict:  # noqa: ANN001
     """One file as the API serves it.
 
     `url` is the download (an ordinary `<a href>` in the browser, because a
@@ -151,16 +154,22 @@ def attachment_out(a: EmailAttachment, *, base: str = "/api/email/attachments") 
     whose bytes were never kept -- a refused type, or a relay that forwarded
     only the name. `inline` says whether the browser may show it in the page:
     a raster image the server has itself recognised, never anything else.
+
+    Takes an `EmailAttachment` or an `OpsMailAttachment`: one shape for both
+    realms, so the reader draws a file the same way whichever database it
+    came from. Ours has no Content-ID, disposition or refusal -- a refused
+    upload never becomes a row -- and reads as a plain attachment.
     """
-    kept = bool(a.path) and not a.refused
+    refused = getattr(a, "refused", "") or ""
+    kept = bool(a.path) and not refused
     return {
         "id": a.id,
         "filename": a.filename,
         "size": a.size or 0,
         "content_type": a.content_type,
-        "content_id": a.content_id or "",
-        "disposition": a.disposition or "attachment",
-        "refused": a.refused or "",
+        "content_id": getattr(a, "content_id", "") or "",
+        "disposition": getattr(a, "disposition", "") or "attachment",
+        "refused": refused,
         "inline": kept and a.content_type in email_files.INLINE_TYPES,
         "url": f"{base}/{a.id}" if kept else "",
         "created_at": stamp(a.created_at),

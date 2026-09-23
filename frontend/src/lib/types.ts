@@ -1,6 +1,10 @@
 /* Hand-written to match app/schemas/serialize.py. One shaping layer on each
  * side is easier to keep honest than a generator nobody re-runs. */
 
+// A type only: `lib/email.ts` carries no imports of its own, so nothing that
+// reads this file pulls an editor or a sanitiser into its chunk.
+import type { EmailSummary } from './email'
+
 /* 'adf' is written only by the lead importer, from a document a dealer
  * uploaded. The agent cannot claim it -- save_captured_fields takes the four
  * conversational values and nothing else. */
@@ -222,6 +226,11 @@ export interface Outreach {
   error: string
   sent_at: string | null
   created_at: string
+  /* Everybody else on the message, its files and its importance. Only on
+     email rows, and only where the server loaded the envelope -- a logged
+     call has none, and neither does a list that did not ask. `to_address`
+     stays the one primary address either way. */
+  email?: EmailSummary
 }
 
 export interface HandoffRule {
@@ -302,6 +311,8 @@ export interface Kpi {
   /** The count is real but the feature behind it is not set up, so the window
    *  line says why instead of a zero reading as a quiet day. */
   unavailable?: boolean
+  /** Something to act on (e.g. traffic on a model with no published rates). */
+  warning?: boolean
 }
 
 export interface Overview {

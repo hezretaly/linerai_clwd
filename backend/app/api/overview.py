@@ -256,7 +256,12 @@ def overview(
                  "-- last 24 hours" if spend
                  else "no calls billed yet"
              ),
-             "unavailable": not spend or bool(unpriced)},
+             "unavailable": not spend or bool(unpriced),
+             # Only unpriced traffic is something to act on. "No calls billed
+             # yet" is a fact, not a fault, and warm on this page means a
+             # fault -- two meanings for one colour is how the one that
+             # matters stops being read.
+             "warning": bool(unpriced)},
             {"key": "appointments_set", "label": "Appointments set",
              "value": appointments_set, "window": "last 24 hours"},
             {"key": "needs_a_person", "label": "Needs a person",

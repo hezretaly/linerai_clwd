@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
-import { useEffect } from 'react'
+import { useEffect, useId } from 'react'
 
 /* Hand-written shadcn-shaped primitives. They read the same tokens the CLI
  * components would, so swapping to the real thing later is a file move. */
@@ -216,6 +216,46 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       {children}
     </label>
+  )
+}
+
+/**
+ * `Field`'s layout for a control that is more than one element -- a
+ * recipient box with chips in it, a rich-text editor with a toolbar.
+ *
+ * `Field` wraps its control in a `<label>`, and a label forwards a click on
+ * any of its plain content to the first labelable element inside it. With a
+ * single `<input>` that is the point; with a toolbar it means a click on the
+ * words "Message", or anywhere in the editor's text, presses Bold. So the
+ * caption here is a `<label htmlFor>` pointing at one input when the caller
+ * names it, or plain text naming the group when it does not.
+ */
+export function FieldGroup({
+  label,
+  htmlFor,
+  children,
+  className,
+}: {
+  label: string
+  htmlFor?: string
+  children: ReactNode
+  className?: string
+}) {
+  const id = useId()
+  const caption = 'text-xs font-medium text-muted-foreground'
+  return (
+    <div role="group" aria-labelledby={id} className={clsx('min-w-0 space-y-1.5', className)}>
+      {htmlFor ? (
+        <label id={id} htmlFor={htmlFor} className={clsx('block', caption)}>
+          {label}
+        </label>
+      ) : (
+        <span id={id} className={clsx('block', caption)}>
+          {label}
+        </span>
+      )}
+      {children}
+    </div>
   )
 }
 

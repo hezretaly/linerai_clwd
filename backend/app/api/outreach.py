@@ -19,9 +19,8 @@ from app.api.deps import current_user, find_staff, get_dealership
 from app.api.team import rep_load
 from app.config import settings
 from app.db import get_db, utcnow
-from app import outreach_send
+from app import email_outbound
 from app.events import emit
-from app.integrations.registry import get_email_sender
 from app.models import (
     Appointment,
     CapturedField,
@@ -33,7 +32,7 @@ from app.models import (
     User,
     Vehicle,
 )
-from app.schemas.serialize import appointment_out, outreach_out
+from app.schemas.serialize import appointment_out, outreach_many, outreach_out
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
@@ -297,12 +296,21 @@ def outreach_draft(
         .order_by(Outreach.created_at.desc())
         .all()
     )
-    return {"outreach": [outreach_out(o) for o in rows]}
+    return {"outreach": outreach_many(db, rows)}
 
 
 class OutreachBody(BaseModel):
     subject: str
-    body: str
+    #: The text half. Written from `html` instead when that is given.
+    body: str = ""
+    # Optional, and `{subject, body}` alone is the send it always was: to the
+    # buyer's address on file, text only.
+    to: str | list[str | dict] | None = None
+    cc: str | list[str | dict] | None = None
+    bcc: str | list[str | dict] | None = None
+    html: str = ""
+    attachment_ids: list[str] | None = None
+    importance: str = "normal"
 
 
 @router.post("/{appointment_id}/outreach")
@@ -315,59 +323,40 @@ def send_outreach(
 ) -> dict:
     appointment = get_appointment(db, appointment_id)
     lead = db.query(Lead).filter_by(id=appointment.lead_id).one_or_none()
-    if lead is None or not lead.email:
+    to = email_outbound.typed_or_on_file(body.to, lead.email) if lead is not None else None
+    if lead is None or not to:
         raise HTTPException(
             409,
             "No email on file for this lead, so there is nothing to send to. Log a call "
             "instead.",
         )
 
-    sender = get_email_sender()
-    record = Outreach(
-        appointment_id=appointment.id, lead_id=lead.id, sent_by_user_id=user.id,
-        channel="email", to_address=lead.email, subject=body.subject, body=body.body,
-        provider=sender.name, status="queued",
-        reply_token=outreach_send.mint_reply_token(db),
-    )
-    db.add(record)
-    db.commit()
-
-    # One guard, shared with the lead-level send. See app/outreach_send.py.
-    blocked = outreach_send.blocked_reason(sender, lead.email)
-    if blocked:
-        record.status = "failed"
-        record.error = blocked
-        db.commit()
-        return outreach_out(record)
-
     try:
-        # Reply-To routes back to this row, not to the rep who pressed send:
-        # a reply has to reach the system to land on the buyer's timeline.
-        result = sender.send(
-            lead.email, body.subject, body.body,
-            reply_to=outreach_send.reply_to_address(record.reply_token),
-            # Signed with the dealership's own name, read from the row. It came
-            # from SENDING_FROM, which is one copy too many of a fact the
-            # database already holds -- and every deployment that started from
-            # `.env.example` mailed its buyers as "Riverside Auto".
-            from_address=outreach_send.dealership_from(db, sender),
+        # Unsigned: the draft ends in the rep's name and the dealership's,
+        # written into the text they are looking at.
+        message = email_outbound.build(
+            db, to=to, cc=body.cc, bcc=body.bcc,
+            subject=body.subject, body=body.body, html=body.html,
+            attachment_ids=body.attachment_ids, importance=body.importance,
+            uploader_id=user.id,
         )
-        record.provider_message_id = result.message_id
-        record.provider_thread_id = result.thread_id
-        # 'sent' means the provider accepted it. There is no delivery callback.
-        record.status = result.status
-        record.error = result.detail if result.status != "sent" else ""
-        record.sent_at = utcnow()
-    except Exception as exc:
-        record.status = "failed"
-        record.error = str(exc)
-        db.commit()
-        return outreach_out(record)
+    except email_outbound.OutboundError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
 
-    db.commit()
+    # The one path, the one guard over every recipient -- see
+    # app/email_outbound.py. The event waits until the mirror below is
+    # written, so a dashboard that refetches on it finds both.
+    sent = email_outbound.send(
+        db, message, kind="followup", lead_id=lead.id, appointment_id=appointment.id,
+        sent_by_user_id=user.id, announce_event=False,
+    )
+    if sent.result is None:
+        return sent.out()
 
     # Mirror into the buyer's thread. This is what makes the demo visibly land
-    # -- and it means the round trip never depends on inbox delivery.
+    # -- and it means the round trip never depends on inbox delivery. Plain
+    # text, as the thread is, and only for mail that went: a refused send
+    # sitting in the buyer's chat reads as one that arrived.
     convo = (
         db.query(Conversation)
         .filter_by(id=appointment.conversation_id)
@@ -375,21 +364,16 @@ def send_outreach(
         if appointment.conversation_id
         else db.query(Conversation).filter_by(lead_id=lead.id).first()
     )
-    if convo is not None:
+    if convo is not None and sent.ok:
         db.add(Message(
             conversation_id=convo.id, role="rep",
-            content=f"{body.subject}\n\n{body.body}",
-            tool_calls_json=json.dumps([{"name": "outreach", "outreach_id": record.id}]),
+            content=f"{sent.record.subject}\n\n{sent.record.body}",
+            tool_calls_json=json.dumps([{"name": "outreach", "outreach_id": sent.record.id}]),
         ))
         db.commit()
 
-    emit(db, "outreach.sent", {
-        "outreach_id": record.id, "appointment_id": appointment.id, "lead_id": lead.id,
-        "to": lead.email, "provider": record.provider,
-        "delivered_externally": sender.delivers,
-        "conversation_id": convo.id if convo else None,
-    })
-    return outreach_out(record)
+    email_outbound.announce(db, sent, conversation_id=convo.id if convo else None)
+    return sent.out()
 
 
 class LogCallBody(BaseModel):

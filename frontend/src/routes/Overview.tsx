@@ -305,7 +305,7 @@ export function OverviewPage() {
                 <p
                   className={clsx(
                     'mt-1 text-xs',
-                    kpi.unavailable ? 'text-warning-foreground' : 'text-muted-foreground',
+                    kpi.warning ? 'text-warning-foreground' : 'text-muted-foreground',
                   )}
                 >
                   {kpi.window}

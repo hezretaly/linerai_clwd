@@ -34,6 +34,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app import email_envelopes
 from app.models import (
     Appointment,
     CallRecording,
@@ -153,6 +154,13 @@ def compose(
             tool_calls=loads(m.tool_calls_json, []),
         ))
 
+    # What each email carried beyond one address -- every recipient, the
+    # files, importance -- loaded for the whole timeline at once. A buyer a
+    # year in has hundreds of these, and a query per card is the difference
+    # between a page that opens and one that hangs.
+    envelopes = email_envelopes.for_outreach_many(db, outreach or [])
+    files = email_envelopes.attachments_of(db, [e.id for e in envelopes.values()])
+
     for o in outreach or []:
         # An inbound reply has no mirror by definition: nothing wrote it into a
         # thread, a buyer sent it to us.
@@ -161,7 +169,15 @@ def compose(
         # sits in the thread a rep is reading, and moving it by a few
         # milliseconds would shuffle it past the message it answered.
         at = mirror.created_at if mirror is not None else (o.sent_at or o.created_at)
-        row = outreach_out(o)
+        env = envelopes.get(o.id)
+        # Email only: a text or a logged call has no envelope, and an empty
+        # recipient list on one would read as a message sent to nobody.
+        row = outreach_out(
+            o,
+            email=email_envelopes.summary(
+                env, files.get(env.id, []) if env else [], include_bcc=True,
+            ) if o.channel == "email" else None,
+        )
         # An outreach row has a `kind` of its own -- followup, reminder,
         # credit_application -- and so does a timeline entry. Two different
         # words for two different things, and letting them share a key means

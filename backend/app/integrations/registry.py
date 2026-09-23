@@ -121,7 +121,11 @@ def _email_status() -> IntegrationStatus:
         try:
             sender.check()
             configured = True
-            detail = f"Sending as {getattr(sender, 'from_address', lambda: sender.name)()}."
+            # The address a dealership's mail actually leaves from. It asked
+            # for a `from_address` attribute no sender has, so the line read
+            # "Sending as resend" -- the vendor, where the one fact somebody
+            # opens this for is which mailbox.
+            detail = f"Sending as {sender.default_address('dealership') or sender.name}."
         except Exception as exc:  # NotConfigured
             missing = getattr(exc, "missing", [])
             detail = getattr(exc, "detail", str(exc))

@@ -13,20 +13,33 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
+from typing import Sequence
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.integrations.email.base import EmailSender, with_name
+from app.integrations.email.base import EmailSender, address_list, bare_address, with_name
 from app.models import OpsUser, Outreach, User
 
 
-def blocked_reason(sender: EmailSender, to_address: str) -> str:
+def blocked_reason(sender: EmailSender, recipients: str | Sequence[str]) -> str:
     """Why this send must not go out, or "" if it may.
 
     Only bites when the sender actually delivers: with the outbox there is
     nothing to protect anyone from, and refusing there would hide the row a
     rep is supposed to see.
+
+    **Every recipient, To, Cc and Bcc alike.** `recipients` is one string --
+    which may itself hold several addresses, as a box's text does -- or a list
+    of them. A limit that looked only at the first To would let a rehearsal
+    Cc a real prospect, and Bcc is the one nobody sees on the copy afterwards.
+    The whole message is refused if any one of them is outside the limit:
+    sending to the allowed half would be a message the rep did not write.
+
+    **Compared on the bare address, lowercased.** It compared the string it
+    was handed, verbatim, so `Pat <pat@x.com>` was refused with `pat@x.com`
+    on the list -- and an address in a different case was refused too, though
+    no mail server treats the domain's case as meaningful.
 
     The message names the setting and the value that lifts it. A refusal that
     says only "blocked" costs whoever reads it a search through the codebase.
@@ -36,15 +49,29 @@ def blocked_reason(sender: EmailSender, to_address: str) -> str:
     allowed = settings.outbound_recipients
     if allowed is None:
         return ""
-    if (to_address or "").lower() in allowed:
+    permitted = {(bare_address(a) or a).strip().lower() for a in allowed}
+    addresses = [
+        (bare_address(entry) or entry).strip().lower()
+        for entry in address_list(recipients)
+    ]
+    if not addresses:
+        # Nothing to check is not the same as nothing refused. A guard that
+        # passes an empty list passes whatever a bug upstream dropped.
+        return "Not sent: the message has no recipient."
+    refused = [a for a in dict.fromkeys(addresses) if a not in permitted]
+    if not refused:
         return ""
     return (
-        f"Not sent: OUTBOUND_ONLY_TO does not include {to_address}. "
+        f"Not sent: OUTBOUND_ONLY_TO does not include {', '.join(refused)}. "
         + (
             f"It currently allows {', '.join(allowed)}. "
             if allowed else "It is empty, so every address is refused. "
         )
-        + "Add the address to it, or set OUTBOUND_ONLY_TO=everyone to send freely."
+        + (
+            "Add the address to it"
+            if len(refused) == 1 else "Add those addresses to it, or take them off the message"
+        )
+        + ", or set OUTBOUND_ONLY_TO=everyone to send freely."
     )
 
 
@@ -236,7 +263,9 @@ def with_signature(db: Session, body: str, user=None) -> str:
         return text
     if block in text:
         return text
-    return f"{text}\n\n{block}"
+    # A message that is only a file still gets its sign-off, without two
+    # blank lines above it.
+    return f"{text}\n\n{block}" if text else block
 
 
 def signature_for(db: Session, user=None) -> str:

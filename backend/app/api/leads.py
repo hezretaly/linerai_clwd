@@ -526,9 +526,25 @@ def reach(
     drafting = email_agent.have_model()
     sms_blocked = sms_module.blocked_reason(number) if number else ""
 
+    # Every address this buyer is known by, for the composer's To suggestions:
+    # the one on their row first, then any a rep has linked. `to` stays the
+    # one string it always was; this is the list beside it.
+    known = [{"address": address, "label": "On file"}] if address else []
+    seen = {address.lower()} if address else set()
+    for row in (
+        db.query(LeadAddress)
+        .filter_by(lead_id=lead.id)
+        .order_by(LeadAddress.created_at.asc())
+        .all()
+    ):
+        if row.address and row.address.lower() not in seen:
+            seen.add(row.address.lower())
+            known.append({"address": row.address, "label": "Also writes from"})
+
     return {
         "email": {
             "to": address,
+            "addresses": known,
             "available": bool(address),
             "reason": "" if address else "No email address on file for this buyer.",
             # Recorded either way; this says whether it also arrives.

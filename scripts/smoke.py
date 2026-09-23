@@ -1669,6 +1669,26 @@ def main() -> int:
           status_of("GET", "/api/ops/mail?box=archive")[0] == 400)
 
     call("POST", f"/api/demo/requests/{ops_demo['id']}/cancel")
+    # **Given back, like the appointment slots are.** Every run sent four
+    # messages from /ops and kept them, and the mailbox lists the newest 300
+    # -- so after enough runs Sent stopped counting, and `make ops-ui`'s "it
+    # lands in Sent" failed on a count pinned at 300 by debris from a
+    # different gate. Addressed with this run's stamp, so nothing else is
+    # touched; files and envelope first, or the foreign keys refuse.
+    from app.db import ops_session as _ops_session
+    from app.models import OpsMailAttachment as _OpsFile, OpsMailEnvelope as _OpsEnv
+    from app.models import OpsMessage as _OpsMsg
+
+    with _ops_session() as _odb:
+        mine = [m.id for m in _odb.query(_OpsMsg).filter(_OpsMsg.to_address.contains(stamp))]
+        if mine:
+            _odb.query(_OpsFile).filter(_OpsFile.message_id.in_(mine)).delete(synchronize_session=False)
+            _odb.query(_OpsEnv).filter(_OpsEnv.message_id.in_(mine)).delete(synchronize_session=False)
+            _odb.query(_OpsMsg).filter(_OpsMsg.id.in_(mine)).delete(synchronize_session=False)
+            _odb.commit()
+        check("and the mail this run sent from /ops is given back",
+              _odb.query(_OpsMsg).filter(_OpsMsg.to_address.contains(stamp)).count() == 0,
+              f"{len(mine)} removed")
     # Back to the dealership for everything after this -- including the
     # slot-release `finally`, which reads /api/appointments. One jar, one
     # session at a time, and leaving an ops session behind here made the
@@ -2947,9 +2967,11 @@ def main() -> int:
     check("and a send cannot be filed against a buyer who does not exist",
           ghost[0] == 404, str(ghost[0]))
 
-    # Replying threads. The provider id of the message being answered goes out
+    # Replying threads. The Message-ID of the message being answered goes out
     # as In-Reply-To, which is what puts our reply under the original in the
-    # buyer's client instead of starting a second conversation.
+    # buyer's client instead of starting a second conversation -- the RFC
+    # Message-ID, never a provider's own API id, which names nothing a mail
+    # client has ever seen.
     arrived = next(
         m for m in call("GET", "/api/email/messages?box=received")["messages"]
         if m["lead_id"]
@@ -2998,6 +3020,286 @@ def main() -> int:
           str(threaded.get("headers")))
     check("and a fresh send carries no threading header at all",
           "headers" not in payload, str(sorted(payload)))
+
+    # ------------------------------------------------------------------------
+    print("\n== a whole email: several people, a copy, a file, formatting, and back ==")
+    # The whole outbound path carried one address and a plain-text body, so a
+    # rep who typed two addresses into To sent one string with a comma in it
+    # and there was nowhere at all for a Cc, a file or a bold word. Everything
+    # below is the same message seen from each end: what the provider is
+    # handed, what the send files, what the reader draws, and what a reply
+    # coming back carries.
+    import base64 as _b64
+    from email.message import EmailMessage as _Mime
+
+    from app.integrations.email.base import OutgoingAttachment as _Out
+    from app.integrations.email.gmail import GmailSender as _GmailFull
+
+    pdf = b"%PDF-1.4\n% a smoke test's attachment\n"
+    full = ResendSender().payload(
+        ["one@example.invalid", "Two, Person <two@example.invalid>"], "Your visit",
+        "Hi both", reply_to="reply+t@d", in_reply_to="<p@x.invalid>",
+        cc=["cc@example.invalid"], bcc=["bcc@example.invalid"],
+        html="<p>Hi <b>both</b></p>", references="<a@x.invalid> <p@x.invalid>",
+        attachments=[_Out("visit.pdf", "application/pdf", pdf)],
+        headers={"Importance": "high", "X-Priority": "1"},
+    )
+    check("the provider is handed every To as its own entry",
+          full["to"] == ["one@example.invalid", '"Two, Person" <two@example.invalid>'],
+          str(full["to"]))
+    check("and the Cc and Bcc as lists of their own",
+          full.get("cc") == ["cc@example.invalid"] and full.get("bcc") == ["bcc@example.invalid"],
+          f"{full.get('cc')} / {full.get('bcc')}")
+    check("the HTML the rep formatted, and the text half beside it",
+          full["html"].startswith("<p>Hi <b>both</b></p>") and full["text"] == "Hi both",
+          full["html"][:60])
+    check("the file, as bytes the provider can decode",
+          [a["filename"] for a in full.get("attachments", [])] == ["visit.pdf"]
+          and _b64.b64decode(full["attachments"][0]["content"]) == pdf)
+    check("and the whole References chain, not only the parent",
+          full["headers"].get("References") == "<a@x.invalid> <p@x.invalid>"
+          and full["headers"].get("In-Reply-To") == "<p@x.invalid>"
+          and full["headers"].get("Importance") == "high",
+          str(full.get("headers")))
+
+    mime = _GmailFull().message(
+        ["one@example.invalid"], "Your visit", "Hi", cc=["cc@example.invalid"],
+        html="<p>Hi</p>", attachments=[_Out("visit.pdf", "application/pdf", pdf)],
+    )
+    check("Gmail gets the same message as MIME: Cc, an HTML part and the file",
+          "cc@example.invalid" in (mime["Cc"] or "")
+          and mime.get_body(("html",)) is not None
+          and [p.get_filename() for p in mime.iter_attachments()] == ["visit.pdf"]
+          and bool(mime["Message-ID"]),
+          str(mime["Cc"]))
+
+    fe = secrets.token_hex(4)
+    up_status, uploaded = upload_as("/api/email/attachments", f"quote-{fe}.pdf", pdf,
+                                    "application/pdf")
+    check("a file is uploaded before the message is sent",
+          up_status in (200, 201) and isinstance(uploaded, dict) and uploaded.get("id"),
+          f"{up_status} {str(uploaded)[:80]}")
+    exe_status, exe = upload_as("/api/email/attachments", "invoice.pdf.exe", b"MZ\x90\x00",
+                                "application/pdf")
+    check("a program is refused however it is named, and says why",
+          exe_status == 400 and "program" in str(exe).lower(), f"{exe_status} {str(exe)[:90]}")
+
+    unread = status_of("POST", "/api/email/compose", {
+        "to": f"not an address, ok.{fe}@example.invalid", "subject": "x", "body": "y",
+    })
+    check("an entry that is not an address is refused, by name, before anything is sent",
+          unread[0] == 400 and "not an address" in unread[1], unread[1][:120])
+
+    sent_full = call("POST", "/api/email/compose", {
+        "to": f"Alex {fe} <alex.{fe}@example.invalid>; blair.{fe}@example.invalid",
+        "cc": f"casey.{fe}@example.invalid", "bcc": f"drew.{fe}@example.invalid",
+        "subject": f"Two of you, one file {fe}",
+        "html": "<p>Hello <b>there</b></p><ul><li>one</li><li>two</li></ul>"
+                "<script>alert(1)</script>",
+        "attachment_ids": [uploaded.get("id") if isinstance(uploaded, dict) else ""],
+    })
+    summary_ = sent_full.get("email") or {}
+    check("one send to two people, a copy and a blind copy",
+          [r["address"] for r in summary_.get("to", [])]
+          == [f"alex.{fe}@example.invalid", f"blair.{fe}@example.invalid"]
+          and [r["address"] for r in summary_.get("cc", [])] == [f"casey.{fe}@example.invalid"]
+          and [r["address"] for r in summary_.get("bcc", [])] == [f"drew.{fe}@example.invalid"],
+          json.dumps(summary_)[:200])
+    check("is still one row, whose address is the first To and nothing else",
+          sent_full["to_address"] == f"alex.{fe}@example.invalid", sent_full["to_address"])
+    check("the text half keeps the list and never the script",
+          "- one" in sent_full["body"] and "alert" not in sent_full["body"],
+          sent_full["body"][:120])
+    check("and the file went with it",
+          [a["filename"] for a in summary_.get("attachments", [])] == [f"quote-{fe}.pdf"])
+
+    read = call("GET", f"/api/email/read/message/{sent_full['id']}")
+    check("the reader draws the formatting and not the script",
+          "<b>there</b>" in read["html"] and "<script" not in read["html"]
+          and "alert" not in read["html"], read["html"][:120])
+    check("our own send shows its blind copy to staff",
+          [r["address"] for r in read["bcc"]] == [f"drew.{fe}@example.invalid"])
+    check("Reply all answers everybody who could see it, and never the blind copy",
+          any(f"blair.{fe}" in x for x in read["reply_all"]["to"] + read["reply_all"]["cc"])
+          and any(f"casey.{fe}" in x for x in read["reply_all"]["to"] + read["reply_all"]["cc"])
+          and not any("drew." in x for x in read["reply_all"]["to"] + read["reply_all"]["cc"]),
+          str(read["reply_all"]))
+    got_status, got_headers, got = fetch(read["attachments"][0]["url"])
+    check("the file downloads as a file, byte for byte",
+          got_status == 200 and got == pdf
+          and got_headers.get("content-disposition", "").startswith("attachment;"),
+          f"{got_status} {got_headers.get('content-disposition')}")
+    check("and nothing a sender attached can run as a page from our origin",
+          got_headers.get("x-content-type-options") == "nosniff"
+          and "sandbox" in got_headers.get("content-security-policy", ""),
+          str({k: got_headers.get(k) for k in ("x-content-type-options",
+                                               "content-security-policy")}))
+    listed = next((m for m in call("GET", "/api/email/messages?box=sent&limit=200")["messages"]
+                   if m["id"] == sent_full["id"]), None)
+    check("the mailbox row says a file is on it",
+          listed is not None and len((listed.get("email") or {}).get("attachments", [])) == 1)
+
+    forwarded = call("POST", "/api/email/compose", {
+        "to": f"erin.{fe}@example.invalid", "subject": read["forward"]["subject"],
+        "body": "See below.", "forward_of": {"kind": "message", "id": sent_full["id"]},
+        "attachment_ids": read["forward"]["attachment_ids"],
+    })
+    check("a forward carries the files it was forwarded with",
+          forwarded.get("kind") == "forward"
+          and len((forwarded.get("email") or {}).get("attachments", [])) == 1,
+          str(forwarded.get("kind")))
+    again = call("GET", f"/api/email/read/message/{sent_full['id']}")
+    check("and the original keeps its own -- a forward copies, it does not move",
+          len(again["attachments"]) == 1)
+
+    # The way back. The Worker now posts the message exactly as the mail
+    # server delivered it, and everything a real message carries has to
+    # survive: a Cc, an inline logo the HTML points at by cid, a tracking
+    # pixel, a document, and a file no provider will carry.
+    raw_msg = _Mime()
+    raw_msg["From"] = f"Rae {fe} <rae.{fe}@example.invalid>"
+    raw_msg["To"] = "sales@example.invalid"
+    raw_msg["Cc"] = f"Sam {fe} <sam.{fe}@example.invalid>"
+    raw_msg["Subject"] = f"Two questions and a scan {fe}"
+    raw_msg["Message-ID"] = f"<raw-{fe}@example.invalid>"
+    raw_msg.set_content("Hello,\n\nIs the car still there? Scan attached.\n\nRae")
+    raw_msg.add_alternative(
+        "<p>Hello,</p><p>Is the car <b>still there</b>? Scan attached.</p>"
+        '<p><img src="cid:logo"><img src="https://tracker.example.invalid/p.gif"></p>',
+        subtype="html",
+    )
+    png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
+           b"\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01"
+           b"\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+    raw_msg.get_payload()[1].add_related(png, "image", "png", cid="<logo>")
+    raw_msg.add_attachment(pdf, maintype="application", subtype="pdf", filename="scan.pdf")
+    raw_msg.add_attachment(b"MZ", maintype="application", subtype="octet-stream",
+                           filename="setup.exe")
+    raw_bytes = raw_msg.as_bytes()
+
+    def post_raw(body: bytes, secret: str = WEBHOOK_SECRET.decode()) -> tuple[int, str]:
+        req = urllib.request.Request(
+            BASE + "/api/emails/inbound/raw", data=body, method="POST",
+            headers={"Content-Type": "message/rfc822", "X-Webhook-Secret": secret,
+                     "X-Envelope-From": f"bounce+{fe}@relay.example.invalid",
+                     "X-Envelope-To": "sales@example.invalid"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, resp.read().decode()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode()[:200]
+
+    check("the raw intake refuses a caller without the secret",
+          post_raw(raw_bytes, "wrong")[0] == 401)
+    first_raw = post_raw(raw_bytes)
+    check("and takes the message whole from the Worker",
+          first_raw[0] == 200 and '"received"' in first_raw[1], str(first_raw)[:120])
+    filed = settled(f"<raw-{fe}@example.invalid>")
+    check("filed against a buyer named from the header, not the relay's envelope",
+          filed.get("outcome") == "accepted" and bool(filed.get("lead_id"))
+          and f"rae.{fe}@example.invalid" in (filed.get("from_address") or ""),
+          str(filed)[:160])
+    check("the same bytes again are a duplicate, not a second message",
+          '"duplicate"' in post_raw(raw_bytes)[1])
+    rae_lead = filed.get("lead_id")
+    inbound_entry = next(
+        (e for e in call("GET", f"/api/leads/{rae_lead}/timeline")["entries"]
+         if e.get("kind") == "outreach" and e.get("direction") == "in"), None,
+    ) if rae_lead else None
+    check("it is on their timeline, with its copy and its files counted",
+          inbound_entry is not None
+          and [r["address"] for r in (inbound_entry.get("email") or {}).get("cc", [])]
+          == [f"sam.{fe}@example.invalid"]
+          and len((inbound_entry.get("email") or {}).get("attachments", [])) == 2,
+          json.dumps((inbound_entry or {}).get("email"))[:200])
+    if inbound_entry is not None:
+        received = call("GET", f"/api/email/read/message/{inbound_entry['id']}")
+        check("the inline logo is drawn from the message itself, never fetched",
+              "data:image/png" in received["html"] and "cid:" not in received["html"])
+        check("and the tracking pixel is held until somebody asks for it",
+              received["images_held"] == 1 and "tracker.example" not in received["html"])
+        shown = call("GET", f"/api/email/read/message/{inbound_entry['id']}?images=1")
+        check("asking for it lets it through", "tracker.example" in shown["html"])
+        files = {a["filename"]: a for a in received["attachments"]}
+        check("the document can be opened and the program cannot",
+              bool(files.get("scan.pdf", {}).get("url"))
+              and not files.get("setup.exe", {}).get("url")
+              and "program" in files.get("setup.exe", {}).get("refused", ""),
+              str({k: (v["url"], v["refused"][:30]) for k, v in files.items()}))
+        everyone = received["reply_all"]["to"] + received["reply_all"]["cc"]
+        check("Reply all answers them and their copy, and never our own mailbox",
+              any(f"rae.{fe}" in x for x in everyone) and any(f"sam.{fe}" in x for x in everyone)
+              and not any("sales@" in x for x in everyone), str(received["reply_all"]))
+
+    # The Worker that is deployed today still posts JSON, and sends a file's
+    # name without its bytes. That has to arrive as a file somebody sent,
+    # marked as not kept -- not silently as a message with nothing attached.
+    legacy_id = f"<legacy-{fe}@example.invalid>"
+    inbound({
+        "messageId": legacy_id, "from": f"lee.{fe}@example.invalid",
+        "to": "sales@example.invalid", "subject": f"Scan attached {fe}",
+        "text": "Here is my licence.",
+        "attachments": [{"filename": "licence.jpg", "mimeType": "image/jpeg", "size": 48213}],
+    })
+    legacy = settled(legacy_id)
+    legacy_entry = next(
+        (e for e in call("GET", f"/api/leads/{legacy['lead_id']}/timeline")["entries"]
+         if e.get("kind") == "outreach" and e.get("direction") == "in"), None,
+    ) if legacy.get("lead_id") else None
+    kept = (legacy_entry or {}).get("email", {}).get("attachments", [])
+    check("the old Worker's file names arrive as files that were not kept, saying why",
+          len(kept) == 1 and not kept[0]["url"] and "Worker" in kept[0]["refused"],
+          str(kept)[:160])
+
+    # OUTBOUND_ONLY_TO is what stops a rehearsal reaching a real prospect, and
+    # a Cc is as real a recipient as a To.
+    class _Delivers:
+        delivers = True
+
+    from app.config import settings as _full_cfg
+    from app.outreach_send import blocked_reason as _blocked
+
+    was_scope = _full_cfg.outbound_only_to
+    try:
+        _full_cfg.outbound_only_to = "allowed@example.invalid"
+        check("the outbound limit reads the Cc, not only the To",
+              f"stranger.{fe}@example.invalid" in _blocked(
+                  _Delivers(), ["allowed@example.invalid", f"stranger.{fe}@example.invalid"]))
+        check("and lets the message go when every address is allowed",
+              _blocked(_Delivers(), ["Allowed <allowed@example.invalid>"]) == "")
+    finally:
+        _full_cfg.outbound_only_to = was_scope
+
+    # Given back: the two buyers the raw and legacy deliveries minted, and the
+    # three sends to nobody. Envelopes and files first, or the foreign keys
+    # refuse; the bytes on disk stay, because the store is shared by hash.
+    from sqlalchemy import text as _fsql
+
+    from app.db import SessionLocal as _FullSession
+
+    with _FullSession() as _fdb:
+        for lid in [x for x in (rae_lead, legacy.get("lead_id")) if x]:
+            for (cid,) in _fdb.execute(
+                _fsql("SELECT id FROM conversations WHERE lead_id = :l"), {"l": lid}
+            ).all():
+                for table in ("conversation_once", "escalations", "messages", "vehicle_mentions"):
+                    _fdb.execute(_fsql(f"DELETE FROM {table} WHERE conversation_id = :c"), {"c": cid})
+            _fdb.execute(_fsql("DELETE FROM email_replies_due WHERE lead_id = :l"), {"l": lid})
+            drop_envelopes(_fdb, {"l": lid}, receipts="lead_id = :l", outreach="lead_id = :l")
+            for table in ("inbound_emails", "captured_fields", "lead_addresses", "outreach",
+                          "conversations"):
+                _fdb.execute(_fsql(f"DELETE FROM {table} WHERE lead_id = :l"), {"l": lid})
+            _fdb.execute(_fsql("DELETE FROM leads WHERE id = :l"), {"l": lid})
+        like = {"p": f"%{fe}%"}
+        drop_envelopes(_fdb, like, receipts="message_id LIKE :p", outreach="to_address LIKE :p")
+        _fdb.execute(_fsql("DELETE FROM inbound_emails WHERE message_id LIKE :p"), like)
+        _fdb.execute(_fsql("DELETE FROM outreach WHERE to_address LIKE :p"), like)
+        _fdb.commit()
+        left = _fdb.execute(_fsql("SELECT COUNT(*) FROM outreach WHERE to_address LIKE :p"),
+                            like).scalar()
+    check("and everything this section sent and received is given back", left == 0, str(left))
+
 
     # Who a message is *from*. Resend verifies the domain rather than the
     # mailbox, so one verified `linerai.us` makes every address on it legal to
@@ -4240,6 +4542,10 @@ def main() -> int:
               _send.with_signature(_sdb2, "Hi.")[-40:])
     finally:
         _sdb2.close()
+        # Put back what was there. Left behind, every email the manager
+        # sends afterwards -- in the next gate, and in the demo -- signs off
+        # with this run's hex stamp under their title.
+        call("PUT", "/api/me/signature", {"text": mine["text"]})
 
     # An image cannot go in plain text, so it rides the HTML half -- and a
     # sender that delivers only text ignores it and the reader still gets the
@@ -6246,22 +6552,49 @@ def main() -> int:
     check("an unknown flag is refused rather than quietly stored",
           _raises_keyerror(runtime_flags))
 
-    # The Worker has to send what the loop-breaker reads, and only that. A full
-    # header dump is somebody's routing metadata travelling through our webhook
-    # for no reason.
-    worker_src = pathlib.Path(
-        "backend/app/integrations/email/worker/src/index.ts"
-    ).read_text()
-    for header in ("auto-submitted", "list-id", "list-unsubscribe", "precedence"):
-        check(f"the worker forwards {header}", f'"{header}"' in worker_src)
-    check("and it already forwards attachment names and sizes, never the bytes",
-          "attachments:" in worker_src and "content?.byteLength" in worker_src)
-    from app.email_intake import AUTOMATED_HEADERS
+    # **The Worker forwards the message; it no longer reads it.** It used to
+    # parse with postal-mime and post a JSON digest -- one sender, no Cc, and
+    # file *names* whose bytes never left Cloudflare -- with the seven loop
+    # headers picked out by hand. Now the raw bytes travel as they arrived and
+    # the backend reads every header itself, so what has to hold is that the
+    # Worker posts the message whole with the envelope beside it, never opens
+    # it, and bounces only what is too big to accept.
+    worker_dir = pathlib.Path("backend/app/integrations/email/worker")
+    worker_src = (worker_dir / "src/index.ts").read_text()
+    for needle in ('"Content-Type": "message/rfc822"', '"X-Envelope-From": message.from',
+                   '"X-Envelope-To": message.to', '"X-Webhook-Secret": env.WEBHOOK_SECRET'):
+        check(f"the worker posts {needle.split(':')[0]}", needle in worker_src)
+    # Read the code, not its comments: the history of why it stopped parsing
+    # is written down in there and names what it no longer does.
+    worker_code = re.sub(r"/\*.*?\*/|//[^\n]*", "", worker_src, flags=re.S)
+    check("and never parses the message itself (no postal-mime, in the code or the package)",
+          "postal-mime" not in worker_code.lower()
+          and "postal-mime" not in (worker_dir / "package.json").read_text().lower())
+    from app.api import inbound_email as _ie_mod
 
-    forwarded = set(re.findall(r'^\t\t\t"([a-z-]+)",$', worker_src, re.MULTILINE))
-    check("every header the backend checks is one the worker sends",
-          set(AUTOMATED_HEADERS) <= forwarded,
-          f"not sent: {sorted(set(AUTOMATED_HEADERS) - forwarded)}")
+    raw_cap = re.search(r"const MAX_RAW = ([\d\s*]+);", worker_src)
+    check("its size limit is the backend's raw limit, not a second opinion about it",
+          raw_cap is not None and eval(raw_cap.group(1)) == _ie_mod.MAX_RAW,  # noqa: S307 -- digits and *
+          raw_cap.group(1) if raw_cap else "no MAX_RAW")
+    check("and it bounces only a message too big to take, never a failed delivery",
+          worker_code.count("setReject(") == 2, str(worker_code.count("setReject(")))
+
+    # The loop-breaker still reads every header it names -- from the message
+    # itself now, so nothing upstream can forget to forward one.
+    from app import email_mime as _mime
+    from app.email_intake import AUTOMATED_HEADERS, automated_reason as _auto
+
+    looped = (
+        b"From: Vacation <away@example.invalid>\r\nTo: sales@example.invalid\r\n"
+        b"Subject: Out of office\r\nMessage-ID: <loop-check@example.invalid>\r\n"
+        + b"".join(f"{h}: yes\r\n".encode() for h in AUTOMATED_HEADERS)
+        + b"\r\nI am away until Monday.\r\n"
+    )
+    seen = _mime.parse(looped).headers
+    check("every header the loop-breaker checks is read off a raw message",
+          set(AUTOMATED_HEADERS) <= set(seen), f"not read: {sorted(set(AUTOMATED_HEADERS) - set(seen))}")
+    check("and an auto-reply is caught from them",
+          bool(_auto("away@example.invalid", seen, "I am away until Monday.")))
 
     print("\n== a rep answers, and a buyer's two addresses become one buyer ==")
     # The loop this whole feature is for: they write, a rep replies from the

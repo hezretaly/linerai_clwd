@@ -209,13 +209,22 @@ def signature_name(body: str) -> str:
     return ""
 
 
-def automated_reason(sender: str, headers: dict | None, body: str) -> str:
+def automated_reason(sender: str, headers: dict | None, body: str, *, files: int = 0) -> str:
     """Why no reply should be composed for this delivery, or "" if one may be.
 
     The order is deliberate: **headers first, then the address, then shape.**
     A header is the sender declaring itself a machine, and honouring it stops a
     loop on turn one. The address catches the machine that declares nothing.
     Shape is last and weakest.
+
+    `sender` is the **header** From -- the person -- not the envelope sender,
+    which on forwarded mail is an SRS rewrite and on a mailing service is a
+    bounce address. Judging the envelope marked real people as robots and let
+    `no-reply@` senders through whenever a relay stood in front of them.
+
+    `files` is how many attachments arrived. A message that is only a file --
+    a photo of the trade-in, the signed form -- has an empty body and is still
+    somebody sending something, so it is not refused for having no words.
 
     Returns a reason rather than a boolean because it is written onto the
     receipt: "no reply -- List-Unsubscribe header" is something an operator can
@@ -242,6 +251,6 @@ def automated_reason(sender: str, headers: dict | None, body: str) -> str:
     if local.split("+", 1)[0] in ROBOT_LOCAL_PARTS or local in ROBOT_LOCAL_PARTS:
         return f"{local}@ is not a mailbox a person reads"
 
-    if not just_the_reply(body).strip():
+    if not just_the_reply(body).strip() and not files:
         return "the message has no body"
     return ""

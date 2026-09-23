@@ -36,12 +36,11 @@ from app.api.deps import current_user, find_staff, get_dealership
 from app.integrations.base import NotConfigured
 from app.config import settings
 from app.db import get_db, utcnow
-from app import outreach_send
+from app import email_outbound
 from app.events import emit
 from app import matching
 from app.matching import match_lead
 from app.ingest.adf import AdfError, parse_adf
-from app.integrations.registry import get_email_sender
 from app.models import (
     Appointment,
     CapturedField,
@@ -52,7 +51,7 @@ from app.models import (
     User,
     Vehicle,
 )
-from app.schemas.serialize import lead_out, outreach_out, vehicle_out
+from app.schemas.serialize import lead_out, outreach_many, vehicle_out
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
@@ -450,7 +449,7 @@ def lead_outreach(
         .order_by(Outreach.created_at.desc())
         .all()
     )
-    return {"outreach": [outreach_out(o) for o in rows]}
+    return {"outreach": outreach_many(db, rows)}
 
 
 @router.get("/{lead_id}/summary-preview")
@@ -489,18 +488,35 @@ def summary_preview(
 
 class SendBody(BaseModel):
     subject: str
-    body: str
+    #: The text half. Written from `html` instead when that is given.
+    body: str = ""
     appointment_id: str | None = None
     kind: str = "followup"
+    # Everything below is optional, and a plain `{subject, body, kind}` is
+    # exactly the send it always was: to the address on file, text only.
+    #: Defaults to the buyer's address on file. A string (which may hold
+    #: several addresses) or a list.
+    to: str | list[str | dict] | None = None
+    cc: str | list[str | dict] | None = None
+    bcc: str | list[str | dict] | None = None
+    html: str = ""
+    attachment_ids: list[str] | None = None
+    importance: str = "normal"
 
 
-def _track_links(request: Request, db: Session, record: Outreach) -> None:
+def _track_links(
+    request: Request, db: Session, record: Outreach, message: email_outbound.Message,
+) -> None:
     """Rewrite the dealer's application URL to a hop we can count.
 
     Done at send rather than at draft because the token belongs to the row, and
     the row does not exist until now. The base comes from the request, so the
     link matches the host the dealer is actually using -- hardcoding one is how
     a staging box mails production links.
+
+    **In both halves.** The text is what the row stores and what a plain-text
+    client shows; the HTML is what almost everybody clicks. Rewriting one would
+    leave the overview counting clicks on a link most buyers never saw.
 
     A rep who deleted the link from the draft gets no token, and that is the
     honest outcome: there is nothing in that email to click.
@@ -510,7 +526,7 @@ def _track_links(request: Request, db: Session, record: Outreach) -> None:
     if record.kind != "credit_application":
         return
     target = (live_settings(db).credit_application_url or "").strip()
-    if not target or target not in record.body:
+    if not target or target not in message.text:
         return
 
     from app.api.redirect import store_path
@@ -526,7 +542,7 @@ def _track_links(request: Request, db: Session, record: Outreach) -> None:
     else:
         link = f"{str(request.base_url).rstrip('/')}/r/{token}"
     record.click_token = token
-    record.body = record.body.replace(target, link)
+    email_outbound.rewrite(message, target, link)
 
 
 @router.post("/{lead_id}/outreach")
@@ -538,59 +554,36 @@ def send_lead_outreach(
     user: User = Depends(current_user),
 ) -> dict:
     lead = _get_lead(db, lead_id)
-    if not lead.email:
+    to = email_outbound.typed_or_on_file(payload.to, lead.email)
+    if not to:
         raise HTTPException(
             409,
             "No email on file for this lead, so there is nothing to send to. A rep has to "
             "call them.",
         )
 
-    sender = get_email_sender()
-    record = Outreach(
-        appointment_id=payload.appointment_id, lead_id=lead.id, sent_by_user_id=user.id,
-        channel="email", kind=payload.kind, to_address=lead.email,
-        subject=payload.subject, body=payload.body,
-        provider=sender.name, status="queued",
-        reply_token=outreach_send.mint_reply_token(db),
-    )
-    db.add(record)
-    db.flush()
-    _track_links(request, db, record)
-    db.commit()
+    try:
+        # Unsigned: the built drafts end in the rep's own name and the
+        # dealership's, written into the text the rep is looking at, and the
+        # composer shows no sign-off under a preset for that reason.
+        message = email_outbound.build(
+            db, to=to, cc=payload.cc, bcc=payload.bcc,
+            subject=payload.subject, body=payload.body, html=payload.html,
+            attachment_ids=payload.attachment_ids, importance=payload.importance,
+            uploader_id=user.id,
+        )
+    except email_outbound.OutboundError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
 
     # An imported address is by definition not one we allow-listed. Refusing is
-    # the point -- a rehearsal must not mail a real prospect. One guard, shared
-    # with the appointment send; see app/outreach_send.py.
-    blocked = outreach_send.blocked_reason(sender, lead.email)
-    if blocked:
-        record.status = "failed"
-        record.error = blocked
-        db.commit()
-        return outreach_out(record)
-
-    try:
-        # record.body, not payload.body: the tracked link is the one that goes.
-        result = sender.send(
-            lead.email, payload.subject, record.body,
-            reply_to=outreach_send.reply_to_address(record.reply_token),
-            from_address=outreach_send.dealership_from(db, sender),
-        )
-        record.provider_message_id = result.message_id
-        record.provider_thread_id = result.thread_id
-        record.status = result.status
-        record.error = result.detail if result.status != "sent" else ""
-        record.sent_at = utcnow()
-    except Exception as exc:
-        record.status = "failed"
-        record.error = str(exc)
-        db.commit()
-        return outreach_out(record)
-
-    db.commit()
-    emit(db, "outreach.sent", {
-        "outreach_id": record.id, "appointment_id": payload.appointment_id, "lead_id": lead.id,
-        "to": lead.email, "provider": record.provider,
-        "delivered_externally": sender.delivers,
-        "conversation_id": None,
-    })
-    return outreach_out(record)
+    # the point -- a rehearsal must not mail a real prospect. The one path runs
+    # the one guard, over every recipient; see app/email_outbound.py.
+    sent = email_outbound.send(
+        db, message, kind=payload.kind, lead_id=lead.id,
+        appointment_id=payload.appointment_id, sent_by_user_id=user.id,
+        # The row's own token goes in the link, so it is rewritten once the
+        # row exists and before it is committed -- the stored text is the
+        # text that went.
+        prepare=lambda record, msg: _track_links(request, db, record, msg),
+    )
+    return sent.out()

@@ -12,8 +12,20 @@ import type { Conversation, Lead, TeamMember } from '../lib/types'
 import { Button, Input, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
-import { EmailReader } from '../components/dashboard/EmailReader'
+import {
+  ComposeFields,
+  EmailReader,
+  ImportanceToggle,
+  draftPayload,
+  emptyDraft,
+  sendProblem,
+  sendable,
+  type MailDraft,
+  type SendResult,
+} from '../components/dashboard/EmailReader'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
+import type { RecipientSuggestion } from '../components/email'
+import { textToHtml } from '../lib/email'
 import { AssignTo } from '../components/dashboard/AssignTo'
 import { CarPhoto } from '../components/CarPhoto'
 
@@ -120,6 +132,30 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
     () => data?.conversations.find((c) => c.id === target) ?? null,
     [data, target],
   )
+
+  /* Who an email from this page is likely to go to, offered as somebody
+   * types into To or Cc: every address the buyer is known by -- `/reach`'s
+   * list, which is the one on their row and each a rep has linked -- and
+   * then the people on this floor, because "pass this to finance" is the
+   * other thing an email from a buyer's page is for. Suggestions only: the
+   * box takes any address. */
+  const suggestions = useMemo<RecipientSuggestion[]>(() => {
+    const out: RecipientSuggestion[] = []
+    const seen = new Set<string>()
+    const add = (name: string, email: string) => {
+      const key = email.trim().toLowerCase()
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      out.push({ name, email: email.trim() })
+    }
+    const buyer = data?.lead
+    const known = reach?.email.addresses?.length
+      ? reach.email.addresses.map((a) => a.address)
+      : [buyer?.email ?? '', ...(buyer?.linked_addresses ?? []).map((a) => a.address)]
+    for (const address of known) add(buyer?.name ?? '', address)
+    for (const m of team?.members ?? []) if (m.active !== false) add(m.name, m.email)
+    return out
+  }, [data?.lead, reach, team])
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['timeline'] })
@@ -241,12 +277,18 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
         {/* One email, in full. The timeline card is a summary -- clamped to
             three lines -- and until this existed there was nowhere the whole
             thing could be read, so a rep went to their own mail client and the
-            reply left this system. */}
+            reply left this system. The reader owns answering, too: Reply,
+            Reply all and Forward are written under the message they answer,
+            which is what threads them. Keyed on the email, so opening another
+            one starts clean rather than carrying a half-written answer to the
+            first into it. */}
         {lead && (
           <EmailReader
+            key={reading?.id ?? 'none'}
             entry={reading}
             lead={lead}
             signature={data?.email_signature ?? ''}
+            suggestions={suggestions}
             onClose={() => setReading(null)}
             onSent={invalidate}
           />
@@ -281,7 +323,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
                 lead={lead}
                 drafting={reach?.email.draft}
                 signature={data?.email_signature ?? ''}
-                answering={undefined}
+                suggestions={suggestions}
                 onDone={() => { setMode('chat'); invalidate() }}
               />
             ) : mode === 'sms' && lead ? (
@@ -614,7 +656,11 @@ function LeadRail({
 /** One buyer's reachable channels, from `GET /api/leads/{id}/reach`. */
 export interface Reach {
   email: {
+    /** The address on their row: still the one string it always was. */
     to: string
+    /** Every address they are known by, the row's first and then each a rep
+     *  has linked -- the composer's suggestions. */
+    addresses?: { address: string; label: string }[]
     available: boolean
     reason: string
     delivers: boolean
@@ -923,7 +969,7 @@ const PRESETS = [
 type Preset = '' | (typeof PRESETS)[number][0]
 
 /**
- * One email composer on the buyer page: reply, write, or load a built draft.
+ * One email composer on the buyer page: write, or load a built draft.
  *
  * **Three ways to fill one box, and one Send.** These used to be two separate
  * composers -- a band for the server's drafts and this one for a reply --
@@ -936,21 +982,34 @@ type Preset = '' | (typeof PRESETS)[number][0]
  * out of scope and a call was the only way to reach a buyer, which stopped
  * being true and would have been read as current.
  *
+ * **Answering one of their emails is the reader's job, not this box's.** This
+ * took an `answering` entry for threading, and it was mounted with `undefined`
+ * hard-coded, so the branch never ran and every email from here opened a new
+ * thread whether or not the rep meant it to. Reply, Reply all and Forward now
+ * live under the message they answer (`EmailReader`), which is where the
+ * threading headers come from, and this says plainly that it starts a new
+ * thread and points there.
+ *
+ * **The same boxes as every other composer**: To as chips, Cc and Bcc, a
+ * formatted body, files. What stays here is where a draft comes from. Liner's
+ * drafts and the built ones arrive as plain text -- the draft endpoint and the
+ * guards behind it only ever write text -- and go into the editor through
+ * `textToHtml`, so their paragraphs survive; the rep formats from there.
+ *
  * **The send picks its endpoint by what the message is, not by which button
- * was pressed.** A reply or a hand-written note goes through
- * `/api/email/compose`, the same endpoint the mailbox uses, and carries
- * `in_reply_to_outreach_id` so the buyer's client keeps one thread instead of
- * opening a second conversation about the same car. A preset goes through
+ * was pressed.** A hand-written note goes through `/api/email/compose`, the
+ * same endpoint the mailbox uses. A preset goes through
  * `POST /api/leads/{id}/outreach` with its `kind`, because that is where the
- * credit application's link is rewritten to a countable one. Both go through
- * `blocked_reason`: there is one guard against a rehearsal mailing a real
- * prospect and neither path may skip it.
+ * credit application's link is rewritten to a countable one -- in the text
+ * and the HTML both. Both go through `blocked_reason`, over every recipient:
+ * there is one guard against a rehearsal mailing a real prospect and neither
+ * path may skip it.
  */
 function EmailReply({
   lead,
   drafting,
   signature,
-  answering,
+  suggestions,
   onDone,
 }: {
   lead: Lead
@@ -959,16 +1018,15 @@ function EmailReply({
   /** What the send appends: this person's own sign-off, or their name and
    *  title over the dealership's details. */
   signature: string
-  answering: TimelineEntry | undefined
+  /** Addresses offered as somebody types into To or Cc. */
+  suggestions: RecipientSuggestion[]
   onDone: () => void
 }) {
-  const parent = answering?.subject ?? ''
-  // Not "Re: Re: Re:". A buyer who replies four times should not end up with a
-  // subject line that is mostly prefix.
-  const [subject, setSubject] = useState(
-    parent ? (/^re:/i.test(parent) ? parent : `Re: ${parent}`) : '',
-  )
-  const [body, setBody] = useState('')
+  // To starts at the address on their row -- what "email this buyer" meant
+  // when it was a line of text rather than a field -- and is theirs to change.
+  const [draft, setDraft] = useState<MailDraft>(() => emptyDraft(lead.email))
+  const patch = (p: Partial<MailDraft>) => setDraft((d) => ({ ...d, ...p }))
+  const { subject, text: body } = draft
   const [problem, setProblem] = useState('')
   /** The rep's one line of steering: "ask if Saturday works". */
   const [instruction, setInstruction] = useState('')
@@ -993,8 +1051,9 @@ function EmailReply({
         `/api/leads/${lead.id}/outreach?draft=1&kind=${kind}`,
       ),
     onSuccess: (draftIn, kind) => {
-      setSubject(draftIn.subject)
-      setBody(draftIn.body)
+      // Plain text from the server, into the editor as paragraphs. The
+      // editor reports the text back a moment later, so `body` catches up.
+      patch({ subject: draftIn.subject, html: textToHtml(draftIn.body), text: draftIn.body })
       setPreset(kind)
       setRefused([])
     },
@@ -1007,14 +1066,16 @@ function EmailReply({
   })
 
   /* **Liner writes it; the rep decides whether it goes.** Nothing is sent and
-   * nothing is stored -- the draft lands in this textarea and lives in the
+   * nothing is stored -- the draft lands in the editor and lives in the
    * browser like every other dealership draft, and the send below is the same
    * one a hand-typed message goes through, `blocked_reason` included.
    *
    * Two modes, one endpoint. With text already in the box it rewrites that in
    * the dealership's voice, keeping the rep's facts; with an empty box it
    * writes from the conversation, the car in focus, the captured fields and
-   * the tone a manager set. The instruction steers either. */
+   * the tone a manager set. The instruction steers either. What is handed
+   * over to rewrite is the plain text: the draft endpoint writes text and its
+   * guards read text, so formatting the rep added is theirs to re-apply. */
   /* Which subject the last draft wrote. A new draft replaces its own subject
    * but never one the rep typed: the box is theirs once they have touched it. */
   const [draftedSubject, setDraftedSubject] = useState('')
@@ -1025,7 +1086,7 @@ function EmailReply({
    * first existed, so after one draft the box always had text in it and every
    * later press could only reword that text -- there was no way to ask again
    * for something different. */
-  const draft = useMutation({
+  const draftWith = useMutation({
     mutationFn: (how: 'rewrite' | 'fresh') =>
       api.post<{ subject: string; body: string; violations: string[] }>(
         `/api/leads/${lead.id}/draft-email`,
@@ -1034,11 +1095,11 @@ function EmailReply({
     onSuccess: (result) => {
       setRefused(result.violations ?? [])
       if (result.body) {
-        setBody(result.body)
+        patch({ html: textToHtml(result.body), text: result.body })
         setInstruction('')
       }
       if (result.subject && (!subject.trim() || subject === draftedSubject)) {
-        setSubject(result.subject)
+        patch({ subject: result.subject })
         setDraftedSubject(result.subject)
       }
     },
@@ -1059,21 +1120,14 @@ function EmailReply({
           // link to `/r/<token>` and lets the overview count the applications
           // buyers actually opened. Answered here rather than in `compose`,
           // which has no notion of a lead's outreach kinds.
-          api.post<{ status: string; error?: string }>(`/api/leads/${lead.id}/outreach`, {
-            subject,
-            body,
+          api.post<SendResult>(`/api/leads/${lead.id}/outreach`, {
+            ...draftPayload(draft),
             kind: preset,
           })
-        : api.post<{ status: string; error?: string; blocked?: boolean }>(
-            '/api/email/compose',
-            {
-              to: lead.email,
-              subject,
-              body,
-              lead_id: lead.id,
-              in_reply_to_outreach_id: answering?.id,
-            },
-          ),
+        : api.post<SendResult>('/api/email/compose', {
+            ...draftPayload(draft),
+            lead_id: lead.id,
+          }),
     onSuccess: (result) => {
       // A refusal comes back as a stored failed row rather than an error, and
       // the sentence names the setting that would lift it. Showing it beats a
@@ -1082,58 +1136,47 @@ function EmailReply({
         setProblem(result.error || 'The provider did not accept it.')
         return
       }
-      setBody('')
+      setDraft(emptyDraft(lead.email))
       setProblem('')
       setPreset('')
       onDone()
     },
-    onError: (err: unknown) => setProblem(String((err as Error)?.message ?? err)),
+    // A 400 names what it could not read -- the address that is not one, the
+    // file that was refused -- in the server's own sentence.
+    onError: (err: unknown) => setProblem(sendProblem(err)),
   })
 
   if (!lead.email) return null
+  const presetLabel = (PRESETS.find(([k]) => k === preset) ?? [, ''])[1].toLowerCase()
   return (
     // No rule of its own: the footer's channel picker is the divider above
     // this, and a second one drew two lines a few pixels apart on a phone.
-    <div>
-      <div className="mb-2 text-xs text-muted-foreground">
-        Reply to <span className="font-medium text-foreground">{lead.email}</span>
+    <div className="min-w-0">
+      <p className="mb-2 text-xs text-muted-foreground">
         {/* Which kind the send will record, said before it is pressed. A
             credit application is counted on the overview and carries a
             rewritten link, so "this is a follow-up" is a fact about the
             message rather than a label on a button. */}
         {preset
-          ? ` · sending as ${(PRESETS.find(([k]) => k === preset) ?? [, ''])[1].toLowerCase()}`
-          : answering
-            ? ` · under "${parent || '(no subject)'}"`
-            : ' · this starts a new thread in their inbox'}
-      </div>
-      <Input
-        value={subject}
-        onChange={(e) => setSubject(e.target.value)}
-        placeholder="Subject"
-        className="mb-2"
-      />
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
+          ? `Sending as ${presetLabel}. It starts a new thread in their inbox.`
+          : 'A new message, so it starts a new thread in their inbox. To answer one of theirs, open it on the timeline and press Reply.'}
+      </p>
+      <ComposeFields
+        draft={draft}
+        onChange={patch}
+        suggestions={suggestions}
+        // **Shown, not typed, and it carries their name.** Appended on the
+        // way out by the compose endpoint, so a rep who could not see it
+        // typed their name again or wondered why it was missing. A built
+        // draft goes through the outreach endpoint, which appends nothing --
+        // it signs itself in the body -- so the preview is not shown for one.
+        signature={preset ? '' : signature}
+        placeholder="Write the email..."
         // Room to read and edit a whole draft. Four rows showed the greeting
         // and a line of body, and the rest scrolled inside a box inside a
         // scrolling footer -- editing it meant finding it first.
-        rows={10}
-        placeholder="Write the reply..."
-        className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+        minHeight={200}
       />
-      {/* **Shown, not typed, and it carries their name.** Appended on the way
-          out by the compose endpoint, so a rep who could not see it typed
-          their name again or wondered why it was missing. A built draft goes
-          through the outreach endpoint, which appends nothing -- it signs
-          itself in the body -- so the preview is not shown for one. */}
-      {signature && !preset && (
-        <div className="mt-2 rounded-md border border-dashed border-border bg-muted/30 p-2">
-          <p className="text-[11px] font-medium text-muted-foreground">Sent with this sign-off</p>
-          <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{signature}</p>
-        </div>
-      )}
       {problem && <p className="mt-1.5 text-xs text-destructive">{problem}</p>}
       {/* **The guards refused it, and the rep is told why.** A draft carrying
           a price nothing sourced is exactly as wrong as a chat bubble
@@ -1182,9 +1225,9 @@ function EmailReply({
           className="mt-3 rounded-md border border-border bg-muted/40 p-2"
           onSubmit={(e) => {
             e.preventDefault()
-            if (draft.isPending) return
+            if (draftWith.isPending) return
             setProblem('')
-            draft.mutate(body.trim() ? 'rewrite' : 'fresh')
+            draftWith.mutate(body.trim() ? 'rewrite' : 'fresh')
           }}
         >
           <label htmlFor="draft-instruction" className="text-xs font-medium">
@@ -1202,8 +1245,8 @@ function EmailReply({
               }
               className="h-8 min-w-0 flex-1 text-sm"
             />
-            <Button type="submit" size="sm" variant="secondary" disabled={draft.isPending}>
-              {draft.isPending ? 'Writing...' : body.trim() ? 'Rewrite mine' : 'Write draft'}
+            <Button type="submit" size="sm" variant="secondary" disabled={draftWith.isPending}>
+              {draftWith.isPending ? 'Writing...' : body.trim() ? 'Rewrite mine' : 'Write draft'}
             </Button>
             {/* Starting again is its own act. The box keeps what is in it
                 until the new draft lands, so nothing is lost to a mis-click. */}
@@ -1212,8 +1255,8 @@ function EmailReply({
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={draft.isPending}
-                onClick={() => { setProblem(''); draft.mutate('fresh') }}
+                disabled={draftWith.isPending}
+                onClick={() => { setProblem(''); draftWith.mutate('fresh') }}
               >
                 New draft
               </Button>
@@ -1226,11 +1269,16 @@ function EmailReply({
           </p>
         </form>
       )}
-      <div className="mt-3 flex justify-end">
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <ImportanceToggle
+          value={draft.importance}
+          onChange={(importance) => patch({ importance })}
+          className="mr-auto"
+        />
         <Button
           size="sm"
           variant="primary"
-          disabled={!body.trim() || send.isPending}
+          disabled={!sendable(draft) || send.isPending}
           onClick={() => send.mutate()}
         >
           {send.isPending ? 'Sending...' : 'Send email'}
@@ -1239,7 +1287,6 @@ function EmailReply({
     </div>
   )
 }
-
 
 /**
  * Other addresses this buyer writes from, and the control that adds one.

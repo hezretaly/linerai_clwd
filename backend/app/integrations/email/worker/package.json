@@ -6,9 +6,6 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail --format pretty"
   },
-  "dependencies": {
-    "postal-mime": "^3.0.0"
-  },
   "devDependencies": {
     "wrangler": "^4.0.0"
   }

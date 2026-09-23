@@ -2,7 +2,9 @@ import clsx from 'clsx'
 
 import { dateTime, money, time } from '../../lib/format'
 import type { Vehicle, User } from '../../lib/types'
+import { addrList, fileSize, type Addr, type EmailSummary } from '../../lib/email'
 import { Icon } from '../Icon'
+import { Badge } from '../ui'
 import { withStore } from '../../lib/store'
 
 /* One buyer, every channel, in the order it happened.
@@ -40,6 +42,10 @@ export interface TimelineEntry {
   delivered_externally?: boolean
   error?: string | null
   in_thread?: boolean
+  /** Everything an email carried beyond `to_address`: every recipient, the
+   *  files, importance. Email only -- null on a text or a logged call, which
+   *  have no envelope, and absent on rows older than the envelope table. */
+  email?: EmailSummary | null
 
   // appointment
   starts_at?: string
@@ -151,6 +157,42 @@ function Message({ e, showChannel }: { e: TimelineEntry; showChannel: boolean })
   )
 }
 
+/** How many other people were on an email, beside the one address the card
+ *  prints.
+ *
+ *  Outbound that is every To and Cc beyond the buyer. Inbound it is the
+ *  buyer's own To and Cc less the buyer and less *us* -- the address it was
+ *  delivered to, which would otherwise put "+1" on every email anybody ever
+ *  sent the dealership, and noise on every card is how the one card where it
+ *  matters stops being read. The browser is not told which mailbox is ours,
+ *  so a `reply+` token is recognised as ours and, where there is none, the
+ *  first To is taken to be it -- which is how a buyer addresses `sales@`.
+ *  That guess only ever moves a count: the names are the tooltip, read
+ *  straight off the envelope. Bcc is never counted, since nobody else on
+ *  the message could see it. */
+function othersOn(e: TimelineEntry): number {
+  const email = e.email
+  if (!email) return 0
+  const key = (a: Addr) => (a.address || '').trim().toLowerCase()
+  const token = (k: string) => k.startsWith('reply+')
+  let to = (email.to ?? []).map(key).filter(Boolean)
+  const cc = (email.cc ?? []).map(key).filter(Boolean)
+  if (e.direction === 'in') to = to.some(token) ? to : to.slice(1)
+  const primary = (e.to_address || '').trim().toLowerCase()
+  return new Set([...to, ...cc].filter((k) => k !== primary && !token(k))).size
+}
+
+/** The whole envelope as a tooltip: who a "+2" actually is. */
+function envelopeTitle(email: EmailSummary): string {
+  return [
+    email.to?.length ? `To: ${addrList(email.to)}` : '',
+    email.cc?.length ? `Cc: ${addrList(email.cc)}` : '',
+    email.bcc?.length ? `Bcc: ${addrList(email.bcc)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 function Outreach({
   e,
   onOpen,
@@ -162,6 +204,11 @@ function Outreach({
   // and a rep skimming a timeline has to be able to tell at a glance who wrote
   // which -- so it leans to the buyer's side and says who it is from.
   const inbound = e.direction === 'in'
+  // The server has already left out inline images the body draws itself, so
+  // this is the files a person attached, not a signature's logo.
+  const files = e.email?.attachments ?? []
+  const others = othersOn(e)
+  const important = e.email?.importance === 'high'
   // Buyer left, us right -- the sides a chat uses, because an exchange of four
   // emails is a conversation and reads as one. It used to centre our sends,
   // which is right for a one-off follow-up into silence and wrong the moment
@@ -184,12 +231,29 @@ function Outreach({
               under a mail icon -- which is the one thing a rep scanning a
               timeline must not be told wrongly, since it decides how they
               answer. */}
-          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Icon name={CHANNEL_ICON[e.channel] ?? 'mail'} className="h-3 w-3 shrink-0" />
-            {inbound
-              ? `${CHANNEL_LABEL[e.channel] ?? e.channel} reply`
-              : CHANNEL_LABEL[e.channel] ?? e.channel}
-          </span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Icon name={CHANNEL_ICON[e.channel] ?? 'mail'} className="h-3 w-3 shrink-0" />
+              {inbound
+                ? `${CHANNEL_LABEL[e.channel] ?? e.channel} reply`
+                : CHANNEL_LABEL[e.channel] ?? e.channel}
+            </span>
+            {/* On the card, not only in the reader: "they flagged it" and
+                "they sent the paperwork" are what a rep scanning the timeline
+                is looking for, and a clamped body says neither. Warning
+                rather than red, which is kept for a send that failed. */}
+            {important && <Badge tone="warning">High importance</Badge>}
+            {files.length > 0 && (
+              <span
+                title={files.map((f) => `${f.filename} (${fileSize(f.size)})`).join('\n')}
+                className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"
+              >
+                <Icon name="paperclip" className="h-3 w-3 shrink-0" />
+                <span className="tnum">{files.length}</span>
+                <span className="sr-only">{files.length === 1 ? 'file' : 'files'}</span>
+              </span>
+            )}
+          </div>
           {/* A text has no subject, and an empty bold line above the body
               reads as something that failed to load. */}
           {e.subject && (
@@ -235,8 +299,18 @@ function Outreach({
           Open{e.direction === 'in' ? ' and reply' : ''}
         </button>
       )}
-      <p className="tnum mt-1.5 text-[11px] text-muted-foreground">
-        {e.to_address ? `${inbound ? 'From' : 'To'} ${e.to_address} · ` : ''}
+      <p className="tnum mt-1.5 break-words text-[11px] text-muted-foreground">
+        {e.to_address ? `${inbound ? 'From' : 'To'} ${e.to_address}` : ''}
+        {/* `to_address` is one address by design -- the buyer -- and the
+            rest of the envelope rides beside it. A count rather than the
+            list, which is what the reader is for; the names are one hover
+            away. */}
+        {e.to_address && others > 0 && e.email && (
+          <span title={envelopeTitle(e.email)} className="ml-1 cursor-help font-medium text-foreground/70">
+            +{others}
+          </span>
+        )}
+        {e.to_address ? ' · ' : ''}
         {dateTime(e.at)}
         {!inbound && !e.delivered_externally && e.channel === 'email' && (
           <> · recorded locally, not delivered</>

@@ -62,7 +62,7 @@ from app.models import (  # noqa: E402
     Vehicle,
     VehicleMention,
 )
-from app.seed import _next_open_slot  # noqa: E402
+from app.seed import _next_open_slot, staff_address  # noqa: E402
 
 FIRST = [
     "Avery", "Bailey", "Cameron", "Dakota", "Elliot", "Finley", "Gray", "Harper",
@@ -593,9 +593,22 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     # ---- 3. refused to invent, and quoted the dealer verbatim -------------
     honest = buyer("Priya Ganesh", "priya.ganesh@example.invalid", "+15550100203",
                    "chat", now - timedelta(days=2, hours=8), staff(2))
+    # **A make this lot does not carry, read off the lot.** It said Porsche,
+    # and on a lot whose dearest car -- the one the next sentence offers -- is
+    # a Porsche, the demo had Liner deny a make and then name one of its cars
+    # in the same breath: the invented-vehicle failure, written by the fixture.
+    on_lot = {(v.make or "").lower() for v in vehicles}
+    absent = next(
+        (m for m in ("Porsche", "Volvo", "Lexus", "Jaguar", "Genesis", "Tesla")
+         if m.lower() not in on_lot),
+        "",
+    )
+    ask = f"Do you have anything from {absent}?" if absent else "Do you have a convertible?"
+    none = (f"Nothing from {absent} on the lot right now." if absent
+            else "No convertibles on the lot right now.")
     thread(honest, "chat", now - timedelta(minutes=2), [
-        ("buyer", "Do you have a Porsche Cayenne?"),
-        ("assistant", "Nothing from Porsche on the lot right now. The closest I "
+        ("buyer", ask),
+        ("assistant", f"{none} The closest I "
                       f"have is the {name_of(car)} at {price}."),
         ("buyer", "What's your doc fee?"),
         ("assistant", "Our documentation fee is $189, and it's the same on every "
@@ -720,12 +733,15 @@ def _full_email(db, now, car, owner, buyer) -> dict[str, int]:
     from app.integrations.registry import get_email_sender
     from app.db import active_store
 
-    made = {"leads": 0, "outreach": 0, "inbound_emails": 0, "conversations": 0, "messages": 0}
-    mailbox = get_email_sender().default_address("dealership")
+    # `buyer()` counts the lead into the caller's tally itself.
+    made = {"outreach": 0, "inbound_emails": 0, "conversations": 0, "messages": 0}
+    # The address the dealership's mail goes out from, and so the one a buyer
+    # writes to. With no sending domain configured there is none, and the
+    # fixture's own domain stands in -- `.example`, so it cannot be mailed.
+    mailbox = get_email_sender().default_address("dealership") or staff_address("sales")
     renee = email_addresses.Recipient("Renee Castillo", "renee.castillo@example.invalid")
     marco = email_addresses.Recipient("Marco Castillo", "marco.castillo@example.invalid")
     lead = buyer(renee.name, renee.address, "+15550100206", "email", now - timedelta(hours=5), owner)
-    made["leads"] += 1
     model = f"{car.year} {car.make} {car.model}"
 
     arrived = now - timedelta(hours=4, minutes=40)

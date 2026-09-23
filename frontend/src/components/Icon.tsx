@@ -174,6 +174,31 @@ const PATHS = {
       <rect x="2" y="12" width="20" height="7" rx="2" />
     </>
   ),
+  // Not from the mockups either: the mail reader and composer. Same 24-unit
+  // grid and stroke as the rest, so a paperclip beside a mail icon on a
+  // timeline card reads as one family.
+  paperclip: (
+    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+  ),
+  reply: (
+    <>
+      <path d="M9 14L4 9l5-5" />
+      <path d="M20 20v-7a4 4 0 00-4-4H4" />
+    </>
+  ),
+  replyAll: (
+    <>
+      <path d="M7 14L2 9l5-5" />
+      <path d="M12 14L7 9l5-5" />
+      <path d="M22 20v-7a4 4 0 00-4-4H7" />
+    </>
+  ),
+  forward: (
+    <>
+      <path d="M15 14l5-5-5-5" />
+      <path d="M4 20v-7a4 4 0 014-4h12" />
+    </>
+  ),
 } as const
 
 export type IconName = keyof typeof PATHS

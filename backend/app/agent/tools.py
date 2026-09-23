@@ -1371,9 +1371,6 @@ def close_conversation(
         )
         return result
 
-    from app.integrations.registry import get_email_sender
-
-    sender = get_email_sender()
     # Composed from rows, not the `summary` argument above.
     #
     # That argument is a model-written sentence and it used to be the whole
@@ -1385,31 +1382,56 @@ def close_conversation(
     # The rail already decided this: a model-written summary is a second place
     # a fact can be invented. It matters more here, because this is the copy
     # the buyer keeps and reads back to a rep.
+    from app import email_outbound
     from app.recap import buyer_summary
 
-    record = Outreach(
-        lead_id=lead.id, channel="email", to_address=lead.email,
-        subject=f"Your conversation with {db.query(Dealership).first().name}",
-        body=buyer_summary(db, convo), provider=sender.name, status="queued",
+    dealership = db.query(Dealership).first()
+    # **Sent, through the one path every other email takes.** This used to
+    # write an `outreach` row marked `queued` and stop there -- nothing in the
+    # system ever drains a queued row -- while telling the model `emailed:
+    # True`. So a deployment that switched summaries on had the assistant
+    # promising mail that was never sent, which is the exact failure this
+    # switch was written to prevent. Now the outbound limit, the reply route
+    # home and the From are the same as any send's, and `emailed` says what
+    # happened.
+    try:
+        message = email_outbound.build(
+            db, to=lead.email,
+            subject=f"Your conversation with {dealership.name if dealership else 'us'}",
+            # It ends with the dealership's name, address and phone already,
+            # so the sign-off would be the same block again.
+            body=buyer_summary(db, convo),
+            # Nobody here wrote it: RFC 3834, so the buyer's own auto-responder
+            # does not answer it.
+            headers={"Auto-Submitted": "auto-generated"},
+        )
+    except email_outbound.OutboundError as exc:
+        result["note"] = (
+            f"Nothing was sent: {exc} Tell the buyer a colleague will follow up "
+            "rather than saying an email is on its way."
+        )
+        return result
+    sent = email_outbound.send(
+        db, message, kind="summary", lead_id=lead.id,
+        sent_by_user_id=None, conversation_id=convo.id,
     )
-    db.add(record)
-    db.commit()
-
-    # Delivery is the outbox unless Gmail is configured, and the buyer was just
-    # promised an email. Say which happened rather than reporting success.
-    result["emailed"] = True
-    result["delivered_externally"] = sender.delivers
     result["to"] = lead.email
-    if not sender.delivers:
+    if not sent.ok:
+        result["note"] = (
+            f"The summary email was not sent: {sent.detail} Tell the buyer a "
+            "colleague will follow up rather than saying it is on its way."
+        )
+        return result
+
+    # Delivery is the outbox unless a provider is configured, and the buyer was
+    # just promised an email. Say which happened rather than reporting success.
+    result["emailed"] = True
+    result["delivered_externally"] = sent.sender.delivers
+    if not sent.sender.delivers:
         result["note"] = (
             "Recorded, not delivered -- no email provider is configured. Tell the "
             "buyer a colleague will send it rather than saying it is on its way."
         )
-    emit(db, "outreach.sent", {
-        "outreach_id": record.id, "lead_id": lead.id, "to": lead.email,
-        "provider": record.provider, "delivered_externally": sender.delivers,
-        "conversation_id": convo.id, "appointment_id": None,
-    })
     return result
 
 
