@@ -358,15 +358,22 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     somebody holding a phone.
   - **Replayed on refresh, unlike availability** — "what is your number" does
     not go stale the way a slot list does — but only while unanswered.
-  - **It follows the conversation down, and it is the contact form.** It
-    stayed under the message that first drew it, so a buyer who asked three
-    more things about the car scrolled back up past them to find it while
-    every reply pointed at "the form on your screen". `contactLast` in
-    `Chat.tsx` draws an unanswered one last, live and after a refresh; one at
-    a time, and it leaves the thread on submit, since the buyer's own message
-    then says what they typed. The model called it "your details" and "the
-    details form", which does not say what it is for, so the prompt, the tool
-    results and the button all say contact.
+  - **It stays where it was asked, and comes down when Liner asks again.**
+    It first stayed under the message that drew it, so a buyer who asked
+    three more things scrolled back up to find it while every reply pointed
+    at "the form on your screen". Then it was drawn last on *every* render,
+    which overcorrected: each answer about the car arrived above the same
+    form, and the thread read as one long demand for a number. Now it moves
+    only on a turn that asks for it again — `request_details`, or an
+    escalation with nobody to ring, answering `already_asked` while one is
+    unanswered. Live that is the stream's `details_again`; after a refresh
+    `already_asked` survives the buyer-shaped cut, and the form is drawn
+    after the last turn that asked. It keeps its key when it moves, so
+    anything typed into it stays. One at a time, and it leaves the thread
+    on submit, since the buyer's own message then says what they typed.
+    The model called it "your details" and "the details form", which does
+    not say what it is for, so the prompt, the tool results and the button
+    all say contact.
   - **Email is offered on every card and required on none.** Only the
     *required* key was forced back onto a card, so one asking for a name and
     a number had no email box at all — and a buyer who would rather be

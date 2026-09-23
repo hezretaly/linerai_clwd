@@ -4500,6 +4500,10 @@ def main() -> int:
         check("a second escalation does not draw a second card over the first",
               not again_up.get("fields") and again_up.get("already_escalated"),
               str(again_up.get("already_escalated")))
+        # It is asking for a number again, though, so the one on screen is
+        # brought back down under this reply rather than left where it was.
+        check("but it says it asked again, which brings the form on screen down",
+              again_up.get("already_asked") is True, str(sorted(again_up)))
         # **A number said out loud lands on the row, or it was never taken.**
         # `save_captured_fields` wrote captured fields and refused outright
         # without a lead -- which on a call is every turn before the booking,
@@ -5088,23 +5092,36 @@ def main() -> int:
     check("and the reply points at them rather than asking again in words",
           "number" not in ask_msg.lower(), ask_msg[:70])
 
-    # **The contact form follows the conversation down.** It used to stay
-    # under the message that first drew it, so a buyer who asked three more
-    # things had to scroll back up past them to find it while every reply
-    # pointed at "the form on your screen". It is drawn last until it is
-    # filled in, on the live stream and after a refresh alike.
+    # **The contact form stays where it was asked, and comes down only when
+    # Liner asks again.** It was drawn last on every render, so each answer to
+    # a question about the car arrived above the same form -- a thread that
+    # read as one long demand for a number. A later turn that answers
+    # something else leaves it in place; a turn that asks for it again brings
+    # it down, live (`details_again`) and after a refresh (`already_asked`,
+    # kept through the buyer-shaped cut).
     say(aid, content="Actually, what's your warranty like?")
     back = call("GET", f"/api/chat/sessions/{aid}")
     check("a refresh still owes the form, since nobody filled it in",
           bool((back.get("details") or {}).get("fields")),
           str(back.get("details"))[:60])
+    from app.api import chat as _chat_api
+    check("a turn asking again keeps its flag through the buyer-shaped cut, and nothing else",
+          _chat_api.buyer_tool_calls([{"name": "request_details", "result": {
+              "already_asked": True, "note": "internal guidance"}}])
+          == [{"name": "request_details", "result": {"already_asked": True}}])
+    _chat_py = pathlib.Path("backend/app/api/chat.py").read_text()
+    check("and the stream says so, so the page can bring the form down",
+          '_sse("details_again"' in _chat_py)
     # The browser is the only other place this can be got wrong, and a page
     # can be wired to a correct endpoint and still render the wrong thing.
     _chat_src = pathlib.Path("frontend/src/routes/Chat.tsx").read_text()
-    check("and the page draws an unanswered form last, below every later reply",
-          "contactLast(items).map" in _chat_src
-          and "prev.filter((i) => i.kind !== 'details')" in _chat_src,
-          "the form stays where it was first drawn")
+    check("and the page draws the thread in order, moving the form only when asked again",
+          "{items.map((item) => {" in _chat_src
+          and "contactLast" not in _chat_src
+          and "event === 'details_again'" in _chat_src
+          and "setItems(contactToEnd)" in _chat_src
+          and "c.result?.already_asked" in _chat_src,
+          "the form is still pinned to the bottom, or never moves")
     check("and it asks for contact, not for details",
           "Send contact info" in pathlib.Path("frontend/src/components/DetailsCard.tsx").read_text())
 

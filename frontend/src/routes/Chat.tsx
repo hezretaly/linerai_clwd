@@ -154,20 +154,19 @@ function withVehicles(prev: Item[], id: string, vehicles: VehicleCardData[]): It
   return [...prev, { kind: 'vehicles', id, vehicles: cars }]
 }
 
-/** The thread as drawn: an unanswered contact form always last.
+/** The unanswered contact form, moved to the end of the thread.
  *
- *  **It follows the conversation down.** It used to stay under the message
- *  that first asked for it, so a buyer who asked three more things about the
- *  car had to scroll back up past them to find it -- while every reply
- *  pointed at "the form on your screen" that was no longer on their screen.
- *  State keeps arrival order; this is only where the card is drawn. There is
- *  one at a time -- a later one replaces an earlier -- and it leaves the
- *  thread when it is submitted, because the buyer's own message then carries
- *  what they typed. */
-function contactLast(items: Item[]): Item[] {
-  const card = [...items].reverse().find((i) => i.kind === 'details')
+ *  **Only when Liner asks for it again.** It used to be drawn last on every
+ *  render, so it followed the buyer down under every reply -- three
+ *  questions about the car and each answer arrived above the same form,
+ *  which read as a thread that kept demanding a number. It stays where it
+ *  was asked now, and comes down when the turn asks again (`details_again`
+ *  live, `already_asked` in the transcript after a refresh). The item keeps
+ *  its key, so what the buyer had already typed into it survives the move. */
+function contactToEnd(items: Item[]): Item[] {
+  const card = items.find((i) => i.kind === 'details')
   if (!card) return items
-  return [...items.filter((i) => i.kind !== 'details'), card]
+  return [...items.filter((i) => i !== card), card]
 }
 
 export function Chat() {
@@ -420,10 +419,13 @@ export function Chat() {
             { kind: 'booking', id: `book-${Date.now()}`, data: data as unknown as BookingCardData },
           ])
         } else if (event === 'details') {
+          // One form at a time: a new one replaces any still unanswered.
           setItems((prev) => [
-            ...prev,
+            ...prev.filter((i) => i.kind !== 'details'),
             { kind: 'details', id: `details-${Date.now()}`, data: data as unknown as DetailsCardData },
           ])
+        } else if (event === 'details_again') {
+          setItems(contactToEnd)
         } else if (event === 'finance') {
           setItems((prev) => [...prev, { kind: 'finance', id: `finance-${Date.now()}` }])
         } else if (event === 'rails') {
@@ -505,7 +507,7 @@ export function Chat() {
       )}
 
       <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-        {contactLast(items).map((item) => {
+        {items.map((item) => {
           if (item.kind === 'text') {
             return (
               <div
@@ -776,6 +778,9 @@ async function resume(
   let rebuilt: Item[] = [
     { kind: 'text', id: 'greeting', role: 'assistant', content: payload.greeting },
   ]
+  // Where the unanswered form belongs: after the last turn that asked for
+  // it -- the one that drew it, or a later one that asked again.
+  let contactAt = -1
   for (const message of payload.messages) {
     if (message.content) {
       rebuilt.push({
@@ -798,15 +803,20 @@ async function resume(
     if (message.tool_calls.some((c) => c.result?.card === FINANCE_CARD)) {
       rebuilt.push({ kind: 'finance', id: `finance-${message.id}` })
     }
+    if (message.tool_calls.some((c) => c.result?.fields || c.result?.already_asked)) {
+      contactAt = rebuilt.length
+    }
   }
   // Times are not replayed from the transcript -- the server looked them up
   // again, because a slot list from ten minutes ago may be gone.
-  // An unanswered contact form comes back at the bottom, where it stays
-  // until it is filled in (`contactLast`). The server's copy, not the
+  // An unanswered contact form comes back where it was last asked for
+  // (`contactToEnd` has the reasoning). The server's copy, not the
   // transcript's: it is the one that knows whether the form is still owed,
   // and it is null once `save_details` lands.
   if (payload.details) {
-    rebuilt.push({ kind: 'details', id: `details-${payload.id}`, data: payload.details })
+    const card: Item = { kind: 'details', id: `details-${payload.id}`, data: payload.details }
+    if (contactAt < 0) rebuilt.push(card)
+    else rebuilt.splice(contactAt, 0, card)
   }
   if (payload.booking) {
     rebuilt.push({ kind: 'booking', id: `book-${payload.id}`, data: payload.booking })

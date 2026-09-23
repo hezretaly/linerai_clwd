@@ -1084,8 +1084,8 @@ def request_details(db: Session, convo: Conversation, args: dict) -> dict:
         return {
             "already_asked": True,
             "note": (
-                "The contact form is already on the buyer's screen, unanswered, and "
-                "it stays at the bottom -- under whatever you write next. No second "
+                "The contact form is already on the buyer's screen, unanswered; it "
+                "is brought back down under the reply you write now. No second "
                 "one is drawn. If it helps, say in one line why filling it in gets "
                 "them what they asked for, then answer anything else they asked -- "
                 "and do not repeat what the record cannot tell them."
@@ -1602,8 +1602,12 @@ def contact_card(db: Session, convo: Conversation, reachable: bool) -> dict:
     Nothing is drawn when there is no need: a buyer already on file, a card
     already unanswered on their screen, or a call, which has no screen at all.
     """
-    if reachable or convo.channel == "voice" or details_pending(db, convo):
+    if reachable or convo.channel == "voice":
         return {}
+    if details_pending(db, convo):
+        # Asking again, with the form already up: it is brought back down
+        # under this reply rather than drawn twice (`already_asked`).
+        return {"already_asked": True}
     return details.card(
         None,
         "A colleague will confirm this for you -- leave a number and they will call.",

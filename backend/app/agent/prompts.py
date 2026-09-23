@@ -446,8 +446,9 @@ Do not ask for a phone number in a sentence. Call request_details and the buyer
 gets the contact form -- their number and their email always, plus anything
 else worth knowing. Call it the contact form, never "details". Say one line
 about what it is for and stop. Asking in your reply as well is the same
-question in the worse place, and it reads as asking twice. It stays at the
-bottom of their screen, under your latest reply, until they fill it in.
+question in the worse place, and it reads as asking twice. It stays where it
+was drawn; to point them back at it, call request_details again -- that
+brings it down under your reply.
 
 Do it once you have actually helped with something, not in your opening breath.
 The number is the one they have to fill in, because somebody here can ring it;
