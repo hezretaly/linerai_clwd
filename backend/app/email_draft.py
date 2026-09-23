@@ -84,6 +84,9 @@ def brief(
     rewrite: str = "",
     author: User | None = None,
     channel: str = "email",
+    answering: dict | None = None,
+    how: str = "",
+    forward_to: str = "",
 ) -> str:
     """Everything the draft may use, as one block appended to the prompt.
 
@@ -102,6 +105,11 @@ def brief(
     """
     what = {"email": "email", "sms": "text message", "chat": "chat reply"}.get(channel, "message")
     parts: list[str] = ["--- WHAT YOU ARE DRAFTING ---", f"A {what} to this buyer."]
+
+    # The one email this is answering or passing on, as the reader showed it.
+    # First, because it is what the message is about.
+    if answering:
+        parts.append(_answering_block(answering, how, forward_to))
 
     if rewrite.strip():
         parts.append(
@@ -261,6 +269,42 @@ def _buyer_block(db: Session, lead: Lead) -> str:
             "Do not repeat a guess back to them as though they said it. If a "
             "guessed field matters to the message, ask rather than assert."
         )
+    return "\n".join(lines)
+
+
+#: How much of an answered email the brief carries. A person's ask is at the
+#: top, and the quoted history under a long thread is the part nobody reads.
+ANSWERED_MAX = 4000
+
+
+def _answering_block(content: dict, how: str, forward_to: str) -> str:
+    """The email being answered or forwarded: who, when, what, and its words.
+
+    Read through the reader's own `read_dealer`, so the draft answers exactly
+    the message the rep has open -- not a guess at the latest one, which is
+    the mistake the old inline composer's `lastInbound` made.
+    """
+    sender = content.get("from") or {}
+    who = sender.get("name") or ""
+    address = sender.get("address") or ""
+    body = (content.get("text") or "").strip()
+    if len(body) > ANSWERED_MAX:
+        body = body[:ANSWERED_MAX] + "\n[... the rest is not shown]"
+    forwarding = how == "forward"
+    lines = [
+        "--- THE EMAIL BEING FORWARDED ---" if forwarding else "--- THE EMAIL YOU ARE ANSWERING ---",
+        f"From: {who} <{address}>" if who else f"From: {address}",
+        f"Date: {content.get('date') or 'not recorded'}",
+        f"Subject: {content.get('subject') or '(no subject)'}",
+        "",
+        body or "(no text)",
+    ]
+    if forwarding:
+        lines += [
+            "",
+            f"It is being forwarded to: {forward_to.strip() or 'people not yet chosen'}. "
+            "Write the note to them, not to whoever wrote it.",
+        ]
     return "\n".join(lines)
 
 

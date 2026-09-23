@@ -584,6 +584,33 @@ def main() -> int:
         check("a chat reply to an anonymous buyer drafts without inventing a name",
               "Not identified yet" in stranger and "chat reply" in stranger, stranger[:120])
 
+        # **Reply and Forward in the reader.** The email being answered is
+        # in the brief, the request asks for no subject (the reply keeps the
+        # one it answers), and mail from somebody not on file drafts with no
+        # conversation at all.
+        answered = {"from": {"name": "Pat Buyer", "address": "pat@example.invalid"},
+                    "date": "2026-09-01T10:00:00Z", "subject": "Is the Q7 still there?",
+                    "text": "Hi, is the Q7 still available this weekend?"}
+        replying = email_draft.brief(db, None, None, author=writer, channel="email",
+                                     answering=answered, how="reply")
+        check("a reply's brief carries the email it answers",
+              "--- THE EMAIL YOU ARE ANSWERING ---" in replying
+              and "still available this weekend" in replying, replying[:120])
+        forwarding = email_draft.brief(db, None, None, author=writer, channel="email",
+                                       answering=answered, how="forward",
+                                       forward_to="finance@example.invalid")
+        check("and a forward's is written to the people it goes to",
+              "--- THE EMAIL BEING FORWARDED ---" in forwarding
+              and "finance@example.invalid" in forwarding)
+        replier = FakeProvider([say("Yes, it is here all weekend -- when suits you?")])
+        answer, _ = loop.draft_text(db, None, brief=replying, channel="email_reply",
+                                    provider=replier)
+        check("a reply drafts with no conversation, and asks for no subject line",
+              answer.startswith("Yes")
+              and replier.seen_messages[0][-1]["content"] == loop.DRAFT_REQUESTS["email_reply"]
+              and "Do not write a subject line" in loop.DRAFT_REQUESTS["email_reply"],
+              answer[:60])
+
         # **The writing assistant's instructions are the dealership's to
         # rewrite** (Liner setup -> Instructions), published like every part.
         from app.api.settings import live_settings as _live  # noqa: E402

@@ -52,6 +52,14 @@ class DraftBody(BaseModel):
     lead_id: str = ""
     #: Which thread this is about. For a buyer, defaults to their newest.
     conversation_id: str = ""
+    #: The email a reply or a forward is about, as the reader names it:
+    #: `message` (an outreach row) or `unmatched` (a receipt nobody placed).
+    answering_kind: str = ""
+    answering_id: str = ""
+    #: `reply`, `reply_all` or `forward`.
+    how: str = ""
+    #: Who a forward is going to, as typed in its To box.
+    forward_to: str = ""
 
 
 @router.get("/drafts/available")
@@ -75,11 +83,28 @@ def draft(
 ) -> dict:
     if body.channel not in CHANNELS:
         raise HTTPException(400, f"A draft is for one of: {', '.join(CHANNELS)}.")
+    if (body.answering_kind or body.answering_id) and (
+        body.channel != "email" or body.how not in ("reply", "reply_all", "forward")
+    ):
+        raise HTTPException(400, "Only an email is answered: reply, reply_all or forward.")
     verdict = email_agent.have_model()
     if not verdict.allowed:
         # Typed, and it names the setting: "why did nothing happen" is the
         # question a person actually has.
         raise HTTPException(503, detail={"reason": verdict.reason, "detail": verdict.detail})
+
+    # **Answering one email, opened in the reader.** It is read through the
+    # reader's own function -- same kinds, same refusals (mail addressed to
+    # Liner is a 404 here too) -- so the draft answers exactly the message the
+    # rep has open, and mail from somebody not on file yet can be answered
+    # with no conversation at all.
+    answering = None
+    if body.answering_kind or body.answering_id:
+        from app.api.mail_reader import read_dealer
+
+        answering = read_dealer(body.answering_kind, body.answering_id, 0, db, user)
+        if not body.lead_id and answering.get("lead_id"):
+            body.lead_id = answering["lead_id"]
 
     lead = None
     if body.lead_id:
@@ -104,9 +129,9 @@ def draft(
             .order_by(Conversation.started_at.desc())
             .first()
         )
-    if lead is None and convo is None:
+    if lead is None and convo is None and answering is None:
         raise HTTPException(400, "Name the buyer or the conversation to draft for.")
-    if convo is None:
+    if convo is None and answering is None:
         raise HTTPException(
             409,
             "This buyer has no conversation yet, so there is nothing to draft from. "
@@ -114,10 +139,13 @@ def draft(
         )
 
     polishing = bool(body.text.strip())
+    request = (
+        f"email_{'forward' if body.how == 'forward' else 'reply'}" if answering else body.channel
+    )
     text, violations = loop.draft_text(
         db,
         convo,
-        channel=body.channel,
+        channel=request,
         brief=email_draft.brief(
             db, lead, convo,
             rewrite=body.text,
@@ -125,11 +153,18 @@ def draft(
             # their name, from their composer.
             author=user,
             channel=body.channel,
+            answering=answering,
+            how=body.how,
+            forward_to=body.forward_to,
         ),
     )
     subject = ""
     if body.channel == "email":
+        # A reply keeps the subject it answers, so one the model offered
+        # anyway is dropped rather than handed back to replace it.
         subject, text = email_draft.split_subject(text)
+        if answering:
+            subject = ""
     else:
         # A text and a chat bubble render no markdown, so none is sent: the
         # same cut `record_assistant_message` makes on Liner's own replies.
@@ -143,5 +178,5 @@ def draft(
         # Shown to the rep rather than swallowed: the guards refused it twice,
         # and the rep is the person who can decide whether they know it.
         "violations": violations,
-        "conversation_id": convo.id,
+        "conversation_id": convo.id if convo is not None else None,
     }

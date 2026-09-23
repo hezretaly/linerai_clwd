@@ -524,6 +524,28 @@ def main() -> int:
     convo = session["conversation_id"]
     rails = session["rails"]
     check("openers offered", len(rails) >= 3, f"{len(rails)} chips")
+    # **A chip the lot cannot answer is not offered.** "Anything with a third
+    # row?" searches seat counts; on a lot whose export carries none -- both
+    # real dealerships so far -- it could only ever answer "nothing matched",
+    # which reads as a dealership with no family cars. Asked of the rows, so it
+    # returns the day a feed carries seats. Riverside's fixture does, which is
+    # why the chip is still tapped below.
+    from types import SimpleNamespace as _RailNS
+    from app.agent import rail_actions as _ra
+    from app.db import SessionLocal as _RailSession
+    _rdb = _RailSession()
+    try:
+        _seats = lambda n: _RailNS(action_json=json.dumps(
+            {"do": "with_seats", "args": {"min_seats": n}}))
+        check("a seats chip is offered where the lot records seats",
+              _ra.answerable(_rdb, _seats(7)))
+        check("and withheld where no car on the lot could answer it",
+              not _ra.answerable(_rdb, _seats(99)))
+        check("while a chip with any other action is never withheld for it",
+              _ra.answerable(_rdb, _RailNS(action_json=json.dumps(
+                  {"do": "under_price", "args": {"max_price": 1}}))))
+    finally:
+        _rdb.close()
     badge_empty = call("GET", "/api/overview")["badges"]["conversations"]
     listed_empty = [c["id"] for c in call("GET", "/api/conversations")["conversations"]]
     check("a session nobody has typed in is not on the badge",
@@ -5100,6 +5122,22 @@ def main() -> int:
     for _channel in ("email", "sms", "chat"):
         check(f"and the {_channel} composer has it beside Send",
               f'<AssistButton\n' in _lead_page and f'channel="{_channel}"' in _lead_page)
+    # Reply, Reply all and Forward in both email readers have it too, on the
+    # words above the quote -- and it answers *that* email, read by the server
+    # through the reader's own function, never a body the browser sent.
+    code, detail = status_of("POST", "/api/drafts", {
+        "channel": "sms", "answering_kind": "message", "answering_id": "x", "how": "reply"})
+    check("only an email is answered from the reader", code == 400, f"{code} {detail[:60]}")
+    code, detail = status_of("POST", "/api/drafts", {
+        "channel": "email", "answering_kind": "message", "answering_id": "x", "how": "forward",
+        "forward_to": "someone@example.invalid"})
+    check("and a reply or forward with no model refuses the same way",
+          code == 503 and "LLM_MODE" in detail, f"{code} {detail[:60]}")
+    for _reader in ("frontend/src/components/dashboard/EmailReader.tsx",
+                    "frontend/src/routes/EmailSetup.tsx"):
+        _src = pathlib.Path(_reader).read_text()
+        check(f"{_reader.rsplit('/', 1)[-1]}: Reply and Forward carry the writing assistant",
+              "<AssistButton" in _src and "aboveQuote(" in _src and "answering={" in _src)
     check("and the old instruction box and its three buttons are gone",
           "draft-email" not in _lead_page and "Rewrite mine" not in _lead_page
           and "New draft" not in _lead_page)

@@ -211,3 +211,22 @@ def run(db: Session, convo: Conversation, rail: Rail) -> tuple[str, list[dict]] 
     if not name:
         return None
     return ACTIONS[name](db, convo, args)
+
+
+def answerable(db: Session, rail: Rail) -> bool:
+    """Whether this lot can answer the chip at all, before anybody taps it.
+
+    **A chip is a question the dealership put on screen on its own behalf.**
+    "Anything with a third row?" searches seat counts, and a lot whose export
+    carries none -- Alsbou's, Craig and Landreth's -- can only answer it with
+    "nothing matched", which reads as a dealership with no family cars rather
+    than one that never recorded the seats. The knowledge chips follow the same
+    rule by being dropped when a store has written no answers. Asked of the
+    rows, per request, so the chip comes back the day a feed carries seats.
+    """
+    action, args = action_of(rail)
+    if action == "with_seats":
+        seats = int(args.get("min_seats") or 7)
+        found = tools.offerable(db.query(Vehicle.id)).filter(Vehicle.seats >= seats).first()
+        return found is not None
+    return True

@@ -308,8 +308,26 @@ export function quoteHtml(content: MailContent, mode: 'reply' | 'forward' = 'rep
     ].filter(Boolean) as string[]
     return `<p>${lines.map(escapeHtml).join('<br>')}</p>${bodyHtml(content)}`
   }
-  const said = when ? `On ${when}, ${from} wrote:` : `${from} wrote:`
+  const said = quoteMarker(content, 'reply')
   return `<p>${escapeHtml(said)}</p><blockquote>${bodyHtml(content)}</blockquote>`
+}
+
+/** The first line of the quote `quoteHtml` writes, as the editor's text
+ *  reports it: where the rep's own words end. One function for both, so the
+ *  line written and the line looked for cannot drift apart. */
+export function quoteMarker(content: MailContent, mode: 'reply' | 'forward'): string {
+  if (mode === 'forward') return '---------- Forwarded message ----------'
+  const from = formatAddr(content.from)
+  const when = quoteDate(content.date)
+  return when ? `On ${when}, ${from} wrote:` : `${from} wrote:`
+}
+
+/** What the rep has written above the quote -- the part the writing
+ *  assistant polishes, or generates when it is empty. The quote itself is
+ *  somebody else's words and is never sent to be rewritten. */
+export function aboveQuote(text: string, marker: string): string {
+  const at = marker ? text.indexOf(marker) : -1
+  return (at >= 0 ? text.slice(0, at) : text).trim()
 }
 
 /** `quoteHtml` under an empty first paragraph, which is where the caret

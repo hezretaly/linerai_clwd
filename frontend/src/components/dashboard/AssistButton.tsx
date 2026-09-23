@@ -44,6 +44,7 @@ export function AssistButton({
   text,
   leadId,
   conversationId,
+  answering,
   onDraft,
   onProblem,
 }: {
@@ -52,6 +53,14 @@ export function AssistButton({
   text: string
   leadId?: string | null
   conversationId?: string | null
+  /** A reply or forward from the reader: the email it is about, which the
+   *  server reads for itself, and where a forward is going. */
+  answering?: {
+    kind: 'message' | 'unmatched'
+    id: string
+    how: 'reply' | 'reply_all' | 'forward'
+    forwardTo?: string
+  }
   onDraft: (result: DraftResult) => void
   /** A sentence to show the rep, or '' to clear the last one. */
   onProblem: (message: string) => void
@@ -66,6 +75,10 @@ export function AssistButton({
         text,
         lead_id: leadId ?? '',
         conversation_id: conversationId ?? '',
+        answering_kind: answering?.kind ?? '',
+        answering_id: answering?.id ?? '',
+        how: answering?.how ?? '',
+        forward_to: answering?.forwardTo ?? '',
       }),
     onSuccess: (result) => {
       onProblem('')
@@ -99,7 +112,11 @@ export function AssistButton({
       title={
         polishing
           ? 'Liner rewrites what you have typed, keeping your facts. Nothing is sent.'
-          : 'Liner writes the next message from this conversation. Nothing is sent.'
+          : answering?.how === 'forward'
+            ? 'Liner writes a short note to go above the forwarded email. Nothing is sent.'
+            : answering
+              ? 'Liner writes a reply to this email, above the quote. Nothing is sent.'
+              : 'Liner writes the next message from this conversation. Nothing is sent.'
       }
       onClick={() => draft.mutate()}
     >

@@ -89,6 +89,9 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
             ]
         followups = followups[:3]
 
+    # A chip the lot cannot answer is not offered (`rail_actions.answerable`).
+    followups = [rail for rail in followups if rail_actions.answerable(db, rail)]
+
     knowledge = (
         db.query(Rail)
         .filter_by(kind="knowledge", enabled=True)

@@ -8,15 +8,19 @@ import { dateTime, relative } from '../lib/format'
 import { withStore } from '../lib/store'
 import type { IntegrationsPayload } from '../lib/types'
 import {
+  aboveQuote,
   addrList,
   bareAddress,
   fwdSubject,
   looksLikeAddress,
+  quoteHtml,
+  quoteMarker,
   quotedBody,
   reSubject,
   replyAllAddsSomeone,
   splitPending,
   splitRecipients,
+  textToHtml,
   type Addr,
   type Attachment,
   type EmailSummary,
@@ -43,6 +47,7 @@ import {
 } from '../components/email'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
+import { AssistButton, Refused } from '../components/dashboard/AssistButton'
 
 /* Every email this dealership has sent or received, and below it the tools to
  * work out why one did not arrive.
@@ -219,6 +224,16 @@ interface Compose {
   /** Ids of those files: that message's, not uploads of ours, so throwing the
    *  draft away leaves them where they are. */
   forwarded?: string[]
+  /** A reply or forward opened from the reader: what the writing assistant
+   *  answers, the quote it keeps under the rep's words, and the line where
+   *  that quote begins. A new email has none, and no assistant button. */
+  assist?: {
+    kind: Mail['kind']
+    id: string
+    how: 'reply' | 'reply_all' | 'forward'
+    quote: string
+    marker: string
+  }
 }
 
 function blankCompose(): Compose {
@@ -950,6 +965,13 @@ function MailReader({
       ...blankCompose(),
       ...answering,
       heading: all ? 'Reply all' : 'Reply',
+      assist: {
+        kind: mail.kind,
+        id: mail.id,
+        how: all ? 'reply_all' : 'reply',
+        quote: quoteHtml(content, 'reply'),
+        marker: quoteMarker(content, 'reply'),
+      },
       to: target.to.join(', '),
       cc: target.cc.join(', '),
       // Not "Re: Re: Re:". The server already added it once; this is only
@@ -966,6 +988,13 @@ function MailReader({
     onCompose({
       ...blankCompose(),
       heading: 'Forward',
+      assist: {
+        kind: mail.kind,
+        id: mail.id,
+        how: 'forward',
+        quote: quoteHtml(content, 'forward'),
+        marker: quoteMarker(content, 'forward'),
+      },
       subject: content.forward.subject || fwdSubject(content.subject),
       html: quotedBody(content, 'forward'),
       // Theirs, carried along: each can be taken off before sending, and the
@@ -1108,6 +1137,7 @@ function Composer({
   const [result, setResult] = useState<string | null>(null)
   // Files still uploading hold Send, or the message goes without them.
   const [uploading, setUploading] = useState(0)
+  const [assistRefused, setAssistRefused] = useState<string[]>([])
   const sentOk = useRef(false)
   const open = draft !== null
 
@@ -1380,7 +1410,29 @@ function Composer({
           </div>
         ) : null}
 
+        <Refused violations={assistRefused} />
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          {/* The writing assistant on a reply or forward, beside Send: on the
+              words above the quote, which is put back as it was. */}
+          {draft.assist && (
+            <AssistButton
+              channel="email"
+              text={aboveQuote(draft.text, draft.assist.marker)}
+              leadId={draft.lead_id ?? null}
+              answering={{
+                kind: draft.assist.kind,
+                id: draft.assist.id,
+                how: draft.assist.how,
+                forwardTo: draft.to,
+              }}
+              onProblem={(message) => setResult(message || null)}
+              onDraft={(drafted) => {
+                setAssistRefused(drafted.violations ?? [])
+                const quote = draft.assist?.quote ?? ''
+                if (drafted.body) update({ html: textToHtml(drafted.body) + quote, text: drafted.body })
+              }}
+            />
+          )}
           <Button
             variant="primary"
             size="sm"

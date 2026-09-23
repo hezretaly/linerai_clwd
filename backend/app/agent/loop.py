@@ -219,7 +219,7 @@ def run_turn(
 
 def draft_text(
     db: Session,
-    convo: Conversation,
+    convo: Conversation | None,
     *,
     brief: str,
     channel: str = "email",
@@ -276,7 +276,9 @@ def draft_text(
     # The transcript, so the draft can refer to what was actually said. The
     # instruction itself is the last user turn, which is what a model reads
     # most recently -- the same reasoning as every addendum here.
-    messages = _history(db, convo)
+    # No conversation is a real case: an answer to mail from somebody who is
+    # not on file yet. The email being answered is in the brief instead.
+    messages = _history(db, convo) if convo is not None else []
     messages.append({"role": "user", "content": DRAFT_REQUESTS.get(channel, DRAFT_REQUEST)})
 
     buyer_text = " ".join(
@@ -297,21 +299,22 @@ def draft_text(
             [],
             # "voice" is the only channel the guards treat differently, and a
             # draft is never spoken.
-            channel="email" if channel == "email" else "chat",
+            channel="email" if channel.startswith("email") else "chat",
             attempt=attempt,
             assistant_turns=sum(1 for m in messages if _role_of(m) == "assistant"),
-            booked=convo.stage == "booked",
+            booked=convo is not None and convo.stage == "booked",
             tool_inputs=[],
             buyer_text=buyer_text,
             makes=tools.known_makes(db),
-            prior_results=tools.earlier_results(db, convo),
+            prior_results=tools.earlier_results(db, convo) if convo is not None else [],
         )
         if verdict.ok:
             return verdict.text, []
         if attempt > 1:
             # Twice is enough. The rep sees the complaint rather than a draft
             # carrying a claim the guard would not let a buyer read.
-            log.info("draft refused on conversation %s: %s", convo.id, verdict.violations)
+            log.info("draft refused on conversation %s: %s",
+                     convo.id if convo is not None else "-", verdict.violations)
             return "", list(verdict.violations)
         attempt += 1
         messages.append({"role": "assistant", "content": text or "(empty)"})
@@ -352,6 +355,25 @@ DRAFT_SYSTEM = COMPOSER
 DRAFT_REQUESTS = {
     "email": DRAFT_REQUEST + (
         " Two or three short paragraphs; a buyer reads this on a phone."
+    ),
+    # Answering or passing on one particular email, opened in the reader. The
+    # subject is already set -- "Re:" or "Fwd:" the one being answered -- so
+    # none is asked for, and a new one would break the thread in their inbox.
+    "email_reply": (
+        "Write this reply now, in the first person, as the team member named in "
+        "the brief -- it goes out under their name. It answers THE EMAIL YOU ARE "
+        "ANSWERING in the brief: respond to what it actually says. Do not write a "
+        "subject line; the reply keeps the one it is answering. Write the body "
+        "only, ending with the closing the brief asks for. Two or three short "
+        "paragraphs. Do not say that you are an assistant, and do not promise "
+        "anything the team has not agreed to."
+    ),
+    "email_forward": (
+        "Write the covering note for this forward now, in the first person, as "
+        "the team member named in the brief. It goes above THE EMAIL BEING "
+        "FORWARDED, to the people it is being sent to -- not a reply to whoever "
+        "wrote it. One or two short sentences saying why they are getting it. No "
+        "subject line, ending with the closing the brief asks for."
     ),
     "sms": (
         "Write this text message now, in the first person, as the team member "

@@ -1049,6 +1049,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     `Subject: ...`, and `split_subject` takes it off; one text rather than two
     requests, so the guards read the subject with the body. A subject the rep
     typed is never overwritten -- only one the last draft wrote.
+  - **Reply, Reply all and Forward have it too**, in the buyer page's reader
+    and the mailbox's. It works on the words *above the quote* --
+    `quoteMarker` is the quote's first line, written by `quoteHtml` and
+    looked for by `aboveQuote`, one function so the two cannot drift -- and
+    puts the quote back under whatever it writes. The request names the email
+    (`answering_kind`/`answering_id`) and the server reads it through the
+    reader's own `read_dealer`, so the draft answers the message the rep has
+    open, with the same refusals, and never a body the browser sent. A reply
+    asks for no subject (it keeps the one it answers); a forward's note is
+    written to the people it goes to. Mail from somebody not on file drafts
+    with no conversation at all.
+  - **A chip the lot cannot answer is not offered.** "Anything with a third
+    row?" searches seat counts, and neither real dealership's export carries
+    any, so it could only ever answer "nothing matched" -- which reads as a
+    lot with no family cars. `rail_actions.answerable` asks the rows per
+    request, so it returns the day a feed carries seats; Riverside's fixture
+    does, which is why the gate still taps it.
   - **The footer grows to 75vh for an email**, because at 45vh the Send
     button sat below the fold of the footer's own scroll.
   - **The way to type into their thread is labelled Text**, beside Email and

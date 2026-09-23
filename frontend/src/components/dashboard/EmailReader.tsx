@@ -5,11 +5,15 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { withStore } from '../../lib/store'
 import {
+  aboveQuote,
   fwdSubject,
+  quoteHtml,
+  quoteMarker,
   quotedBody,
   recipientCount,
   replyAllAddsSomeone,
   reSubject,
+  textToHtml,
   type Attachment,
   type EmailSummary,
   type Importance,
@@ -27,6 +31,7 @@ import { Icon } from '../Icon'
 import { Badge, Button, Input, Sheet, Spinner } from '../ui'
 import type { Lead } from '../../lib/types'
 import type { TimelineEntry } from './Timeline'
+import { AssistButton, Refused } from './AssistButton'
 
 /* One email, opened and readable, with the answer written underneath it.
  *
@@ -301,6 +306,8 @@ export function EmailReader({
   const [answering, setAnswering] = useState<Answer | null>(null)
   const [draft, setDraft] = useState<MailDraft>(() => emptyDraft())
   const [problem, setProblem] = useState('')
+  /** Why the writing assistant's draft was refused, shown rather than lost. */
+  const [refused, setRefused] = useState<string[]>([])
   const patch = (p: Partial<MailDraft>) => setDraft((d) => ({ ...d, ...p }))
   // What the reply said when it opened -- the quote, as the editor first
   // normalised it -- and how many files it carried. Pre-filled text is not
@@ -487,6 +494,7 @@ export function EmailReader({
               focusTo={answering === 'forward'}
             />
             {problem && <p className="text-xs text-destructive">{problem}</p>}
+            <Refused violations={refused} />
             <div className="flex flex-wrap items-center justify-end gap-2">
               <ImportanceToggle
                 value={draft.importance}
@@ -496,6 +504,23 @@ export function EmailReader({
               <Button size="sm" variant="ghost" onClick={() => setAnswering(null)}>
                 Cancel
               </Button>
+              {/* The writing assistant, on the words above the quote: empty
+                  reads Auto-generate and answers this very email; typed reads
+                  Polish. The quote under it is put back as it was. */}
+              <AssistButton
+                channel="email"
+                text={aboveQuote(draft.text, quoteMarker(content, answering === 'forward' ? 'forward' : 'reply'))}
+                leadId={lead.id}
+                answering={{ kind: 'message', id: entry.id, how: answering, forwardTo: draft.to }}
+                onProblem={setProblem}
+                onDraft={(result) => {
+                  setRefused(result.violations ?? [])
+                  if (result.body) {
+                    const mode = answering === 'forward' ? 'forward' : 'reply'
+                    patch({ html: textToHtml(result.body) + quoteHtml(content, mode), text: result.body })
+                  }
+                }}
+              />
               <Button
                 size="sm"
                 variant="primary"
