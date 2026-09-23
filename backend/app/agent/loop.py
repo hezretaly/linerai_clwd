@@ -34,7 +34,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.agent import guards, tools
-from app.agent.prompts import build_system_prompt
+from app.agent.prompts import COMPOSER, build_system_prompt, composer_system
 from app.agent.providers import Provider, get_provider
 from app.api.settings import live_settings
 from app.models import Conversation, Dealership, Message
@@ -222,9 +222,14 @@ def draft_text(
     convo: Conversation,
     *,
     brief: str,
+    channel: str = "email",
     provider: Provider | None = None,
 ) -> tuple[str, list[str]]:
     """Write something a **rep** will read, decide on, and maybe send.
+
+    `channel` is where it is going -- `email`, `sms` or `chat` -- and decides
+    only the shape asked for (`DRAFT_REQUESTS`): a subject line and a closing
+    for an email, a sentence or two for a text or a chat reply.
 
     Returns `(text, violations)`. A non-empty `violations` means the guards
     refused the draft twice and the rep is shown why instead of being handed
@@ -263,13 +268,16 @@ def draft_text(
     # discuss the price" in the next, as though the writer were somebody
     # else. The facts it carried are all in the brief; the pricing posture is
     # the one rule that has to travel, and it does, in the dealership block.
-    system = f"{DRAFT_SYSTEM}\n\n{brief.strip()}"
+    # The dealership's own wording for the writing assistant where it has one
+    # (Liner setup → Instructions), published like every other part.
+    dealership = db.query(Dealership).first()
+    system = f"{composer_system(db, dealership, live_settings(db))}\n\n{brief.strip()}"
 
     # The transcript, so the draft can refer to what was actually said. The
     # instruction itself is the last user turn, which is what a model reads
     # most recently -- the same reasoning as every addendum here.
     messages = _history(db, convo)
-    messages.append({"role": "user", "content": DRAFT_REQUEST})
+    messages.append({"role": "user", "content": DRAFT_REQUESTS.get(channel, DRAFT_REQUEST)})
 
     buyer_text = " ".join(
         m["content"] for m in messages if isinstance(m, dict) and m.get("role") == "user"
@@ -287,7 +295,9 @@ def draft_text(
             # `earlier_results` is the same set the voice guard reads, so a
             # car found three turns ago is still a car this may mention.
             [],
-            channel="email",
+            # "voice" is the only channel the guards treat differently, and a
+            # draft is never spoken.
+            channel="email" if channel == "email" else "chat",
             attempt=attempt,
             assistant_turns=sum(1 for m in messages if _role_of(m) == "assistant"),
             booked=convo.stage == "booked",
@@ -329,19 +339,34 @@ DRAFT_REQUEST = (
 )
 
 
-#: The whole system prompt of a draft, ahead of `email_draft.brief`. Short on
-#: purpose: the brief is the data, and this is only who is speaking and how.
-DRAFT_SYSTEM = """You write emails for a member of a car dealership's sales team. They read
-what you write, may edit it, and send it themselves under their own name. It is
-their email, not an assistant's.
+#: The writing assistant's default instructions, which now live beside the
+#: other assistants' in `prompts` -- a dealership can rewrite them on the Liner
+#: setup page. Kept under this name because it is what a draft ran under.
+DRAFT_SYSTEM = COMPOSER
 
-Write in the first person as the person named under WHO IS WRITING: "I" for
-them and "we" for the dealership. Never mention Liner, an assistant or AI.
-Anything that needs checking, they check: "I'll confirm that and come back to
-you", never "a colleague will". Anything that happens at the dealership, they
-are part of: "when you come in, I can go through the price with you", never
-"someone can".
-
-State only facts written in the brief below -- no price, mileage, feature,
-vehicle or policy that is not there. Plain text, no markdown. Two or three
-short paragraphs; a buyer reads this on a phone."""
+#: The shape each channel needs, asked for in the last turn rather than the
+#: instructions, so a dealership rewriting those cannot lose the part that
+#: makes an email an email. A text costs per segment and arrives on a phone;
+#: a chat reply lands under the buyer's own last message, where a paragraph
+#: reads as a form letter.
+DRAFT_REQUESTS = {
+    "email": DRAFT_REQUEST + (
+        " Two or three short paragraphs; a buyer reads this on a phone."
+    ),
+    "sms": (
+        "Write this text message now, in the first person, as the team member "
+        "named in the brief -- it comes from the dealership's number and they "
+        "send it themselves. One or two short sentences, under 300 characters. "
+        "No subject, no greeting line, no signature: end with their first name "
+        "only if it reads naturally. Do not say that you are an assistant, and "
+        "do not promise anything the team has not agreed to."
+    ),
+    "chat": (
+        "Write the next reply in the website chat now, in the first person, as "
+        "the team member named in the brief -- they have taken this "
+        "conversation over and the buyer can see it is a person. Answer what "
+        "the buyer last said. One to three short sentences, plain text, no "
+        "subject and no sign-off. Do not say that you are an assistant, and do "
+        "not promise anything the team has not agreed to."
+    ),
+}

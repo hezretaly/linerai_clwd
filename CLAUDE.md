@@ -990,25 +990,40 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     storefront shell opens its widget on arrival when it sees it, and the
     widget is the same `/chat` reading the same per-store conversation id from
     `localStorage`, so the buyer sees the thread they were in.
-- **Draft with Liner is a form, and it is offered only where it can work.**
-  The instruction box sat beside a button with nothing saying the box was the
-  prompt, and Enter did nothing; on a stub deployment the button was pressed
-  and then refused. The prompt is a labelled form now -- Enter or the button
-  sends it, and the button says *Write draft* or *Rewrite* before it is pressed
-  -- and `/reach` carries `email.draft`, from the same `have_model` the
-  endpoint asks, so with no model the composer shows the reason instead of the
-  control.
-  - **The brief and the rules are editable, on the Advanced tab.**
-    `assistant_prompts` hangs off a settings *version*, so an edit is drafted
-    and published with everything else and reaches no buyer until a manager
-    publishes; `_ensure_draft` copies it into each new draft, or the next
-    unrelated edit would publish the default over it. Empty means ours, so an
-    untouched dealership follows every improvement to `BRIEF`. Manager only,
-    `{{NAME}}`s `fill` cannot answer are refused rather than sent in braces,
-    and `OWN_PROMPT_MAX` keeps the whole prompt under the gate's 12,000. What
-    it cannot change is said on the page: prices, sold cars, clashes and
-    provenance are executors and guards, so a rewrite changes how Liner
-    talks, never what it may claim.
+- **Every composer has two buttons: the writing assistant and Send.** The
+  email, the text and the chat reply on the buyer page share `AssistButton`,
+  and what it does is decided by the box: empty reads **Auto-generate** (the
+  obvious next message from the thread, the car and the dealership's
+  answers), anything typed reads **Polish** (the rep's words -- a finished
+  draft or three words of notes -- turned into the message they meant, facts
+  kept). It replaced an instruction box, Write draft, Rewrite mine and New
+  draft: the words in the box were always the better steering, and to start
+  again you empty it. One endpoint, `POST /api/drafts` with a `channel`, which
+  decides only the shape asked for (`loop.DRAFT_REQUESTS`): a subject and a
+  closing for an email, a sentence or two and no signature for a text or a
+  chat reply, markdown stripped from both. A chat reply can be to a buyer
+  with no lead, so it names the thread rather than the buyer. With no model,
+  `/api/drafts/available` says so first and the button is drawn unavailable
+  with the reason on it. The built drafts (Follow-up, Credit application)
+  stay as a source for the email box.
+  - **Each assistant's instructions are editable, on the Instructions tab.**
+    The brief and rules every buyer-facing assistant shares, then one part
+    each for the website chat, the phone line, the email replies and the
+    writing assistant (`prompts.PARTS`) -- those were constants, so a manager
+    could rewrite what every conversation starts from but not how Liner talks
+    on the phone. `assistant_prompts` and `assistant_parts` both hang off a
+    settings *version*, so an edit is drafted and published with everything
+    else; `_ensure_draft` copies both into each new draft, or the next
+    unrelated edit would publish the default over them. Empty means ours, so
+    an untouched dealership follows every improvement. Manager only,
+    `{{NAME}}`s `fill` cannot answer are refused, and three ceilings are said
+    in numbers: `OWN_PROMPT_MAX` for the brief and rules, `PART_MAX` per part
+    (a call's is the gate's 1,500), and `PROMPT_MAX` -- no assistant's whole
+    assembled prompt past 12,000, measured on the draft at save. Riverside's
+    chat already sits at about 11,900 of it, so the page shows each
+    assistant's total rather than only a count per box. What no wording can
+    change is said on the page: prices, sold cars, clashes and provenance are
+    executors and guards.
   - **It is written as the person pressing the button.** The email goes out
     under their name and their own sign-off, but the prompt around the brief
     is the buyer-facing assistant's, so drafts spoke as Liner or "our team"
@@ -1034,11 +1049,10 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     `Subject: ...`, and `split_subject` takes it off; one text rather than two
     requests, so the guards read the subject with the body. A subject the rep
     typed is never overwritten -- only one the last draft wrote.
-  - **Rewrite and start again are two buttons.** With one, the box always
-    had text after the first draft, so every later press could only reword
-    it and there was no way to ask for something different. The body is ten
-    rows and the footer grows to 75vh for an email, because at 45vh the Send
+  - **The footer grows to 75vh for an email**, because at 45vh the Send
     button sat below the fold of the footer's own scroll.
+  - **The way to type into their thread is labelled Text**, beside Email and
+    their number; SMS says SMS, so two buttons never share a label.
 - **A drafted email is written for a rep to read, and it cannot act.**
   `POST /api/leads/{id}/draft-email` hands back text and stores nothing — there
   is no Drafts tab because nothing stores a draft, and a model writing one does

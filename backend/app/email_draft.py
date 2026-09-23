@@ -77,32 +77,42 @@ PROVENANCE = {
 
 def brief(
     db: Session,
-    lead: Lead,
+    lead: Lead | None,
     convo: Conversation | None,
     *,
-    instruction: str,
+    instruction: str = "",
     rewrite: str = "",
     author: User | None = None,
+    channel: str = "email",
 ) -> str:
     """Everything the draft may use, as one block appended to the prompt.
 
-    `instruction` is the rep's one line -- "ask if Saturday works", "answer
-    their financing question". It is the whole point of the feature: without
-    it a draft is one guess at what the rep wanted, and they rewrite it by
-    hand. `rewrite` is the other mode: the rep's own text, to be put in the
-    dealership's voice with its facts kept.
+    Two modes, and the composer's one button picks between them by whether
+    the box has anything in it. Empty is **Auto-generate**: the obvious next
+    message from where the conversation got to. Anything typed is **Polish**:
+    `rewrite` is the rep's own text -- a finished draft or three words of
+    notes, "ask if saturday works" -- turned into the message they meant,
+    with their facts kept. The words in the box are the steering, which is
+    why there is no separate instruction field any more; `instruction` stays
+    for a caller that has one.
+
+    `channel` is `email`, `sms` or `chat`, and decides the closing: an email
+    ends with the rep's first name over the signature appended at send, a
+    text or a chat reply ends when it has said its piece.
     """
-    parts: list[str] = ["--- WHAT YOU ARE DRAFTING ---"]
+    what = {"email": "email", "sms": "text message", "chat": "chat reply"}.get(channel, "message")
+    parts: list[str] = ["--- WHAT YOU ARE DRAFTING ---", f"A {what} to this buyer."]
 
     if rewrite.strip():
         parts.append(
-            "The team member has written a draft of their own, below. Rewrite it "
-            "in the dealership's voice: keep every fact they stated and every "
-            "commitment they made, change nothing about what is being offered, "
-            "and do not add a claim they did not make. If something they wrote "
-            "cannot be supported by the facts below, leave it exactly as they "
-            "wrote it rather than correcting it -- it is their message and they "
-            "may know something you do not.\n\n"
+            f"The team member has written this {what} themselves, below -- it may "
+            "be a finished draft or a few words of notes. Turn it into the message "
+            "they meant, in the dealership's voice: keep every fact they stated "
+            "and every commitment they made, change nothing about what is being "
+            "offered, and do not add a claim they did not make. If something they "
+            "wrote cannot be supported by the facts below, leave it exactly as "
+            "they wrote it rather than correcting it -- it is their message and "
+            "they may know something you do not.\n\n"
             f"THEIR DRAFT:\n{rewrite.strip()}"
         )
     if instruction.strip():
@@ -115,13 +125,13 @@ def brief(
 
     shop = db.query(Dealership).first()
     if author is not None:
-        parts.append(_author_block(author, shop))
+        parts.append(_author_block(author, shop, channel))
     else:
         parts.append(
             "--- HOW IT ENDS ---\nDo not sign the email. The dealership's "
             "sign-off is appended when it is sent."
         )
-    parts.append(_buyer_block(db, lead))
+    parts.append(_buyer_block(db, lead) if lead is not None else _stranger_block(db, convo))
     parts.append(_dealership_block(db))
 
     vehicle = _focus_vehicle(db, lead, convo)
@@ -134,7 +144,7 @@ def brief(
 
     parts.append(
         "--- RULES FOR THIS DRAFT ---\n"
-        "Write the email body only. A team member reads it before anything is "
+        f"Write the {what} only. A team member reads it before anything is "
         "sent, so do not write as though it has already gone. Every fact you "
         "state must come from the blocks above: no price, mileage, feature or "
         "vehicle that is not written there, and no policy answer you compose "
@@ -169,7 +179,7 @@ DRAFT_FINANCING = {
 ROLE_TITLE = {"manager": "sales manager", "rep": "sales representative"}
 
 
-def _author_block(author: User, shop: Dealership | None) -> str:
+def _author_block(author: User, shop: Dealership | None, channel: str = "email") -> str:
     """Who is writing: the person signed in, not the assistant.
 
     **A drafted email goes out under the rep's name**, because the composer
@@ -192,6 +202,11 @@ def _author_block(author: User, shop: Dealership | None) -> str:
         f"example \"Best,\\n{first or author.name}\". Their signature -- full "
         "name, title and the dealership's details -- is appended under it when "
         "it is sent, so do not write any of that."
+        if channel == "email" else
+        # A text and a chat reply carry no signature block: the buyer already
+        # knows who they are talking to, and a sign-off under two sentences
+        # reads as a form letter.
+        "No closing and no signature block."
     )
     return (
         "--- WHO IS WRITING ---\n"
@@ -249,6 +264,25 @@ def _buyer_block(db: Session, lead: Lead) -> str:
     return "\n".join(lines)
 
 
+def _stranger_block(db: Session, convo: Conversation | None) -> str:
+    """A buyer who has not said who they are: a chat reply to somebody anonymous.
+
+    Most live chats have no lead -- `book_appointment` is what mints one -- and
+    the reply box on such a thread is exactly where a rep taking over wants a
+    hand. There is no name to use and nothing captured against a person, so
+    the block says so rather than inventing a "there" to greet.
+    """
+    from app.recap import conversation_recap
+
+    lines = [
+        "--- THE BUYER ---",
+        "Not identified yet: no name, number or address on file. Do not guess one.",
+    ]
+    if convo is not None:
+        lines += ["", conversation_recap(db, convo) or "No history recorded yet."]
+    return "\n".join(lines)
+
+
 def _dealership_block(db: Session) -> str:
     shop = db.query(Dealership).first()
     live = live_settings(db)
@@ -289,7 +323,7 @@ def _hours(shop: Dealership) -> str:
     return ", ".join(open_days)
 
 
-def _focus_vehicle(db: Session, lead: Lead, convo: Conversation | None) -> Vehicle | None:
+def _focus_vehicle(db: Session, lead: Lead | None, convo: Conversation | None) -> Vehicle | None:
     """The car this is about: the thread's focus, else the last one quoted.
 
     Asked across the buyer rather than off the newest thread alone, for the
@@ -302,6 +336,8 @@ def _focus_vehicle(db: Session, lead: Lead, convo: Conversation | None) -> Vehic
             return found
     from app.models import VehicleMention
 
+    if lead is None:
+        return None
     mention = (
         db.query(VehicleMention)
         .join(Conversation, VehicleMention.conversation_id == Conversation.id)

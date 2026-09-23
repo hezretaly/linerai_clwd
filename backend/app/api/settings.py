@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_dealership, require_manager
 from app.db import get_db, utcnow
 from app.models import (
+    AssistantPart,
     AssistantPrompt,
     AssistantSettings,
     Dealership,
@@ -59,7 +60,7 @@ def get_assistant_settings(
     user: User = Depends(current_user),
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
-    from app.agent.prompts import build_system_prompt
+    from app.agent.prompts import build_system_prompt, composer_system
 
     live = live_settings(db)
     draft = draft_settings(db)
@@ -70,8 +71,18 @@ def get_assistant_settings(
         "prompt": _prompt_out(db, live, draft),
         # Read-only. "Here is literally what it was told" is a strong answer to
         # the control objection, and it costs nothing because we assemble this
-        # string anyway (§18.3).
+        # string anyway (§18.3). One per assistant now, because each is told
+        # something different on top of the shared brief.
         "compiled_prompt": build_system_prompt(db, dealership, live),
+        "compiled": {
+            "chat": build_system_prompt(db, dealership, live, "chat"),
+            "voice": build_system_prompt(db, dealership, live, "voice"),
+            "email": build_system_prompt(db, dealership, live, "email"),
+            # The writing assistant's instructions; each draft's facts -- the
+            # buyer, the car, the knowledge table -- are composed after them
+            # per draft (`email_draft.brief`), so there is no one string.
+            "composer": composer_system(db, dealership, live),
+        },
     }
 
 
@@ -124,10 +135,13 @@ def _prompt_out(db: Session, live, draft) -> dict:
         "defaults": {
             "brief": prompts.METHOD if profile.assistant()["sales_method"] else prompts.BRIEF,
             "rules": prompts.OPERATING_RULES,
+            **{part: prompts.default_part(part) for part in prompts.PARTS},
         },
         "live": prompts.own_prompt(db, live),
         "draft": prompts.own_prompt(db, draft) if draft else prompts.own_prompt(db, live),
         "max_chars": prompts.OWN_PROMPT_MAX,
+        "part_max": prompts.PART_MAX,
+        "prompt_max": prompts.PROMPT_MAX,
     }
 
 
@@ -161,6 +175,11 @@ def _ensure_draft(db: Session) -> AssistantSettings:
         # for the draft's wording misses the row just added and inserts a
         # second one for the same version.
         db.flush()
+    # Each assistant's own wording travels with it, for the same reason.
+    for part in db.query(AssistantPart).filter_by(settings_id=live.id).all():
+        db.add(AssistantPart(settings_id=draft.id, part=part.part, text=part.text,
+                             updated_by=part.updated_by))
+    db.flush()
     return draft
 
 
@@ -248,8 +267,22 @@ def put_credit_link(
 
 
 class PromptBody(BaseModel):
-    brief: str = ""
-    rules: str = ""
+    """Any of the six, and only what is sent changes. `""` restores ours."""
+
+    brief: str | None = None
+    rules: str | None = None
+    chat: str | None = None
+    voice: str | None = None
+    email: str | None = None
+    composer: str | None = None
+
+
+#: What each part is called in a sentence a manager reads.
+PART_NAMES = {
+    "brief": "the brief", "rules": "the rules", "chat": "the website chat's",
+    "voice": "the phone calls'", "email": "the email replies'",
+    "composer": "the writing assistant's",
+}
 
 
 @router.put("/assistant-settings/prompt")
@@ -259,37 +292,66 @@ def put_prompt(
     user: User = Depends(require_manager),
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
-    """The dealership's own brief and rules, onto the draft.
+    """The dealership's own wording for any assistant, onto the draft.
 
-    **A manager's, like publishing.** This is the text every buyer
-    conversation starts from, so it is not something any rep changes on the
-    way past; and like every other field on the page it lands on the draft
-    and reaches nobody until it is published.
+    **Six parts, one endpoint.** The brief and the rules every buyer-facing
+    assistant shares, then one set of instructions each for the website chat,
+    the phone line, the email replies and the writing assistant a rep uses.
+    Each replaces the product's own text for that part, and saving the default
+    verbatim -- or nothing -- stores nothing, so an untouched box follows the
+    product's text as it improves rather than freezing a copy of it.
+
+    **A manager's, like publishing.** This is what every conversation starts
+    from, so it is not something any rep changes on the way past; and like
+    every other field on the page it lands on the draft and reaches nobody
+    until it is published.
+
+    **Three ceilings, each said in numbers.** The brief and rules together
+    stay under `OWN_PROMPT_MAX`, each part under its own `PART_MAX` (a call's
+    is the gate's 1,500, because it is re-read every turn of a call billed by
+    the minute), and then the whole: every assistant's assembled prompt must
+    stay under `PROMPT_MAX`, measured on the draft as it would be published.
+    The first two are about one box; the third is the one that actually costs.
 
     **What it cannot change is written down on the page too.** A price the
     tools did not return, a car that is sold, a booking that clashes and a
     typed field that was a guess are all refused by executors and guards, not
     by this text -- so a rewrite changes how Liner talks and never what it may
-    claim. Empty restores the product's own wording.
+    claim.
     """
     from app.agent import prompts
 
-    brief, rules = body.brief.strip(), body.rules.strip()
-    # Saving the default verbatim stores nothing: an unchanged box should
-    # follow the product's own text as it improves, not freeze a copy of it.
-    if brief == prompts.BRIEF.strip():
-        brief = ""
-    if rules == prompts.OPERATING_RULES.strip():
-        rules = ""
-    if len(brief) + len(rules) > prompts.OWN_PROMPT_MAX:
+    given = body.model_dump(exclude_none=True)
+    if not given:
+        raise HTTPException(400, "Nothing to save.")
+    defaults = {"brief": prompts.BRIEF, "rules": prompts.OPERATING_RULES}
+    cleaned: dict[str, str] = {}
+    for key, value in given.items():
+        text = value.strip()
+        default = defaults.get(key) or prompts.default_part(key)
+        # Saving the default verbatim stores nothing.
+        cleaned[key] = "" if text == default.strip() else text
+
+    live = live_settings(db)
+    draft = _ensure_draft(db)
+    current = prompts.own_prompt(db, draft)
+    after = {**current, **cleaned}
+
+    if len(after["brief"]) + len(after["rules"]) > prompts.OWN_PROMPT_MAX:
         raise HTTPException(
             400,
-            f"The brief and rules come to {len(brief) + len(rules):,} characters; the "
-            f"limit is {prompts.OWN_PROMPT_MAX:,}. Every character is re-read on every "
-            "turn of every conversation.",
+            f"The brief and rules come to {len(after['brief']) + len(after['rules']):,} "
+            f"characters; the limit is {prompts.OWN_PROMPT_MAX:,}. Every character is "
+            "re-read on every turn of every conversation.",
         )
-    live = live_settings(db)
-    unknown = prompts.unknown_placeholders(f"{brief}\n{rules}", dealership, live)
+    for part in prompts.PARTS:
+        if len(after[part]) > prompts.PART_MAX[part]:
+            raise HTTPException(
+                400,
+                f"{PART_NAMES[part].capitalize()} instructions come to {len(after[part]):,} "
+                f"characters; the limit is {prompts.PART_MAX[part]:,}.",
+            )
+    unknown = prompts.unknown_placeholders("\n".join(cleaned.values()), dealership, live)
     if unknown:
         raise HTTPException(
             400,
@@ -297,12 +359,37 @@ def put_prompt(
             "in braces: " + ", ".join("{{" + u + "}}" for u in unknown),
         )
 
-    draft = _ensure_draft(db)
-    row = db.query(AssistantPrompt).filter_by(settings_id=draft.id).one_or_none()
-    if row is None:
-        row = AssistantPrompt(settings_id=draft.id)
-        db.add(row)
-    row.brief, row.rules, row.updated_by = brief, rules, user.id
+    if "brief" in cleaned or "rules" in cleaned:
+        row = db.query(AssistantPrompt).filter_by(settings_id=draft.id).one_or_none()
+        if row is None:
+            row = AssistantPrompt(settings_id=draft.id)
+            db.add(row)
+        row.brief, row.rules, row.updated_by = after["brief"], after["rules"], user.id
+    for part in prompts.PARTS:
+        if part not in cleaned:
+            continue
+        row = db.query(AssistantPart).filter_by(settings_id=draft.id, part=part).one_or_none()
+        if row is None:
+            row = AssistantPart(settings_id=draft.id, part=part)
+            db.add(row)
+        row.text, row.updated_by = cleaned[part], user.id
+    db.flush()
+
+    # The whole prompt, as it would be published. Refused rather than stored,
+    # so the draft can never hold something the publish would ship over.
+    too_long = {
+        channel: length
+        for channel, length in prompts.prompt_lengths(db, dealership, draft).items()
+        if length > prompts.PROMPT_MAX
+    }
+    if too_long:
+        db.rollback()
+        which = ", ".join(f"{c} ({n:,} characters)" for c, n in too_long.items())
+        raise HTTPException(
+            400,
+            f"That would take the whole prompt past {prompts.PROMPT_MAX:,} characters "
+            f"for: {which}. Every character is re-read on every turn.",
+        )
     db.commit()
     return _prompt_out(db, live, draft)
 

@@ -91,6 +91,36 @@ class AssistantPrompt(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class AssistantPart(Base):
+    """A dealership's own wording for one assistant, beside the shared brief.
+
+    Liner is four assistants that share a brief and its rules: the website
+    chat, the phone line, the email replies, and the writing assistant a rep
+    presses Auto-generate or Polish on. Each has instructions of its own on top
+    -- the chat's about the cards on screen, the call's about speaking, the
+    email's about an inbox, the writer's about sounding like the person
+    sending it -- and those were constants in the code, so a manager could
+    rewrite the brief every buyer conversation starts from but not how Liner
+    behaves on the phone.
+
+    **A row per part, and the vocabulary is closed** (`prompts.PARTS`): a free
+    key here is a place wording goes to be read by nothing. A table rather than
+    four columns on `assistant_prompts` because `create_all` adds a table to a
+    database that already exists and never a column. Per settings version, so
+    it is drafted and published exactly like the brief; empty means the
+    product's own text.
+    """
+
+    __tablename__ = "assistant_parts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    settings_id: Mapped[str] = mapped_column(ForeignKey("assistant_settings.id"), index=True)
+    part: Mapped[str] = mapped_column(String(20))
+    text: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class HandoffRule(Base):
     """The five escalation triggers. The only home for escalation config (§0)."""
 

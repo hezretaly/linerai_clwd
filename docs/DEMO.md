@@ -668,7 +668,7 @@ and `/api/integrations` (or `make placeholders`) is the live list.
 | `RESEND_API_KEY` | Every send writes a real outreach row and delivers nothing. The composer says *Not delivered* and quotes the provider. |
 | The Cloudflare Worker | Replies never arrive. `/app/email` is how you tell that apart from silence. |
 | `SCRAPER_BASE_URL` | The import screen offers CSV only. |
-| The credit application link (Liner setup → Behaviour, live on Save) | Liner offers no application button in the chat, the credit-application draft refuses with a typed `not_configured`, and the overview card says why instead of showing a zero. |
+| The credit application link (its own card on Liner setup, live on Save) | Liner offers no application button in the chat, the credit-application draft refuses with a typed `not_configured`, and the overview card says why instead of showing a zero. |
 | `knowledge:` in the profile | Liner says a person will check, rather than inventing a doc fee. |
 
 ---

@@ -1053,7 +1053,7 @@ def main() -> int:
     state = call("GET", "/api/assistant-settings")
     check("and emptying it hands Liner back its default wording",
           marker not in state["compiled_prompt"]
-          and state["prompt"]["live"] == {"brief": "", "rules": ""},
+          and state["prompt"]["live"]["brief"] == "" and state["prompt"]["live"]["rules"] == "",
           str(state["prompt"]["live"]))
     check("the setup page offers the boxes, not only the compiled text",
           "/api/assistant-settings/prompt" in
@@ -1127,6 +1127,65 @@ def main() -> int:
     check("the setup page's Save goes to the live endpoint, not the draft",
           "/api/assistant-settings/credit-application-url" in _setup
           and "credit_application_url: next" not in _setup)
+
+    print("\n== each assistant's own instructions, edited on the setup page ==")
+    # The chat, the phone line, the email replies and the writing assistant
+    # each have instructions on top of the shared brief, and they were
+    # constants -- a manager could rewrite what every conversation starts from
+    # but not how Liner talks on the phone. Same four rules as the brief:
+    # manager only, a ceiling per box, draft until published, and now the one
+    # that costs: no assistant's whole prompt past 12,000.
+    tag = f"SMOKE-PART-{secrets.token_hex(3)}"
+    call("POST", "/api/auth/login", REP_LOGIN)
+    denied = status_of("PUT", "/api/assistant-settings/prompt", {"voice": tag})[0]
+    call("POST", "/api/auth/login", LOGIN)
+    check("a rep cannot rewrite how Liner talks on the phone", denied == 403, str(denied))
+    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"voice": "x" * 1600})
+    check("a call's instructions stay under the 1,500 every turn re-reads",
+          code == 400 and "1,500" in why, why[:100])
+    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"chat": "y" * 2900})
+    check("and nothing takes an assistant's whole prompt past 12,000",
+          code == 400 and "12,000" in why and "chat" in why, why[:120])
+    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"email": "Sign as {{NOBODY}}."})
+    check("a placeholder Liner cannot fill is refused here too",
+          code == 400 and "NOBODY" in why, why[:100])
+    try:
+        mine = call("GET", "/api/assistant-settings")["prompt"]["defaults"]
+        call("PUT", "/api/assistant-settings/prompt",
+             # The call's default is within a few characters of its ceiling,
+             # so this replaces it rather than appending to it.
+             {"voice": f"Words only, two sentences at a time. {tag}-VOICE",
+              "composer": f"{mine['composer']}\n{tag}-WRITER"})
+        state = call("GET", "/api/assistant-settings")
+        check("an edit lands on the draft and reaches no caller until published",
+              f"{tag}-VOICE" in state["prompt"]["draft"]["voice"]
+              and f"{tag}-VOICE" not in state["compiled"]["voice"]
+              and state["has_unpublished_changes"])
+        call("POST", "/api/assistant-settings/publish")
+        state = call("GET", "/api/assistant-settings")
+        check("published, the phone line is told it and the chat is not",
+              f"{tag}-VOICE" in state["compiled"]["voice"]
+              and f"{tag}-VOICE" not in state["compiled"]["chat"]
+              and f"{tag}-VOICE" not in state["compiled"]["email"])
+        check("and the writing assistant runs on its own wording",
+              f"{tag}-WRITER" in state["compiled"]["composer"])
+        # The next draft is minted from live, and it must carry the parts --
+        # or the next unrelated edit publishes the default over them.
+        call("PATCH", "/api/assistant-settings", {"tone": state["live"]["tone"]})
+        again = call("GET", "/api/assistant-settings")
+        check("an unrelated edit afterwards keeps them in the new draft",
+              f"{tag}-VOICE" in again["prompt"]["draft"]["voice"]
+              and not again["has_unpublished_changes"])
+    finally:
+        call("PUT", "/api/assistant-settings/prompt",
+             {"chat": "", "voice": "", "email": "", "composer": ""})
+        call("POST", "/api/assistant-settings/publish")
+    state = call("GET", "/api/assistant-settings")
+    check("and emptying them hands each assistant back its default",
+          all(state["prompt"]["live"][k] == "" for k in ("chat", "voice", "email", "composer"))
+          and tag not in state["compiled"]["voice"])
+    check("the setup page edits every assistant, not only the brief",
+          all(f"key: '{k}'" in _setup for k in ("shared", "chat", "voice", "email", "composer")))
 
     print("\n== an unclaimed lead can be opened from the overview ==")
     pool = call("GET", "/api/overview")["queues"]["unclaimed_leads"]
@@ -5006,10 +5065,11 @@ def main() -> int:
           "/reach" in _lead_src and "'/api/integrations'" not in _lead_src,
           "LeadPage.tsx still requests /api/integrations")
 
-    print("\n== the drafting assistant writes; it cannot act ==")
-    # **A rep presses Draft with Liner, reads what comes back and decides.**
-    # Nothing is stored -- there is no Drafts tab because nothing stores a
-    # draft, and a model writing one does not change that.
+    print("\n== the writing assistant writes; it cannot act ==")
+    # **A rep presses Auto-generate or Polish, reads what comes back and
+    # decides.** Nothing is stored -- there is no Drafts tab because nothing
+    # stores a draft, and a model writing one does not change that. One
+    # endpoint for the email, the text and the chat reply.
     from app import email_agent as _agent
     from app.db import SessionLocal as _DraftSession
 
@@ -5017,12 +5077,32 @@ def main() -> int:
     # path -- typed and naming the setting, because "why did nothing happen"
     # is the question a person actually has. Handing back a template the rep
     # cannot tell from a real draft is the failure being avoided.
-    code, detail = status_of(
-        "POST", f"/api/leads/{form['appointment']['lead_id']}/draft-email",
-        {"instruction": "Ask whether Saturday still works."})
-    check("with no model it refuses and names the setting, rather than "
-          "handing back a template",
-          code == 503 and "LLM_MODE" in detail, f"{code} {detail[:70]}")
+    _drafted_for = form["appointment"]["lead_id"]
+    for _channel, _text in (("email", ""), ("sms", "ask if saturday works"), ("chat", "")):
+        code, detail = status_of("POST", "/api/drafts",
+                                 {"channel": _channel, "text": _text, "lead_id": _drafted_for})
+        check(f"{_channel}: with no model it refuses and names the setting, rather "
+              "than handing back a template",
+              code == 503 and "LLM_MODE" in detail, f"{code} {detail[:70]}")
+    _avail = call("GET", "/api/drafts/available")
+    check("and every composer is told so before the button is pressed",
+          _avail["available"] is False and "LLM_MODE" in _avail["reason"], str(_avail)[:90])
+    code, detail = status_of("POST", "/api/drafts", {"channel": "fax", "lead_id": _drafted_for})
+    check("a channel nobody defined is refused, not drafted as an email", code == 400, str(code))
+    # **Two buttons on every composer: the writing assistant and Send**, and
+    # the first one's job is decided by the box. Read out of the page, the
+    # way the built drafts are, because a button that exists only in a plan
+    # is exactly what nothing else here can tell apart from one on screen.
+    _assist = pathlib.Path("frontend/src/components/dashboard/AssistButton.tsx").read_text()
+    check("the button says Polish over text and Auto-generate over an empty box",
+          "'Polish'" in _assist and "'Auto-generate'" in _assist and "'/api/drafts'" in _assist)
+    _lead_page = pathlib.Path("frontend/src/routes/LeadPage.tsx").read_text()
+    for _channel in ("email", "sms", "chat"):
+        check(f"and the {_channel} composer has it beside Send",
+              f'<AssistButton\n' in _lead_page and f'channel="{_channel}"' in _lead_page)
+    check("and the old instruction box and its three buttons are gone",
+          "draft-email" not in _lead_page and "Rewrite mine" not in _lead_page
+          and "New draft" not in _lead_page)
     # **The autonomous-reply brakes are not this question.** `EMAIL_AGENT`,
     # the runtime flag, the cooldown and the ceiling all exist to stop Liner
     # answering a buyer *on its own*; a person asked for this draft and a

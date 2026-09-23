@@ -123,6 +123,27 @@ for. If they would rather not, leave it -- they said no, and asking twice is
 how a helpful conversation turns into a form.
 """
 
+#: The writing assistant's instructions -- what a rep gets when they press
+#: Auto-generate or Polish on an email, a text or a chat reply. Short on
+#: purpose: each draft's facts are composed after it (`email_draft.brief`),
+#: and the shape a channel needs -- a subject line, a length -- is asked for in
+#: the request itself (`loop.DRAFT_REQUESTS`), so a dealership rewriting this
+#: cannot lose the part that makes an email an email.
+COMPOSER = """You write messages for a member of a car dealership's sales team -- emails,
+texts and replies in a website chat. They read what you write, may edit it,
+and send it themselves under their own name. It is their message, not an
+assistant's.
+
+Write in the first person as the person named under WHO IS WRITING: "I" for
+them and "we" for the dealership. Never mention Liner, an assistant or AI.
+Anything that needs checking, they check: "I'll confirm that and come back to
+you", never "a colleague will". Anything that happens at the dealership, they
+are part of: "when you come in, I can go through the price with you", never
+"someone can".
+
+State only facts written in the brief below -- no price, mileage, feature,
+vehicle or policy that is not there. Plain text, no markdown."""
+
 #: Anything still wearing braces after the fill.
 UNFILLED = re.compile(r"\{\{[^}]*\}\}")
 
@@ -241,17 +262,68 @@ OWN_PROMPT_MAX = 8000
 PLACEHOLDER = re.compile(r"\{\{([A-Z_, ]+)\}\}")
 
 
-def own_prompt(db: Session, settings_row: AssistantSettings) -> dict:
-    """This settings version's own brief and rules, "" where it uses ours."""
-    from app.models import AssistantPrompt
+#: The whole prompt an assistant is handed, per channel. `make agent-check`
+#: pins the product's own under it, and a dealership's wording is refused at
+#: save if it would take any channel over -- every character is re-read on
+#: every turn of every conversation, and it is the cached prefix of the bill.
+PROMPT_MAX = 12_000
 
+#: Each assistant's own instructions, on top of the shared brief and rules.
+#: Closed: `AssistantPart.part` is one of these or it is refused.
+PARTS = ("chat", "voice", "email", "composer")
+
+#: How long each may be. The call's is the gate's 1,500 -- it is re-read on
+#: every turn of a call that bills by the minute -- and the rest leave room for
+#: the facts and the knowledge table inside `PROMPT_MAX`.
+PART_MAX = {"chat": 3000, "voice": 1500, "email": 2000, "composer": 2500}
+
+
+def own_prompt(db: Session, settings_row: AssistantSettings) -> dict:
+    """This settings version's own wording, "" wherever it uses ours.
+
+    The brief and rules every buyer-facing assistant shares, and one part per
+    assistant (`PARTS`). One dict for all six, because `unpublished` compares
+    live with draft through it and a part it did not return would be an edit
+    the banner never mentioned.
+    """
+    from app.models import AssistantPart, AssistantPrompt
+
+    have = settings_row is not None and settings_row.id
     row = (
         db.query(AssistantPrompt).filter_by(settings_id=settings_row.id).one_or_none()
-        if settings_row is not None and settings_row.id else None
+        if have else None
     )
-    return {
+    out = {
         "brief": (row.brief or "").strip() if row else "",
         "rules": (row.rules or "").strip() if row else "",
+        **{part: "" for part in PARTS},
+    }
+    if have:
+        for p in db.query(AssistantPart).filter_by(settings_id=settings_row.id).all():
+            if p.part in PARTS:
+                out[p.part] = (p.text or "").strip()
+    return out
+
+
+def default_part(part: str) -> str:
+    """The product's own text for one assistant's instructions."""
+    return {
+        "chat": CHAT_ADDENDUM, "voice": VOICE_ADDENDUM,
+        "email": EMAIL_ADDENDUM, "composer": COMPOSER,
+    }[part].strip()
+
+
+def composer_system(db: Session, dealership: Dealership, settings_row: AssistantSettings) -> str:
+    """What the writing assistant is told it is, ahead of each draft's facts."""
+    own = own_prompt(db, settings_row)["composer"]
+    return fill(own, dealership, settings_row) if own else COMPOSER.strip()
+
+
+def prompt_lengths(db: Session, dealership: Dealership, settings_row: AssistantSettings) -> dict:
+    """How long each buyer-facing assistant's whole prompt comes out."""
+    return {
+        channel: len(build_system_prompt(db, dealership, settings_row, channel))
+        for channel in ("chat", "voice", "email")
     }
 
 
@@ -525,7 +597,13 @@ yourself, never name yourself, never say you are an assistant again. Start
 with the answer. Asked outright whether you are a bot, say yes, warmly --
 that is a question, not an opening.
 """.rstrip(),
-        # One line per channel, appended last, so where the method and the
-        # machinery disagree the machinery is what was read most recently.
-        {"voice": VOICE_ADDENDUM, "email": EMAIL_ADDENDUM}.get(channel, CHAT_ADDENDUM),
+        # One part per channel, appended last, so where the method and the
+        # machinery disagree the machinery is what was read most recently. A
+        # dealership's own wording for that assistant replaces ours whole.
+        _channel_part(custom, channel, dealership, settings_row),
     ]).strip()
+
+
+def _channel_part(custom: dict, channel: str, dealership: Dealership, row: AssistantSettings) -> str:
+    part = channel if channel in ("voice", "email") else "chat"
+    return fill(custom[part], dealership, row) if custom[part] else default_part(part)

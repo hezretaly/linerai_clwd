@@ -7,13 +7,11 @@ from sqlalchemy.orm import Session
 
 from app import (
     email_agent,
-    email_draft,
     matching,
     outreach_send,
     sms as sms_module,
     timeline,
 )
-from app.agent import loop
 from app.integrations import twilio_account
 from app.integrations.registry import get_email_sender
 from app.integrations.sms import twilio_sms
@@ -588,107 +586,6 @@ def reach(
             "available": bool(number),
             "reason": "" if number else "No phone number on file for this buyer.",
         },
-    }
-
-
-class DraftBody(BaseModel):
-    #: The rep's one line: "ask if Saturday works", "answer their financing
-    #: question". Optional, because a draft with none is still the obvious
-    #: next message -- but it is what makes the feature repeatable rather
-    #: than one guess the rep rewrites by hand.
-    instruction: str = ""
-    #: The rep's own text, when they want it put into the dealership's voice
-    #: rather than written from scratch. Their facts are kept.
-    rewrite: str = ""
-    #: Which thread this is about. Defaults to the buyer's newest.
-    conversation_id: str = ""
-
-
-@router.post("/{lead_id}/draft-email")
-def draft_email(
-    lead_id: str,
-    body: DraftBody,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    """Write an email for this rep to read, edit and decide on.
-
-    **Nothing is sent and nothing is stored.** The draft goes back in the
-    response and lives in the rep's browser until they press send, which is
-    what every other dealership draft here does -- there is no Drafts tab
-    because nothing stores a draft, and a model writing one does not change
-    that. The send still goes through the composer and still through
-    `blocked_reason`.
-
-    **It cannot act.** `loop.draft_text` withholds the tool schema, so the
-    model that writes this cannot book the appointment it offers, close the
-    thread or raise a handoff. Reusing the buyer loop would have done all
-    three as a side effect of drafting -- and, through `may_reply`'s hourly
-    ceiling, could have thrown the email kill switch.
-
-    **The brakes that do not apply, and why.** `EMAIL_AGENT`, the runtime
-    flag, the cooldown, the per-correspondent gap and the hourly ceiling all
-    exist to stop Liner answering a buyer *on its own*. A person asked for
-    this and a person decides whether it leaves, so none of them is the
-    question here -- and asking `email_agent.enabled` anyway refused every
-    draft on a deployment that had simply not turned the autonomous replies
-    on, which is the default and the documented state, citing a switch the
-    rep had not touched. `have_model` is the one brake that does apply: with
-    `LLM_MODE=stub` there is nothing to write with, and the honest answer is
-    to say so rather than hand back a template the rep cannot tell from a
-    real draft.
-    """
-    lead = _get(db, lead_id)
-
-    verdict = email_agent.have_model()
-    if not verdict.allowed:
-        # Typed, and it names the setting. Same shape `/api/email/agent`
-        # answers with, because "why did nothing happen" is the question a
-        # person actually has.
-        raise HTTPException(503, detail={"reason": verdict.reason, "detail": verdict.detail})
-
-    convo = None
-    if body.conversation_id:
-        convo = (
-            db.query(Conversation)
-            .filter(Conversation.id == body.conversation_id, Conversation.lead_id == lead.id)
-            .one_or_none()
-        )
-    if convo is None:
-        convo = (
-            db.query(Conversation)
-            .filter(Conversation.lead_id == lead.id)
-            .order_by(Conversation.started_at.desc())
-            .first()
-        )
-    if convo is None:
-        raise HTTPException(
-            409,
-            "This buyer has no conversation yet, so there is nothing to draft from. "
-            "Write the first message yourself.",
-        )
-
-    text, violations = loop.draft_text(
-        db,
-        convo,
-        brief=email_draft.brief(
-            db, lead, convo, instruction=body.instruction, rewrite=body.rewrite,
-            # Written as the person pressing the button: it goes out under
-            # their name and their sign-off.
-            author=user,
-        ),
-    )
-    subject, text = email_draft.split_subject(text)
-    return {
-        # Empty when the model gave none; the composer then leaves the rep's
-        # subject box alone rather than blanking it.
-        "subject": subject,
-        "body": text,
-        # Shown to the rep rather than swallowed. A draft the guards refused
-        # twice is one carrying a claim nothing sourced, and the rep is the
-        # person who can decide whether they know it to be true.
-        "violations": violations,
-        "conversation_id": convo.id,
     }
 
 

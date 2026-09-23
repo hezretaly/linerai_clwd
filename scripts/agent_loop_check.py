@@ -555,6 +555,57 @@ def main() -> int:
               db.query(Message).filter_by(conversation_id=drafted.id).count() == 0,
               "a draft landed in the thread")
 
+        # **One writing assistant for the email, the text and the chat
+        # reply**, and what it does is decided by the box: empty generates,
+        # anything typed is polished -- three words of notes included, since
+        # the words are the steering now there is no instruction field.
+        noted = email_draft.brief(db, buyer, drafted, rewrite="ask if saturday works",
+                                  author=writer, channel="sms")
+        check("a text is polished from the rep's own notes, not written over them",
+              "THEIR DRAFT:\nask if saturday works" in noted and "text message" in noted,
+              noted[:120])
+        check("and a text is asked for no closing and no signature block",
+              "No closing and no signature block." in noted and "Best," not in noted)
+        texter = FakeProvider([say("Does Saturday still work for you to come in?")])
+        sent_text, _ = loop.draft_text(db, drafted, brief=noted, channel="sms", provider=texter)
+        check("the request is a text's: short, and no subject line asked for",
+              texter.seen_messages[0][-1]["content"] == loop.DRAFT_REQUESTS["sms"]
+              and "Subject" not in texter.seen_messages[0][-1]["content"],
+              texter.seen_messages[0][-1]["content"][:80])
+        check("and the text comes back as written", sent_text.startswith("Does Saturday"),
+              sent_text[:60])
+        # A chat reply can be to somebody who has not said who they are: most
+        # live chats have no lead, and that is exactly where a rep who has
+        # taken over wants a hand. No name is invented for them.
+        anon = Conversation(channel="chat", stage="opening")
+        db.add(anon)
+        db.commit()
+        stranger = email_draft.brief(db, None, anon, author=writer, channel="chat")
+        check("a chat reply to an anonymous buyer drafts without inventing a name",
+              "Not identified yet" in stranger and "chat reply" in stranger, stranger[:120])
+
+        # **The writing assistant's instructions are the dealership's to
+        # rewrite** (Liner setup -> Instructions), published like every part.
+        from app.api.settings import live_settings as _live  # noqa: E402
+        from app.models import AssistantPart  # noqa: E402
+
+        _row = AssistantPart(settings_id=_live(db).id, part="composer",
+                             text="Write like {{DEALER_NAME}}'s oldest salesman. OWN-WRITER")
+        db.add(_row)
+        db.commit()
+        try:
+            own = FakeProvider([say("Hi there, it is still here.")])
+            loop.draft_text(db, drafted, brief=written, channel="chat", provider=own)
+            check("a dealership's own writing-assistant wording is what a draft runs under",
+                  own.seen_systems[0].startswith("Write like ")
+                  and "OWN-WRITER" in own.seen_systems[0]
+                  and "{{DEALER_NAME}}" not in own.seen_systems[0],
+                  own.seen_systems[0][:80])
+        finally:
+            db.delete(_row)
+            db.delete(anon)
+            db.commit()
+
         # **The guards run on a draft too.** A price nothing sourced is the
         # same invention in an email as in a chat bubble -- and the rep is the
         # one person who can say whether they know it to be true, so the

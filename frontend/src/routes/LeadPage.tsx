@@ -9,7 +9,7 @@ import { PROVENANCE_LABEL, initials, money, relative } from '../lib/format'
 import type { BookingCardData } from '../components/BookingCard'
 import { BookingCard } from '../components/BookingCard'
 import type { Conversation, Lead, TeamMember } from '../lib/types'
-import { Button, Input, Spinner, Unavailable } from '../components/ui'
+import { Button, Input, Spinner } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { CHANNEL_LABEL, Timeline } from '../components/dashboard/Timeline'
 import {
@@ -28,6 +28,7 @@ import type { RecipientSuggestion } from '../components/email'
 import { textToHtml } from '../lib/email'
 import { AssignTo } from '../components/dashboard/AssignTo'
 import { CarPhoto } from '../components/CarPhoto'
+import { AssistButton, Refused } from '../components/dashboard/AssistButton'
 
 /* One buyer, one page.
  *
@@ -321,7 +322,6 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
             {mode === 'email' && lead ? (
               <EmailReply
                 lead={lead}
-                drafting={reach?.email.draft}
                 signature={data?.email_signature ?? ''}
                 suggestions={suggestions}
                 onDone={() => { setMode('chat'); invalidate() }}
@@ -341,6 +341,8 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
             ) : (
               <Composer
                 name={name}
+                leadId={lead?.id ?? null}
+                conversationId={target}
                 source={CHANNEL_LABEL[targetConvo?.channel ?? 'chat'] ?? 'Website chat'}
                 value={reply}
                 onChange={setReply}
@@ -702,7 +704,10 @@ function ChannelPicker({
   threadLabel: string
 }) {
   const options: { key: Channel; label: string; hint: string }[] = []
-  if (hasThread) options.push({ key: 'chat', label: 'Reply', hint: threadLabel })
+  // **Text, not Reply**: it sits beside Email and a phone number, and a
+  // row of ways to reach somebody reads as channels -- Reply is a verb that
+  // could mean any of them. It is the box that types into their thread.
+  if (hasThread) options.push({ key: 'chat', label: 'Text', hint: threadLabel })
   if (reach?.email.available) {
     options.push({
       key: 'email',
@@ -711,7 +716,9 @@ function ChannelPicker({
       hint: reach.email.to,
     })
   }
-  if (reach?.sms.available) options.push({ key: 'sms', label: 'Text', hint: reach.sms.to })
+  // SMS says so, because Text above is the thread: two buttons with one
+  // label is a rep guessing which one reaches the buyer's phone.
+  if (reach?.sms.available) options.push({ key: 'sms', label: 'SMS', hint: reach.sms.to })
 
   // Every reason the server gave, for the channels it did not offer. Shown
   // only when there is nothing at all to offer: listed beside three working
@@ -793,7 +800,7 @@ function ClosedFooter({
   // above actually found.
   const ways: { key: Channel; label: string }[] = []
   if (reach?.email.available) ways.push({ key: 'email', label: 'Write them an email' })
-  if (reach?.sms.available) ways.push({ key: 'sms', label: 'Send them a text' })
+  if (reach?.sms.available) ways.push({ key: 'sms', label: 'Send them an SMS' })
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -843,8 +850,14 @@ function LockedComposer({ onTakeover }: { onTakeover: () => void }) {
   )
 }
 
+/** The reply box on a thread a rep has taken over. Two buttons: the writing
+ *  assistant (Auto-generate, or Polish once there is text) and Send. The
+ *  "Save as note" that sat between them was a placeholder for a note store
+ *  that does not exist, and a control for nothing is not a third button. */
 function Composer({
   name,
+  leadId,
+  conversationId,
   source,
   value,
   onChange,
@@ -852,6 +865,8 @@ function Composer({
   sending,
 }: {
   name: string
+  leadId: string | null
+  conversationId: string | null
   source: string
   value: string
   onChange: (v: string) => void
@@ -859,8 +874,11 @@ function Composer({
   sending: boolean
 }) {
   const dealership = useDealership()
+  const [problem, setProblem] = useState('')
+  const [refused, setRefused] = useState<string[]>([])
   return (
-    <div className="mx-auto max-w-3xl overflow-hidden rounded-lg border border-input focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
+    <div className="mx-auto max-w-3xl space-y-1.5">
+    <div className="overflow-hidden rounded-lg border border-input focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
       <textarea
         rows={3}
         value={value}
@@ -874,11 +892,17 @@ function Composer({
           <b className="font-medium text-foreground">{dealership?.name || 'the dealership'}</b> ·{' '}
           {source}
         </span>
-        <Unavailable
-          label="Save as note"
-          size="sm"
-          className="ml-auto"
-          why="There is no internal note store. Everything written here is sent to the buyer."
+        <span className="ml-auto" />
+        <AssistButton
+          channel="chat"
+          text={value}
+          leadId={leadId}
+          conversationId={conversationId}
+          onProblem={setProblem}
+          onDraft={(result) => {
+            setRefused(result.violations ?? [])
+            if (result.body) onChange(result.body)
+          }}
         />
         <button
           onClick={onSend}
@@ -888,6 +912,9 @@ function Composer({
           {sending ? 'Sending...' : 'Send reply'}
         </button>
       </div>
+    </div>
+    {problem && <p className="text-xs text-destructive">{problem}</p>}
+    <Refused violations={refused} />
     </div>
   )
 }
@@ -1007,14 +1034,11 @@ type Preset = '' | (typeof PRESETS)[number][0]
  */
 function EmailReply({
   lead,
-  drafting,
   signature,
   suggestions,
   onDone,
 }: {
   lead: Lead
-  /** From `/reach`: whether a model is there to draft with, and why not. */
-  drafting?: { available: boolean; reason: string }
   /** What the send appends: this person's own sign-off, or their name and
    *  title over the dealership's details. */
   signature: string
@@ -1028,15 +1052,8 @@ function EmailReply({
   const patch = (p: Partial<MailDraft>) => setDraft((d) => ({ ...d, ...p }))
   const { subject, text: body } = draft
   const [problem, setProblem] = useState('')
-  /** The rep's one line of steering: "ask if Saturday works". */
-  const [instruction, setInstruction] = useState('')
   /** Why the guards refused a draft, shown rather than swallowed. */
   const [refused, setRefused] = useState<string[]>([])
-  const { data: me } = useQuery({
-    queryKey: ['me'],
-    queryFn: () => api.get<{ user: { name: string; role: string } }>('/api/auth/me'),
-    staleTime: 5 * 60_000,
-  })
   /** Which built draft is in the box, if any. It decides the `kind` the send
    *  records -- a rep tidying the wording of a credit application has not
    *  turned it into something else. */
@@ -1065,53 +1082,9 @@ function EmailReply({
     },
   })
 
-  /* **Liner writes it; the rep decides whether it goes.** Nothing is sent and
-   * nothing is stored -- the draft lands in the editor and lives in the
-   * browser like every other dealership draft, and the send below is the same
-   * one a hand-typed message goes through, `blocked_reason` included.
-   *
-   * Two modes, one endpoint. With text already in the box it rewrites that in
-   * the dealership's voice, keeping the rep's facts; with an empty box it
-   * writes from the conversation, the car in focus, the captured fields and
-   * the tone a manager set. The instruction steers either. What is handed
-   * over to rewrite is the plain text: the draft endpoint writes text and its
-   * guards read text, so formatting the rep added is theirs to re-apply. */
   /* Which subject the last draft wrote. A new draft replaces its own subject
    * but never one the rep typed: the box is theirs once they have touched it. */
   const [draftedSubject, setDraftedSubject] = useState('')
-
-  /* Two ways to ask, one endpoint. `rewrite` hands over what is in the box
-   * and gets it back in the dealership's voice with the rep's facts kept;
-   * `fresh` ignores it and writes a new draft from the conversation. Only the
-   * first existed, so after one draft the box always had text in it and every
-   * later press could only reword that text -- there was no way to ask again
-   * for something different. */
-  const draftWith = useMutation({
-    mutationFn: (how: 'rewrite' | 'fresh') =>
-      api.post<{ subject: string; body: string; violations: string[] }>(
-        `/api/leads/${lead.id}/draft-email`,
-        { instruction, rewrite: how === 'rewrite' ? body.trim() : '' },
-      ),
-    onSuccess: (result) => {
-      setRefused(result.violations ?? [])
-      if (result.body) {
-        patch({ html: textToHtml(result.body), text: result.body })
-        setInstruction('')
-      }
-      if (result.subject && (!subject.trim() || subject === draftedSubject)) {
-        patch({ subject: result.subject })
-        setDraftedSubject(result.subject)
-      }
-    },
-    onError: (err: unknown) => {
-      // The 503 for "no model configured" carries the setting to change, and
-      // that sentence is the whole answer to "why did nothing happen".
-      const payload = (err as ApiError)?.payload as
-        | { detail?: { detail?: string } }
-        | undefined
-      setProblem(payload?.detail?.detail || String((err as Error)?.message ?? err))
-    },
-  })
 
   const send = useMutation({
     mutationFn: () =>
@@ -1178,21 +1151,7 @@ function EmailReply({
         minHeight={200}
       />
       {problem && <p className="mt-1.5 text-xs text-destructive">{problem}</p>}
-      {/* **The guards refused it, and the rep is told why.** A draft carrying
-          a price nothing sourced is exactly as wrong as a chat bubble
-          carrying one -- but the person reading this may know the figure to
-          be true, so they get the complaint and the box, rather than a
-          silent empty answer. */}
-      {refused.length > 0 && (
-        <div className="mt-1.5 rounded-md border border-warning/30 bg-warning-muted p-2">
-          <p className="text-xs font-medium text-warning-foreground">
-            Liner could not source this, so the draft was not written:
-          </p>
-          <ul className="mt-0.5 text-xs text-warning-foreground/90">
-            {refused.map((v) => <li key={v}>{v}</li>)}
-          </ul>
-        </div>
-      )}
+      <div className="mt-1.5"><Refused violations={refused} /></div>
       {/* The built drafts. A draft *source*, not a second composer: pressing
           one fills the box above, and the rep edits and sends it from there. */}
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1209,71 +1168,29 @@ function EmailReply({
           </Button>
         ))}
       </div>
-      {/* **Ask Liner to write it.** A form of its own, so Enter sends the
-          prompt as well as the button does -- the one-line box used to sit
-          beside a button with nothing saying the box was the prompt, and Enter
-          did nothing at all. With text already in the email it rewrites that
-          instead, and the button says which it will do before it is pressed.
-          Where there is no model the control is replaced by the reason, from
-          `/reach`, rather than offered and then refused. */}
-      {drafting && !drafting.available ? (
-        <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-          Draft with Liner is unavailable here: {drafting.reason}
-        </p>
-      ) : (
-        <form
-          className="mt-3 rounded-md border border-border bg-muted/40 p-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (draftWith.isPending) return
-            setProblem('')
-            draftWith.mutate(body.trim() ? 'rewrite' : 'fresh')
-          }}
-        >
-          <label htmlFor="draft-instruction" className="text-xs font-medium">
-            {body.trim() ? 'Ask Liner to rewrite what you have written' : 'Ask Liner to write it'}
-          </label>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <Input
-              id="draft-instruction"
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              placeholder={
-                body.trim()
-                  ? 'e.g. make it shorter and friendlier (optional)'
-                  : 'e.g. ask if Saturday still works (optional)'
-              }
-              className="h-8 min-w-0 flex-1 text-sm"
-            />
-            <Button type="submit" size="sm" variant="secondary" disabled={draftWith.isPending}>
-              {draftWith.isPending ? 'Writing...' : body.trim() ? 'Rewrite mine' : 'Write draft'}
-            </Button>
-            {/* Starting again is its own act. The box keeps what is in it
-                until the new draft lands, so nothing is lost to a mis-click. */}
-            {body.trim() && (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={draftWith.isPending}
-                onClick={() => { setProblem(''); draftWith.mutate('fresh') }}
-              >
-                New draft
-              </Button>
-            )}
-          </div>
-          <p className="mt-1 text-[11px] text-muted-foreground">
-            Liner writes it as you{me?.user.name ? `, ${me.user.name}` : ''}, from this conversation, the car
-            and your dealership's answers. It fills the email above and sends nothing -- edit it
-            as much as you like, then press Send.
-          </p>
-        </form>
-      )}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
         <ImportanceToggle
           value={draft.importance}
           onChange={(importance) => patch({ importance })}
           className="mr-auto"
+        />
+        {/* The writing assistant, beside Send: Auto-generate on an empty
+            email, Polish on one with words in it. What is handed over to
+            polish is the plain text -- the drafts and the guards behind them
+            only read text -- so formatting is the rep's to re-apply. */}
+        <AssistButton
+          channel="email"
+          text={body}
+          leadId={lead.id}
+          onProblem={setProblem}
+          onDraft={(result) => {
+            setRefused(result.violations ?? [])
+            if (result.body) patch({ html: textToHtml(result.body), text: result.body })
+            if (result.subject && (!subject.trim() || subject === draftedSubject)) {
+              patch({ subject: result.subject })
+              setDraftedSubject(result.subject)
+            }
+          }}
         />
         <Button
           size="sm"
@@ -1384,6 +1301,7 @@ function LinkedAddresses({ lead }: { lead: Lead }) {
 function SmsComposer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
   const [body, setBody] = useState('')
   const [problem, setProblem] = useState('')
+  const [draftRefused, setRefusedDraft] = useState<string[]>([])
 
   const { data: state } = useQuery({
     queryKey: ['lead-sms', lead.id],
@@ -1458,9 +1376,19 @@ function SmsComposer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
                 : ''}
             </span>
             <div className="ml-auto flex gap-2">
-              <Button size="sm" variant="ghost" onClick={onDone}>
-                Cancel
-              </Button>
+              {/* Two buttons, like every composer here: the writing
+                  assistant and Send. Cancel was a third way to do what the
+                  channel picker above already does. */}
+              <AssistButton
+                channel="sms"
+                text={body}
+                leadId={lead.id}
+                onProblem={setProblem}
+                onDraft={(result) => {
+                  setRefusedDraft(result.violations ?? [])
+                  if (result.body) setBody(result.body)
+                }}
+              />
               <Button
                 size="sm"
                 variant="primary"
@@ -1481,6 +1409,7 @@ function SmsComposer({ lead, onDone }: { lead: Lead; onDone: () => void }) {
         </p>
       )}
       {problem && <p className="text-xs text-destructive">{problem}</p>}
+      <Refused violations={draftRefused} />
     </div>
   )
 }
