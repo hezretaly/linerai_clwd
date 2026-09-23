@@ -20,7 +20,7 @@ import { useDemos, useOpsSummary, useSetStatus } from './data'
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean; badge?: 'unread' | 'unmatched_mail' }[] = [
   { to: '/ops', label: 'Demo calendar', icon: 'calendar', end: true, badge: 'unread' },
-  { to: '/ops/mail', label: 'Inbox', icon: 'mail', badge: 'unmatched_mail' },
+  { to: '/ops/mail', label: 'Email', icon: 'mail', badge: 'unmatched_mail' },
   { to: '/ops/phone', label: 'Phone', icon: 'phone' },
 ]
 

@@ -199,6 +199,21 @@ const PATHS = {
       <path d="M4 20v-7a4 4 0 014-4h12" />
     </>
   ),
+  // The ops Email page's folders: what went out, and what was binned.
+  send: (
+    <>
+      <path d="M22 2L11 13" />
+      <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+    </>
+  ),
+  dot: <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />,
 } as const
 
 export type IconName = keyof typeof PATHS

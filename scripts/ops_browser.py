@@ -35,6 +35,26 @@ SHOTS.mkdir(parents=True, exist_ok=True)
 #: was there, which on a reply is the quoted message.
 EDITOR = '[contenteditable="true"]'
 
+
+class Fields:
+    """The composer's To and Subject, found by their labels.
+
+    They used to be the first and second `<input>` on the page, which held
+    only while nothing above the composer had an input -- the Email page's
+    search box broke it, and the rule had pinned Cc and Bcc below Subject,
+    where nobody looks for them. A label is what a person reads, and it does
+    not move when the layout does.
+    """
+
+    def __init__(self, page):
+        scope = page.locator("[data-composer]").last
+        self.to = scope.locator('input[aria-label="To"]')
+        self.subject = scope.locator('input[aria-label="Subject"]')
+
+    def present(self) -> bool:
+        return self.to.count() == 1 and self.subject.count() == 1
+
+
 #: The file the copies-and-files step attaches. A fixed name, because the
 #: picker's row and the reader's list are both found by it.
 ATTACHMENT = "ops-check.txt"
@@ -268,10 +288,32 @@ def main() -> int:
             assert page.locator("text=New demo booked").count() == 0, "toast survived the click"
             wait_for_badge(page, start)
             page.screenshot(path=SHOTS / "04-detail.png")
-            page.click('[role=dialog] button:text-is("Close")')
+
+            say("Email them opens our own Email page, replying to them -- not a mail client")
+            # It was a `mailto:` link, so the answer left this system for good:
+            # sent under whatever address the laptop's client used, never in
+            # Sent, invisible to the other founder. Now it lands here, with the
+            # request open and Reply started, threaded to their form.
+            link = page.locator('[role=dialog] a:text-is("Email them")')
+            assert link.count() == 1, "the demo detail should offer Email them"
+            assert not (link.get_attribute("href") or "").startswith("mailto:"), (
+                "Email them should stay in the dashboard, not open a mail client"
+            )
+            link.click()
+            page.wait_for_url("**/ops/mail**", timeout=10000)
+            page.wait_for_selector('[data-composer] input[aria-label="To"]', timeout=10000)
+            # The chip carries their name as well: "Browser Check <browser@...>".
+            addressed = page.locator('[data-composer] [aria-label^="Remove"][aria-label*="browser@opstest.invalid"]')
+            addressed.wait_for(timeout=5000)
+            assert "Ops Test Motors" in " ".join(page.locator("h2").all_inner_texts()), (
+                "the request they sent should be open above the reply"
+            )
+            assert "reply=" not in page.url, "the link should be used once, not on every refresh"
+            page.screenshot(path=SHOTS / "04b-email-them.png", full_page=True)
+            page.click('button:text-is("Close")')
 
             say("and it stays away across a reload -- read is a state, not a session")
-            page.reload()
+            page.goto(f"{BASE}/ops")
             page.wait_for_selector("text=Demo calendar", timeout=10000)
             wait_for_badge(page, start)
             assert page.locator("text=New demo booked").count() == 0, "replay re-popped a toast"
@@ -333,13 +375,13 @@ def main() -> int:
             page.wait_for_timeout(400)
             page.click('button:text-is("Write")')
             page.wait_for_selector("text=New message", timeout=5000)
-            fields = page.locator("input")
-            assert fields.count() >= 2, "the composer should offer To and Subject"
-            assert fields.first.input_value() == "", (
+            fields = Fields(page)
+            assert fields.present(), "the composer should offer To and Subject"
+            assert fields.to.input_value() == "", (
                 "Write opened prefilled -- this is a first message, not a reply"
             )
-            fields.first.fill("first.contact@example.invalid")
-            fields.nth(1).fill("About Liner")
+            fields.to.fill("first.contact@example.invalid")
+            fields.subject.fill("About Liner")
             page.fill(EDITOR, "Reaching out about a demo.")
             page.click('button:text-is("Send")')
             page.wait_for_selector("text=Not delivered", timeout=10000)
@@ -380,9 +422,9 @@ def main() -> int:
             drafts_before, sent_before = box_count("Drafts"), box_count("Sent")
             page.click('button:text-is("Write")')
             page.wait_for_selector("text=New message", timeout=5000)
-            fields = page.locator("input")
-            fields.first.fill("draft.check@example.invalid")
-            fields.nth(1).fill("Half a thought")
+            fields = Fields(page)
+            fields.to.fill("draft.check@example.invalid")
+            fields.subject.fill("Half a thought")
             page.fill(EDITOR, "Started this, will finish later.")
             page.click('button:text-is("Save draft")')
             page.wait_for_selector("text=Draft kept", timeout=8000)
@@ -423,10 +465,10 @@ def main() -> int:
             # through the picker's own input, exactly as a person's pick does.
             page.click('button:text-is("Write")')
             page.wait_for_selector("text=New message", timeout=5000)
-            fields = page.locator("input")
-            assert fields.first.input_value() == "", "Write opened prefilled"
-            fields.first.fill("copies.check@example.invalid")
-            fields.nth(1).fill("Two people and a file")
+            fields = Fields(page)
+            assert fields.to.input_value() == "", "Write opened prefilled"
+            fields.to.fill("copies.check@example.invalid")
+            fields.subject.fill("Two people and a file")
             page.click('button:text-is("Cc")')
             page.locator('input[aria-label="Cc"]').fill("second.person@example.invalid")
             page.fill(EDITOR, "One for you both, with a file.")

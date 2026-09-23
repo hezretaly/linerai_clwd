@@ -2026,6 +2026,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     and goes out under whatever address that client is configured with rather
     than the one the deployment can prove it owns. A second endpoint for it is
     how one of the two stops going through `blocked_reason`.
+    - **"Email them" on a demo was a `mailto:`, which is the same leak one
+      click earlier.** It now opens `/ops/mail?reply=form:<id>` with Reply
+      already started on that request, so the answer is threaded to the form
+      and listed in Sent. `make ops-ui` presses it and fails on a `mailto:`.
+    - **The page is Email, and the reader is where you write.** Folders,
+      list and message side by side; the composer opens in the reading pane
+      rather than above the list, so the message being answered stays on
+      screen. To, Cc and Bcc sit together, and leaving an unsaved message
+      asks first. The gate finds fields by label inside `[data-composer]`,
+      not by input order, which moved every time a field was added.
   - **A reply reports the provider, not a green tick.** With the default outbox
     sender `sent: true` means recorded and nothing left the building, so the
     composer says *Not delivered* and quotes the provider's own words. It goes

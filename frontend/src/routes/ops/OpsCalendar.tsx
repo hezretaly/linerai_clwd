@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 
 import { dateTime, relative, time } from '../../lib/format'
@@ -338,9 +338,13 @@ function DetailSheet({ request, onClose }: { request: DemoEntry | null; onClose:
 
           <dl className="space-y-2.5">
             <Row icon="mail" label="Email">
-              <a href={`mailto:${request.email}`} className="text-primary hover:underline">
-                {request.email || '--'}
-              </a>
+              {request.email ? (
+                <Link to={emailThem(request)} className="break-all text-primary hover:underline">
+                  {request.email}
+                </Link>
+              ) : (
+                '--'
+              )}
             </Row>
             <Row icon="phone" label="Phone">
               {request.phone ? (
@@ -421,17 +425,28 @@ function DetailSheet({ request, onClose }: { request: DemoEntry | null; onClose:
                 Put it back
               </Button>
             )}
-            <a
-              href={`mailto:${request.email}`}
-              className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm font-medium hover:bg-accent"
-            >
-              Email them
-            </a>
+            {request.email && (
+              <Link
+                to={emailThem(request)}
+                className="inline-flex h-8 items-center rounded-md border border-input px-3 text-sm font-medium hover:bg-accent"
+              >
+                Email them
+              </Link>
+            )}
           </div>
         </div>
       )}
     </Sheet>
   )
+}
+
+/** Where "Email them" goes: our own Email page, with this request open and
+ *  Reply started, rather than a `mailto:` into whichever mail client the
+ *  laptop has -- where the answer leaves this system, goes out under the
+ *  wrong address, and never shows in Sent for the other one of us. */
+function emailThem(request: { id: string; email: string }): string {
+  const q = new URLSearchParams({ reply: `form:${request.id}`, to: request.email })
+  return `/ops/mail?${q.toString()}`
 }
 
 function Row({
