@@ -2,11 +2,17 @@
 
 Draft vs live is the point. An edit is a draft until it is published, otherwise
 a tweak silently changes buyer-facing behaviour mid-conversation (§18.2).
+
+**Except the credit application link**, which is a fact about the dealership
+rather than a change to how Liner talks: it has its own endpoint and takes
+effect when it is saved (`put_credit_link`).
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+import re
+
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -73,10 +79,12 @@ def get_assistant_settings(
 #: live version on every one of these is not an unpublished change, whatever
 #: else differs about the rows -- `version`, `status` and the timestamps always
 #: do, and comparing whole rows would make the banner permanent.
+#:
+#: The credit application link is not here: it is never drafted (it goes live
+#: on save, through `put_credit_link`), so it can never be an unpublished change.
 EDITABLE = (
     "tone", "push_level", "price_mode", "discount_pct", "financing_mode",
     "after_hours_mode", "greeting", "booking_slot_length",
-    "credit_application_url",
 )
 
 
@@ -165,6 +173,9 @@ class SettingsPatch(BaseModel):
     after_hours_mode: str | None = None
     greeting: str | None = None
     booking_slot_length: int | None = None
+    #: Declared only so it can be refused by name. Left off the model it would
+    #: be dropped without a word -- a 200 for a link that changed nothing,
+    #: which is the one outcome worse than an error.
     credit_application_url: str | None = None
 
 
@@ -175,12 +186,65 @@ def patch_assistant_settings(
     user: User = Depends(current_user),
 ) -> dict:
     """Edits always land on a draft, never on the live row."""
+    if body.credit_application_url is not None:
+        raise HTTPException(
+            400,
+            "The credit application link is not drafted -- it goes live when it is "
+            "saved. PUT /api/assistant-settings/credit-application-url.",
+        )
     draft = _ensure_draft(db)
 
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(draft, key, value)
     db.commit()
     return {"draft": settings_out(draft)}
+
+
+#: A finance application collects a social security number, so an address that
+#: is not https is not one to send a buyer to -- and this one lands in an email,
+#: in a button on the chat and in the `Location` of the counted hop. The same
+#: rule the browser enforces, held here because the browser is a request.
+CREDIT_LINK = re.compile(r"^https://\S+$", re.IGNORECASE)
+
+
+class CreditLinkBody(BaseModel):
+    url: str = ""
+
+
+@router.put("/assistant-settings/credit-application-url")
+def put_credit_link(
+    body: CreditLinkBody,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_manager),
+) -> dict:
+    """The dealership's finance application, live the moment it is saved.
+
+    **It is not drafted, because it is not behaviour.** Draft and publish exist
+    so that a change to how Liner talks is read before a buyer meets it; a
+    link to the dealer's own form is a fact about the dealership, and making a
+    manager find a Publish button to set it -- after a Save that said it had
+    saved -- is asking them to publish a URL. And Save cannot simply publish:
+    that would push whatever else is sitting in the draft, a half-rewritten
+    brief included, live as a side effect of setting a link.
+
+    **The draft row follows.** Publishing turns the draft row into the live
+    one, so a draft left holding the old address would put it back the next
+    time anybody published a tone change. `publish_settings` carries the live
+    link across as well, so nothing but this endpoint ever changes it.
+
+    **A manager's, like publishing**, because it takes effect at once and it
+    is where every buyer who presses the application button is sent.
+    """
+    url = body.url.strip()
+    if url and (not CREDIT_LINK.match(url) or len(url) > 500):
+        raise HTTPException(400, "Use the full https:// address of the application page.")
+    live = live_settings(db)
+    live.credit_application_url = url
+    draft = draft_settings(db)
+    if draft is not None:
+        draft.credit_application_url = url
+    db.commit()
+    return {"credit_application_url": url, "live": settings_out(live)}
 
 
 class PromptBody(BaseModel):
@@ -252,6 +316,10 @@ def publish_settings(
     if draft is None:
         raise HTTPException(400, "Nothing to publish")
     current = live_settings(db)
+    # The link is not drafted (`put_credit_link`), so whatever the draft row
+    # says about it is not a decision anybody made here -- the live address
+    # carries across rather than a publish quietly changing it.
+    draft.credit_application_url = current.credit_application_url
     current.status = "archived"
     draft.status = "live"
     draft.published_by = user.id

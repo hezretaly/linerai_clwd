@@ -825,8 +825,7 @@ def main() -> int:
 
     # Clear the link first: with nothing to send to, the draft must refuse
     # rather than mail an invitation to apply nowhere.
-    call("PATCH", "/api/assistant-settings", {"credit_application_url": ""})
-    call("POST", "/api/assistant-settings/publish")
+    call("PUT", "/api/assistant-settings/credit-application-url", {"url": ""})
     code, detail = status_of(
         "GET", f"/api/leads/{lead_for_credit['id']}/outreach?draft=1&kind=credit_application"
     )
@@ -852,9 +851,8 @@ def main() -> int:
           refused["available"] is False and "card" not in refused
           and "never invent a link" in refused["guidance"], str(refused)[:100])
 
-    call("PATCH", "/api/assistant-settings",
-         {"credit_application_url": "https://riverside.example/finance"})
-    call("POST", "/api/assistant-settings/publish")
+    call("PUT", "/api/assistant-settings/credit-application-url",
+         {"url": "https://riverside.example/finance"})
     draft = call("GET",
                  f"/api/leads/{lead_for_credit['id']}/outreach?draft=1&kind=credit_application")
     check("with a link it drafts one", draft["kind"] == "credit_application", draft["subject"])
@@ -1060,6 +1058,75 @@ def main() -> int:
     check("the setup page offers the boxes, not only the compiled text",
           "/api/assistant-settings/prompt" in
           pathlib.Path("frontend/src/routes/Assistant.tsx").read_text())
+
+    print("\n== the credit application link is live on Save, not drafted ==")
+    # A manager who wanted to set a link was told "saved to the draft, publish
+    # to put it in front of buyers" -- asked to publish a version of the
+    # assistant in order to set a URL. It is a fact about the dealership, so
+    # it has its own endpoint and goes live on Save. Three things make that
+    # safe and each is checked: it is live at once, it publishes nothing else
+    # sitting in the draft, and no later publish can put an old address back.
+    before = call("GET", "/api/assistant-settings")
+    link0, tone0 = before["live"]["credit_application_url"], before["live"]["tone"]
+    other_tone = next(t for t in ("warm", "neutral", "energetic") if t != tone0)
+    call("POST", "/api/auth/login", REP_LOGIN)
+    denied = status_of("PUT", "/api/assistant-settings/credit-application-url",
+                       {"url": "https://riverside.example/rep-says"})[0]
+    call("POST", "/api/auth/login", LOGIN)
+    check("a rep cannot change where every buyer's application goes", denied == 403, str(denied))
+    for bad in ("http://riverside.example/finance", "javascript:alert(1)",
+                "riverside.example/finance"):
+        code, why = status_of("PUT", "/api/assistant-settings/credit-application-url",
+                              {"url": bad})
+        check(f"{bad!r} is refused rather than sent to a buyer", code == 400, f"{code} {why[:60]}")
+    code, why = status_of("PATCH", "/api/assistant-settings",
+                          {"credit_application_url": "https://riverside.example/drafted"})
+    check("and the draft refuses it by name rather than dropping it silently",
+          code == 400 and "credit-application-url" in why, why[:100])
+    from app.api.settings import draft_settings as _draft_row
+    from app.db import SessionLocal as _LinkSession
+    try:
+        # A half-finished edit, sitting in the draft while the link is saved.
+        call("PATCH", "/api/assistant-settings", {"tone": other_tone})
+        fresh = f"https://riverside.example/finance-{secrets.token_hex(3)}"
+        call("PUT", "/api/assistant-settings/credit-application-url", {"url": fresh})
+        state = call("GET", "/api/assistant-settings")
+        check("saved, the link is live at once -- no publish",
+              state["live"]["credit_application_url"] == fresh,
+              state["live"]["credit_application_url"])
+        check("and nothing else in the draft went live with it",
+              state["live"]["tone"] == tone0 and state["draft"]["tone"] == other_tone
+              and state["has_unpublished_changes"], f"live tone {state['live']['tone']}")
+        code, location = follow(BASE + "/r/site/credit-application")
+        check("the application button sends buyers there straight away",
+              code == 302 and location == fresh, f"{code} -> {location}")
+        # Publishing turns the draft row into the live one. A draft holding an
+        # older address -- one saved under the old flow, say -- must not put it
+        # back as a side effect of publishing a tone change.
+        _ldb = _LinkSession()
+        try:
+            _draft_row(_ldb).credit_application_url = "https://stale.example/old-finance"
+            _ldb.commit()
+        finally:
+            _ldb.close()
+        call("POST", "/api/assistant-settings/publish")
+        state = call("GET", "/api/assistant-settings")
+        check("a publish carries the live link across rather than changing it",
+              state["live"]["credit_application_url"] == fresh
+              and state["live"]["tone"] == other_tone,
+              state["live"]["credit_application_url"])
+    finally:
+        call("PATCH", "/api/assistant-settings", {"tone": tone0})
+        call("POST", "/api/assistant-settings/publish")
+        call("PUT", "/api/assistant-settings/credit-application-url", {"url": link0})
+    state = call("GET", "/api/assistant-settings")
+    check("and it is never an unpublished change of its own",
+          state["live"]["credit_application_url"] == link0
+          and not state["has_unpublished_changes"], str(state["has_unpublished_changes"]))
+    _setup = pathlib.Path("frontend/src/routes/Assistant.tsx").read_text()
+    check("the setup page's Save goes to the live endpoint, not the draft",
+          "/api/assistant-settings/credit-application-url" in _setup
+          and "credit_application_url: next" not in _setup)
 
     print("\n== an unclaimed lead can be opened from the overview ==")
     pool = call("GET", "/api/overview")["queues"]["unclaimed_leads"]

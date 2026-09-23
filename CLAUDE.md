@@ -3213,10 +3213,24 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     the result, because there it has to be in the words; on a call it says
     the application is on their website. With no link set it draws nothing
     -- a button leading to a 410 is worse than none.
-  - **The link has a Save button.** It saved on blur and said nothing, so a
-    manager pasting it looked for a way to keep it and found none. It says
-    *Saved to the draft* now, because like every field there it reaches a
-    buyer only once published.
+  - **The link is live on Save, and it is the one setting that is not
+    drafted.** It saved on blur and said nothing; then it had a Save that
+    said *saved to the draft, publish to put it in front of buyers* -- a
+    manager setting a URL was being asked to publish a version of the
+    assistant. Draft and publish exist so a change to how Liner *talks* is
+    read before a buyer meets it; the application's address is a fact about
+    the dealership. So `PUT /api/assistant-settings/credit-application-url`
+    (manager only, https only) writes the live row, and three rules keep that
+    from leaking into the draft machinery:
+    - **Save does not press Publish.** That would push whatever else is in
+      the draft -- a half-rewritten brief -- live as a side effect of a link.
+    - **The draft row follows, and publish carries the live link across.**
+      Publishing turns the draft row into the live one, so a draft holding an
+      older address would put it back the next time anybody changed the tone.
+      Only the endpoint ever changes it, and it is not in `EDITABLE`, so it is
+      never an "unpublished change".
+    - **PATCH refuses the key by name** rather than dropping it: a 200 for a
+      link that changed nothing is worse than an error.
 - **A question the record cannot answer is a lead, not a dead end — and it
   is refused once.** A real transcript: a buyer asked whether a Durango was a
   three-row, was told the listing did not say, pressed twice, and was told
