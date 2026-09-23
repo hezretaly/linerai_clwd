@@ -1055,6 +1055,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     assistant's total rather than only a count per box. What no wording can
     change is said on the page: prices, sold cars, clashes and provenance are
     executors and guards.
+  - **Polish improves the rep's message; it never writes another one.** The
+    draft sat in the brief under a closing *"Draft this email now"*, and a
+    model does what it read last — so Polish came back as a fresh email from
+    the transcript, unrelated to what the rep had typed, and the subject was
+    never sent at all. `loop.polish_request` is now the last turn: their
+    subject and their draft, to be kept point for point and made to read
+    well. The email composer sends its subject, and a polished subject
+    replaces the typed one (it *is* the typed one, tidied); a generated
+    email still only fills a subject box that is empty or holds the last
+    draft's. What the rep wrote grounds the guards — their own price or
+    "still here" is theirs to send — while a figure they did not write is
+    still refused.
   - **It is written as the person pressing the button.** The email goes out
     under their name and their own sign-off, but the prompt around the brief
     is the buyer-facing assistant's, so drafts spoke as Liner or "our team"

@@ -1181,12 +1181,17 @@ function EmailReply({
         <AssistButton
           channel="email"
           text={body}
+          subject={subject}
           leadId={lead.id}
           onProblem={setProblem}
           onDraft={(result) => {
             setRefused(result.violations ?? [])
             if (result.body) patch({ html: textToHtml(result.body), text: result.body })
-            if (result.subject && (!subject.trim() || subject === draftedSubject)) {
+            // Polish rewrites the subject the rep typed along with the body --
+            // it is their subject, tidied. A generated email only fills a box
+            // that is empty or holds the last draft's own subject.
+            const polished = result.mode === 'polish' && result.body
+            if (result.subject && (polished || !subject.trim() || subject === draftedSubject)) {
               patch({ subject: result.subject })
               setDraftedSubject(result.subject)
             }

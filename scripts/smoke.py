@@ -5201,6 +5201,12 @@ def main() -> int:
     check("the button says Polish over text and Auto-generate over an empty box",
           "'Polish'" in _assist and "'Auto-generate'" in _assist and "'/api/drafts'" in _assist)
     _lead_page = pathlib.Path("frontend/src/routes/LeadPage.tsx").read_text()
+    # Polish rewrites the rep's subject with their body, so the email composer
+    # has to send it: it did not, and a polished body came back under a
+    # subject the assistant had never seen.
+    check("the email composer sends its subject to be polished with the body",
+          "subject: subject ?? ''" in _assist
+          and 'channel="email"\n          text={body}\n          subject={subject}' in _lead_page)
     for _channel in ("email", "sms", "chat"):
         check(f"and the {_channel} composer has it beside Send",
               f'<AssistButton\n' in _lead_page and f'channel="{_channel}"' in _lead_page)

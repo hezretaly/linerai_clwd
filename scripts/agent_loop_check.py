@@ -561,19 +561,58 @@ def main() -> int:
         # the words are the steering now there is no instruction field.
         noted = email_draft.brief(db, buyer, drafted, rewrite="ask if saturday works",
                                   author=writer, channel="sms")
-        check("a text is polished from the rep's own notes, not written over them",
-              "THEIR DRAFT:\nask if saturday works" in noted and "text message" in noted,
-              noted[:120])
+        check("a polish says so in the brief, and leaves the draft to the last turn",
+              "You are polishing it" in noted and "text message" in noted
+              and "ask if saturday works" not in noted, noted[:120])
         check("and a text is asked for no closing and no signature block",
               "No closing and no signature block." in noted and "Best," not in noted)
         texter = FakeProvider([say("Does Saturday still work for you to come in?")])
-        sent_text, _ = loop.draft_text(db, drafted, brief=noted, channel="sms", provider=texter)
-        check("the request is a text's: short, and no subject line asked for",
-              texter.seen_messages[0][-1]["content"] == loop.DRAFT_REQUESTS["sms"]
-              and "Subject" not in texter.seen_messages[0][-1]["content"],
-              texter.seen_messages[0][-1]["content"][:80])
+        sent_text, _ = loop.draft_text(db, drafted, brief=noted, channel="sms", provider=texter,
+                                       polish="ask if saturday works")
+        last_turn = texter.seen_messages[0][-1]["content"]
+        # **The rep's draft is the last thing the model reads.** It used to sit
+        # in the brief under a closing "Draft this email now", and a model does
+        # what it read last: Polish came back as a fresh message unrelated to
+        # what the rep had typed.
+        check("a polish ends on the rep's own words, not on a request for a new message",
+              last_turn.endswith("THEIR DRAFT:\nask if saturday works")
+              and "Do not write a different message" in last_turn
+              and last_turn != loop.DRAFT_REQUESTS["sms"], last_turn[-80:])
+        check("the text is polished to a text's shape, no subject line asked for",
+              "under 300 characters" in last_turn and "THEIR SUBJECT" not in last_turn)
         check("and the text comes back as written", sent_text.startswith("Does Saturday"),
               sent_text[:60])
+        # Empty box: the old request, unchanged.
+        fresh = FakeProvider([say("Does Saturday still work for you?")])
+        loop.draft_text(db, drafted, brief=noted, channel="sms", provider=fresh)
+        check("an empty box still asks for the next message",
+              fresh.seen_messages[0][-1]["content"] == loop.DRAFT_REQUESTS["sms"])
+
+        # **An email is polished with its subject.** The subject was never
+        # sent, so a rep's own subject line could not be tidied and a polished
+        # body came back under whatever the box already said.
+        mailed = email_draft.brief(db, buyer, drafted, rewrite="x", author=writer)
+        polisher = FakeProvider([say(
+            "Subject: Your Saturday visit\n\nHi, the car is $31,777 and still here -- "
+            "does Saturday at 10 suit you?\n\nBest,\nDana")])
+        polished, refused = loop.draft_text(
+            db, drafted, brief=mailed, channel="email", provider=polisher,
+            polish="car is 31777 and still here, sat 10am ok?", subject="saturday")
+        asked = polisher.seen_messages[0][-1]["content"]
+        check("an email's polish carries the rep's subject and asks for it back",
+              "THEIR SUBJECT: saturday" in asked and "Subject: " in asked, asked[-120:])
+        # The rep typed that price and that it is still here. It is theirs to
+        # send, so it grounds the guard rather than being refused as invented.
+        check("a figure and a claim the rep wrote are not refused as invented",
+              not refused and email_draft.split_subject(polished)[0] == "Your Saturday visit",
+              str(refused))
+        # And the guard still bites on a figure the rep did not write.
+        invent = FakeProvider([say("Subject: Hi\n\nIt is $12,345 today."),
+                               say("Subject: Hi\n\nIt is $12,345 today.")])
+        _, invented = loop.draft_text(db, drafted, brief=mailed, channel="email",
+                                      provider=invent, polish="say hi", subject="Hi")
+        check("but a price the rep did not write is still refused",
+              any("12,345" in v for v in invented), str(invented))
         # A chat reply can be to somebody who has not said who they are: most
         # live chats have no lead, and that is exactly where a rep who has
         # taken over wants a hand. No name is invented for them.

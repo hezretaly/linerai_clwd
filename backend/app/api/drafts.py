@@ -47,6 +47,9 @@ class DraftBody(BaseModel):
     channel: str = "email"
     #: What is in the box. Empty generates; anything else is polished.
     text: str = ""
+    #: The subject line the rep typed, for a new email. Polished with the body;
+    #: with an empty body it is what the generated email goes under.
+    subject: str = ""
     #: The buyer, for an email or a text. A chat reply can be to somebody who
     #: has not said who they are, so it names the thread instead.
     lead_id: str = ""
@@ -146,6 +149,8 @@ def draft(
         db,
         convo,
         channel=request,
+        polish=body.text,
+        subject="" if answering else body.subject,
         brief=email_draft.brief(
             db, lead, convo,
             rewrite=body.text,
@@ -165,6 +170,10 @@ def draft(
         subject, text = email_draft.split_subject(text)
         if answering:
             subject = ""
+        elif not subject:
+            # The model dropped the line: hand back theirs rather than a blank
+            # the composer would have to know not to write over.
+            subject = body.subject.strip()
     else:
         # A text and a chat bubble render no markdown, so none is sent: the
         # same cut `record_assistant_message` makes on Liner's own replies.

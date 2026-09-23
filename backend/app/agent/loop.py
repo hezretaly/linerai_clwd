@@ -224,8 +224,14 @@ def draft_text(
     brief: str,
     channel: str = "email",
     provider: Provider | None = None,
+    polish: str = "",
+    subject: str = "",
 ) -> tuple[str, list[str]]:
     """Write something a **rep** will read, decide on, and maybe send.
+
+    `polish` is the rep's own text, and `subject` the subject line they typed.
+    With `polish` set the last turn is `polish_request` -- their draft, to be
+    improved -- instead of `DRAFT_REQUESTS`, which asks for a new message.
 
     `channel` is where it is going -- `email`, `sms` or `chat` -- and decides
     only the shape asked for (`DRAFT_REQUESTS`): a subject line and a closing
@@ -279,7 +285,29 @@ def draft_text(
     # No conversation is a real case: an answer to mail from somebody who is
     # not on file yet. The email being answered is in the brief instead.
     messages = _history(db, convo) if convo is not None else []
-    messages.append({"role": "user", "content": DRAFT_REQUESTS.get(channel, DRAFT_REQUEST)})
+    # **The draft is the last thing it reads, not a paragraph in the brief.**
+    # Polish used to carry the rep's text in the system prompt and then end on
+    # "Draft this email now" -- and a model does what it read last, so it
+    # wrote a fresh email from the transcript and the rep's draft came back
+    # as something unrelated to it. The subject was not sent at all.
+    polishing = bool(polish.strip())
+    if polishing:
+        messages.append({"role": "user", "content": polish_request(channel, polish, subject)})
+    else:
+        request = DRAFT_REQUESTS.get(channel, DRAFT_REQUEST)
+        if subject.strip() and channel == "email":
+            request += (
+                f" They have already typed the subject: {subject.strip()!r}. Write "
+                "the email that goes under it and repeat that subject exactly on "
+                "the Subject: line."
+            )
+        messages.append({"role": "user", "content": request})
+    # What the rep wrote is theirs to send. A figure, a make or "it's still
+    # here" in their own draft is not something the model invented, so it is
+    # grounding here -- otherwise polishing a draft that quotes a price is
+    # refused for quoting it, which is the guard overruling the person it
+    # exists to protect a buyer *for*.
+    written = [{"written_by_rep": f"{subject}\n{polish}"}] if polishing else []
 
     buyer_text = " ".join(
         m["content"] for m in messages if isinstance(m, dict) and m.get("role") == "user"
@@ -292,18 +320,19 @@ def draft_text(
 
         verdict = guards.run_guards(
             text,
-            # No tool results, because no tools ran. The grounding a draft
-            # gets is what the conversation was already told --
-            # `earlier_results` is the same set the voice guard reads, so a
-            # car found three turns ago is still a car this may mention.
-            [],
+            # No tool results, because no tools ran -- only the rep's own
+            # draft when polishing. The grounding a draft gets otherwise is
+            # what the conversation was already told: `earlier_results` is
+            # the same set the voice guard reads, so a car found three turns
+            # ago is still a car this may mention.
+            written,
             # "voice" is the only channel the guards treat differently, and a
             # draft is never spoken.
             channel="email" if channel.startswith("email") else "chat",
             attempt=attempt,
             assistant_turns=sum(1 for m in messages if _role_of(m) == "assistant"),
             booked=convo is not None and convo.stage == "booked",
-            tool_inputs=[],
+            tool_inputs=written,
             buyer_text=buyer_text,
             makes=tools.known_makes(db),
             prior_results=tools.earlier_results(db, convo) if convo is not None else [],
@@ -352,6 +381,66 @@ DRAFT_SYSTEM = COMPOSER
 #: makes an email an email. A text costs per segment and arrives on a phone;
 #: a chat reply lands under the buyer's own last message, where a paragraph
 #: reads as a form letter.
+#: What each channel's polished message has to come back as. Kept beside
+#: `DRAFT_REQUESTS` because the two describe the same shapes.
+POLISH_SHAPES = {
+    "email": (
+        "Start with exactly one line `Subject: ` followed by their subject, "
+        "polished the same way -- or, if they gave none, a short one that fits "
+        "their draft -- then a blank line, then the polished body, ending with "
+        "the closing the brief asks for."
+    ),
+    "email_reply": (
+        "Do not write a subject line; the reply keeps the one it answers. The "
+        "body only, ending with the closing the brief asks for."
+    ),
+    "email_forward": (
+        "Do not write a subject line. The covering note only, ending with the "
+        "closing the brief asks for."
+    ),
+    "sms": (
+        "A text message: under 300 characters, no subject, no greeting line and "
+        "no signature."
+    ),
+    "chat": "A chat reply: plain text, no subject and no sign-off.",
+}
+
+
+def polish_request(channel: str, draft: str, subject: str = "") -> str:
+    """The last turn of a Polish: the rep's own words, to be made better.
+
+    **Improve this message, never write another one.** What the rep typed is
+    what they mean to say -- a finished draft or a few words of notes -- and
+    the transcript above is context for it, not a question to answer
+    instead. The subject is polished with the body, because it is part of the
+    same message and it was the part the old request never saw.
+    """
+    what = {
+        "email": "email", "email_reply": "reply", "email_forward": "covering note",
+        "sms": "text message", "chat": "chat reply",
+    }.get(channel, "message")
+    lines = [
+        f"Polish the team member's own {what}, below. Do not write a different "
+        "message and do not answer anything else in the conversation: this is "
+        "their message, improved. Keep what it says, who it is to, every fact, "
+        "figure, date, time and commitment in it, and the order of their "
+        "points. Fix the wording, grammar, tone and flow so it reads well in "
+        "the dealership's voice, in the first person as the team member named "
+        "in the brief. Keep it about the same length -- a few words of notes "
+        "become the short message they plainly mean, nothing more. Add no "
+        "point, offer, price or question they did not write. If something they "
+        "wrote cannot be supported by the facts in the brief, leave it as they "
+        "wrote it -- it is their message and they may know something you do "
+        "not. Do not say that you are an assistant.",
+        POLISH_SHAPES.get(channel, ""),
+        "",
+    ]
+    if channel == "email":
+        lines.append(f"THEIR SUBJECT: {subject.strip() or '(none yet)'}")
+    lines.append(f"THEIR DRAFT:\n{draft.strip()}")
+    return "\n".join(lines)
+
+
 DRAFT_REQUESTS = {
     "email": DRAFT_REQUEST + (
         " Two or three short paragraphs; a buyer reads this on a phone."

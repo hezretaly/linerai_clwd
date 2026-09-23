@@ -112,16 +112,14 @@ def brief(
         parts.append(_answering_block(answering, how, forward_to))
 
     if rewrite.strip():
+        # Only the mode. The draft itself is the last message the model reads
+        # (`loop.polish_request`): carried here, under a closing request to
+        # "draft this email now", it was read as background and a new email
+        # came back in its place.
         parts.append(
-            f"The team member has written this {what} themselves, below -- it may "
-            "be a finished draft or a few words of notes. Turn it into the message "
-            "they meant, in the dealership's voice: keep every fact they stated "
-            "and every commitment they made, change nothing about what is being "
-            "offered, and do not add a claim they did not make. If something they "
-            "wrote cannot be supported by the facts below, leave it exactly as "
-            "they wrote it rather than correcting it -- it is their message and "
-            "they may know something you do not.\n\n"
-            f"THEIR DRAFT:\n{rewrite.strip()}"
+            f"The team member has written this {what} themselves -- it is the "
+            "last message you will read. You are polishing it, not writing a "
+            "new one."
         )
     if instruction.strip():
         parts.append(f"WHAT THEY ASKED FOR: {instruction.strip()}")

@@ -42,6 +42,7 @@ export function useDraftAvailability() {
 export function AssistButton({
   channel,
   text,
+  subject,
   leadId,
   conversationId,
   answering,
@@ -51,6 +52,9 @@ export function AssistButton({
   channel: DraftChannel
   /** What is in the box now: empty generates, anything else is polished. */
   text: string
+  /** A new email's subject line, polished with the body -- or, over an empty
+   *  body, the subject the generated email is written under. */
+  subject?: string
   leadId?: string | null
   conversationId?: string | null
   /** A reply or forward from the reader: the email it is about, which the
@@ -73,6 +77,7 @@ export function AssistButton({
       api.post<DraftResult>('/api/drafts', {
         channel,
         text,
+        subject: subject ?? '',
         lead_id: leadId ?? '',
         conversation_id: conversationId ?? '',
         answering_kind: answering?.kind ?? '',
