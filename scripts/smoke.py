@@ -524,28 +524,25 @@ def main() -> int:
     convo = session["conversation_id"]
     rails = session["rails"]
     check("openers offered", len(rails) >= 3, f"{len(rails)} chips")
-    # **A chip the lot cannot answer is not offered.** "Anything with a third
-    # row?" searches seat counts; on a lot whose export carries none -- both
-    # real dealerships so far -- it could only ever answer "nothing matched",
-    # which reads as a dealership with no family cars. Asked of the rows, so it
-    # returns the day a feed carries seats. Riverside's fixture does, which is
-    # why the chip is still tapped below.
+    # **"Anything with a third row?" is withdrawn, from every store.** No real
+    # export carries seats, so it answered "nothing matching" and the buyer
+    # asked for a person. The seed stops writing it; an older database still
+    # holds the row, and `action_of` would hand an unknown action to the model
+    # and go on offering it -- so `RETIRED` is read off the raw action.
     from types import SimpleNamespace as _RailNS
     from app.agent import rail_actions as _ra
-    from app.db import SessionLocal as _RailSession
-    _rdb = _RailSession()
-    try:
-        _seats = lambda n: _RailNS(action_json=json.dumps(
-            {"do": "with_seats", "args": {"min_seats": n}}))
-        check("a seats chip is offered where the lot records seats",
-              _ra.answerable(_rdb, _seats(7)))
-        check("and withheld where no car on the lot could answer it",
-              not _ra.answerable(_rdb, _seats(99)))
-        check("while a chip with any other action is never withheld for it",
-              _ra.answerable(_rdb, _RailNS(action_json=json.dumps(
-                  {"do": "under_price", "args": {"max_price": 1}}))))
-    finally:
-        _rdb.close()
+    from app import seed as _rail_seed
+    _seats = _RailNS(action_json=json.dumps({"do": "with_seats", "args": {"min_seats": 7}}))
+    check("the third-row chip is not offered",
+          not any("third row" in r["label"].lower() for r in rails),
+          str([r["label"] for r in rails]))
+    check("nor seeded any more",
+          not any("third row" in row[2].lower() for row in _rail_seed.RAILS))
+    check("and a row an older seed left behind is withheld",
+          _ra.retired(_seats) and "with_seats" not in _ra.ACTIONS)
+    check("while a chip with a live action is not",
+          not _ra.retired(_RailNS(action_json=json.dumps(
+              {"do": "under_price", "args": {"max_price": 1}}))))
     badge_empty = call("GET", "/api/overview")["badges"]["conversations"]
     listed_empty = [c["id"] for c in call("GET", "/api/conversations")["conversations"]]
     check("a session nobody has typed in is not on the badge",
@@ -553,7 +550,7 @@ def main() -> int:
     check("nor in the list",
           convo not in listed_empty and len(listed_empty) == listed_before)
 
-    reply, state, _ = say(convo, rail_id=pick(rails, "third row"))
+    reply, state, _ = say(convo, rail_id=pick(rails, "under $20k"))
     check("liner answered with inventory", bool(reply and reply["content"]))
     badge_after = call("GET", "/api/overview")["badges"]["conversations"]
     listed_after = [c["id"] for c in call("GET", "/api/conversations")["conversations"]]
@@ -670,7 +667,7 @@ def main() -> int:
     card_convo = call("POST", "/api/chat/sessions")
     cid, crails = card_convo["conversation_id"], card_convo["rails"]
     card = None
-    for words in (("third row",), ("tell me about",), ("see it this week",)):
+    for words in (("under $20k",), ("tell me about",), ("see it this week",)):
         _, state2, events = say(cid, rail_id=pick(crails, *words))
         crails = state2["rails"]
         card = next((d for e, d in events if e == "booking"), None)
@@ -1280,6 +1277,91 @@ def main() -> int:
                       for l in call("GET", "/api/overview")["queues"]["unclaimed_leads"]),
               loose["lead"]["name"])
         call("POST", f"/api/conversations/{loose['id']}/handback")
+
+    print("\n== a rep's reply reaches the buyer's open chat, as it is written ==")
+    # The buyer's `/chat` had one stream, the reply to its own message, so a
+    # rep who took the thread over and answered from the dashboard wrote a row
+    # the buyer saw only on a refresh -- from a real host, where the buyer
+    # asked for a person, was told somebody was picking it up, and was then
+    # answered into a page that never showed it. Driven over HTTP with a real
+    # stream open, because the wake is the half that can be perfectly correct
+    # and never reached from the endpoint.
+    live_id = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(live_id, content="Can I talk to a person about financing?")
+
+    def _listen(into: list, opened: threading.Event, wanted: int = 1) -> None:
+        try:
+            with httpx.stream("GET", f"{BASE}/api/chat/sessions/{live_id}/live",
+                              timeout=httpx.Timeout(15.0)) as response:
+                into.append(("status", response.status_code))
+                opened.set()
+                event = ""
+                for line in response.iter_lines():
+                    if line.startswith("event: "):
+                        event = line[7:]
+                    elif line.startswith("data: ") and event == "message":
+                        into.append(("message", json.loads(line[6:]), time.monotonic()))
+                        if sum(1 for g in into if g[0] == "message") >= wanted:
+                            return
+        except Exception as exc:  # a timeout is the failure being checked for
+            into.append(("error", repr(exc)[:120]))
+        finally:
+            opened.set()
+
+    heard: list = []
+    listening = threading.Event()
+    live_reader = threading.Thread(target=_listen, args=(heard, listening), daemon=True)
+    live_reader.start()
+    listening.wait(10)
+    time.sleep(0.5)
+    call("POST", f"/api/conversations/{live_id}/takeover")
+    rep_text = f"Hi, it's the team here -- happy to help with financing. {secrets.token_hex(3)}"
+    written_at = time.monotonic()
+    call("POST", f"/api/conversations/{live_id}/messages", {"content": rep_text})
+    live_reader.join(12)
+    pushed = next((g for g in heard if g[0] == "message"), None)
+    check("the stream opens for a real conversation",
+          ("status", 200) in heard, str(heard)[:160])
+    check("a rep's reply is pushed to the buyer's open page",
+          pushed is not None and pushed[1].get("content") == rep_text, str(heard)[:200])
+    check("the moment it is written, not on the next keep-alive",
+          pushed is not None and pushed[2] - written_at < 3,
+          f"{(pushed[2] - written_at):.2f}s" if pushed else "never")
+    check("and it carries the words and nothing from the event behind them",
+          pushed is not None and set(pushed[1]) == {"id", "role", "content", "created_at"},
+          str(sorted(pushed[1])) if pushed else "")
+    # A reconnect -- a dropped connection, a new tab -- is sent what is already
+    # there, which the page drops by id. That is what makes a message written
+    # during the gap arrive at all.
+    again: list = []
+    reopened = threading.Event()
+    rejoin = threading.Thread(target=_listen, args=(again, reopened), daemon=True)
+    rejoin.start()
+    rejoin.join(8)
+    check("a page that connects later is sent what it missed",
+          any(g[0] == "message" and g[1].get("content") == rep_text for g in again),
+          str(again)[:160])
+    check("an unknown conversation is a 404, not an empty stream",
+          status_of("GET", "/api/chat/sessions/does-not-exist/live")[0] == 404)
+    chat_src = pathlib.Path("frontend/src/routes/Chat.tsx").read_text()
+    check("and the chat page holds the stream open",
+          "new EventSource(" in chat_src and "/live`" in chat_src)
+    call("POST", f"/api/conversations/{live_id}/handback")
+
+    # **The dashboard's half: every event moves something.** A buyer's message
+    # emitted `conversation.message`, which refreshed the list and not the
+    # buyer page's timeline, so a rep reading the thread watched it sit still
+    # while the buyer typed. Read against `EVENT_TYPES`, because a type with no
+    # line in the map fails silently -- the event arrives and nothing moves.
+    from app.events import EVENT_TYPES as _types
+    ws_src = pathlib.Path("frontend/src/lib/ws.ts").read_text()
+    block = ws_src[ws_src.index("const INVALIDATES"):ws_src.index("\n}\n", ws_src.index("const INVALIDATES"))]
+    mapped = dict(re.findall(r"'([a-z_.]+)':\s*\[([^\]]*)\]", block))
+    check("every registered event type refreshes something on the dashboard",
+          not (_types - set(mapped)), str(sorted(_types - set(mapped))))
+    check("and a new message refreshes the buyer page, not only the list",
+          "'timeline'" in mapped.get("conversation.message", ""),
+          mapped.get("conversation.message", "missing"))
 
     # Putting somebody back is the same endpoint with no user. What it does not
     # do is reopen the escalation: somebody really did pick that up, and taking
@@ -4298,7 +4380,7 @@ def main() -> int:
     # assistant -- what is short-circuited is only the pre-written question.
     actions = {name for name in _actions.ACTIONS}
     check("only chips with a fixed meaning carry one",
-          actions == {"under_price", "with_seats", "matching", "cheaper",
+          actions == {"under_price", "matching", "cheaper",
                       "fewer_miles", "call_me"},
           str(sorted(actions)))
     check("and a malformed action falls back to the model rather than raising",
@@ -4985,7 +5067,7 @@ def main() -> int:
     # ask for, which lands back at `slot_offered`. So it is pressed until it
     # takes, or this passes and fails with the lot's opening hours rather than
     # with the thing being checked.
-    for words in (("third row",), ("tell me about",), ("see it this week",),
+    for words in (("under $20k",), ("tell me about",), ("see it this week",),
                   ("works", "saturday"), ("works", "saturday"),
                   ("works", "saturday")):
         chip = pick(arails, *words)
@@ -7980,7 +8062,7 @@ def _stores_section(before: set[str]) -> None:
         # anywhere in it (the socket URL is built from `location.host`).
         # A vendor URL the server handed over -- the WebRTC offer goes to
         # `session.calls_url` -- is not a store path and is left alone.
-        if re.search(r"""(fetch|sendBeacon|new WebSocket)\(\s*[`'"](/|[^`'"]*/(api|ws)/)""", line)
+        if re.search(r"""(fetch|sendBeacon|new WebSocket|new EventSource)\(\s*[`'"](/|[^`'"]*/(api|ws)/)""", line)
         and "withStore" not in line
     ]
     check("and no raw fetch, beacon or socket URL leaves its store",

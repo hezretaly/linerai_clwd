@@ -68,7 +68,7 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
         # So live serves the openers and then stops: the chips are the way in,
         # which is the job a dealership put them there for, and after that the
         # composer is the answer. A chip's *action* is untouched -- the
-        # openers carry `under_price`, `with_seats` and `matching`, and they
+        # openers carry `under_price` and `matching`, and they
         # still answer themselves with no model turn.
         return []
     else:
@@ -89,8 +89,9 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
             ]
         followups = followups[:3]
 
-    # A chip the lot cannot answer is not offered (`rail_actions.answerable`).
-    followups = [rail for rail in followups if rail_actions.answerable(db, rail)]
+    # A chip the product has withdrawn is not offered, even from a database
+    # seeded while it existed (`rail_actions.RETIRED`).
+    followups = [rail for rail in followups if not rail_actions.retired(rail)]
 
     knowledge = (
         db.query(Rail)

@@ -245,7 +245,23 @@ async def main() -> int:
             bad_urls.append(r.url)
 
         page.on("response", on_response)
-        page.on("requestfailed", lambda r: bad_urls.append(r.url))
+        # **The chat's live stream is cut whenever its page is left**, and
+        # that is what a stream is: `GET .../live` stays open until the
+        # document goes, so leaving it reports `ERR_ABORTED` -- landing on
+        # the *next* route, because the abort happens during its `goto`. The
+        # embed shot leaves one open in an iframe right before `/alsbou`, which
+        # then failed with a "failed to load resource" that named nothing on
+        # that page. Only an abort of that one stream is excused; the stream
+        # failing any other way is still a real break.
+        cut_streams: list[str] = []
+
+        def on_failed(r) -> None:
+            if r.url.split("?")[0].endswith("/live") and "ERR_ABORTED" in (r.failure or ""):
+                cut_streams.append(r.url)
+                return
+            bad_urls.append(r.url)
+
+        page.on("requestfailed", on_failed)
 
         phone = False
 
@@ -253,6 +269,7 @@ async def main() -> int:
             errors.clear()
             bad_urls.clear()
             signed_out_probe.clear()
+            cut_streams.clear()
             here[0] = route
             await page.goto(BASE + route, wait_until="networkidle")
             await page.wait_for_timeout(700)
@@ -329,6 +346,8 @@ async def main() -> int:
                     unexplained.append(url)
             if signed_out_probe:
                 excused.append("nobody signed in, so /api/auth/me answers 401")
+            if cut_streams:
+                excused.append("the previous page's chat stream closed as it was left")
 
             if excused and not unexplained:
                 # Every failed request is accounted for, so the generic
@@ -344,6 +363,10 @@ async def main() -> int:
                     f"turn to days past 48h"
                 )
 
+            if real and unexplained:
+                # Name the request, not only the console line: "failed to load
+                # resource" says nothing about which one.
+                real[0] = f"{real[0]} [{unexplained[0][:80]}]"
             if real:
                 failures.append(f"{route}: {real[0][:120]}")
             print(f"  {route:32} {len(body.strip()):>6} chars"

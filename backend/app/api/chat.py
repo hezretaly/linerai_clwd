@@ -232,6 +232,112 @@ def buyer_tool_calls(calls: list[dict]) -> list[dict]:
     return out
 
 
+#: How long a live stream waits for a wake before it looks anyway and sends a
+#: keep-alive. Under nginx's default 60s read timeout, so a quiet thread is not
+#: cut off by the proxy; and it is the backstop for a wake that never came --
+#: a second worker, a message written by a script -- at one cheap query a
+#: page every twenty seconds rather than a request a page every two.
+LIVE_CHECK_S = 20.0
+#: What a reconnect is sent again. The page drops anything it already has by
+#: id, so resending is harmless; this only bounds a very long thread.
+LIVE_BACKLOG = 50
+
+
+def _people_since(db: Session, conversation_id: str, cursor: datetime | None) -> list[Message]:
+    """What a person at the dealership has written into this thread.
+
+    **Only `rep`, because only that is written without the page asking.**
+    Liner's replies arrive on the reply to the buyer's own message; a
+    confirmation email mirrored into the thread is a `rep` row too and is
+    exactly as much news to the buyer, so it comes the same way.
+    """
+    query = db.query(Message).filter(
+        Message.conversation_id == conversation_id, Message.role == "rep"
+    )
+    if cursor is not None:
+        query = query.filter(Message.created_at >= cursor)
+        return query.order_by(Message.created_at.asc()).limit(LIVE_BACKLOG).all()
+    rows = query.order_by(Message.created_at.desc()).limit(LIVE_BACKLOG).all()
+    return list(reversed(rows))
+
+
+@router.get("/sessions/{conversation_id}/live")
+async def live(conversation_id: str) -> StreamingResponse:
+    """Messages a person writes into this thread, as they are written.
+
+    **Server push over the connection the page already has, not polling and
+    not Web Push.** A poll asks every few seconds whether anything happened,
+    on every open chat, when almost always nothing has -- and still arrives
+    late. Web Push (a service worker, a permission prompt, a VAPID key) is for
+    reaching somebody whose page is *closed*, which is not this problem: a
+    buyer waiting on a person is looking at the chat. So the page holds one
+    stream open and the rep's reply is written down it the moment it is
+    committed. `events.emit` already fires for it; `ThreadWatchers` is how
+    that reaches here.
+
+    **Buyer-shaped, like the rehydrate.** No session is in front of this --
+    the id is the key, as it is for `GET /sessions/{id}` -- so what goes out is
+    the message text a person wrote and nothing from the event that announced
+    it. An unknown id is a 404 before the stream opens, never an empty stream
+    that would say nothing either way.
+
+    **No database connection is held while waiting.** Each look opens a
+    session and closes it, because a stream can sit open all afternoon and a
+    pooled connection held that long is one the next buyer cannot have.
+    """
+    from app.events import watchers
+
+    store = active_store()
+    with SessionLocal(store) as db:
+        _conversation(db, conversation_id)
+
+    # Refused before the stream opens, so it is a status a client can read.
+    # The waiter itself is taken inside the stream: a generator that is never
+    # started never runs its `finally`, and a waiter taken out here would then
+    # stay counted against the ceiling for good.
+    if watchers.full(conversation_id):
+        raise HTTPException(429, "Too many pages are following this conversation.")
+
+    async def stream():
+        waiter = watchers.watch(conversation_id)
+        if waiter is None:
+            return
+        sent: set[str] = set()
+        cursor: datetime | None = None
+        try:
+            # How long to wait before reconnecting after a drop. The browser
+            # reconnects by itself; this only stops it hammering a server that
+            # is restarting.
+            yield "retry: 5000\n\n"
+            while True:
+                waiter.clear()
+                with SessionLocal(store) as db:
+                    rows = _people_since(db, conversation_id, cursor)
+                    fresh = [m for m in rows if m.id not in sent]
+                    for m in fresh:
+                        sent.add(m.id)
+                        cursor = m.created_at if cursor is None else max(cursor, m.created_at)
+                    payload = [
+                        {"id": m.id, "role": "rep", "content": m.content,
+                         "created_at": message_out(m)["created_at"]}
+                        for m in fresh if (m.content or "").strip()
+                    ]
+                for item in payload:
+                    yield _sse("message", item)
+                try:
+                    await asyncio.wait_for(waiter.wait(), timeout=LIVE_CHECK_S)
+                except asyncio.TimeoutError:
+                    yield ": still here\n\n"
+        finally:
+            watchers.unwatch(conversation_id, waiter)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/sessions/{conversation_id}/rails")
 def get_rails(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     convo = _conversation(db, conversation_id)

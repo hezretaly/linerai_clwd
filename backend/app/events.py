@@ -150,6 +150,72 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
+class ThreadWatchers:
+    """Buyer pages holding a live stream open on their own conversation.
+
+    **The buyer's `/chat` had no way to hear anything it had not asked for.**
+    Its only stream was the reply to its own POST, so a rep who took a thread
+    over and answered wrote a row the buyer never saw -- until they refreshed,
+    which nobody waiting on an answer thinks to do. They read the silence as
+    being ignored, and the rep reads the silence back as a buyer who left.
+
+    Kept apart from `ConnectionManager` on purpose. That one pushes the whole
+    event stream to signed-in staff; this one pushes nothing at all. A waiter
+    is an `asyncio.Event` keyed on a conversation id, and setting it only
+    tells that page's stream to go and *look* -- what the buyer is then sent
+    is read from the rows and cut to their shape in `api/chat.py`, so no
+    event payload (an escalation's reason, a rep's id) can reach a stranger's
+    browser through here.
+
+    Keyed on the id alone, not the store: ids are UUIDs, and the worst a
+    collision could do is make a page look at its own thread for nothing.
+    """
+
+    #: Per conversation. A buyer has one page open, perhaps two; more than
+    #: this is a script holding connections, and each one is a socket.
+    PER_THREAD = 4
+    #: Across the process. Well above any real afternoon, and below the point
+    #: where held connections would starve the ones doing work.
+    TOTAL = 2000
+
+    def __init__(self) -> None:
+        self._waiting: dict[str, set[asyncio.Event]] = {}
+
+    @property
+    def count(self) -> int:
+        return sum(len(v) for v in self._waiting.values())
+
+    def full(self, conversation_id: str) -> bool:
+        """Whether either ceiling is reached for this thread."""
+        return (
+            len(self._waiting.get(conversation_id, ())) >= self.PER_THREAD
+            or self.count >= self.TOTAL
+        )
+
+    def watch(self, conversation_id: str) -> asyncio.Event | None:
+        """A waiter for this thread, or None when either ceiling is reached."""
+        if self.full(conversation_id):
+            return None
+        waiter = asyncio.Event()
+        self._waiting.setdefault(conversation_id, set()).add(waiter)
+        return waiter
+
+    def unwatch(self, conversation_id: str, waiter: asyncio.Event) -> None:
+        current = self._waiting.get(conversation_id)
+        if current is None:
+            return
+        current.discard(waiter)
+        if not current:
+            self._waiting.pop(conversation_id, None)
+
+    def wake(self, conversation_id: str) -> None:
+        for waiter in list(self._waiting.get(conversation_id, ())):
+            waiter.set()
+
+
+watchers = ThreadWatchers()
+
 # The main event loop, captured at startup. Most endpoints here are sync `def`,
 # which FastAPI runs in a threadpool -- there is no running loop in that thread,
 # so the broadcast has to be handed back to the main one explicitly. Without
@@ -226,7 +292,20 @@ def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
     # a routed intake session, goes to that store's audience and not to
     # whichever store the request happened to arrive for.
     _schedule(message, _store_of(db))
+    # Anything about a conversation sends that buyer's open page to look at
+    # its own thread. Whatever it finds is read from rows, never from this
+    # payload (`ThreadWatchers`).
+    conversation_id = (payload or {}).get("conversation_id")
+    if conversation_id:
+        _wake(str(conversation_id))
     return event
+
+
+def _wake(conversation_id: str) -> None:
+    loop = _loop
+    if loop is None or loop.is_closed():
+        return
+    loop.call_soon_threadsafe(watchers.wake, conversation_id)
 
 
 def _store_of(db: Session) -> str:

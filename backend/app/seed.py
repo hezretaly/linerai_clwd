@@ -185,9 +185,6 @@ HANDOFF_RULES = [
 RAILS = [
     ("opener", "opening", "What's under $20k?", "What do you have under $20,000?",
      "browsing", 1, False, {"do": "under_price", "args": {"max_price": 20000}}),
-    ("opener", "opening", "Anything with a third row?",
-     "I need something with a third row for the kids.", "browsing", 2, False,
-     {"do": "with_seats", "args": {"min_seats": 7}}),
     ("opener", "opening", "Something reliable for commuting",
      "I'm after something reliable for a daily commute.", "browsing", 3, False,
      {"do": "matching", "args": {"keywords": "commuter reliable fuel efficient",

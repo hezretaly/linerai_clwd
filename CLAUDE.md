@@ -393,10 +393,10 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   it in-process with the switch thrown, because a mechanism nobody exercises
   is one that is broken the day somebody wants it back.
 - **Liner follows up once when a buyer goes quiet, and the browser is what
-  asks.** `/chat` has no socket and no poll, so a message written server-side
-  into a thread nobody is watching would surface on refresh or *above* their
-  next message. The only buyer this can help is one still on the page, so the
-  page notices the silence and requests one more turn. A closed tab produces
+  asks.** The only buyer this can help is one still on the page, so the page
+  notices the silence and requests one more turn — a model turn spent on a
+  closed tab is spent on nobody. (`/chat` now holds a live stream, below, but
+  it carries what a *person* writes; this stays a request the page makes.) A closed tab produces
   nothing, which is correct — there would be nobody to read it — and nothing is
   queued, so nothing survives to interrupt somebody tomorrow.
   - **The allowance is the server's; only the clock is the browser's.** A
@@ -579,6 +579,37 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     from them. Being asked for a number you gave two turns ago reads exactly
     like not having been listened to — the same rule the reply text follows
     about not listing the times back.
+- **What a rep writes reaches the buyer's open chat as it is written.** A rep
+  who took a thread over and answered wrote a row the buyer saw only on a
+  refresh — from a real host: the buyer asked for a person, read *someone is
+  picking this up*, and was then answered into a page that never showed it.
+  The dashboard had the mirror-image fault: `conversation.message` refreshed
+  the list and not the buyer page's `timeline`, so a rep reading the thread
+  watched it sit still while the buyer typed.
+  - **Server push over a connection the page already holds — not polling, not
+    Web Push.** A poll asks every few seconds, on every open chat, whether
+    anything happened, when almost always nothing has, and still arrives late.
+    Web Push (service worker, permission prompt, VAPID keys) reaches a page
+    that is *closed*; a buyer waiting on a person is looking at this one. So
+    `GET /api/chat/sessions/{id}/live` is one `EventSource` per open chat, and
+    the reply is written down it the moment `emit` fires — measured at 0.01s.
+    Web Push would be the right tool for the *other* problem, a rep away from
+    the dashboard, and is not built.
+  - **The wake carries nothing; the stream reads rows.** `events.watchers`
+    holds an `asyncio.Event` per conversation and `emit` sets it for any event
+    naming one. The stream then reads `rep` messages and sends id, role, words
+    and time — no event payload, because this endpoint has no session in front
+    of it, exactly like the rehydrate. A reconnect re-sends what is there and
+    the page drops it by id, which is how a message written during a dropped
+    connection still arrives.
+  - **No connection is held while waiting**, because a stream can sit open all
+    afternoon: each look opens a session and closes it. A twenty-second
+    keep-alive stays under nginx's sixty and doubles as the backstop for a
+    wake that never came. Four streams per thread and 2,000 per process, a 429
+    before the stream opens rather than an empty one.
+  - **Every registered event has a line in `INVALIDATES`**, even a short one:
+    half had none and moved nothing on screen. `make smoke` reads the map
+    against `EVENT_TYPES`, opens a real stream, and times the push.
 - **The chat transcript is one ordered list, and a card is an entry in it.**
   Search results and the booking card used to sit in their own state, render
   under the whole thread and get cleared on every send, so three cars the buyer
@@ -1060,12 +1091,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     asks for no subject (it keeps the one it answers); a forward's note is
     written to the people it goes to. Mail from somebody not on file drafts
     with no conversation at all.
-  - **A chip the lot cannot answer is not offered.** "Anything with a third
-    row?" searches seat counts, and neither real dealership's export carries
-    any, so it could only ever answer "nothing matched" -- which reads as a
-    lot with no family cars. `rail_actions.answerable` asks the rows per
-    request, so it returns the day a feed carries seats; Riverside's fixture
-    does, which is why the gate still taps it.
+  - **"Anything with a third row?" is gone, from every store.** It searched
+    seat counts, neither real dealership's export carries any, and on Alsbou's
+    it answered "I don't have anything matching" -- a lot with no family cars,
+    by its own button -- and the buyer's next message asked for a person.
+    Hiding it only where the rows lacked seats kept it on Riverside's fixture,
+    a demo of something no real lot can do. The seed no longer writes it and
+    `rail_actions.RETIRED` keeps an older database's row off the screen and off
+    the chips list, since `action_of` would otherwise hand an unknown action to
+    the model and go on offering it.
   - **The footer grows to 75vh for an email**, because at 45vh the Send
     button sat below the fold of the footer's own scroll.
   - **The way to type into their thread is labelled Text**, beside Email and

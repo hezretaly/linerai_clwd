@@ -53,7 +53,7 @@ async def main() -> int:
         await buyer.wait_for_timeout(800)
 
         print("\nbuyer taps through:")
-        for label in ["third row", "Tell me about", "see it this week"]:
+        for label in ["under $20k", "Tell me about", "see it this week"]:
             await tap(buyer, label)
             print(f"  tapped: {label}")
 

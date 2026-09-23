@@ -263,12 +263,48 @@ export function Chat() {
   // and they are the way out of the card without typing.
   const visibleRails = liveBookingId ? rails.filter((r) => r.kind === 'knowledge') : rails
 
+  // ---- what a person writes, as they write it -------------------------
+  //
+  // A rep who takes the thread over answers from the dashboard, and that
+  // message is not a reply to anything this page sent -- so before this it
+  // reached the buyer only on a refresh, and the buyer sat looking at
+  // "someone is picking this up" while the answer was already written.
+  //
+  // One stream held open, pushed to when the row is committed. Not a poll:
+  // that asks every few seconds on every open chat whether anything happened,
+  // when almost nothing has. Not Web Push either, which is for reaching a
+  // page that is closed; a buyer waiting on a person is looking at this one.
+  // `EventSource` reconnects by itself, and the server re-sends what it has
+  // on reconnect, so a message written during a dropped connection still
+  // arrives -- dropped here by id if it is already on screen.
+  useEffect(() => {
+    if (!conversationId || typeof EventSource === 'undefined') return
+    const source = new EventSource(
+      withStore(`/api/chat/sessions/${encodeURIComponent(conversationId)}/live`),
+    )
+    source.addEventListener('message', (event) => {
+      let data: { id: string; content: string }
+      try {
+        data = JSON.parse((event as MessageEvent).data)
+      } catch {
+        return
+      }
+      if (!data?.id || !data.content) return
+      setItems((prev) =>
+        prev.some((i) => i.id === data.id)
+          ? prev
+          : [...prev, { kind: 'text', id: data.id, role: 'rep', content: data.content }],
+      )
+    })
+    return () => source.close()
+  }, [conversationId])
+
   // ---- the follow-up on a quiet buyer ----------------------------------
   //
   // Driven from here because this is the only place that can tell the buyer is
-  // still on the page. `/chat` has no socket, so a message written server-side
-  // into a thread nobody is watching would surface on refresh, or above their
-  // next message, out of order. A closed tab asks for nothing, which is right:
+  // still on the page, and a model turn spent on a closed tab is spent on
+  // nobody. The live stream above carries what a *person* writes; this stays
+  // a request the page makes. A closed tab asks for nothing, which is right:
   // there would be nobody to read it.
   //
   // The allowance is the server's -- `agent/nudge.py` reads the transcript and

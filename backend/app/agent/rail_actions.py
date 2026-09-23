@@ -80,12 +80,6 @@ def under_price(db: Session, convo: Conversation, args: dict) -> tuple[str, list
                   f"Here's what we have under {_money_words(cap)}:")
 
 
-def with_seats(db: Session, convo: Conversation, args: dict) -> tuple[str, list[dict]]:
-    seats = int(args.get("min_seats") or 7)
-    return search(db, convo, {"min_seats": seats},
-                  f"Here's what seats {seats} or more:")
-
-
 def matching(db: Session, convo: Conversation, args: dict) -> tuple[str, list[dict]]:
     """A keyword search whose lead-in the dealership wrote.
 
@@ -173,7 +167,6 @@ def call_me(db: Session, convo: Conversation, args: dict) -> tuple[str, list[dic
 #: chip had before this file.
 ACTIONS = {
     "under_price": under_price,
-    "with_seats": with_seats,
     "matching": matching,
     "cheaper": cheaper,
     "fewer_miles": fewer_miles,
@@ -213,20 +206,31 @@ def run(db: Session, convo: Conversation, rail: Rail) -> tuple[str, list[dict]] 
     return ACTIONS[name](db, convo, args)
 
 
-def answerable(db: Session, rail: Rail) -> bool:
-    """Whether this lot can answer the chip at all, before anybody taps it.
+#: Actions a chip used to carry and no longer may. The seed stops writing
+#: them, but a database seeded before that still holds the row -- and
+#: `action_of` would read an unknown action as "let the model have it", so the
+#: chip would carry on being offered, now answered by a model instead.
+#:
+#: **"Anything with a third row?" is here because no lot can answer it.** It
+#: searched seat counts, and neither real dealership's export carries any, so
+#: on Alsbou's it answered "I don't have anything matching" -- a dealership
+#: with no family cars, according to its own button -- and the buyer's next
+#: message was asking for a person. Riverside's fixture does record seats, and
+#: it is gone there too: a chip that works on the demo lot and nowhere real is
+#: a demo of something the product does not do.
+RETIRED = {"with_seats"}
 
-    **A chip is a question the dealership put on screen on its own behalf.**
-    "Anything with a third row?" searches seat counts, and a lot whose export
-    carries none -- Alsbou's, Craig and Landreth's -- can only answer it with
-    "nothing matched", which reads as a dealership with no family cars rather
-    than one that never recorded the seats. The knowledge chips follow the same
-    rule by being dropped when a store has written no answers. Asked of the
-    rows, per request, so the chip comes back the day a feed carries seats.
+
+def retired(rail: Rail | None) -> bool:
+    """Whether this chip names an action the product has withdrawn.
+
+    Read off the raw `action_json` rather than through `action_of`, which
+    forgets any action it no longer knows -- the very thing being asked.
     """
-    action, args = action_of(rail)
-    if action == "with_seats":
-        seats = int(args.get("min_seats") or 7)
-        found = tools.offerable(db.query(Vehicle.id)).filter(Vehicle.seats >= seats).first()
-        return found is not None
-    return True
+    if rail is None or not getattr(rail, "action_json", ""):
+        return False
+    try:
+        payload = json.loads(rail.action_json)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(payload, dict) and str(payload.get("do") or "") in RETIRED

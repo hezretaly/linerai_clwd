@@ -25,17 +25,35 @@ export interface DealerEvent {
 }
 
 /* Each event invalidates the relevant query keys rather than patching cache by
- * hand. Simpler, and the refetch is cheap against SQLite. */
+ * hand. Simpler, and the refetch is cheap against SQLite.
+ *
+ * **Every registered event type has a line here, even an empty one.** A buyer
+ * writing into a thread emitted `conversation.message`, and that invalidated
+ * `conversations` and nothing else -- so the list moved while the buyer page a
+ * rep was actually reading, whose timeline is `timeline`, stayed exactly as it
+ * was until somebody reloaded it. The page looked like a conversation that had
+ * gone quiet while the buyer was still typing. Half the registered types had no
+ * line at all and so refreshed nothing. `make smoke` now reads this map against
+ * `EVENT_TYPES`, because a type left off it fails silently: the event arrives
+ * and nothing on screen moves. */
 const INVALIDATES: Record<string, string[]> = {
   'conversation.started': ['overview', 'conversations'],
-  'conversation.message': ['conversations'],
-  'lead.qualified': ['leads', 'overview'],
+  'conversation.message': ['conversations', 'timeline', 'overview'],
+  'conversation.declined': ['overview', 'conversations', 'timeline'],
+  'lead.qualified': ['leads', 'overview', 'timeline'],
   'lead.imported': ['leads', 'overview'],
-  'appointment.booked': ['overview', 'appointments', 'leads', 'conversations'],
-  'appointment.confirmed': ['overview', 'appointments'],
-  'appointment.assigned': ['overview', 'appointments', 'team'],
-  'handoff.triggered': ['overview', 'conversations'],
+  'lead.created': ['leads', 'conversations', 'overview'],
+  'lead.updated': ['leads', 'lead', 'conversations', 'timeline', 'reach', 'duplicates'],
+  'lead.assigned': ['overview', 'leads', 'conversations', 'timeline', 'team'],
+  'appointment.booked': ['overview', 'appointments', 'leads', 'conversations', 'timeline'],
+  'appointment.confirmed': ['overview', 'appointments', 'timeline'],
+  'appointment.cancelled': ['overview', 'appointments', 'leads', 'conversations', 'timeline'],
+  'appointment.rescheduled': ['overview', 'appointments', 'timeline'],
+  'appointment.assigned': ['overview', 'appointments', 'team', 'timeline'],
+  'handoff.triggered': ['overview', 'conversations', 'timeline'],
+  'team.deactivated': ['team', 'overview', 'leads', 'conversations', 'appointments'],
   'outreach.sent': ['appointments', 'leads', 'conversations', 'email-messages', 'timeline'],
+  'outreach.opened': ['overview', 'leads', 'timeline'],
   // Mail arriving is the one thing on this dashboard nobody triggered, so it
   // is the one thing that must not wait for a click. `email-receipts` is here
   // as well as `email-messages` because a reply nobody could place has no
@@ -45,16 +63,27 @@ const INVALIDATES: Record<string, string[]> = {
   // the unread count sat stale until somebody clicked, on the one dashboard
   // where mail arriving is the whole point of having it open.
   'email.received': [
-    'email-messages', 'email-receipts', 'timeline', 'leads', 'conversations',
+    'email-messages', 'email-receipts', 'email-threads', 'timeline', 'leads', 'conversations',
     'ops-mail', 'ops-summary',
   ],
+  'email.agent': ['email-agent'],
+  'vehicle.status_changed': ['inventory', 'overview'],
   // Ours, not a dealership's: somebody asking Liner for a demo. Every ops
   // surface reads the same three keys, so a booking made while the calendar is
   // open moves the badge, the day and the inbox together.
   'demo.requested': ['ops-summary', 'ops-demos', 'ops-mail'],
   'demo.updated': ['ops-summary', 'ops-demos', 'ops-mail'],
-  'call.started': ['overview', 'conversations'],
-  'call.ended': ['overview', 'conversations'],
+  'call.started': ['overview', 'conversations', 'timeline'],
+  'call.ended': ['overview', 'conversations', 'timeline'],
+  'call.transcribed': ['conversations', 'timeline'],
+  'phone.started': ['ops-phone'],
+  'phone.ended': ['ops-phone'],
+  'phone.persona': ['ops-phone'],
+  'sms.sent': ['timeline', 'lead-sms', 'conversations', 'leads'],
+  'sms.received': ['timeline', 'lead-sms', 'conversations', 'leads', 'ops-phone'],
+  'sms.status': ['timeline', 'lead-sms'],
+  'sms.opt_out': ['reach', 'lead-sms', 'timeline', 'ops-phone'],
+  'sms.resumed': ['reach', 'lead-sms', 'timeline', 'ops-phone'],
 }
 
 /**
