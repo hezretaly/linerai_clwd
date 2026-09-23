@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent } from 'react'
 
 import { api, ApiError } from '../../lib/api'
 import { fileSize, type Attachment } from '../../lib/email'
@@ -33,6 +33,10 @@ export type AttachmentPickerProps = {
   uploadPath?: string
   removeBase?: string
   disabled?: boolean
+  /** How many files are still uploading, whenever that changes. A composer
+   *  holds its Send until this is zero: pressing it mid-upload sent the
+   *  message without the file, and nothing said so. */
+  onBusy?: (uploading: number) => void
 }
 
 type Busy = { key: string; name: string; size: number }
@@ -56,9 +60,15 @@ export function AttachmentPicker({
   uploadPath = '/api/email/attachments',
   removeBase = '/api/email/attachments',
   disabled = false,
+  onBusy,
 }: AttachmentPickerProps) {
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<Busy[]>([])
+  const onBusyRef = useRef(onBusy)
+  onBusyRef.current = onBusy
+  useEffect(() => {
+    onBusyRef.current?.(busy.length)
+  }, [busy.length])
   const [problems, setProblems] = useState<Problem[]>([])
   const [over, setOver] = useState(false)
   // Uploads finish in any order, so each one adds to the newest list rather

@@ -117,6 +117,10 @@ def remember_inbound(db: Session, convo: Conversation, received: Outreach, text:
     db.add(Message(
         conversation_id=convo.id, role="buyer", content=text,
         tool_calls_json=_dump([{"name": "outreach", "outreach_id": received.id}]),
+        # When it arrived, not when it was filed: mail a stranger sent last
+        # week and placed today, once they became a buyer, belongs last week
+        # in the thread the model reads, not after everything since.
+        **({"created_at": received.sent_at} if received.sent_at else {}),
     ))
     db.commit()
 

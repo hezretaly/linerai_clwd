@@ -87,6 +87,20 @@ async def tick_forever() -> None:
     """
     while True:
         try:
+            # Not behind the agent switch: filing mail that arrived is not
+            # answering it, and a deploy strands deliveries whether or not
+            # Liner replies to email.
+            from app.api.inbound_email import recover_stranded
+
+            recovered = await asyncio.to_thread(recover_stranded)
+            if recovered:
+                log.warning("placed %d delivery(ies) a restart had stranded: %s",
+                            len(recovered), recovered)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("stranded delivery recovery failed")
+        try:
             if settings.email_agent:
                 # In a thread: `drain` is synchronous SQLAlchemy, and running
                 # it on the event loop would block every socket in the process

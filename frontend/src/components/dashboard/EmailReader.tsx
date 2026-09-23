@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { api, ApiError } from '../../lib/api'
@@ -73,6 +73,8 @@ export type MailDraft = {
   text: string
   attachments: Attachment[]
   importance: Importance
+  /** Files still uploading. Not sent; it holds Send until they land. */
+  uploading?: number
 }
 
 export function emptyDraft(to = ''): MailDraft {
@@ -93,6 +95,7 @@ export function emptyDraft(to = ''): MailDraft {
  *  400 never disagree about an attachment-only message. */
 export function sendable(d: MailDraft): boolean {
   return (
+    !d.uploading &&
     recipientCount(d.to) > 0 &&
     Boolean(d.subject.trim() || d.text.trim() || d.attachments.length)
   )
@@ -201,6 +204,7 @@ export function ComposeFields({
       <AttachmentPicker
         value={draft.attachments}
         onChange={(attachments) => onChange({ attachments })}
+        onBusy={(uploading) => onChange({ uploading })}
       />
     </div>
   )
@@ -298,6 +302,28 @@ export function EmailReader({
   const [draft, setDraft] = useState<MailDraft>(() => emptyDraft())
   const [problem, setProblem] = useState('')
   const patch = (p: Partial<MailDraft>) => setDraft((d) => ({ ...d, ...p }))
+  // What the reply said when it opened -- the quote, as the editor first
+  // normalised it -- and how many files it carried. Pre-filled text is not
+  // somebody's work, so only a change from this is worth asking about.
+  const opened = useRef<{ text: string | null; files: number } | null>(null)
+  const edit = (p: Partial<MailDraft>) => {
+    if (opened.current && opened.current.text === null && p.text !== undefined) {
+      opened.current.text = p.text
+    }
+    patch(p)
+  }
+  const changed =
+    answering !== null &&
+    opened.current !== null &&
+    ((opened.current.text !== null && draft.text !== opened.current.text) ||
+      draft.attachments.length !== opened.current.files)
+  /** Closing the drawer throws the reply away -- there is no Drafts box on
+   *  this side -- so it asks first when there is something to lose. Escape
+   *  closes the sheet, which made this one keystroke from gone. */
+  const leave = () => {
+    if (changed && !window.confirm('Discard this email? Nothing here is saved as a draft.')) return
+    onClose()
+  }
 
   const id = entry?.id ?? ''
   const { data: content, error, isLoading } = useQuery({
@@ -365,6 +391,10 @@ export function EmailReader({
       attachments:
         how === 'forward' ? content.attachments.filter((a) => forwarded.has(a.id)) : [],
     })
+    opened.current = {
+      text: null,
+      files: how === 'forward' ? content.attachments.filter((a) => forwarded.has(a.id)).length : 0,
+    }
     setProblem('')
     setAnswering(how)
   }
@@ -374,7 +404,7 @@ export function EmailReader({
   return (
     <Sheet
       open
-      onClose={onClose}
+      onClose={leave}
       width="w-[40rem]"
       title={<h2 className="break-words text-sm font-semibold">{entry.subject || '(no subject)'}</h2>}
     >
@@ -450,7 +480,7 @@ export function EmailReader({
             </p>
             <ComposeFields
               draft={draft}
-              onChange={patch}
+              onChange={edit}
               suggestions={suggestions}
               signature={signature}
               placeholder={answering === 'forward' ? 'Add a note (optional)...' : 'Write the reply...'}

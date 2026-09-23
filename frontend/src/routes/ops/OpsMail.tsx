@@ -712,6 +712,8 @@ function Composer({
   const [id, setId] = useState(draft.id)
   const [address, setAddress] = useState(draft.to)
   const [cc, setCc] = useState(draft.cc ?? '')
+  // Files still uploading hold Send, or the message goes without them.
+  const [uploading, setUploading] = useState(0)
   const [bcc, setBcc] = useState(draft.bcc ?? '')
   const [line, setLine] = useState(draft.subject)
   const [html, setHtml] = useState(draft.html)
@@ -854,6 +856,7 @@ function Composer({
         onChange={setFiles}
         uploadPath={OPS_ATTACHMENTS}
         removeBase={OPS_ATTACHMENTS}
+        onBusy={setUploading}
       />
       {/* A button rather than a checkbox: it is one more thing somebody may
           set, not a field, and an <input> here would be counted among the
@@ -914,14 +917,14 @@ function Composer({
         <Button
           variant="primary"
           size="sm"
-          disabled={send.isPending || !sendable}
+          disabled={send.isPending || !sendable || uploading > 0}
           onClick={() => send.mutate()}
         >
           {send.isPending ? 'Sending...' : 'Send'}
         </Button>
         <Button
           size="sm"
-          disabled={saveDraft.isPending || !anything}
+          disabled={saveDraft.isPending || !anything || uploading > 0}
           onClick={() => saveDraft.mutate(files.map((f) => f.id))}
         >
           {saveDraft.isPending ? 'Saving...' : 'Save draft'}

@@ -236,6 +236,9 @@ INBOUND_STYLE = {
 }
 
 
+_RASTER_DATA = re.compile(r"^data:image/(png|jpe?g|gif|webp);base64,", re.I)
+
+
 def clean_inbound(
     html: str,
     *,
@@ -258,13 +261,21 @@ def clean_inbound(
 
     def attribute(element: str, name: str, value: str):  # noqa: ANN202
         nonlocal held
+        if name == "href":
+            # `data:` and `cid:` are allowed schemes because an image may use
+            # them; a link may not. `data:text/html,...` is a whole page a
+            # click away, and the scheme list cannot say "images only".
+            v = (value or "").strip().lower()
+            return value if v.startswith(("http://", "https://", "mailto:", "tel:", "#")) else None
         if element == "img" and name == "src":
             v = (value or "").strip()
             if v.lower().startswith("cid:"):
                 from urllib.parse import unquote
 
                 return inline.get(unquote(v[4:]).strip("<>").lower())
-            if v.lower().startswith("data:image/"):
+            if _RASTER_DATA.match(v):
+                # Raster only. An SVG is a document, and one inside a
+                # message is somebody else's markup with nothing cleaning it.
                 return v
             if v.lower().startswith(("http://", "https://")):
                 if images:

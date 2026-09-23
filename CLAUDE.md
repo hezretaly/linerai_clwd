@@ -862,6 +862,48 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     human to pull it is not a brake overnight, and the flag records that a
     machine set it — otherwise the morning after reads as somebody having
     turned it off by hand.
+- **An email is everything a real one carries, and it lives beside the row it
+  always had.** Several To, Cc and Bcc, Reply-To, HTML, files, importance and
+  the threading headers go in `email_envelopes` / `email_attachments` (and
+  `ops_mail_envelopes` / `ops_mail_attachments` for ours) -- new tables,
+  because `create_all` never adds a column. `outreach.to_address` stays one
+  bare address, `body` stays the text half, and one message is still one row,
+  so the timeline, the counts and the threads are unchanged.
+  - **One send path, `email_outbound`.** Compose, lead and appointment
+    outreach, Liner's own replies, the test send and the buyer summary all go
+    through it: addresses parsed one entry at a time and refused by name,
+    `OUTBOUND_ONLY_TO` over To, Cc *and* Bcc, the rep's HTML cleaned to what
+    the editor can make (`email_html.clean_outbound`, nh3) with the text half
+    written from it, the sign-off on both halves, and the row committed
+    before the provider is asked. Ops sends are the same rules in `api/ops.py`.
+  - **Threading is by RFC Message-ID and nothing else.** A provider's API id
+    (Resend's is a UUID) never goes in `In-Reply-To`; Resend's real one is
+    read back after the send, and `References` carries the whole chain.
+  - **The Worker forwards; the backend reads.** Raw bytes, the SMTP envelope
+    in `X-Envelope-*`, parsed with the standard library in `email_mime` and
+    kept on disk under `var/mail/`. It used to parse with postal-mime and post
+    a digest that could not carry a file. Identity is the header From, never
+    the relay's envelope sender. A raw delivery a restart strands at
+    `received` is placed by the ticker (`recover_stranded`); a JSON one is
+    not, because its loop-header verdict was never stored.
+  - **Received HTML is drawn three walls deep.** `clean_inbound` on the
+    server (links http/https/mailto/tel only, `data:` images raster only,
+    `cid:` inlined, remote images held until asked for), DOMPurify in the
+    browser, and an iframe with no `allow-scripts` under its own CSP. Stored
+    as it arrived and cleaned when read, so a stricter rule applies to old
+    mail too.
+  - **Files are on disk by SHA-256, per store, never in a row.** Served as
+    downloads with `nosniff` and a sandbox CSP; only a raster image the
+    server recognised by its bytes is ever shown inline. Gmail's blocked
+    extensions are refused both ways -- a received one is kept as a row that
+    says why, with no bytes a click away. A forward *copies* a file row; the
+    bytes are shared.
+  - **Reply all never answers us and never the Bcc.** `is_our_address` plus
+    the address the message was delivered to come out of every suggestion,
+    and a Bcc is shown to staff on our own sent mail and carried nowhere.
+  - **Send waits for uploads.** `AttachmentPicker` reports files in flight
+    and every composer holds Send until they land; pressing it mid-upload
+    sent the message without the file and nothing said so.
 - **`OUTBOUND_ONLY_TO` gates sending, never receiving.** One setting whose
   name is the rule: empty refuses every send, a list allows those addresses,
   the word `everyone` lifts the limit. One call site,
@@ -3308,8 +3350,8 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | Thing | State |
 |---|---|
 | Agent | **Stub by default; unscripted when a key is set.** The stub is a state machine over `conversations.stage` assembling replies from tool results — it only answers what someone anticipated. `LLM_MODE=live` puts a real model on the same eight tools and the same guards. Set `OPENAI_API_KEY`. The vendor HTTP call has never run here (no key); everything either side of it is exercised by `make agent-check`. |
-| Email out | **Outbox by default.** A real `outreach` row, mirrored into the buyer's chat thread. Sends nothing. `ResendSender` is written and **never executed** — no `RESEND_API_KEY` here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list, the reply token, the row, the error path, the request body. |
-| Email in | **Endpoint real and tested; the route in front of it is not.** `POST /api/inbound-email` verifies an HMAC, dedupes on message id, resolves by token → `In-Reply-To` → lead match, and stores what it cannot place. `make smoke` drives all of it. The Cloudflare Worker that feeds it has never been deployed. |
+| Email out | **Outbox by default.** A real `outreach` row plus its envelope (To, Cc, Bcc, HTML, files), mirrored into the buyer's chat thread. Sends nothing. `ResendSender` and `GmailSender` are written and **never executed** — no key here. Everything either side of the HTTP call is exercised by `make smoke`: the allow-list over every recipient, the reply token, the row, the error path, the Resend body with cc/bcc/attachments/References, and Gmail's MIME tree. |
+| Email in | **Endpoints real and tested; the route in front of them is not.** `POST /api/emails/inbound/raw` takes the message whole (`message/rfc822`) and keeps the `.eml`; the JSON intake stays for the Worker deployed before it. Both verify the secret, dedupe, resolve by token → our Message-ID → References → lead match, and store what they cannot place, files included. `make smoke` drives all of it with real MIME. The Worker that forwards raw bytes has never been deployed — until it is, files arrive as names only. |
 | Phone (Twilio) | **Written and never executed.** A real number in both directions: people ring it and `app/phone_bridge.py` bridges Twilio Media Streams to OpenAI Realtime; `/ops/phone` rings people from it. No Twilio account here and `api.twilio.com` is blocked, so no request has run — but the inbound path is signed with a shared secret we own, so `make smoke` drives the whole of it: the signature against Twilio's *published test vector*, a forged one, a valid one replayed with a different caller, the TwiML, the persona switch and the realm split. |
 | SMS | **Written and never executed, and no assistant touches it.** A rep texts a buyer from their page; replies arrive at `/api/phone/sms`, resolve by number and land on that buyer's timeline. Same account, credentials and signature check as the phone line. No Twilio account here, so the send has never run — but the inbound path is signed with a secret we own, so `make smoke` drives all of it: a forged signature, the dedupe, the timeline landing, `OUTBOUND_ONLY_TO`, STOP and START, and a stranger's text being claimed onto a buyer later. Bulk sending stays blocked pending A2P 10DLC. |
 | Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |

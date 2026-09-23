@@ -571,6 +571,43 @@ def raw_path(relative: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def recover_stranded(older_than_minutes: int = 10) -> list[str]:
+    """Place raw deliveries a restart left claimed and never filed.
+
+    The intake answers before it files, which is what keeps a slow CRM from
+    bouncing a buyer's reply -- and it means a deploy landing between the
+    answer and the background pass leaves a receipt at `received` for ever,
+    with the Worker long since told it may forget the message. For a raw
+    delivery nothing is lost: the bytes were on disk before the answer, and
+    the verdict on them is read from the file, so placing it now is the pass
+    that should have run. A JSON digest is left alone: its loop-header
+    verdict was decided in the request and never stored, and re-deciding it
+    without the headers could mint a buyer out of an auto-responder.
+
+    Ten minutes is far longer than a placement takes, so a pass that is
+    merely slow is never run twice.
+    """
+    from datetime import timedelta
+
+    from app.db import has_database
+    from app.stores import known_stores
+
+    cutoff = utcnow() - timedelta(minutes=older_than_minutes)
+    placed: list[str] = []
+    for slug in [""] + [s for s in known_stores() if has_database(s)]:
+        with mailboxes.using(slug), SessionLocal(slug) as db:
+            stranded = [
+                r.id for r in db.query(InboundEmail)
+                .filter(InboundEmail.outcome == "received", InboundEmail.created_at < cutoff)
+                .limit(50)
+            ]
+        for receipt_id in stranded:
+            if _raw_for(receipt_id):
+                _place(receipt_id, "", slug or active_store(), None)
+                placed.append(receipt_id)
+    return placed
+
+
 def _raw_for(receipt_id: str) -> str:
     """The saved message for a receipt that has no envelope yet, if any.
 

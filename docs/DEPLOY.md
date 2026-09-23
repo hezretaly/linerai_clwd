@@ -253,6 +253,19 @@ addresses are minted per send and cannot be enumerated as rules.
 The Worker has never been deployed from here, so treat its first run as
 untested. The endpoint it posts to is covered by `make smoke`.
 
+**Redeploy the Worker to receive files, copies and formatting.** The current
+Worker posts the whole message as it arrived (`message/rfc822`) to
+`/api/emails/inbound/raw`, and the backend reads the Cc list, the HTML, inline
+images and attachments out of it. A Worker deployed before this change posts a
+JSON digest instead, which the backend still accepts -- but it never carried
+the bytes of a file, so those arrive as *"the relay forwarded only this file's
+name"* until you run `wrangler deploy` from
+`backend/app/integrations/email/worker/`. The raw intake accepts up to 30 MB,
+so nginx's `client_max_body_size` has to be at least that (the shipped configs
+say 32m); received messages are kept under `backend/var/mail/` and attachments
+under `backend/var/attachments/` -- both are data, so back them up with the
+databases.
+
 ### Sending under your own name
 
 `SENDING_DOMAIN` also decides who may put their own address in a `From`.

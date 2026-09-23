@@ -122,7 +122,8 @@ class ResendSender(EmailSender):
         out = {
             "from": self.from_header(from_address),
             "to": address_list(to),
-            "subject": subject,
+            # One line: a CR/LF in a subject is a header of the sender's choosing.
+            "subject": header_value(subject),
             "text": body,
             # The image, if there is one, rides here and nowhere else. The
             # text half keeps the words and loses nothing a reader needs.

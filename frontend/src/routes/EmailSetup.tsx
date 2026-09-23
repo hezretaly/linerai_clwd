@@ -1106,6 +1106,8 @@ function Composer({
 }) {
   const toId = useId()
   const [result, setResult] = useState<string | null>(null)
+  // Files still uploading hold Send, or the message goes without them.
+  const [uploading, setUploading] = useState(0)
   const sentOk = useRef(false)
   const open = draft !== null
 
@@ -1336,6 +1338,7 @@ function Composer({
           value={draft.attachments}
           onChange={(attachments) => update({ attachments })}
           disabled={send.isPending}
+          onBusy={setUploading}
         />
 
         {/* Shown, not typed. The server appends it -- the sender's own words
@@ -1381,7 +1384,7 @@ function Composer({
           <Button
             variant="primary"
             size="sm"
-            disabled={!hasRecipient || !hasSomething || send.isPending}
+            disabled={!hasRecipient || !hasSomething || send.isPending || uploading > 0}
             onClick={() => {
               setResult(null)
               send.mutate(draft)

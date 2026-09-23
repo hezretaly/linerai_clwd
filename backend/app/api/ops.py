@@ -1022,8 +1022,11 @@ def save_draft(
     draft.to_address = to[0].address if to else ""
     draft.subject = body.subject.strip()
     draft.body = text
-    draft.reply_to_kind = body.reply_to_kind
-    draft.reply_to_id = body.reply_to_id
+    # Kept when the save does not say: a draft reopened from Drafts does not
+    # know what it was answering, and saving it again used to erase that --
+    # so the reply went out as a new thread in their inbox.
+    draft.reply_to_kind = body.reply_to_kind or draft.reply_to_kind or ""
+    draft.reply_to_id = body.reply_to_id or draft.reply_to_id or ""
     draft.updated_at = utcnow()
     db.flush()
 

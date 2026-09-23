@@ -872,6 +872,8 @@ function ReachOut({
 }) {
   const { subject, html, text, cc, bcc, files } = draft
   const [problem, setProblem] = useState('')
+  // Files still uploading hold Send, or the message goes without them.
+  const [uploading, setUploading] = useState(0)
 
   const leadId = appointment.lead_id
   const address = appointment.lead?.email ?? ''
@@ -956,6 +958,7 @@ function ReachOut({
         value={files}
         onChange={(next) => update({ files: next })}
         disabled={send.isPending}
+        onBusy={setUploading}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -964,7 +967,7 @@ function ReachOut({
             setProblem('')
             send.mutate()
           }}
-          disabled={send.isPending || blank || !address}
+          disabled={send.isPending || blank || !address || uploading > 0}
         >
           {send.isPending ? 'Sending...' : 'Send email'}
         </Button>
