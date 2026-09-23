@@ -697,6 +697,7 @@ book through the chips, and the appointment counter should move with no reload.
 ```bash
 cd /srv/liner && sudo -u liner git pull
 sudo -u liner make install && sudo -u liner make build
+# (make build alone now installs whatever the pull added, but install is still the full reset)
 sudo systemctl restart liner
 ```
 

@@ -1,4 +1,4 @@
-.PHONY: prune-ops help install build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
+.PHONY: prune-ops help install deps build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -14,8 +14,25 @@ help:
 install: ## Install backend and frontend dependencies
 	cd backend && uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 	cd frontend && npm install
+	@touch backend/.venv/.deps-stamp
 
-build: ## Build the frontend into frontend/dist (the API serves it in production)
+# **A dependency added upstream arrives with `git pull`, and `make build` has
+# to notice.** The documented update is `make install && make build`; the
+# email work added TipTap, DOMPurify and nh3, and a deploy that ran only
+# `make build` failed on 14 missing-module errors -- or, had the frontend
+# built, restarted into a backend that could not import nh3. Each stamp is
+# older than its lock file exactly when a pull brought new dependencies, so
+# this installs then and costs nothing otherwise.
+frontend/node_modules/.package-lock.json: frontend/package-lock.json
+	cd frontend && npm ci
+
+backend/.venv/.deps-stamp: backend/pyproject.toml
+	cd backend && uv pip install --python .venv/bin/python -e ".[dev]"
+	@touch $@
+
+deps: frontend/node_modules/.package-lock.json backend/.venv/.deps-stamp ## Install only what changed since the last install
+
+build: deps ## Build the frontend into frontend/dist (the API serves it in production)
 	cd frontend && npm run build
 	@# The bundle a stranger loads. The login form prefills seeded credentials
 	@# on a laptop and must not in here -- `import.meta.env.DEV` is what strips
