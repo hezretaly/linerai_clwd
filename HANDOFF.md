@@ -291,8 +291,8 @@ downgraded. Pin the commit instead, in this order:
    and `make restore-ops FILE=...` after, or founder@/cto@ cannot sign in.
 3. `.env` must have a real `TWILIO_AUTH_TOKEN` (`openssl rand -hex 32` if the
    phone line is not used): production refuses to boot without one.
-4. `git fetch origin && git checkout --detach 21558e0`, then `make build`
-   (it installs the new dependencies) and restart.
+4. `git fetch origin && git checkout --detach origin/claude/alsbou-release`,
+   then `make build` (it installs the new dependencies) and restart.
 5. Check: `/alsbou/api/widget/config?origin=https://www.alsboucars.com` and
    `?origin=https://alsboucars.com` both say `allowed` and `enabled`;
    `/widget/alsbou` sends `frame-ancestors` naming both; nginx adds no
@@ -301,10 +301,11 @@ downgraded. Pin the commit instead, in this order:
    first -- only that browser sees it -- then hand it to Get My Auto. Tag last:
    a pre-`21558e0` bubble on their site has no off switch.
 
-`21558e0` does **not** carry the Sunday-hours fix or the loader's `greeted`
-fix (a console error on the dealer's page on first open); both are on this
-branch's head only. A release ref -- `21558e0` plus those two hunks and
-nothing else -- is the clean way to give linerai.us them without migrations.
+**`claude/alsbou-release` is that release**: `21558e0` plus the Sunday-hours
+fix, the loader's `greeted` fix and the path-form tag on the setup card, and
+nothing else -- no migrations. Its `docs/RELEASE-alsbou.md` is the full
+account: how the widget works, the deploy, the checks, the launch checklist
+and the rollback.
 
 Also before launch, and not code: the other chat (Capital One's Chat
 Concierge) has to come out of their `chatbox` slot for the spec's "no other
