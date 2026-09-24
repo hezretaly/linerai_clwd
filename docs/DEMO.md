@@ -246,19 +246,23 @@ Five things, and each breaks differently:
 - **`SENDING_DOMAIN`** — the domain must be verified in Resend. It also builds
   the `Reply-To: reply+<token>@` that routes a buyer's answer back into their
   timeline.
-- **Each dealership has its own mailbox on that domain, from its profile.**
-  `mailbox: alsbou` in `alsbou.yaml` makes Alsbou's mail go out as
-  `Alsbou Motors <alsbou@linerai.us>`, and mail *to* that address is
-  filed in Alsbou's store — `craigandlandreth@linerai.us` likewise for Craig
-  and Landreth. Left out, the local part is the website's host without its
-  last label (`alsboucars.com` → `alsboucars`), which is exactly why Alsbou's
-  is written in: the shorter `alsbou` is what the Worker's list carries, and
-  the two have to be the same string. The provider verifies the
-  domain, so every mailbox on it sends on the one key: a new dealership is
-  a line in its profile, **plus** an entry in the Worker's
-  `ALLOWED_RECIPIENTS` in `wrangler.jsonc` and a `wrangler deploy`, or
-  Cloudflare drops its mail before it reaches us. `make smoke` fails on a
-  profile whose mailbox is missing from that list.
+- **Each dealership has its own mailbox, from its profile.** On the shared
+  domain by default: `mailbox: craigandlandreth` makes Craig and Landreth's
+  mail go out as `Craig and Landreth Cars <craigandlandreth@linerai.us>`, and
+  mail *to* that address is filed in their store. Left out, the local part is
+  the website's host without its last label (`alsboucars.com` →
+  `alsboucars`). Or on a **domain of its own**: Alsbou's profile says
+  `mailbox: sales` and `mail_domain: alsbou.linerai.us`, so their mail is
+  `sales@alsbou.linerai.us`, replies come back to
+  `reply+<token>@alsbou.linerai.us`, and everything delivered to that domain
+  is theirs. The domain must be `SENDING_DOMAIN` or a subdomain of it, and a
+  subdomain is verified in Resend and given Email Routing in Cloudflare once
+  (docs/NEW-SERVER.md). The provider verifies a domain, so every mailbox on
+  one sends on the one key: a new dealership is a line in its profile,
+  **plus** its local part in the Worker's `ALLOWED_RECIPIENTS` in
+  `wrangler.jsonc` and a `wrangler deploy`, or Cloudflare drops its mail
+  before it reaches us. `make smoke` fails on a profile whose mailbox is
+  missing from that list.
   - **No new Cloudflare rule per dealership**, as long as the catch-all
     route to the Worker is in place — and it has to be anyway, because
     `reply+<token>@` addresses are minted per send and cannot be enumerated

@@ -1,0 +1,36 @@
+# systemd unit for the demo instance: demo.linerai.us, beside production on the
+# same box (docs/NEW-SERVER.md). Its own checkout, its own user, its own .env,
+# its own Postgres role and databases -- nothing it does can reach a
+# dealership's buyers, and nothing it sends leaves the box (EMAIL_SENDER=outbox).
+#
+#   sudo cp deploy/liner-demo.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now liner-demo
+#   journalctl -u liner-demo -f
+#
+# One worker, for the reason liner.service gives. Port 8001: production has 8000.
+
+[Unit]
+Description=Liner AI (demo)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=linerdemo
+Group=linerdemo
+WorkingDirectory=/srv/liner-demo/backend
+EnvironmentFile=/srv/liner-demo/.env
+ExecStart=/srv/liner-demo/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8001 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/liner-demo/backend
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Why a message sent to one of our addresses did not arrive.
 
-    make mail-check TO=alsbou@linerai.us
+    make mail-check TO=sales@alsbou.linerai.us
 
 **Sending breaks loudly and receiving breaks silently.** A send quotes the
 provider's own error on the next attempt; a delivery that never arrives looks
@@ -83,7 +83,7 @@ def receipts(address: str) -> list[tuple[str, InboundEmail]]:
 def main() -> int:
     if len(sys.argv) < 2 or not sys.argv[1].strip():
         print(__doc__)
-        print("Usage: make mail-check TO=alsbou@linerai.us")
+        print("Usage: make mail-check TO=sales@alsbou.linerai.us")
         return 2
     address = sys.argv[1].strip().lower()
     local = address.partition("@")[0]
@@ -97,16 +97,25 @@ def main() -> int:
         slug = ""
     else:
         slug = mailboxes.store_for(address)
-        boxes = mailboxes.mailboxes()
-        if slug:
+        boxes, owned = mailboxes.mailboxes(), mailboxes.domains()
+        if slug and local.startswith("reply+"):
+            print(f"  store    {slug} -- the send that minted this reply token is filed there")
+            print(f"  read at  /app/campaigns on that store, and on the buyer's own page")
+        elif slug and mailboxes.domain_of(address) in owned:
+            print(f"  store    {slug} -- its profile declares `mail_domain: {mailboxes.domain_of(address)}`,")
+            print("           and everything delivered to that domain is theirs")
+            print(f"  read at  /app/campaigns on that store, and on the buyer's own page")
+        elif slug:
             print(f"  store    {slug} -- its profile declares `mailbox: {local}`")
             print(f"  read at  /{slug}/app/campaigns, and on the buyer's own page")
-        elif local in {"reply", *[b for b in boxes]}:
-            print(f"  store    a reply token, looked up across every seeded store")
+        elif local.startswith("reply+") or local == "reply":
+            print(f"  store    a reply token, looked up across every seeded store -- and")
+            print(f"           held by none of them, so it stays with the default store")
         else:
-            print("  store    no profile declares this mailbox, so it stays with the")
-            print(f"           default store ({settings.dealership or 'unprefixed'})")
+            print("  store    no profile declares this mailbox or domain, so it stays with")
+            print(f"           the default store ({settings.dealership or 'unprefixed'})")
             print(f"           declared mailboxes: {json.dumps(boxes)}")
+            print(f"           declared domains:   {json.dumps(owned)}")
     if slug and not has_database(slug):
         print(f"  WARNING  {slug} has no database on this host, so nothing can be filed")
         print(f"           into it. Run: DEALERSHIP={slug} make reset-db")

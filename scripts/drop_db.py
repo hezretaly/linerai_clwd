@@ -184,9 +184,11 @@ def _detail(slug: str) -> None:
         print(f"      mail    {mail}")
     else:
         with mailboxes.using(slug):
-            box = profile.mailbox()
+            box, own = profile.mailbox(), profile.own_mail_domain()
         if box:
-            print(f"      mail    {box}@ -- no SENDING_DOMAIN set, so nothing finishes the address")
+            print(f"      mail    {box}@{own} -- no SENDING_DOMAIN set, so nothing is sent from it"
+                  if own else
+                  f"      mail    {box}@ -- no SENDING_DOMAIN set, so nothing finishes the address")
     if people:
         print(f"      sign in {people}")
 

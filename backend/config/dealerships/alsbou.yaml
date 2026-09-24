@@ -27,14 +27,20 @@ website_url: "https://www.alsboucars.com/"
 # happens on their form never comes back. Seeded into the Liner setup page's
 # application link; on a box already seeded, paste it there and publish.
 financing_url: "https://www.alsboucars.com/financing"
-# Their mailbox on Liner's sending domain -- the local part of the
-# address their buyers write to and their mail goes out from:
-# `alsbou@<SENDING_DOMAIN>`. Mail arriving for it is filed in this store.
-# Left out, it is derived from the website's host without its last label,
-# which would give `alsboucars`; the shorter one is written in because it is
-# what the Worker's recipient list carries, and **those two have to be the
-# same string or the mail is dropped in Cloudflare with no receipt anywhere.**
-mailbox: alsbou
+# Their mail lives on a domain of its own: `sales@alsbou.linerai.us` is the
+# address their buyer mail goes out from, and buyers' replies come back to
+# `reply+<token>@alsbou.linerai.us`. Everything delivered to that domain is
+# filed in this store, whatever the local part.
+#
+# `mail_domain` has to be SENDING_DOMAIN or a subdomain of it -- the zone this
+# deployment controls in Cloudflare -- and the seed refuses anything else
+# rather than falling back to the shared domain. A subdomain is a domain of
+# its own to the provider and to Cloudflare, so it is verified in Resend and
+# given Email Routing once, by whoever runs the deployment (docs/NEW-SERVER.md).
+# The Worker keeps mail by local part, so `sales@` and `reply+` -- both
+# already on its list -- are all this needs there.
+mailbox: sales
+mail_domain: alsbou.linerai.us
 
 # The sites allowed to put this dealership's assistant in an iframe. It
 # becomes `Content-Security-Policy: frame-ancestors` on `/chat` and `/call`,

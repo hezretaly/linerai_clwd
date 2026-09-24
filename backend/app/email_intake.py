@@ -134,6 +134,12 @@ def is_ours(recipient: str) -> str:
     address = sender_address(recipient) or (recipient or "").strip().lower()
     if not address or REPLY_RE.search(recipient or ""):
         return ""
+    # A subdomain of ours is a dealership's own mail domain
+    # (`alsbou.linerai.us`), and everything on it is theirs -- `support@`
+    # there is a buyer writing to Alsbou, not to Liner.
+    shared = (settings.sending_domain or "").strip().lower()
+    if shared and address.rpartition("@")[2].endswith("." + shared):
+        return ""
     # Compared on the **local part**, not the whole address. The Worker's own
     # recipient filter does the same, and for the same reason: mail reaches
     # these boxes through whatever domain Cloudflare is routing, and a dealer

@@ -263,93 +263,76 @@ no proactive nudge bubble. Two rules still stand if that menu is ever built:
 - "Jordan is on call until 11" is invented staffing. Nothing records who is
   on shift.
 
-## Next — the new server (agreed plan, in order)
+## Next — the new server: everything moves, fresh (agreed plan)
 
-**Alsbou only, for now** (the user, mid-way through: "we don't have to
-implement the other stores yet. only alsbou"). `linerai.us` keeps ops and every
-group that has not moved; Craig and Landreth and Riverside stay there at their
-paths. **No new migrations**: the new server's databases are built from the
-latest schema, and the machinery is only for a later change to a table that
-already holds real rows.
+**The runbook is [`docs/NEW-SERVER.md`](./docs/NEW-SERVER.md)**, written for
+the Claude Code session running on the new server (`srv2004425`, user
+`deploy`, remote control from the Claude app). The user starts that session
+with the message below, then does the outside work at each STOP: Cloudflare
+DNS, the certificate and Email Routing, Resend, and typing secrets.
 
-**Alsbou's website chat needs none of the new server.** Give Get My Auto
-`<script src="https://linerai.us/alsbou/embed.js" async></script>` (their
-`snippets` list; their `chatbox` slot holds Capital One's Chat Concierge, and
-replacing that is Alsbou's call). The path form works on every loader from
-`7014d59` on, and after the move too, because the old box's redirect covers
-`/alsbou/...`. The full spec -- page and VIN awareness, the session on their
-domain, Tag Manager events, the other-chat check -- is commit `21558e0`, which
-predates Postgres and migrations. **Never `git pull` on linerai.us**: that
-brings this branch's head, which migrates every database at boot and cannot be
-downgraded. Pin the commit instead, in this order:
+The plan, as agreed:
 
-1. Record the running commit (`git -C /srv/liner log -1`) and back up:
-   `make dump-ops`, and `sqlite3 <file> ".backup ..."` for `backend/liner.db`,
-   `backend/var/stores/*.db` and `backend/var/ops.db`.
-2. If the box predates the ops split (`git merge-base --is-ancestor 8ea16b5
-   HEAD` fails, or there is no `backend/var/ops.db`), `make dump-ops` before
-   and `make restore-ops FILE=...` after, or founder@/cto@ cannot sign in.
-3. `.env` must have a real `TWILIO_AUTH_TOKEN` (`openssl rand -hex 32` if the
-   phone line is not used): production refuses to boot without one.
-4. `git fetch origin && git checkout --detach origin/claude/alsbou-release`,
-   then `make build` (it installs the new dependencies) and restart.
-5. Check: `/alsbou/api/widget/config?origin=https://www.alsboucars.com` and
-   `?origin=https://alsboucars.com` both say `allowed` and `enabled`;
-   `/widget/alsbou` sends `frame-ancestors` naming both; nginx adds no
-   `X-Frame-Options`; `https://linerai.us/alsbou/chat` answers live.
-6. Paste the tag into a live alsboucars.com page from the browser's devtools
-   first -- only that browser sees it -- then hand it to Get My Auto. Tag last:
-   a pre-`21558e0` bubble on their site has no off switch.
+- **A full transition, and a fresh start.** Nothing is copied from the old
+  box. Only Liner's own `/ops` and Alsbou's production matter.
+- **Production** is `/srv/liner`, port 8000, Postgres (`liner_ops`, `liner`,
+  `liner_alsbou`). It serves `linerai.us` (landing, `/ops`, Liner's mail),
+  `www` (a redirect) and `alsbou.linerai.us`.
+- **The demo** is `/srv/liner-demo`, port 8001, isolated: its own user,
+  role, databases and `.env`. It serves `demo.linerai.us/<store>` by path,
+  its email is outbox only, it shares the model key, and `PUBLIC_DEMO` is on.
+  `linerai.us/chat` (the landing page's *Test the chat*) goes there.
+- **Alsbou's mail** goes out from `sales@alsbou.linerai.us`, and replies come
+  back to `reply+<token>@alsbou.linerai.us`. That is a `mail_domain` in the
+  profile, and routing by whole address. The user verifies the subdomain in
+  Resend and adds it to Cloudflare Email Routing.
+- **Twilio** is copied from the old `.env` unchanged and not tested.
+- **`make live-check`** is the server testing itself with its real `.env`:
+  - settings, never a value;
+  - Resend's domain verification;
+  - a live chat turn;
+  - a voice session mint and a Realtime text exchange;
+  - the intake;
+  - real mail out, and round trips back through Cloudflare and the Worker for
+    both domains;
+  - `INBOX=` to the user;
+  - the widget as alsboucars.com asks for it.
 
-**`claude/alsbou-release` is that release**: `21558e0` plus the Sunday-hours
-fix, the loader's `greeted` fix and the path-form tag on the setup card, and
-nothing else -- no migrations. Its `docs/RELEASE-alsbou.md` is the full
-account: how the widget works, the deploy, the checks, the launch checklist
-and the rollback.
+  It cleans up after itself, and smoke runs its `--plan`.
 
-Also before launch, and not code: the other chat (Capital One's Chat
-Concierge) has to come out of their `chatbox` slot for the spec's "no other
-chat" to hold; their Tag Manager owner has to add a GA4 tag on the `asc_`
-events for the lead events to show anywhere; and Alsbou's lot is a CSV
-snapshot -- a fresh export imported at `/app/inventory` keeps it true, and a
-car missing from it is marked sold by hand. The domain lock is a browser
-control (the frame and the config); the chat API itself is public and rate
-limited, not locked to alsboucars.com.
+**Paste this into the server's session** to start it:
 
-1. **Subdomain routing — done.** `STORE_DOMAIN=linerai.us` makes the
-   Host header pick the store, as the path prefix does
-   (`stores.host_store`, `stores.public_link`).
-2. **Postgres, one database per group — done.** `DATABASE_URL_TEMPLATE`,
-   `app/pg.py`, and `make to-postgres` for the copy. The full `make smoke`
-   passes against Postgres 16 with every checkout database copied in; each
-   audit blocker is fixed and written up in CLAUDE.md under "What differs
-   between the two engines".
-3. **Alembic across every database — done.** `app/migrate.py`, a store and an
-   ops history, migrated at boot and by `make migrate`. Pre-migration
-   databases are adopted in place. The gate fails on a model changed without
-   a revision.
-4. **Deploy — done.** `docs/DEPLOY.md`, *Several dealer groups on their own
-   server*: DNS and an Origin CA wildcard certificate in Cloudflare, Postgres,
-   the `.env`, `make migrate ARGS=--create`, the copy from SQLite, the
-   cut-over in an order that takes nothing down, and the rollback.
-   `deploy/liner-groups.nginx.conf` is the new box (one wildcard block; a name
-   that is not ours gets its connection closed); `deploy/liner-groups-moved.conf`
-   goes on the box keeping `linerai.us` and redirects a moved group's every
-   old address, a tag already on a dealer's site included. The Worker's
-   `ROUTES` sends Alsbou's mail to the new box; both files name Alsbou alone. All of it was run: nginx
-   1.24 in front of the app on Postgres, sign-in, the dealer socket, the chat
-   stream, and an old tag followed by a browser from a dealer's page to a chat
-   on the subdomain. That run found two bugs, both fixed and gated: the
-   widget's settings could not be read after a redirect (`Origin: null`), and
-   the printed `pg_dump` lines named the database in a form libpq misreads.
-5. **Rooftops as locations inside a group — parked** on branch
-   `claude/rooftops-parked`, complete and gated there (it carries migration
-   0003). Not needed until Craig and Landreth move; when they do, it still
-   wants the street address and hours of Clarksville and Bullitt County from
-   Austin.
-6. **Two fixes kept from it:** the prompt's opening hours (Alsbou's Sunday
-   closing at six read as eight to the assistant on every version so far), and
-   adopting a pre-migration database from the baseline rather than the models.
+> Clone https://github.com/hezretaly/linerai_clwd (branch
+> `claude/liner-ai-implementation-8xehez`) into `~/liner-server/linerai_clwd`
+> (install git first if it is missing), then read
+> `docs/NEW-SERVER.md` there and carry it out on this server, top to bottom.
+> Stop at every STOP and tell me exactly what to do. Never ask me to paste a
+> secret into this chat, and never print one.
+
+**Still true from before, and not undone:**
+
+- **The old box still runs `77baaa4`, untouched.** It has backups
+  (`*.before-release`, `backend/var/ops-dump-20260924-195210.json`), and its
+  stray dev server was killed. It is the way back until the user retires it.
+- `claude/alsbou-release` (21558e0 plus the Sunday-hours and `greeted` fixes)
+  exists for updating the old box in place. The full transition supersedes
+  it, so it is unlikely to be needed.
+- **Alsbou's tag once the new server is live**:
+  `<script src="https://alsbou.linerai.us/embed.js" data-dealer="alsbou" async></script>`.
+  `linerai.us/alsbou/embed.js` keeps working through the redirect in
+  `deploy/linerai.nginx.conf`.
+- **Before launch, and not code:**
+  - Capital One's Chat Concierge comes out of their `chatbox` slot.
+  - Their Tag Manager owner adds a GA4 tag on the `asc_` events.
+  - Alsbou's lot is a CSV snapshot, so a fresh export imported at
+    `/app/inventory` keeps it true.
+  - The domain lock is a browser control. The chat API is public and rate
+    limited.
+- **Subdomain routing, Postgres and Alembic are done.** No new migrations:
+  every database is built from the latest schema.
+- **Rooftops are parked** on `claude/rooftops-parked` (migration 0003), and
+  not needed until Craig and Landreth go to production.
+- **After setup, the user removes `/etc/sudoers.d/deploy-setup`.**
 
 ## Next task — port the dashboard mockups
 

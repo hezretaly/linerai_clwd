@@ -398,18 +398,17 @@ _MAILBOX_RE = re.compile(r"^(?!reply$)[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 def mailbox() -> str:
-    """The dealership's own mailbox on the shared sending domain -- the local
-    part only. `alsbou` for `alsbou@linerai.us`.
+    """The dealership's own mailbox -- the local part only. `craigandlandreth`
+    for `craigandlandreth@linerai.us`, `sales` for Alsbou's
+    `sales@alsbou.linerai.us` (the domain is `mail_domain`).
 
     From the profile's `mailbox:` when it says, else the host of their
     `website_url` with `www.` and the last label dropped: `alsboucars.com`
     becomes `alsboucars`. A dealership can be given a shorter or different
-    name by writing it in -- Alsbou's profile says `mailbox: alsbou`, which
-    is what their entry in the Worker's recipient list carries, and **those
-    two have to be the same string or the mail is dropped in Cloudflare with
-    no receipt anywhere.** A profile with neither -- the fixture -- gets "",
-    and the deployment's `SENDING_FROM` / `sales@` stands in, exactly as
-    before.
+    name by writing it in, and **the Worker's recipient list has to carry the
+    same local part or the mail is dropped in Cloudflare with no receipt
+    anywhere.** A profile with neither -- the fixture -- gets "", and the
+    deployment's `SENDING_FROM` / `sales@` stands in, exactly as before.
     """
     stated = str(_top("mailbox") or "").strip().lower()
     if stated:
@@ -420,6 +419,79 @@ def mailbox() -> str:
     local = host.rsplit(".", 1)[0] if "." in host else host
     local = local.replace(".", "-")
     return local if _MAILBOX_RE.match(local) else ""
+
+
+#: A mail domain is a hostname: labels of letters, digits and hyphens. It lands
+#: in a From header and in the Worker's routing, so nothing else gets through.
+_HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def own_mail_domain() -> str:
+    """The profile's `mail_domain`, if it states a usable one, else "".
+
+    `alsbou.linerai.us` for Alsbou. **Only the sending domain or a subdomain of
+    it**: that is the zone this deployment controls in Cloudflare, so it is the
+    only place a reply can come back to, and a provider only sends from a
+    domain whose DNS it has seen. Anything else is ignored rather than guessed
+    at, and the seed refuses the profile out loud (`mail_domain_problem`).
+
+    Readable with no `SENDING_DOMAIN` set, because the intake's routing asks
+    it: a whole domain belongs to one store, and that is true on a laptop
+    before anything is sent from it.
+    """
+    stated = str(_top("mail_domain") or "").strip().lower().rstrip(".")
+    if not stated or not _HOST_RE.match(stated):
+        return ""
+    shared = (settings.sending_domain or "").strip().lower()
+    if shared and not (stated == shared or stated.endswith("." + shared)):
+        return ""
+    return stated
+
+
+def mail_domain() -> str:
+    """The domain this dealership's mail is sent from and replied to.
+
+    Their own where the profile names one -- Alsbou's production mail comes
+    from `sales@alsbou.linerai.us` and buyers' replies go to
+    `reply+<token>@alsbou.linerai.us` -- and `SENDING_DOMAIN` for everyone
+    else. "" with no `SENDING_DOMAIN`, because with no zone behind it there is
+    nothing to send from and nowhere for a reply to land.
+    """
+    shared = (settings.sending_domain or "").strip().lower()
+    if not shared:
+        return ""
+    return own_mail_domain() or shared
+
+
+def mailbox_address() -> str:
+    """`sales@alsbou.linerai.us`: the mailbox on the mail domain, or "".
+
+    The one place the whole address is put together, for the From header, the
+    intake's routing and every screen that shows it -- three copies of
+    `f"{box}@{domain}"` is how one of them keeps the shared domain after a
+    dealership has moved to its own.
+    """
+    box, domain = mailbox(), mail_domain()
+    return f"{box}@{domain}" if box and domain else ""
+
+
+def mail_domain_problem(raw: dict) -> str:
+    """Why a profile's `mail_domain` would be ignored, or "" when it is fine.
+
+    Read by the seed so a typo is refused out loud rather than silently
+    falling back to the shared domain -- which would send a dealership's mail
+    from an address its buyers were never told about.
+    """
+    stated = str((raw or {}).get("mail_domain") or "").strip().lower().rstrip(".")
+    if not stated:
+        return ""
+    if not _HOST_RE.match(stated):
+        return f"mail_domain {stated!r} is not a hostname"
+    shared = (settings.sending_domain or "").strip().lower()
+    if shared and not (stated == shared or stated.endswith("." + shared)):
+        return (f"mail_domain {stated!r} is not {shared} or a subdomain of it -- "
+                "SENDING_DOMAIN is the zone this deployment controls")
+    return ""
 
 
 def staff() -> list[dict]:

@@ -214,10 +214,18 @@ def reply_to_address(token: str) -> str:
     Empty is the honest answer rather than a plausible-looking address: with
     no SENDING_DOMAIN there is no Cloudflare route behind it, so a reply would
     bounce. Better that the send carries no Reply-To than one that eats mail.
+
+    On the dealership's own mail domain where it has one, so a reply comes
+    back the way the message went out -- `reply+...@alsbou.linerai.us` for
+    mail from `sales@alsbou.linerai.us`. The token routes it either way; the
+    domain is what a buyer sees in their mail client.
     """
-    if not settings.sending_domain:
+    from app import profile
+
+    domain = profile.mail_domain()
+    if not domain:
         return ""
-    return f"reply+{token}@{settings.sending_domain}"
+    return f"reply+{token}@{domain}"
 
 
 def signature(db: Session) -> str:

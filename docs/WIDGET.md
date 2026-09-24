@@ -25,7 +25,7 @@ example `https://alsbou.linerai.us/embed.js`.
 
 **A tag pasted before a group moved keeps working, and nobody has to edit the
 dealer's site.** `linerai.us` redirects a moved group's old addresses to its
-subdomain (`deploy/liner-groups-moved.conf`), so the script and its settings
+subdomain (the `moved_group` rule in `deploy/linerai.nginx.conf`), so the script and its settings
 still load. A redirect does not change the address the page's `<script>` tag
 names, though, so the settings say where the chat lives now (`frame_origin`)
 and the loader opens the chat there and talks to it there. A site with a

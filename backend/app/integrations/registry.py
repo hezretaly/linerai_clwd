@@ -151,6 +151,8 @@ def _inbound_status() -> IntegrationStatus:
     Cloudflare route is configured somewhere else entirely -- so folding this
     into the email row would hide exactly the half that breaks quietly.
     """
+    from app.profile import mail_domain as _reply_domain
+
     missing = []
     if not settings.webhook_secret:
         missing.append("WEBHOOK_SECRET")
@@ -164,7 +166,7 @@ def _inbound_status() -> IntegrationStatus:
         impl="webhook" if configured else "none",
         missing=missing,
         detail=(
-            f"Replies to reply+<token>@{settings.sending_domain} are accepted at "
+            f"Replies to reply+<token>@{_reply_domain()} are accepted at "
             "/api/inbound-email. The Cloudflare route that delivers them is "
             "configured outside this app -- see integrations/email/worker/README.md."
             if configured

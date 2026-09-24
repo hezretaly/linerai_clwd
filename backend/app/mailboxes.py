@@ -1,24 +1,32 @@
 """Which dealership an email is for, on a host that serves several.
 
-One sending domain, one mailbox per dealership: `alsbou@linerai.us`
-writes to Alsbou, `craigandlandreth@linerai.us` to Craig and Landreth. The
-provider verifies the *domain*, so every mailbox on it is legal to send from
-on one key -- the same fact that lets `founder@` and `cto@` share it -- and a
-new dealership is a line in its profile, not a new credential.
+Two shapes of dealership address, and a store has one or the other:
 
-The Worker posts to one URL with no store in the path, so the intake has to
-work out the store from the envelope. Two rules, in order:
+- **A mail domain of its own**, a subdomain of the sending domain:
+  `sales@alsbou.linerai.us`, with replies at `reply+<token>@alsbou.linerai.us`.
+  The whole domain is that store's, so anything delivered to it is filed
+  there -- `sales@`, a stranger guessing `info@`, whatever the Worker keeps.
+- **A mailbox on the shared domain**: `craigandlandreth@linerai.us`. Matched
+  on the local part, the way `is_ours` and the Worker compare, because the
+  domain in the envelope is whatever Cloudflare is routing.
+
+The provider verifies a *domain*, so every mailbox on one sends on one key and
+a new dealership on the shared domain is a line in its profile. A subdomain is
+a domain of its own to the provider and to Cloudflare, so it is verified and
+routed once, by whoever runs the deployment.
+
+The Worker posts to one URL with no store in the path, so the intake works out
+the store from the envelope, in this order:
 
 - **`reply+<token>@`** was minted by a send, and the send's row is in exactly
   one store's `outreach` table. Every seeded store is asked; the first that
-  holds the token wins.
-- **A mailbox** names the dealership whose profile declares it. Compared on
-  the local part, the way `is_ours` and the Worker compare, because the
-  domain in the envelope is whatever Cloudflare is routing.
+  holds the token wins. First, because the domain it arrives on is only what
+  the buyer's client kept.
+- **A store's own mail domain**, then **a shared-domain mailbox**.
 
-Anything else -- `sales@`, `support@`, a stranger -- stays with the default
-store, which is what it always was. Nothing here creates a database: a store
-without one is skipped, for the reason `ops_inbox._each` skips it.
+Anything else -- `sales@linerai.us`, `support@`, a stranger -- stays with the
+default store, which is what it always was. Nothing here creates a database: a
+store without one is skipped, for the reason `ops_inbox._each` skips it.
 """
 
 from __future__ import annotations
@@ -66,11 +74,19 @@ def using(slug: str) -> Iterator[None]:
 
 
 def local_part(address: str) -> str:
-    """`Name <alsbou@linerai.us>` -> `alsbou`."""
+    """`Name <sales@alsbou.linerai.us>` -> `sales`."""
     bare = (address or "").strip()
     if "<" in bare and ">" in bare:
         bare = bare[bare.index("<") + 1:bare.index(">")]
     return bare.strip().lower().partition("@")[0]
+
+
+def domain_of(address: str) -> str:
+    """`Name <sales@alsbou.linerai.us>` -> `alsbou.linerai.us`."""
+    bare = (address or "").strip()
+    if "<" in bare and ">" in bare:
+        bare = bare[bare.index("<") + 1:bare.index(">")]
+    return bare.strip().lower().rpartition("@")[2].rstrip(".")
 
 
 def mailbox_for(slug: str) -> str:
@@ -79,17 +95,43 @@ def mailbox_for(slug: str) -> str:
         return profile.mailbox()
 
 
+def domain_for(slug: str) -> str:
+    """One store's own mail domain, or "" when it lives on the shared one."""
+    with using(slug):
+        return profile.own_mail_domain()
+
+
+def _seeded() -> list[str]:
+    """Stores with a database. Routing mail to a store with none is a 500
+    dressed as delivery, so they are left out of every map here."""
+    return [slug for slug in known_stores() if has_database(slug)]
+
+
 def mailboxes() -> dict[str, str]:
-    """Every seeded store's mailbox, local part -> slug. Unseeded stores are
-    left out: routing mail to a store with no database is a 500 dressed as
-    delivery."""
+    """Every seeded shared-domain store's mailbox, local part -> slug.
+
+    A store with a domain of its own is **not** here, and that is the rule
+    that matters: Alsbou's mailbox is `sales`, and matched on the local part
+    it would claim `sales@linerai.us` -- the deployment's own dealership
+    address -- for Alsbou.
+    """
     out: dict[str, str] = {}
-    for slug in known_stores():
-        if not has_database(slug):
+    for slug in _seeded():
+        if domain_for(slug):
             continue
         box = mailbox_for(slug)
         if box and box not in out:
             out[box] = slug
+    return out
+
+
+def domains() -> dict[str, str]:
+    """Every seeded store's own mail domain, domain -> slug."""
+    out: dict[str, str] = {}
+    for slug in _seeded():
+        own = domain_for(slug)
+        if own and own not in out:
+            out[own] = slug
     return out
 
 
@@ -122,4 +164,9 @@ def store_for(to_address: str) -> str:
     found = REPLY_RE.search((to_address or "").strip().strip("<>").split("<")[-1].strip(">"))
     if found:
         return store_for_token(found.group(1))
+    domain = domain_of(to_address)
+    if domain:
+        owner = domains().get(domain)
+        if owner:
+            return owner
     return mailboxes().get(local_part(to_address), "")

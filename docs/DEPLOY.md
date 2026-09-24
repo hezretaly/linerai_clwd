@@ -925,350 +925,112 @@ that cannot be rebuilt from a seed.
 included. `rm -f backend/liner.db*` is no longer the right command and will
 destroy the wrong file.
 
-## Several dealer groups on their own server
+## The server everything runs on
 
-The shape this is heading for, one group at a time. **`linerai.us` stays
-where it is**: the landing page, `/ops`, Liner's own mail (`support@`,
-`founder@`, `cto@`) -- and every group that has not moved, at its path as
-today. **A group that moves gets a subdomain on a second server**, with
-Postgres behind it and a database of its own. **Alsbou goes first, and
-alone:**
+**[`docs/NEW-SERVER.md`](./NEW-SERVER.md) is the runbook**, written for a Claude
+Code session on that box and just as readable by a person. What it builds:
 
-| Address | Box | Its data |
+| Address | Process | Data |
 |---|---|---|
-| `linerai.us` | the one running now | its SQLite files, unchanged: Liner's own, and every group still there |
-| `alsbou.linerai.us` | the group server | `liner_alsbou` |
+| `linerai.us`, `www` | production, `/srv/liner`, port 8000 | `liner_ops`, and `liner` for events and mail to nobody |
+| `alsbou.linerai.us` (and each dealership after it) | production, the same process | `liner_<slug>` |
+| `demo.linerai.us/<store>` | the demo, `/srv/liner-demo`, port 8001, its own user, role and `.env` | `liner_demo`, `liner_demo_<store>` |
 
-Craig and Landreth and Riverside stay on `linerai.us` until each is moved the
-same way (*Moving another group*, below).
+The files beside it:
 
-**Alsbou's website chat does not need any of this.** The tag
-`<script src="https://linerai.us/alsbou/embed.js" async></script>` works
-against `linerai.us` as it runs today (docs/WIDGET.md), and keeps working
-after the move, because the redirect below covers `/alsbou/...`.
+- `deploy/linerai.nginx.conf`: one file with every name.
+  - The demo is an exact `server_name`, so a demo request cannot reach
+    production.
+  - `linerai.us/alsbou/...` redirects to the subdomain.
+  - `linerai.us/chat` and the rest of what the demo stores had on `linerai.us`
+    go to the demo.
+- `deploy/liner.service` and `deploy/liner-demo.service`.
+- `deploy/production.env.example` and `deploy/demo.env.example`. The runbook
+  fills every generated value in place; the secrets a person holds are typed
+  in by that person.
 
-A group is one database, so a manager works across all of its lots in one
-dashboard. Adding a group later is a profile, a DNS record and a line in the
-Worker's config; nginx names no group and routing needs no restart.
+**It was a fresh start, not a copy.** The old box kept running untouched
+until DNS moved, and pointing `linerai.us` back at it is the way back.
+`make to-postgres` and the move below stay for the day real rows do have to
+come across.
 
-**The subdomain is the store.** With `STORE_DOMAIN=linerai.us` the Host header
-picks the store exactly as a `/alsbou/` prefix does, and every link composed for
-that group's buyers — an emailed application, a signature image, the website
-chat tag — names the subdomain. A subdomain that is no group's answers 404
-rather than falling back to some default store, and nothing of Liner's own
-(`/ops`, owner sign-in) is served on a group's host.
+**`make live-check` is how that box tests itself** against the real services,
+using its own `.env`:
 
-Everything below was run against the shipped files: `deploy/liner-groups.nginx.conf`
-under nginx 1.24 in front of the app in this mode, the old box's redirects, and
-a tag written for the old address, followed by a browser from a dealer's page
-to a chat on the subdomain.
+- the chat turn and the voice session;
+- Resend's domain verification;
+- mail out, and back in through Cloudflare, the Worker and the intake, for
+  both `alsbou.linerai.us` and `linerai.us`;
+- the website chat, as the dealer's site asks for it.
 
-### 1. DNS and the certificate, in Cloudflare
+It cleans up after itself and prints no secret. `ARGS=--plan` is the dry run,
+and `make smoke` runs it.
 
-1. **DNS:** an `A` record for `alsbou` to the new server's IP, **proxied**.
-   Leave `linerai.us` and `www` alone. A group that moves later gets its own
-   record then. Use records rather than a `*` wildcard, so only names you
-   created reach the box.
-2. **Certificate:** SSL/TLS → Origin Server → *Create certificate*, for
-   `*.linerai.us` and `linerai.us`, RSA, the default fifteen years. Put both
-   halves on the new server:
-   ```bash
-   sudo install -d -m 700 /etc/ssl/cloudflare
-   sudo tee /etc/ssl/cloudflare/linerai.us.pem >/dev/null   # paste the certificate, then Ctrl-D
-   sudo tee /etc/ssl/cloudflare/linerai.us.key >/dev/null   # paste the private key, then Ctrl-D
-   sudo chmod 600 /etc/ssl/cloudflare/linerai.us.key
-   ```
-   Only Cloudflare connects to this box, and it trusts its own Origin CA; a
-   browser sees Cloudflare's edge certificate, which covers one level of
-   subdomain on every plan. Nothing to renew and no DNS challenge — a Let's
-   Encrypt wildcard needs DNS-01, which means a token on this box that can edit
-   the zone.
-3. **SSL/TLS mode: Full (strict).** It is one setting for the whole zone, so the
-   current box has to present a valid certificate as well (Let's Encrypt and
-   Origin CA both are). Check it still answers after switching; if it shows
-   Cloudflare's 526, its certificate is the problem, not the new box.
+### How the app sees one host serving many
 
-### 2. Postgres
+**The subdomain is the store.** With `STORE_DOMAIN=linerai.us`, the Host
+header picks the store exactly as a `/alsbou/` prefix does. Every link
+composed for that store's buyers names the subdomain: an emailed application,
+a signature image, the website chat tag.
 
-```bash
-sudo apt install postgresql                  # 13 or later
-PGPASS=$(openssl rand -hex 24)               # hex: nothing to escape inside a URL
-sudo -u postgres psql -c "CREATE ROLE liner LOGIN CREATEDB PASSWORD '$PGPASS'"
-```
+- A subdomain that is no store's answers 404, rather than falling back to some
+  default store.
+- Nothing of Liner's own (`/ops`, owner sign-in) is served on a store's host.
+- `DEALERSHIP` is left unset. Nothing is served unprefixed except Liner's own,
+  and the unprefixed database is where `/ops`'s events and mail addressed to
+  nobody are kept.
+- **`ALLOWED_ORIGINS` stays empty.** Every page calls its own host, and the
+  website chat's two public endpoints answer cross-origin by themselves.
+  Listing the store subdomains there would let each read the others' API with
+  a signed-in person's cookie. `alsbou.linerai.us` and
+  `craigandlandreth.linerai.us` are one *site* to a browser, so the cookie
+  goes along, and CORS would be all that said no.
 
-Keep that shell open: `.env` below is written from it. `CREATEDB` because the
-app makes each group's database itself — `make migrate ARGS=--create`,
-`make to-postgres` and `make reset-db` all do — with the settings it needs:
-UTF-8, and the `C` collation, so text sorts byte by byte as it did in SQLite and
-a list comes back in the same order it always did. To keep that right away from
-the role, make each database by hand instead (one per group, plus `liner` and
-`liner_ops`) and leave `CREATEDB` off:
+**A store can have a mail domain of its own.** Alsbou's profile says
+`mail_domain: alsbou.linerai.us`:
 
-```sql
-CREATE DATABASE liner_alsbou OWNER liner TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
-```
+- its mail goes out from `sales@alsbou.linerai.us`;
+- replies come back to `reply+<token>@alsbou.linerai.us`;
+- the intake files anything delivered to that domain in Alsbou's store.
 
-### 3. The code and `.env`
-
-The code goes on as in §1: the `liner` user, `/srv/liner`, `uv` system-wide.
-Then, in the shell that set `PGPASS`:
-
-```bash
-sudo tee /srv/liner/.env >/dev/null <<EOF
-ENV=production
-SESSION_SECRET=$(openssl rand -hex 32)
-
-# The subdomain is the store: alsbou.linerai.us is Alsbou's.
-STORE_DOMAIN=linerai.us
-
-# One database per group; {slug} is the group's profile name.
-DATABASE_URL_TEMPLATE=postgresql+psycopg://liner:$PGPASS@127.0.0.1:5432/liner_{slug}
-# Two more that every boot opens and that stay empty here: the unprefixed
-# default store, which this box serves to nobody, and Liner's own, which is
-# on linerai.us.
-DATABASE_URL=postgresql+psycopg://liner:$PGPASS@127.0.0.1:5432/liner
-OPS_DATABASE_URL=postgresql+psycopg://liner:$PGPASS@127.0.0.1:5432/liner_ops
-
-# Empty on purpose -- see below.
-ALLOWED_ORIGINS=
-
-# Production refuses to boot on the development default of any of these.
-# Everybody's real password comes across with the rows; these are only what
-# a fresh seed would use.
-MANAGER_PASSWORD=$(openssl rand -base64 12)
-REP_PASSWORD=$(openssl rand -base64 12)
-FOUNDER_PASSWORD=$(openssl rand -base64 12)
-CTO_PASSWORD=$(openssl rand -base64 12)
-# Liner's number is answered on linerai.us, not here. A random token seals
-# this box's phone webhook: nobody can sign a request with it.
-TWILIO_AUTH_TOKEN=$(openssl rand -hex 32)
-
-# The same value as on linerai.us: one Worker posts to both boxes, with one secret.
-WEBHOOK_SECRET=paste-the-current-box-value-here
-EOF
-sudo chown liner:liner /srv/liner/.env && sudo chmod 600 /srv/liner/.env
-```
-
-Then copy these from the current box's `.env` as they are: `OUTBOUND_ONLY_TO`,
-the email lines (`EMAIL_SENDER`, `RESEND_API_KEY`, `SENDING_DOMAIN`) and the
-model lines (`LLM_MODE`, `OPENAI_API_KEY` and whatever else you set there). A
-second Resend key for this box is better than the same one twice: either can
-then be revoked without stopping the other box's mail.
-
-Three things are left out on purpose:
-
-- **`PUBLIC_BASE_URL`.** Every link this box composes is for a group and names
-  that group's subdomain; the one other reader is the phone line, which is not
-  here.
-- **`DEALERSHIP`.** Nothing is served unprefixed on this box.
-- **Any address in `ALLOWED_ORIGINS`.** Every page here calls its own host, and
-  the website chat's two public endpoints answer cross-origin by themselves.
-  Listing the group subdomains there would let each read the others' API with
-  a signed-in person's cookie: `alsbou.linerai.us` and
-  `craigandlandreth.linerai.us` are one *site* to a browser, so the cookie goes
-  along, and CORS would be all that said no.
-
-### 4. The databases, then the data
-
-```bash
-cd /srv/liner
-sudo -u liner make install && sudo -u liner make build
-sudo -u liner make migrate ARGS=--create
-```
-
-`--create` makes `liner` and `liner_ops`, the two every boot opens; a group's
-own database is made by the copy. `migrate` then prints each one at its
-revision.
-
-**On the current box**, see what there is, then take copies. The files run in
-WAL mode, so `.backup` rather than `cp` — a copy taken mid-write can be torn or
-miss what is still in `-wal` — and it is safe with the service running:
-
-```bash
-cd /srv/liner && sudo -u liner make stores     # which file holds Alsbou
-sudo apt install sqlite3                        # if it is not there
-sudo -u liner mkdir -p move/var/stores
-sudo -u liner sqlite3 backend/var/stores/alsbou.db ".backup move/var/stores/alsbou.db"
-# Only if Alsbou is the store this box serves unprefixed (DEALERSHIP=alsbou in
-# its .env): its rows are in backend/liner.db instead.
-sudo -u liner sqlite3 backend/liner.db ".backup move/liner.db"
-```
-
-Run as `liner` so nothing root-owned is left beside a live database. The rest
-of `backend/var/` — received mail, attachments, recordings, signature images,
-crawl snapshots — is files that rows point at by a path relative to `var/`, so
-it needs only the same layout:
-
-```bash
-sudo tar -C /srv/liner/backend/var --exclude=./stores --exclude='./ops.db*' \
-    --exclude=./attachments/ops -czf /srv/liner/move/var-files.tgz .
-```
-
-Liner's own (`ops.db`, and the attachments of our own mail) stays behind. The
-other groups' files ride along -- recordings are not kept per store, so there
-is no clean cut -- and nothing on the new box can reach one without its rows. Move
-`/srv/liner/move` to the same place on the new box however you move files
-between the two, owned by `liner`, then there:
-
-```bash
-cd /srv/liner
-sudo -u liner tar -C backend/var -xzf move/var-files.tgz
-sudo -u liner make to-postgres ARGS="--from /srv/liner/move"           # the plan: what goes where
-sudo -u liner make to-postgres ARGS="--apply --from /srv/liner/move"   # the copy
-sudo -u liner make stores
-```
-
-With Alsbou in `liner.db`, add `--default-as alsbou` to both: that file is
-copied into Alsbou's database, and a `var/stores/` file of the same name, if
-there is one, is not. `make stores` on the current box says which of the two
-it was serving.
-
-The copy builds each database from the migrations first, reads every row
-through the models, keeps `events` ids (a dashboard replays from them), and
-counts both sides afterwards: `COUNTS DIFFER` and a non-zero exit if they do
-not match. It refuses a database that already holds rows; `--replace` drops and
-rebuilds it, which is what the final copy over a trial one needs.
-
-### 5. Run it
-
-```bash
-sudo cp deploy/liner.service /etc/systemd/system/liner.service
-sudo systemctl daemon-reload && sudo systemctl enable --now liner
-journalctl -u liner -f
-
-sudo cp deploy/liner-groups.nginx.conf /etc/nginx/sites-available/liner-groups
-sudo ln -sfn /etc/nginx/sites-available/liner-groups /etc/nginx/sites-enabled/liner-groups
-sudo rm -f /etc/nginx/sites-enabled/default    # it claims default_server too, and nginx -t refuses two
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-nginx 1.19.4 or later, for `ssl_reject_handshake`: Ubuntu 22.04 ships 1.18,
-while 24.04 and Debian 12 are fine. A name that is not `*.linerai.us` has its
-connection closed without an answer, so a scanner on the bare IP is never
-shown one of the dealerships. The unit starts after `postgresql.service`,
-because the boot migrates every database and fails if the server is not up.
-
-### 6. Check it, before anything points at it
-
-The records are live, but nothing sends anybody there yet: there is no
-redirect on the current box and no mail route. All of this is safe to repeat.
-
-```bash
-curl -s https://alsbou.linerai.us/api/health | head -c 120                    # "status":"ok"
-curl -s -o /dev/null -w '%{http_code}\n' https://alsbou.linerai.us/ops        # 404: ours is not here
-sudo -u liner make stores     # Alsbou seeded, with its mailbox and manager sign-in
-```
-
-Then in a browser:
-
-- **Sign in** at `https://alsbou.linerai.us/login` with an Alsbou account. The
-  password is the one they already had; everybody signs in once more, because
-  a session belongs to the host it was made on.
-- **Liner setup → Website:** the tag reads
-  `<script src="https://alsbou.linerai.us/embed.js" data-dealer="alsbou" async></script>`.
-  That is the one to hand to Get My Auto (docs/WIDGET.md).
-- `https://alsbou.linerai.us/` is their storefront, with the chat on it.
-
-### 7. The cut-over
-
-The copy you checked is a trial; the real one is taken when you move. In this
-order, and nothing on either box goes down:
-
-1. **Current box:** take the copies again (step 4's `.backup` lines and the
-   `tar`), and note the time.
-2. **New box:** copy them in over the trial —
-   `make to-postgres ARGS="--apply --replace --from /srv/liner/move"`, unpack
-   the files again — then `sudo systemctl restart liner`.
-3. **Current box: send Alsbou's addresses to its subdomain** with
-   `deploy/liner-groups-moved.conf` (its header says where it goes; it names
-   Alsbou and nobody else). Every address Alsbou ever had keeps working at the
-   same path on the subdomain —
-   a bookmark, an emailed application link, a saved car page, and a website
-   chat tag already on a dealer's site. That last one follows the redirect for
-   the script, then follows the chat itself, because its settings name the
-   origin the chat lives at now (`frame_origin`) — which needs this version of
-   the code on the current box as well.
-4. **Worker:** route Alsbou's mail to the new box (below).
-5. **Anything written for a group on the current box after step 1 exists only
-   there** — a chat before the redirect, a mail before the route. On a quiet
-   evening that is nothing. Mail is the part to check:
-   `make mail-check TO=alsbou@linerai.us` on the current box lists every
-   delivery, with its time.
-
-**Keep the SQLite files on the current box.** They are the way back: take the
-include out of nginx and `ROUTES` out of the Worker and it serves them again —
-without anything written on the new box since.
-
-**If Alsbou came from `liner.db`**, the current box's unprefixed `/app`,
-`/chat`, `/call`, `/showroom` and `/r/` are that group's stale copy. Uncomment
-the last block of `liner-groups-moved.conf` so they follow it. The landing
-page's *Test the chat* link is `/chat`, so it then opens that group's chat on
-its subdomain. `/login`, `/ops` and `/api` stay: Liner's own sign-in, dashboard
-and mail intake.
+A subdomain is a domain of its own to Resend and to Cloudflare Email Routing,
+so it is verified and routed once, in the runbook's step 9.
 
 ### Mail: one Worker, two boxes
 
-Email Routing hands every address on `linerai.us` to one Worker, and the Worker
-posted to one URL. So Alsbou's addresses now go to the new box and everything
-else — Liner's own, and the groups still on the current box — where it always
-went. In
-`backend/app/integrations/email/worker/wrangler.jsonc`, after
-`ALLOWED_RECIPIENTS` (with a comma after that line):
+Only for the day a store's mail has to go to a different server from Liner's
+own. Today one box serves both, and every message goes to the Worker's
+`WEBHOOK_URL`.
 
-```jsonc
-"ROUTES": "alsbou@=https://alsbou.linerai.us/api/emails/inbound/raw,reply+=https://alsbou.linerai.us/api/emails/inbound/raw"
-```
-
-then `wrangler deploy` from that directory. `prefix=url` pairs, first match
-wins, everything else to `WEBHOOK_URL` as before. Opening the Worker's own URL
-in a browser prints where each route goes (`routed elsewhere:`), which is the
-quickest way to see what is actually deployed.
-
-- **`reply+` goes to the new box whole.** A reply token names no group, but the
-  send that minted it is a row in exactly one database and the intake asks
-  every group on the box that receives it. Every token the current box minted
-  for Alsbou came across with the copy, and the redirects stop it minting new
-  ones: nobody sends Alsbou's mail from a dashboard that is somewhere else.
-- **While other groups stay on the current box, replies to *their* mail reach
-  the new box too.** A token names no group, so the Worker cannot tell them
-  apart; there they match nothing and are kept in the new box's unprefixed
-  database, which nothing shows. Fine while those groups mail no real buyers,
-  and it ends when they move.
-- **Craig and Landreth and Riverside stay where they are**: `craigandlandreth@`
-  and `sales@` (the fixture's) are not in `ROUTES`, so they go to
-  `WEBHOOK_URL` as before.
+- `ROUTES` in `wrangler.jsonc` sends some addresses elsewhere: `prefix=url`
+  pairs, first match wins, everything else to `WEBHOOK_URL`.
+- **`reply+` goes whole to one box.** A token names no store, but the send
+  that minted it is a row in exactly one database, and the intake asks every
+  store on the box that receives it.
 - **Both boxes need the same `WEBHOOK_SECRET`.** There is one secret on the
-  Worker, and a mismatch is a 401 it treats as permanent: the mail is lost,
-  not delayed.
-- `make smoke` fails on a route that is not https, not the raw intake, or for
-  an address the recipient list drops before any route is read.
+  Worker, and it treats a 401 as permanent: the mail is lost, not delayed.
+- `make smoke` fails on a route that is not https, is not the raw intake, or
+  is for an address the recipient list drops.
 
-### Moving another group
+### Moving a store's rows from SQLite
 
-Craig and Landreth or Riverside, when their turn comes, the way Alsbou went:
-its `A` record (step 1); only its file in the move directory, then
-`make to-postgres` (step 4 -- Alsbou's database is not touched, because its
-file is not in the directory); its name added to both alternations in
-`liner-groups-moved.conf` (`alsbou|craigandlandreth`); its mailbox in `ROUTES`.
-A group with several showrooms wants the parked lots work first (branch
-`claude/rooftops-parked`).
+For a store whose buyers already exist somewhere:
 
-### Adding a group later
+1. Copy its file with `sqlite3 <file> ".backup <copy>"`. Not `cp`: the files
+   run in WAL mode.
+2. Copy `backend/var/` with `tar`: received mail, attachments and recordings
+   are files that rows point at.
+3. `make to-postgres ARGS="--from <dir>"` prints the plan.
+4. `ARGS="--apply --from <dir>"` copies it.
 
-1. Its profile, `backend/config/dealerships/<slug>.yaml` (docs/DEMO.md), pushed
-   and pulled onto the new box.
-2. Its database: `sudo -u liner env DEALERSHIP=<slug> make reset-db` there —
-   on Postgres that creates `liner_<slug>` and seeds it, printing the logins.
-3. A proxied `A` record for `<slug>` in Cloudflare.
-4. Its mailbox in `ALLOWED_RECIPIENTS` and in `ROUTES`, then `wrangler deploy`.
-
-Nothing in nginx, and no restart: the store list is read off the profile
-directory per request.
+The copy builds each database from the migrations, keeps `events` ids, counts
+both sides afterwards, and refuses a database that already holds rows unless
+given `--replace`. `--default-as <slug>` copies an unprefixed `liner.db` into
+that store.
 
 ### Backups on Postgres
 
-One `pg_dump` per database. `make dump-ops ARGS=--files` prints the exact lines
-for every database this box names — they carry the database password, so run
-them rather than pasting them anywhere — and `backend/var/` is the rest.
-`pg_restore` reads them back. The copy from SQLite is not a backup: the SQLite
-files stop being current the moment the new box takes over.
+One `pg_dump` per database. `make dump-ops ARGS=--files` prints the exact
+lines for every database this box names. They carry the database password,
+so run them rather than pasting them anywhere. `backend/var/` is the rest,
+and `pg_restore` reads the dumps back.

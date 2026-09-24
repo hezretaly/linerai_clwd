@@ -236,7 +236,10 @@ def is_our_address(address: str) -> bool:
     if not bare:
         return False
     domain = (settings.sending_domain or "").strip().lower()
-    if domain and bare.endswith("@" + domain):
+    # A dealership's own mail domain is a subdomain of ours
+    # (`sales@alsbou.linerai.us`), and it is ours in the sense this asks:
+    # a Reply all must not answer it and a round trip may send to it.
+    if domain and (bare.endswith("@" + domain) or bare.endswith("." + domain)):
         return True
     return bare in our_addresses()
 

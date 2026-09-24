@@ -17,24 +17,28 @@
 		// with the SMTP envelope in X-Envelope-From / X-Envelope-To. Same
 		// host, same secret. /api/inbound-email/raw is the same handler.
 		"WEBHOOK_RAW_URL": "https://linerai.us/api/emails/inbound/raw",
-		// Every local part the intake accepts. The first five are Liner's own
-		// and the reply tokens; after them, **one mailbox per dealership** --
-		// the `mailbox:` in each profile under backend/config/dealerships/.
-		// Mail to a dealership's mailbox is filed in that dealership's store.
-		// A new dealership is a new entry here *and* a `wrangler deploy`;
-		// `make smoke` fails if a profile's mailbox is missing from this list.
+		// Every local part the intake accepts, on every domain Cloudflare
+		// routes here -- `linerai.us` and each dealership's own subdomain
+		// (`alsbou.linerai.us`). The first five are Liner's own and the reply
+		// tokens; `sales@` is also Alsbou's production mailbox,
+		// `sales@alsbou.linerai.us`, which the intake files in Alsbou's store
+		// by its domain. After them, one mailbox per dealership on the shared
+		// domain -- the `mailbox:` in each profile under
+		// backend/config/dealerships/. `alsbou@` is what Alsbou's mail was
+		// before it had a domain of its own; kept so nothing already sent to it
+		// is thrown away, and filed in the default store, which on the
+		// production box is Alsbou's. A new dealership is a new entry here
+		// *and* a `wrangler deploy`; `make smoke` fails if a profile's mailbox
+		// is missing from this list.
 		"ALLOWED_RECIPIENTS": "support@,sales@,founder@,cto@,reply+,alsbou@,craigandlandreth@"
-		// When the dealer groups are served by another box than Liner's own
-		// (docs/DEPLOY.md, "Several dealer groups on their own server"), their
-		// mail goes there: `prefix=url` pairs, first match wins, everything
-		// else to the URL above. `reply+` goes whole to any one group's host --
-		// the intake finds the token's group among all of them -- and while
-		// some groups are still on linerai.us, replies to *their* mail go
-		// there too and match nothing (docs/DEPLOY.md, "Mail: one Worker, two
-		// boxes"). Both boxes need the same WEBHOOK_SECRET. Kept in this file,
+		// One box serves linerai.us and every dealership subdomain, so every
+		// message goes to the URLs above and there is no `ROUTES`. It exists
+		// for the day a dealership's mail has to go to a different server
+		// than Liner's own: `prefix=url` pairs, first match wins, everything
+		// else to the URL above, both boxes on the same WEBHOOK_SECRET
+		// (docs/DEPLOY.md, "Mail: one Worker, two boxes"). Kept in this file,
 		// not the dashboard: a deploy overwrites vars it does not name.
-		// Uncommented, the line above needs a comma after it. Alsbou only, for
-		// now; a group that moves later adds its mailbox.
+		// Uncommented, the line above needs a comma after it.
 		// "ROUTES": "alsbou@=https://alsbou.linerai.us/api/emails/inbound/raw,reply+=https://alsbou.linerai.us/api/emails/inbound/raw"
 	}
 

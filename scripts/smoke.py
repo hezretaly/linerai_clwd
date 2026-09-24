@@ -2771,7 +2771,7 @@ def main() -> int:
           landed.get("matched_by") == "reply_token", str(landed.get("matched_by")))
 
     print("\n== one mailbox per dealership, and mail to it lands in that store ==")
-    # `alsbou@linerai.us` is Alsbou's, declared in its profile, and the
+    # `sales@alsbou.linerai.us` is Alsbou's, declared in its profile, and the
     # Worker posts to one URL with no store in the path -- so the envelope is
     # what routes a delivery on a host serving several dealerships. Without
     # this every dealership's mail landed in whichever store `DEALERSHIP=`
@@ -2779,25 +2779,69 @@ def main() -> int:
     from app import mailboxes as _boxes
     from app.db import SessionLocal as _Store2
     from app.models import InboundEmail as _Inbound, Lead as _Lead2, Outreach as _Sent
-    boxes = _boxes.mailboxes()
-    # Alsbou's is *written in* rather than derived -- the derivation off
-    # `alsboucars.com` would give `alsboucars`, and the entry their mail is
-    # kept by at Cloudflare says `alsbou@`. Those two being the same string is
-    # the whole routing, so the shorter one is asserted by name here and the
-    # agreement with the Worker's list is asserted further down.
-    check("every seeded dealership with a website declares a mailbox",
-          "alsbou" in boxes and boxes["alsbou"] == "alsbou", str(boxes))
+    boxes, owned = _boxes.mailboxes(), _boxes.domains()
+    # Two shapes of dealership address. Craig and Landreth's is a mailbox on
+    # the shared domain, *written in* rather than derived; Alsbou's is a
+    # domain of its own, `sales@alsbou.linerai.us`, and the whole of that
+    # domain is theirs. The local part has to be one the Worker's list keeps,
+    # which is asserted further down.
+    check("a dealership on the shared domain declares a mailbox",
+          boxes.get("craigandlandreth") == "craigandlandreth", str(boxes))
+    check("a dealership with a mail domain of its own owns that domain",
+          owned.get("alsbou.linerai.us") == "alsbou", str(owned))
+    # Alsbou's local part is `sales`. Matched on the local part like a shared
+    # mailbox, it would claim `sales@linerai.us` -- the deployment's own
+    # dealership address -- for Alsbou.
+    check("and its local part is not a shared-domain mailbox, or it would claim sales@ everywhere",
+          "alsbou" not in boxes.values() and "sales" not in boxes, str(boxes))
     check("the fixture, which has no website, declares none",
           "" not in boxes and _boxes.mailbox_for("") == "", str(boxes))
     # Two profiles naming one mailbox would route by slug order, silently.
     # Read from every profile rather than from `mailboxes()`, which already
     # de-duplicates first-wins -- the collision is the thing being checked.
     from app.stores import known_stores as _known
-    declared = [(box, s) for s in _known() for box in [_boxes.mailbox_for(s)] if box]
+    declared = [(box, s) for s in _known() if not _boxes.domain_for(s)
+                for box in [_boxes.mailbox_for(s)] if box]
     clashes = sorted({box for box, _ in declared if sum(1 for b, _ in declared if b == box) > 1})
     check("no two dealerships declare the same mailbox", not clashes, str(clashes))
+    domained = [d for s in _known() for d in [_boxes.domain_for(s)] if d]
+    check("and no two declare the same mail domain",
+          len(domained) == len(set(domained)), str(domained))
     check("and a mailbox can never look like a reply token",
-          all("+" not in box and box != "reply" for box, _ in declared), str(declared))
+          all("+" not in _boxes.mailbox_for(s) and _boxes.mailbox_for(s) != "reply" for s in _known()),
+          str(declared))
+    # A mail domain outside the zone this deployment controls would be
+    # ignored and the store would send from the shared domain -- an address
+    # its buyers were never given. The seed refuses it by name instead.
+    from app import profile as _mprof
+    from app.config import settings as _mcfg
+    _kept_sd = _mcfg.sending_domain
+    _mcfg.sending_domain = "linerai.us"
+    try:
+        check("a mail domain outside the sending domain is refused by name",
+              "not linerai.us or a subdomain" in _mprof.mail_domain_problem({"mail_domain": "alsbou.example.com"})
+              and _mprof.mail_domain_problem({"mail_domain": "alsbou.linerai.us"}) == ""
+              and "not a hostname" in _mprof.mail_domain_problem({"mail_domain": "a b"}))
+        with _boxes.using("alsbou"):
+            _addr, _rdom = _mprof.mailbox_address(), _mprof.mail_domain()
+        with _boxes.using("craigandlandreth"):
+            _caddr = _mprof.mailbox_address()
+        check("Alsbou's mail goes out from its own domain, Craig's from the shared one",
+              _addr == "sales@alsbou.linerai.us" and _caddr == "craigandlandreth@linerai.us",
+              f"{_addr} / {_caddr}")
+        from app import outreach_send as _os
+        with _boxes.using("alsbou"):
+            _rt = _os.reply_to_address("abc123")
+        check("and a buyer's reply comes back on the domain the mail went out from",
+              _rt == "reply+abc123@alsbou.linerai.us", _rt)
+        from app.email_intake import is_ours as _is_ours
+        from app.email_envelopes import is_our_address as _ours_addr
+        check("support@ on a dealership's own domain is that dealership's, not Liner's",
+              _is_ours("support@alsbou.linerai.us") == "" and _is_ours("support@linerai.us") != "")
+        check("and a Reply all never answers a dealership's own mail domain",
+              _ours_addr("sales@alsbou.linerai.us") and not _ours_addr("sales@alsbou.example.com"))
+    finally:
+        _mcfg.sending_domain = _kept_sd
 
     print("\n== every store's manager signs in at their own domain ==")
     # A login sheet is the first thing a dealership reads, and an address at a
@@ -2885,7 +2929,7 @@ def main() -> int:
     routed_id = f"<worker-{run}-routed@outlook.com>"
     routed_from = f"alsbou.buyer.{run}@example.invalid"
     inbound(worker_payload(
-        messageId=routed_id, to="alsbou@linerai.us", conversationId="",
+        messageId=routed_id, to="sales@alsbou.linerai.us", conversationId="",
         subject="Is the Q7 still available?", **{"from": routed_from, "fromAddress": routed_from},
     ), path="/api/emails/inbound", shared=WEBHOOK_SECRET.decode())
     filed = None
@@ -2912,9 +2956,15 @@ def main() -> int:
         _adb.add(their_send); _adb.commit()
         their_token = their_send.reply_token
     check("a reply token is looked up across every store",
-          _boxes.store_for(f"reply+{their_token}@linerai.us") == "alsbou")
+          _boxes.store_for(f"reply+{their_token}@linerai.us") == "alsbou"
+          and _boxes.store_for(f"reply+{their_token}@alsbou.linerai.us") == "alsbou")
     check("and an address that is nobody's mailbox stays with the default store",
           _boxes.store_for("sales@linerai.us") == "" and _boxes.store_for("support@linerai.us") == "")
+    check("anything on a dealership's own domain is theirs, whatever the local part",
+          _boxes.store_for("Buyer Desk <sales@alsbou.linerai.us>") == "alsbou"
+          and _boxes.store_for("info@alsbou.linerai.us") == "alsbou")
+    check("and a shared-domain mailbox still routes on its local part",
+          _boxes.store_for("craigandlandreth@linerai.us") == ("craigandlandreth" if _seeded("craigandlandreth") else ""))
     # The default store's inbox must not have seen it: filed once, in one
     # place, or a rep at the wrong dealership reads somebody else's buyer.
     with _Store2("") as _ddb:
@@ -2953,8 +3003,8 @@ def main() -> int:
               minted is None or _adb.query(_Lead2).filter_by(id=minted.id).count() == 0)
 
     # And the other direction: what a dealership's mail goes out *from*. The
-    # From carries the dealership's name and its own mailbox on the shared
-    # domain, so a reply -- or a fresh message to the address on the mail --
+    # From carries the dealership's name and its own mailbox, on its own
+    # domain where it has one, so a reply -- or a fresh message to the address on the mail --
     # comes back to the right store.
     from app import outreach_send as _out
     from app.config import settings as _cfg2
@@ -2968,8 +3018,8 @@ def main() -> int:
             default_from = _out.dealership_from(_ddb, _Outbox())
     finally:
         _cfg2.sending_domain = kept_domain
-    check("a dealership's mail goes out from its own mailbox on the shared domain",
-          "<alsbou@linerai.us>" in alsbou_from and "Alsbou" in alsbou_from, alsbou_from)
+    check("a dealership's mail goes out from its own mailbox on its own domain",
+          "<sales@alsbou.linerai.us>" in alsbou_from and "Alsbou" in alsbou_from, alsbou_from)
     check("and the fixture, with no mailbox, keeps the deployment's sales@",
           "<sales@linerai.us>" in default_from, default_from)
 
@@ -6135,7 +6185,10 @@ def main() -> int:
     found = re.search(r'"ALLOWED_RECIPIENTS":\s*"([^"]*)"', wrangler)
     deployed = {p.strip().lower() for p in (found.group(1) if found else "").split(",") if p.strip()}
     from app import mailboxes as _mb
-    missing_boxes = sorted(f"{box}@" for box in _mb.mailboxes() if f"{box}@" not in deployed)
+    # A store on a domain of its own is kept by the Worker on its local part
+    # too -- `sales@` for `sales@alsbou.linerai.us` -- so both shapes count.
+    every_box = set(_mb.mailboxes()) | {_mb.mailbox_for(s) for s in _mb.domains().values()}
+    missing_boxes = sorted(f"{box}@" for box in every_box if box and f"{box}@" not in deployed)
     check("every dealership's mailbox is in the Worker's deployed recipient list",
           found is not None and not missing_boxes,
           f"missing from wrangler.jsonc ALLOWED_RECIPIENTS: {missing_boxes}")
@@ -6163,40 +6216,103 @@ def main() -> int:
     check("and every route it has is https, to the raw intake, for an address it accepts",
           not stray_routes, f"{len(pairs)} route(s)" if not stray_routes else str(stray_routes))
 
-    print("\n== the group server's deploy files ==")
+    print("\n== make live-check, as a plan ==")
+    # The live check runs on the server against real vendors, so nothing here
+    # can run it -- but its plan can, and the plan is built from the same
+    # settings and profile readers the checks use. Driven as a subprocess with
+    # a production-shaped environment, and read for the two things that
+    # matter before anybody runs it for real: it names Alsbou's own mail
+    # domain as the round trip's address, and it prints no secret.
+    import os as _os
+    import subprocess as _sp
+    _plan_env = {**_os.environ, "SENDING_DOMAIN": "linerai.us", "STORE_DOMAIN": "linerai.us",
+                 "WEBHOOK_SECRET": f"live-check-secret-{run}", "OPENAI_API_KEY": f"sk-live-check-{run}"}
+    _plan = _sp.run([sys.executable, "scripts/live_check.py", "--plan", "--store", "alsbou"],
+                    capture_output=True, text=True, env=_plan_env, timeout=120)
+    check("the live check's plan runs, and touches nothing", _plan.returncode == 0
+          and "nothing is sent, written or fetched" in _plan.stdout, (_plan.stderr or _plan.stdout)[-300:])
+    check("its round trip goes to Alsbou's own mail domain, at Alsbou's own address",
+          "reply+<token>@alsbou.linerai.us" in _plan.stdout
+          and "https://alsbou.linerai.us/api/chat/sessions" in _plan.stdout, _plan.stdout[:400])
+    check("and it prints no secret",
+          f"live-check-secret-{run}" not in _plan.stdout + _plan.stderr
+          and f"sk-live-check-{run}" not in _plan.stdout + _plan.stderr)
+    _demo = _sp.run([sys.executable, "scripts/live_check.py", "--plan", "--demo", "--store", "craigandlandreth"],
+                    capture_output=True, text=True, timeout=120)
+    check("the demo's plan sends no mail", _demo.returncode == 0
+          and "skipped: the demo sends no mail" in _demo.stdout, (_demo.stderr or _demo.stdout)[-300:])
+
+    print("\n== the new server's deploy files ==")
     # Nothing here runs nginx, so what is checked is what a later edit could
-    # quietly lose -- and each of these was driven through a real nginx and a
-    # real browser when it was written (docs/DEPLOY.md, "Several dealer
-    # groups on their own server").
-    groups_conf = pathlib.Path("deploy/liner-groups.nginx.conf").read_text()
-    blocks = re.findall(r"location\s+[^{]+\{([^}]*)\}", groups_conf)
+    # quietly lose. The file was driven through nginx 1.24 with curl when it
+    # was written: every redirect below, the demo's name reaching port 8001,
+    # the wildcard reaching 8000, and a stranger's name closed.
+    site = pathlib.Path("deploy/linerai.nginx.conf").read_text()
+    live_site = "\n".join(line for line in site.splitlines() if not line.strip().startswith("#"))
+    servers = {}
+    for chunk in re.split(r"\n(?=server \{)", live_site):
+        named = re.search(r"server_name\s+([^;]+);", chunk)
+        if named:
+            servers[named.group(1).strip()] = chunk
+    blocks = re.findall(r"location\s+[^{]+\{([^}]*)\}", live_site)
     proxied = [b for b in blocks if "proxy_pass" in b]
-    # The Host header *is* the store on that box. A location that drops it
+    # The Host header *is* the store on production. A location that drops it
     # sends every request there to nobody's store.
-    check("every proxied location on the group server passes the Host through",
+    check("every proxied location passes the Host through",
           proxied and all("proxy_set_header Host $host" in b for b in proxied),
           f"{len(proxied)} proxied")
     check("and a name that is not one of ours is closed, not served as a dealership",
-          "default_server" in groups_conf and "return 444" in groups_conf
-          and "ssl_reject_handshake on" in groups_conf)
-    moved_conf = pathlib.Path("deploy/liner-groups-moved.conf").read_text()
-    live_moved = "\n".join(line for line in moved_conf.splitlines() if not line.strip().startswith("#"))
-    named_groups = [set(m.split("|")) for m in re.findall(r"\(\?<\w+>([a-z0-9|_-]+)\)", live_moved)]
+          "default_server" in live_site and "return 444" in live_site
+          and "ssl_reject_handshake on" in live_site)
+    demo_block, shop_block = servers.get("demo.linerai.us", ""), servers.get("*.linerai.us", "")
+    apex_block = servers.get("linerai.us", "")
+    check("the demo's name reaches the demo's process, and only the demo's",
+          "proxy_pass http://liner_demo" in demo_block and "liner_app" not in demo_block
+          and "server 127.0.0.1:8001" in live_site, str(sorted(servers)))
+    check("and every dealership's subdomain, and Liner's own, reach production",
+          "proxy_pass http://liner_app" in shop_block and "liner_demo;" not in shop_block
+          and "proxy_pass http://liner_app" in apex_block)
+    # Stores on the demo are paths, so its dashboard's socket is
+    # `/<store>/ws/dealer`; without the Upgrade headers there it 404s.
+    check("a demo store's dashboard socket under its path is upgraded",
+          re.search(r"location ~ \^/\[\^/\]\+/ws/ \{[^}]*Upgrade", demo_block) is not None)
+    check("the landing page's Test the chat goes to the demo",
+          re.search(r"location ~ \^/\(app\|chat\|call[^{]*\{[^}]*demo\.linerai\.us", apex_block) is not None)
+    moved = [set(m.split("|")) for m in re.findall(r"\(\?<\w+>([a-z0-9|_-]+)\)", apex_block)]
     from app.stores import known_stores as _groups_known
 
-    check("the old box's redirect names the same groups in both of its rules, and only real ones",
-          len(named_groups) == 2 and named_groups[0] == named_groups[1]
-          and named_groups[0] <= set(_groups_known()),
-          f"{[sorted(g) for g in named_groups]} vs profiles {_groups_known()}")
-    # The loader asks for its settings under the group's old path from the
-    # dealer's page; a redirect the page may not read is a failed fetch and
-    # no bubble. And 308, so a POST stays a POST.
+    check("the moved dealership is named in both of its rules, and it is a real one",
+          len(moved) == 2 and moved[0] == moved[1] and moved[0] <= set(_groups_known()),
+          f"{[sorted(g) for g in moved]} vs profiles {_groups_known()}")
+    # The loader asks for its settings under the old path from the dealer's
+    # page; a redirect the page may not read is a failed fetch and no bubble.
+    alsbou_rule = re.search(r"location ~ \^/\(\?<moved_group>[^{]*\{[^}]*\}\s*\}", apex_block)
     check("and its redirect is readable cross-origin, and keeps the method",
-          'add_header Access-Control-Allow-Origin "*"' in live_moved
-          and "return 308" in live_moved and "return 301" not in live_moved)
-    service = pathlib.Path("deploy/liner.service").read_text()
-    check("the service starts after the database server it needs",
-          re.search(r"^After=.*postgresql\.service", service, re.M) is not None)
+          alsbou_rule is not None and 'Access-Control-Allow-Origin "*"' in alsbou_rule.group(0)
+          and "return 308" in alsbou_rule.group(0))
+    for unit, user, port in (("deploy/liner.service", "liner", 8000),
+                             ("deploy/liner-demo.service", "linerdemo", 8001)):
+        text_ = pathlib.Path(unit).read_text()
+        check(f"{unit} starts after Postgres, as {user}, on {port}",
+              re.search(r"^After=.*postgresql\.service", text_, re.M) is not None
+              and f"User={user}" in text_ and f"--port {port}" in text_)
+    prod_env = pathlib.Path("deploy/production.env.example").read_text()
+    demo_env = pathlib.Path("deploy/demo.env.example").read_text()
+    envs = lambda t: dict(  # noqa: E731
+        line.split("=", 1) for line in t.splitlines() if line and not line.startswith("#") and "=" in line)
+    pe, de = envs(prod_env), envs(demo_env)
+    check("production serves stores by subdomain and delivers mail; the demo does neither",
+          pe.get("STORE_DOMAIN") == "linerai.us" and pe.get("EMAIL_SENDER") == "resend"
+          and "STORE_DOMAIN" not in de and de.get("EMAIL_SENDER") == "outbox", f"{pe.get('STORE_DOMAIN')} / {de.get('EMAIL_SENDER')}")
+    check("and they share no database",
+          not ({v for k, v in pe.items() if "DATABASE_URL" in k} & {v for k, v in de.items() if "DATABASE_URL" in k})
+          and "liner_demo" in de.get("DATABASE_URL", "") and "@" in pe.get("DATABASE_URL", ""))
+    check("and every setting the boot refuses a default for is generated in both",
+          all(t.get(k) == "__GENERATE__" for t in (pe, de) for k in (
+              "SESSION_SECRET", "MANAGER_PASSWORD", "REP_PASSWORD", "OWNER_PASSWORD",
+              "FOUNDER_PASSWORD", "CTO_PASSWORD", "TWILIO_AUTH_TOKEN")))
+    check("and the public demo door is open only on the demo",
+          de.get("PUBLIC_DEMO") == "true" and pe.get("PUBLIC_DEMO", "false") == "false")
 
     print("\n== a real dealer platform, parsed from its own markup ==")
     # The first adapter written against a real site rather than the JSON-LD
@@ -6810,7 +6926,7 @@ def main() -> int:
                 _adb.commit()
                 their_envelope = _In(
                     outcome="accepted", message_id=f"<alsbou-waits-{stamp}@mail>",
-                    from_address=theirs_buyer.email, to_address="alsbou@linerai.us",
+                    from_address=theirs_buyer.email, to_address="sales@alsbou.linerai.us",
                     subject="Q7", body="Is it still there?", lead_id=theirs_buyer.id,
                 )
                 their_note = _Sent(

@@ -545,7 +545,7 @@ async def main() -> int:
             # **A tag written for an older address follows the chat to where
             # it lives now.** A tag pasted as `linerai.us/<dealer>/embed.js`
             # still loads once the group has its own subdomain -- the old box
-            # redirects it (deploy/liner-groups-moved.conf) -- but a redirect
+            # redirects it (deploy/linerai.nginx.conf) -- but a redirect
             # does not change `currentScript.src`, so the loader has to take
             # the config's `frame_origin` over its own: for the frame's
             # address *and* for the origin every message is pinned to. Half of

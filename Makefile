@@ -1,4 +1,4 @@
-.PHONY: prune-ops help install deps build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores
+.PHONY: prune-ops help install deps build set-password add-user ingest mail-check live-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -119,6 +119,9 @@ to-postgres: ## Copy the SQLite databases into Postgres, one per store (ARGS=--a
 agent-ping: ## One real turn against the configured model, errors printed in full
 	$(PY) scripts/agent_ping.py
 
+live-check: ## The running system against the real services, from the box: [INBOX=you@...] [ARGS=--plan|--demo|--only chat,voice]
+	$(PY) scripts/live_check.py $(ARGS) $(if $(INBOX),--inbox $(INBOX))
+
 agent-check: ## Drive the live loop against a fake provider (no API key needed)
 	$(PY) scripts/agent_loop_check.py
 
@@ -150,8 +153,8 @@ fixture-site: ## Serve the scraper fixture dealer site on :8100
 ingest: ## Crawl the dealership's own site, every step narrated. ARGS=--publish to apply.
 	$(PY) scripts/ingest.py $(ARGS)
 
-mail-check: ## Why a message to one of our addresses did not arrive: TO=alsbou@linerai.us
-	@test -n "$(TO)" || (echo 'Usage: make mail-check TO=alsbou@linerai.us'; exit 1)
+mail-check: ## Why a message to one of our addresses did not arrive: TO=sales@alsbou.linerai.us
+	@test -n "$(TO)" || (echo 'Usage: make mail-check TO=sales@alsbou.linerai.us'; exit 1)
 	$(PY) scripts/mail_check.py "$(TO)"
 
 capture: ## Fetch a dealer site's listings and report what can be read: URL=https://...

@@ -399,6 +399,14 @@ def _check_profile(raw: dict, path) -> None:
             "These are that dealership's real details and nothing here can look\n"
             "them up. Fill them in from their own site, then seed again.\n"
         )
+    # A mail domain that would be ignored is refused, not fallen back from:
+    # the fallback is the shared domain, which sends a dealership's mail from
+    # an address its buyers were never given.
+    from app import profile as _profile
+
+    wrong = _profile.mail_domain_problem(raw)
+    if wrong:
+        raise SystemExit(f"\n{path}: {wrong}.\n")
 
 
 def load_profile() -> dict:

@@ -41,10 +41,11 @@ feature reports itself as unavailable rather than simulating a result.
 | `make accept-ui` | The same path through the screens — buyer window and dealer window, real clicks |
 | `make agent-check` | Just the live-loop half of the gate: tools, guards, wire format, no API key |
 | `make agent-ping` | **Debugging live mode.** One real call, the vendor's error printed in full |
+| `make live-check` | **The deployment's gate, run on the server against the real vendors**: settings (never a value), Resend's domains, a live chat turn, a voice mint and a Realtime exchange, the intake, real mail out and back through Cloudflare for both domains, the widget. `INBOX=you@...` adds one mail each way; `ARGS=--plan` touches nothing; `ARGS=--demo` for the demo instance. Cleans up after itself |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
 | `make ingest` | **Crawl the dealership's own site, every step narrated.** `ARGS=--publish` applies it |
-| `make mail-check` | **Why a message to one of our addresses did not arrive**: `TO=alsbou@linerai.us`. Which store that mailbox routes to, whether it is seeded, whether this checkout's Worker would keep it, and every receipt for it across every store. *No receipt at all* is the answer that matters — it means Cloudflare or the Worker, not this app |
+| `make mail-check` | **Why a message to one of our addresses did not arrive**: `TO=sales@alsbou.linerai.us`. Which store that mailbox routes to, whether it is seeded, whether this checkout's Worker would keep it, and every receipt for it across every store. *No receipt at all* is the answer that matters — it means Cloudflare or the Worker, not this app |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
 | `make build` | Build the frontend into `frontend/dist` (the API serves it in production) |
@@ -71,11 +72,12 @@ each one buys: **[`docs/DEMO.md`](./docs/DEMO.md)**.
 
 Deploying to a real host: **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**. One process
 serves the API, the WebSocket, the landing page and the SPA, so nginx needs a
-single `proxy_pass`. The dealer groups' own server — a subdomain each, Postgres,
-the copy from SQLite and the cut-over from `linerai.us` — is its last section,
-*Several dealer groups on their own server*, with `deploy/liner-groups.nginx.conf`
-for that box and `deploy/liner-groups-moved.conf` for the one that keeps
-`linerai.us`.
+single `proxy_pass`. **The server everything runs on now** — `linerai.us`,
+`alsbou.linerai.us` and an isolated `demo.linerai.us`, on Postgres, fresh — is
+**[`docs/NEW-SERVER.md`](./docs/NEW-SERVER.md)**, written as the runbook for a
+Claude session on that box, with `deploy/linerai.nginx.conf`, the two units
+and the two `.env` templates beside it. `make live-check` is how that box
+tests itself against the real vendors.
 
 `make dev` kills those ports first — orphaned processes across sessions are the
 most common way this gets confusing.
@@ -1026,6 +1028,37 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Send waits for uploads.** `AttachmentPicker` reports files in flight
     and every composer holds Send until they land; pressing it mid-upload
     sent the message without the file and nothing said so.
+- **`make live-check` is the deployment's gate, as `make smoke` is the
+  code's.** Smoke fakes every vendor on purpose; this is the box itself --
+  its `.env`, its Postgres, nginx, Cloudflare and the three vendors --
+  answering from where it runs (`scripts/live_check.py`, docs/NEW-SERVER.md).
+  - **It prints no secret.** A key is *set* or *NOT SET*; no value, no length,
+    no last four. It runs in a session whose transcript is kept.
+  - **Round trips go only to our own addresses, and that is why they skip
+    `OUTBOUND_ONLY_TO`.** `is_our_address` is asserted before each send.
+    `INBOX=` is a real person and goes through `blocked_reason` like any send.
+    Every test message carries `Auto-Submitted`, so no assistant answers one.
+  - **The intake and the whole route are separate sections.** A message posted
+    straight to the Worker's URL passing while the real email does not puts
+    the fault in Cloudflare or the Worker, not here. It also lets the app half
+    run before `linerai.us` points at the box.
+  - **It cleans up by the schema, not by a list.** `purge` follows every
+    foreign key into what the check created. A hand-written list is the one
+    that misses next month's table and leaves a live check's lead on a
+    dealership's board. The raw `.eml` goes too.
+  - **Dealership mail is sent inside `mailboxes.using(store)`.** Outside it,
+    `from_header` checks the address against the *default* store's mailbox,
+    finds `sales@alsbou.linerai.us` is not its own, and falls back to
+    `sales@linerai.us` -- a send that succeeds from the wrong address. Found
+    writing the check, and it is the same rule every background sender here
+    already follows.
+  - `make smoke` runs its `--plan` with a production-shaped environment and
+    reads it for Alsbou's own domain and for no secret.
+- **The dashboard's test reply posts to the port it is served on.** It said
+  `127.0.0.1:8000`, so on a box running the demo on 8001 beside production,
+  the demo's test reply went to production's intake -- refused only because
+  the two secrets differ. `request.scope["server"]` is the address this
+  process listens on.
 - **`OUTBOUND_ONLY_TO` gates sending, never receiving.** One setting whose
   name is the rule: empty refuses every send, a list allows those addresses,
   the word `everyone` lifts the limit. One call site,
@@ -2236,8 +2269,8 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       that routes an answer back into the buyer's timeline — not a header a
       rep's own address may take over.
   - **One mailbox per dealership on the shared domain, and the envelope
-    routes the mail.** `alsbou@linerai.us` is Alsbou's and
-    `craigandlandreth@linerai.us` is Craig and Landreth's: the `mailbox:` in
+    routes the mail.** `craigandlandreth@linerai.us` is Craig and
+    Landreth's: the `mailbox:` in
     each profile (derived from the website's host when it is not written
     in; the fixture, with no site, has none and keeps `sales@`). The
     provider verifies the domain, so every mailbox on it sends on one key
@@ -2258,6 +2291,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       `ALLOWED_RECIPIENTS`, a new dealership is an entry there plus a
       `wrangler deploy`, and `make smoke` fails on a profile whose mailbox
       is missing from that list.
+    - **Or a domain of its own, and then the whole domain is theirs.**
+      Alsbou's production mail is `sales@alsbou.linerai.us`, with replies
+      at `reply+<token>@alsbou.linerai.us`: the profile's `mail_domain`,
+      which must be `SENDING_DOMAIN` or a subdomain of it (the seed refuses
+      anything else by name rather than falling back to the shared domain,
+      which would mail buyers from an address they were never given).
+      Routing is token, then the store's own domain, then a shared-domain
+      mailbox by local part -- and a store with a domain is **left out of
+      the local-part map**, or its `sales` would claim `sales@linerai.us`,
+      the deployment's own dealership address. `is_ours` gives a subdomain
+      back to the dealership (`support@alsbou.` is a buyer, not our desk)
+      and `is_our_address` counts it as ours for Reply all. A subdomain is
+      a domain of its own to Resend and to Cloudflare, so it is verified
+      and routed once by whoever runs the deployment; the Worker keeps it
+      by local part, so `sales@` and `reply+` already cover it.
     - **Whatever a routed delivery reaches is per store too.** Three things
       followed the envelope's store and one did not: the queued reply
       (`email_replies_due` is a row in the store the mail landed in, and a
@@ -2657,9 +2705,9 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     there and an owner cannot sign in, because the door they would be sent
     to does not exist on that host. `make smoke` drives each one through the
     middleware with a recording app.
-  - **On the group server the Host header is the store, so nginx names no
-    group.** `deploy/liner-groups.nginx.conf` is one wildcard server block
-    and one `proxy_pass`, and a group is a profile, a DNS record and a Worker
+  - **On the server the Host header is the store, so nginx names no
+    group.** `deploy/linerai.nginx.conf` has one wildcard server block for
+    every dealership, and a group is a profile, a DNS record and a Worker
     line. A proxied location that drops `Host` sends every request to
     nobody's store, so `make smoke` reads the file for it. A name that is not
     ours has its connection closed (444, `ssl_reject_handshake`): nginx
@@ -2673,8 +2721,8 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     which allows credentials, would let each group read the others' API as
     that person. Every page there calls its own host, and the website chat's
     two public endpoints answer cross-origin by themselves.
-  - **The box that keeps `linerai.us` redirects a moved group's every
-    address** (`deploy/liner-groups-moved.conf`): 308 so a POST stays a POST,
+  - **`linerai.us` redirects a moved group's every address** (the
+    `moved_group` rule in `deploy/linerai.nginx.conf`): 308 so a POST stays a POST,
     the path taken from `$request_uri` because the matched one is decoded and
     `%20` put back into a `Location` is a space, and
     `Access-Control-Allow-Origin` on the redirect itself, which the loader's

@@ -22,7 +22,7 @@ from app.api.deps import current_user
 from app.api.inbound_email import signature_for
 from app.config import settings
 from app.db import get_db, utcnow
-from app import email_agent, flags
+from app import email_agent, flags, profile
 from app.email_intake import is_ours
 from app.email_threads import EXCHANGE_THRESHOLD
 from app.email_threads import threads as email_threads_for
@@ -79,7 +79,8 @@ def receipts(
         # The address family a reply has to arrive on. Empty domain means the
         # Reply-To is omitted entirely rather than pointing somewhere that
         # would bounce, and the page says so.
-        "reply_domain": settings.sending_domain,
+        # This dealership's, which is its own where its profile names one.
+        "reply_domain": profile.mail_domain(),
         "endpoint": "/api/inbound-email",
         "signature_header": "X-Liner-Signature",
     }
@@ -497,6 +498,7 @@ class TestInbound(BaseModel):
 @router.post("/email/test-inbound")
 def test_inbound(
     body: TestInbound,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
@@ -506,6 +508,11 @@ def test_inbound(
     in-process: the signature check and the header plumbing are exactly the
     parts that break, and a test that skipped them would pass while real
     deliveries 401.
+
+    **To this process, at the address it is listening on** -- not a
+    hardcoded `127.0.0.1:8000`. Two instances share one box (production on
+    8000, the demo on 8001), and the demo's test reply went to production's
+    intake: refused only because the two secrets differ.
     """
     import json
 
@@ -515,7 +522,7 @@ def test_inbound(
     if sent is None or not sent.reply_token:
         raise HTTPException(404, "No such send, or it carries no reply token.")
 
-    domain = settings.sending_domain or "example.invalid"
+    domain = profile.mail_domain() or "example.invalid"
     # What a real reply would quote back: the Message-ID the send went out
     # with, where one is known. A provider's own id is what this used to
     # send, and no mail client would ever have put that in a header.
@@ -531,8 +538,9 @@ def test_inbound(
     }
     raw = json.dumps(payload).encode()
     try:
+        host, port = (request.scope.get("server") or ("127.0.0.1", 8000))[:2]
         response = httpx.post(
-            "http://127.0.0.1:8000/api/inbound-email",
+            f"http://{host}:{port}/api/inbound-email",
             content=raw,
             headers={
                 "Content-Type": "application/json",
