@@ -2537,6 +2537,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     predicate able to separate them. `backend/var/stores/<slug>.db`, and the
     file boundary is the isolation — enforced by the OS rather than by
     somebody remembering a `WHERE` clause.
+  - **A group's own subdomain is its store too** (`STORE_DOMAIN`):
+    `alsbou.linerai.us` sets `current_store` exactly as `/alsbou/` does, in
+    the same middleware, and also `current_host` -- because a link composed
+    for a request that arrived on the subdomain must not repeat the store in
+    its path, and one for the shared host must. `stores.public_link` is the
+    one place an absolute link to a store is built: its subdomain where the
+    deployment has them, the prefix under `PUBLIC_BASE_URL` otherwise. Four
+    rules: the same store in the path as well is dropped; *another* store's
+    prefix or widget there is a 404 rather than served from either; a
+    subdomain that is no dealership's is a 404 rather than the default store,
+    which would show one dealership's storefront under another's name; and
+    nothing of Liner's own is on a dealership's subdomain -- `/ops` is a 404
+    there and an owner cannot sign in, because the door they would be sent
+    to does not exist on that host. `make smoke` drives each one through the
+    middleware with a recording app.
   - **The prefix is stripped before routing, not added to every route.**
     `app/stores.py` sets the active store and rewrites `scope["path"]`, so
     `/alsbou/api/overview` arrives at the existing `/api/overview` handler.

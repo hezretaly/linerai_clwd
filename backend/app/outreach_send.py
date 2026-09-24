@@ -324,7 +324,11 @@ def signature_image_url(db: Session, user=None, base: str = "") -> str:
     row = db.query(UserSignature).filter_by(user_id=user.id).one_or_none()
     if row is None or not row.image_token:
         return ""
-    root = (base or settings.public_base_url or "").rstrip("/")
+    # Under the store: `/s/<token>` is looked up in the store the request
+    # names, and a mail client fetching it names none but the one in the URL.
+    from app.stores import public_link
+
+    root = (base or public_link("")).rstrip("/")
     return f"{root}/s/{row.image_token}.{row.image_ext or 'png'}"
 
 

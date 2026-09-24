@@ -38,11 +38,11 @@ from sqlalchemy.orm import Session
 
 from app import flags, profile
 from app.api.deps import current_user, require_manager
-from app.config import settings
 from app.db import active_store, get_db, utcnow
 from app.events import emit
 from app.models import Dealership, User, WidgetInstall
 from app.page_context import clean_url, own_origins
+from app.stores import public_origin
 from app.schemas.serialize import stamp
 
 router = APIRouter(prefix="/widget", tags=["widget"])
@@ -270,10 +270,10 @@ def installs(
     """Everything the Website card on the Liner setup page shows."""
     rows = db.query(WidgetInstall).order_by(WidgetInstall.last_seen_at.desc()).all()
     slug = active_store()
-    # The address the tag loads from: the public one where the deployment
-    # names it. Without it the page uses the address it was opened at, which
-    # is the same host serving this API.
-    base = settings.public_base_url.rstrip("/")
+    # The address the tag loads from: the dealership's own subdomain on a
+    # group server, the public base URL otherwise. Without either the page
+    # uses the address it was opened at, which is the host serving this API.
+    base = public_origin()
     return {
         "dealer": slug,
         "switch": flags.get(db, "website_chat"),

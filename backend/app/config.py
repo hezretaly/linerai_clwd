@@ -395,6 +395,13 @@ class Settings(BaseSettings):
     # $host`) and wrong behind a proxy that drops Host -- which would put
     # http://127.0.0.1:8000 in a buyer's inbox. Set it and the guessing stops.
     public_base_url: str = ""
+    # The domain each dealer group is served under as its own subdomain:
+    # with `linerai.us`, a request to `alsbou.linerai.us` is Alsbou's exactly
+    # as `/alsbou/...` is, and links composed for Alsbou's buyers point there.
+    # Empty turns host routing off -- every deployment before the group
+    # server -- and the path prefix works everywhere either way. The bare
+    # domain and `www.` are never a store: they stay Liner's own.
+    store_domain: str = ""
     session_cookie: str = "liner_session"
     # How many wrong passwords one account may take in a window before the
     # form starts refusing. Sized for a person who genuinely cannot remember

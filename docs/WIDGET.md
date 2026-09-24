@@ -18,6 +18,11 @@ One line, pasted once:
 <script src="https://linerai.us/embed.js" data-dealer="alsbou" async></script>
 ```
 
+Copy the line from the Website chat card rather than from here. It carries
+the address this deployment is reached at. On a server that gives each dealer
+group its own subdomain (`STORE_DOMAIN`), that address is the group's own, for
+example `https://alsbou.linerai.us/embed.js`.
+
 It goes wherever the site's own scripts go, on every page:
 
 - **In the site template**, just before `</body>`. The dealer's website

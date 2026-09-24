@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app import outreach_send
 from app.api.deps import current_user
-from app.config import BACKEND_DIR, settings
+from app.config import BACKEND_DIR
 from app.db import get_db
 from app.models import User, UserSignature
 from app.schemas.serialize import stamp
@@ -66,7 +66,9 @@ def _row(db: Session, user: User) -> UserSignature:
 
 
 def _out(db: Session, row: UserSignature, request: Request, user: User) -> dict:
-    base = settings.public_base_url or str(request.base_url)
+    from app.stores import public_link
+
+    base = public_link("") or str(request.base_url)
     return {
         "text": row.text or "",
         "image_url": (

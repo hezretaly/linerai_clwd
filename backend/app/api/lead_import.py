@@ -34,7 +34,6 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, find_staff, get_dealership
 from app.integrations.base import NotConfigured
-from app.config import settings
 from app.db import get_db, utcnow
 from app import email_outbound
 from app.events import emit
@@ -529,18 +528,17 @@ def _track_links(
     if not target or target not in message.text:
         return
 
-    from app.api.redirect import store_path
+    from app.stores import public_link
 
     token = secrets.token_urlsafe(16)
     # Under the store the send came from, or the click is looked up in the
     # default store's file and a non-default dealership's buyer gets a 404 for
     # the link they were sent. `request.base_url` already carries the prefix
-    # (`StorePrefix` sets `root_path`); `PUBLIC_BASE_URL` -- what production
-    # uses -- does not, which is how it went unnoticed on every box without it.
-    if settings.public_base_url:
-        link = settings.public_base_url.rstrip("/") + store_path(f"/r/{token}")
-    else:
-        link = f"{str(request.base_url).rstrip('/')}/r/{token}"
+    # (`StorePrefix` sets `root_path`) or is the store's own subdomain;
+    # `PUBLIC_BASE_URL` -- what production uses -- carries neither, which is
+    # how it went unnoticed on every box without it. `public_link` puts the
+    # store on it either way.
+    link = public_link(f"/r/{token}") or f"{str(request.base_url).rstrip('/')}/r/{token}"
     record.click_token = token
     email_outbound.rewrite(message, target, link)
 

@@ -7926,6 +7926,122 @@ def _stores_section(before: set[str]) -> None:
     check("nor are the app's own top-level paths",
           all(_split(f"/{name}/x") == ("", f"/{name}/x") for name in ("api", "ws", "assets")))
 
+    # **A dealer group's own subdomain is its store.** `alsbou.linerai.us`
+    # names Alsbou exactly as `/alsbou/` does, and nothing of Liner's own is
+    # served there. Driven through the middleware with a recording app and a
+    # set `STORE_DOMAIN`, because the running server is not configured with
+    # one -- what is asserted is what the middleware hands on, per host.
+    import asyncio as _hasyncio
+
+    from app.api.redirect import store_path as _store_path
+    from app.db import SessionLocal as _HLocal, current_host as _cur_host, current_store as _cur_store_h
+    from app.stores import StorePrefix as _Prefix, known_stores as _known, public_link as _public_link
+
+    _names = _known()
+    if len(_names) >= 2:
+        _mine, _theirs = _names[0], _names[1]
+        _was_domain, _was_base = _settings.store_domain, _settings.public_base_url
+        _settings.store_domain, _settings.public_base_url = "linerai.test", ""
+        _heard: list = []
+
+        async def _recorder(scope, receive, send):
+            _heard.append((_cur_store_h.get(), _cur_host.get(), scope["path"],
+                           _store_path("/r/x"), _public_link("/r/x")))
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        def _at(host: str, path: str):
+            status: dict = {}
+
+            async def _send(message):
+                if message["type"] == "http.response.start":
+                    status["code"] = message["status"]
+
+            _heard.clear()
+            _hasyncio.run(_Prefix(_recorder)({
+                "type": "http", "path": path, "raw_path": path.encode(), "root_path": "",
+                "query_string": b"", "headers": [(b"host", host.encode())],
+            }, None, _send))
+            return status.get("code"), (_heard[0] if _heard else None)
+
+        try:
+            code, seen = _at(f"{_mine}.linerai.test", "/api/overview")
+            check("a group's own subdomain is its store, with no prefix in the path",
+                  code == 200 and seen and seen[:3] == (_mine, _mine, "/api/overview"), str(seen))
+            check("and a link composed there names the store once, by its host",
+                  seen and seen[3] == "/r/x" and seen[4] == f"https://{_mine}.linerai.test/r/x",
+                  str(seen and seen[3:]))
+            code, seen = _at(f"{_mine}.linerai.test:443", f"/{_mine}/app")
+            check("the same store in the path as well is harmless, and dropped",
+                  code == 200 and seen and seen[2] == "/app", str(seen))
+            code, _ = _at(f"{_mine}.linerai.test", f"/{_theirs}/api/overview")
+            check("another dealership's prefix on a group's subdomain is nobody's answer",
+                  code == 404, str(code))
+            code, _ = _at(f"{_mine}.linerai.test", f"/widget/{_theirs}")
+            check("and so is another dealership's website chat", code == 404, str(code))
+            ops_codes = [_at(f"{_mine}.linerai.test", p)[0] for p in ("/ops", "/ops/mail", "/api/ops/mail")]
+            check("nothing of Liner's own is served on a dealership's subdomain",
+                  ops_codes == [404, 404, 404], str(ops_codes))
+            code, _ = _at("not-a-dealer.linerai.test", "/api/health")
+            check("a subdomain that is no dealership's is a 404, not the default store",
+                  code == 404, str(code))
+            code, seen = _at("www.linerai.test", "/api/health")
+            check("while www and the bare domain stay ours",
+                  code == 200 and seen and seen[:2] == ("", ""), str(seen))
+            code, seen = _at("linerai.test", f"/{_mine}/api/overview")
+            check("and a path-named store on the shared host still works, linking to its subdomain",
+                  code == 200 and seen and seen[0] == _mine and seen[1] == ""
+                  and seen[4] == f"https://{_mine}.linerai.test/r/x", str(seen))
+            _settings.store_domain, _settings.public_base_url = "", "https://linerai.test"
+            code, seen = _at(f"{_mine}.linerai.test", "/api/overview")
+            check("with no STORE_DOMAIN a subdomain means nothing, and links go under the path",
+                  code == 200 and seen and seen[0] == "" and _public_link("/r/x", _mine)
+                  == f"https://linerai.test/{_mine}/r/x", str(seen))
+        finally:
+            _settings.store_domain, _settings.public_base_url = _was_domain, _was_base
+
+        # Signing in on a group's subdomain: that store and no other, a home
+        # page without the store in its path, and never one of our accounts --
+        # the door they would be sent to is not on that host.
+        _seeded_known = [s for s in _names if s in _store_files()]
+        if _seeded_known:
+            from fastapi.testclient import TestClient as _HostClient
+
+            from app.api.deps import pwd as _hpwd
+            from app.main import app as _host_app
+            from app.models import User as _HUser
+
+            _slug = _seeded_known[0]
+            _addr, _secret = f"host.check.{secrets.token_hex(3)}@example.invalid", secrets.token_hex(8)
+            _token = _cur_store_h.set(_slug)
+            try:
+                with _HLocal() as _hdb:
+                    _hdb.add(_HUser(name="Host Check", email=_addr, role="rep",
+                                    password_hash=_hpwd.hash(_secret)))
+                    _hdb.commit()
+            finally:
+                _cur_store_h.reset(_token)
+            _settings.store_domain = "linerai.test"
+            try:
+                _client = _HostClient(_host_app, base_url=f"https://{_slug}.linerai.test")
+                _in = _client.post("/api/auth/login", json={"email": _addr, "password": _secret})
+                check("a rep signs in on their group's subdomain and lands on /app there",
+                      _in.status_code == 200 and _in.json().get("redirect") == "/app"
+                      and _in.json().get("store") == _slug, _in.text[:120])
+                _owner = _client.post("/api/auth/login",
+                                      json={"email": "founder@linerai.us", "password": "liner-dev"})
+                check("and one of our accounts cannot sign in there at all",
+                      _owner.status_code == 401, str(_owner.status_code))
+            finally:
+                _settings.store_domain = _was_domain
+                _token = _cur_store_h.set(_slug)
+                try:
+                    with _HLocal() as _hdb:
+                        _hdb.query(_HUser).filter_by(email=_addr).delete()
+                        _hdb.commit()
+                finally:
+                    _cur_store_h.reset(_token)
+
     # **Nothing this run did may create a store database.** Two places walk
     # every profile to look something up -- `locate_store` on an unprefixed
     # sign-in and `ops_inbox._each` on every `/ops` read -- and *connecting* to

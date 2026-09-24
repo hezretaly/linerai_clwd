@@ -25,7 +25,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.settings import live_settings
-from app.db import SessionLocal, current_store, utcnow
+from app.db import SessionLocal, current_host, current_store, utcnow
 from app.events import emit
 from app.models import LinkClick, Outreach
 
@@ -89,7 +89,9 @@ def store_path(path: str) -> str:
     hole `withStore` closes in the browser, here on a URL we compose.
     """
     slug = current_store.get()
-    return f"/{slug}{path}" if slug else path
+    # On the dealership's own subdomain the host already names the store, and
+    # a prefix there would name it twice.
+    return f"/{slug}{path}" if slug and slug != current_host.get() else path
 
 
 #: The storefront links that are counted, by the kind a press is filed under.
@@ -99,10 +101,15 @@ def store_path(path: str) -> str:
 COUNTED = {"credit-application": "credit_application"}
 
 
+def site_path(kind: str) -> str:
+    """The counted hop for `kind`, before any store is put on it."""
+    slug = next(k for k, v in COUNTED.items() if v == kind)
+    return f"/r/site/{slug}"
+
+
 def site_hop(kind: str) -> str:
     """The counted path a storefront link to `kind` is rewritten to."""
-    slug = next(k for k, v in COUNTED.items() if v == kind)
-    return store_path(f"/r/site/{slug}")
+    return store_path(site_path(kind))
 
 
 #: Where a counted press can come from. Closed, because it is written straight

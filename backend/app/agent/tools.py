@@ -1723,9 +1723,9 @@ def offer_credit_application(db: Session, convo: Conversation, args: dict) -> di
     the words, so it is handed over -- the counted hop where this deployment
     knows its own public address, the dealer's page where it does not.
     """
-    from app.api.redirect import site_hop
+    from app.api.redirect import site_path
     from app.api.settings import live_settings
-    from app.config import settings as app_settings
+    from app.stores import public_link
 
     url = (live_settings(db).credit_application_url or "").strip()
     if not url:
@@ -1746,10 +1746,12 @@ def offer_credit_application(db: Session, convo: Conversation, args: dict) -> di
             ),
         }
     if convo.channel == "email":
-        base = (app_settings.public_base_url or "").rstrip("/")
+        # Absolute, and naming the store: on its own subdomain where the
+        # deployment serves one, under the path on the shared host otherwise.
+        hop = public_link(site_path(CREDIT_CARD))
         return {
             "available": True,
-            "link": f"{base}{site_hop(CREDIT_CARD)}" if base else url,
+            "link": hop or url,
             "guidance": "Put this link in your reply, on a line of its own.",
         }
     return {

@@ -73,10 +73,14 @@ def own_origins() -> list[str]:
     dealership's page as their own site is."""
     from app.config import settings
 
+    from app.stores import public_origin
+
     out: list[str] = []
-    if settings.public_base_url:
-        base = origin_of(settings.public_base_url)
-        if base:
+    # The store's own subdomain on a group server, the public base URL
+    # otherwise -- whichever this dealership's pages are served from.
+    for base in (public_origin(), origin_of(settings.public_base_url or "")):
+        base = (base or "").lower()
+        if base and base not in out:
             out.append(base)
     for origin in settings.origins:
         origin = origin.lower().rstrip("/")

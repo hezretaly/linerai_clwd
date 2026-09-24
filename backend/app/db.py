@@ -66,6 +66,13 @@ def utcnow() -> datetime:
 
 current_store: ContextVar[str] = ContextVar("current_store", default="")
 
+#: The store this request's *host* names -- `alsbou.linerai.us` -- or "" when
+#: the store, if any, came from the path. The two are told apart because a
+#: link composed for a request that arrived on the dealership's own subdomain
+#: must not repeat the store in its path, and one for `linerai.us/alsbou/...`
+#: must.
+current_host: ContextVar[str] = ContextVar("current_host", default="")
+
 _engines: dict[str, Engine] = {}
 _sessions: dict[str, sessionmaker] = {}
 

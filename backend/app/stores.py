@@ -1,4 +1,5 @@
-"""Which dealership a request is for, decided from its URL.
+"""Which dealership a request is for, decided from its URL -- its path, or,
+on a server with `STORE_DOMAIN` set, its host (`alsbou.linerai.us`).
 
 `/alsbou/app`, `/alsbou/api/overview`, `/alsbou/showroom` -- the first path
 segment names a store, and everything after it is an ordinary path this app
@@ -27,8 +28,10 @@ from __future__ import annotations
 import json
 import logging
 
+from urllib.parse import urlsplit
+
 from app.config import settings
-from app.db import current_store, has_database
+from app.db import current_host, current_store, has_database
 
 log = logging.getLogger("liner.stores")
 
@@ -79,6 +82,96 @@ def widget_store(path: str) -> str:
     return slug if slug and slug not in RESERVED and slug in known_stores() else ""
 
 
+#: Subdomains of `STORE_DOMAIN` that are never a dealership: the marketing
+#: site's usual alias. The bare domain is not a subdomain at all.
+NOT_A_STORE = frozenset({"www"})
+
+
+def host_store(scope) -> str | None:  # noqa: ANN001 - ASGI scope
+    """`alsbou.linerai.us` -> `"alsbou"`: the dealership this host names.
+
+    None when the host names none -- host routing is off, or it is the bare
+    domain, `www.` or some other host entirely -- and the path decides as it
+    always has. `""` for a subdomain of ours that is not a dealership this
+    process serves: a typo'd subdomain is answered as nobody's rather than
+    falling through to the default store, which would show one dealership's
+    storefront under a name that looks like another's.
+    """
+    domain = settings.store_domain.strip().lower().strip(".")
+    if not domain:
+        return None
+    raw = ""
+    for name, value in scope.get("headers") or []:
+        if name == b"host":
+            raw = value.decode("latin-1")
+            break
+    host = raw.split(":", 1)[0].strip().lower().rstrip(".")
+    if not host.endswith("." + domain):
+        return None
+    label = host[: -len(domain) - 1]
+    if not label or label in NOT_A_STORE:
+        return None
+    if "." in label or label in RESERVED or label not in known_stores():
+        return ""
+    return label
+
+
+def _scheme() -> str:
+    return urlsplit(settings.public_base_url).scheme or "https"
+
+
+def public_origin(slug: str | None = None) -> str:
+    """Where `slug`'s pages are reached from outside, as an origin, or "".
+
+    Its own subdomain where the deployment serves one per group; otherwise the
+    public base URL, which serves every store under a path. "" when neither is
+    set -- the caller falls back to the address the request arrived at.
+    """
+    slug = current_store.get() if slug is None else slug
+    if settings.store_domain.strip() and slug:
+        return f"{_scheme()}://{slug}.{settings.store_domain.strip().lower().strip('.')}"
+    parts = urlsplit(settings.public_base_url)
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+
+
+def public_link(path: str, slug: str | None = None) -> str:
+    """An absolute link to `path` in `slug`'s store, or "" when this
+    deployment does not say how it is reached from outside.
+
+    **A link that leaves the building has to name its store**, and there are
+    two ways to: the store's own subdomain, or the path under the shared
+    host. `/r/<token>` unprefixed on the shared host is looked up in the
+    *default* store's file -- which is how every non-default dealership's
+    emailed link was a 404 once -- and on a store's own subdomain a prefix
+    would name it twice.
+    """
+    slug = current_store.get() if slug is None else slug
+    if settings.store_domain.strip() and slug:
+        return public_origin(slug) + path
+    base = settings.public_base_url.rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/{slug}{path}" if slug else f"{base}{path}"
+
+
+async def _elsewhere(scope, receive, send, detail: str) -> None:  # noqa: ANN001
+    """404 for a request its host and its path cannot both be right about."""
+    if scope["type"] == "websocket":
+        await send({"type": "websocket.close", "code": 4404})
+        return
+    body = json.dumps({"detail": detail}).encode()
+    await send({
+        "type": "http.response.start",
+        "status": 404,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"cache-control", b"no-store"),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 async def _not_seeded(scope, receive, send, slug: str) -> None:  # noqa: ANN001
     """503 with the fix in it, for a store whose database does not exist yet."""
     detail = (
@@ -110,6 +203,12 @@ class StorePrefix:
     async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
         if scope.get("type") not in ("http", "websocket"):
             return await self.app(scope, receive, send)
+
+        host = host_store(scope)
+        if host == "":
+            return await _elsewhere(scope, receive, send, "No dealership is served at this address.")
+        if host:
+            return await self._on_host(scope, receive, send, host)
 
         widget = widget_store(scope.get("path", "/"))
         if widget:
@@ -162,4 +261,46 @@ class StorePrefix:
             # previous request would read the wrong dealership's database --
             # which is exactly the failure the file split exists to prevent,
             # reintroduced one layer up.
+            current_store.reset(token)
+
+    async def _on_host(self, scope, receive, send, host: str) -> None:  # noqa: ANN001
+        """A request to a dealership's own subdomain: that store, and only it.
+
+        The path may still carry the store -- a link written for the shared
+        host, a bookmark, the login's redirect from before -- and naming the
+        same store twice is harmless, so the prefix is dropped. Naming a
+        *different* one is a request no answer can be right for, and it is
+        refused rather than served from either.
+
+        **Nothing of Liner's own is on a dealership's subdomain.** `/ops` and
+        its API are ours and are served where ours is; a group's address shows
+        that group and nothing else, so a buyer or a rep never meets our
+        dashboard there, even as a login form.
+        """
+        path = scope.get("path", "/")
+        widget = widget_store(path)
+        if widget and widget != host:
+            return await _elsewhere(scope, receive, send, f"This address is {host}'s.")
+        slug, rest = split(path)
+        if slug and slug != host:
+            return await _elsewhere(scope, receive, send, f"This address is {host}'s.")
+        if slug == host:
+            scope = dict(scope)
+            scope["path"] = rest
+            raw = scope.get("raw_path")
+            prefix = f"/{slug}".encode()
+            if raw and raw.startswith(prefix):
+                scope["raw_path"] = raw[len(prefix):] or b"/"
+            path = rest
+        if path == "/ops" or path.startswith(("/ops/", "/api/ops")):
+            return await _elsewhere(scope, receive, send, "Not found")
+        if not has_database(host) and (path.startswith("/api/") or path.startswith("/ws/")):
+            return await _not_seeded(scope, receive, send, host)
+
+        token = current_store.set(host)
+        named = current_host.set(host)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_host.reset(named)
             current_store.reset(token)

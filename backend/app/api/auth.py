@@ -17,7 +17,7 @@ from app.api.deps import (
     verify_password,
 )
 from app.config import settings
-from app.db import SessionLocal, current_store, get_db, has_database, ops_session
+from app.db import SessionLocal, current_host, current_store, get_db, has_database, ops_session
 from app.models import OpsUser, User
 from app.ratelimit import SlidingWindow
 from app.stores import known_stores
@@ -92,10 +92,13 @@ def login(
         # Two databases, one form. The dealership's staff are in this store's
         # file; we are in Liner's own, which is not per store -- so an owner
         # signing in is found once however many dealerships exist.
-        account = (
-            store_db.query(User).filter_by(email=email, active=True).one_or_none()
-            or ops.query(OpsUser).filter_by(email=email, active=True).one_or_none()
-        )
+        account = store_db.query(User).filter_by(email=email, active=True).one_or_none()
+        # Never ours on a dealership's own subdomain. That address is the
+        # group's and shows nothing of Liner's -- `/ops` is not served there
+        # -- so an owner signing in on it would get a session for a door that
+        # does not exist. Refused the way a wrong password is, bcrypt and all.
+        if account is None and not current_host.get():
+            account = ops.query(OpsUser).filter_by(email=email, active=True).one_or_none()
         # Always verify against *something*. Short-circuiting on
         # `account is None` skips bcrypt, and the hundredfold difference in how
         # long that takes is a perfectly good answer to "does this account
@@ -185,6 +188,9 @@ def home_for(account: "User | OpsUser", slug: str) -> str:
     """
     if isinstance(account, OpsUser):
         return "/ops"
+    # On the dealership's own subdomain the host names the store already.
+    if slug and slug == current_host.get():
+        return "/app"
     return f"/{slug}/app" if slug else "/app"
 
 
