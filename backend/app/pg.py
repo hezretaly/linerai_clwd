@@ -54,6 +54,23 @@ def safe(url: str) -> str:
     return make_url(url).render_as_string(hide_password=True)
 
 
+def for_libpq(url: str) -> str:
+    """The URL as `pg_dump`, `pg_restore` and `psql` take it.
+
+    **`postgresql+psycopg://` is SQLAlchemy's, and libpq does not refuse it --
+    it misreads it.** Not a URI to libpq, the string is parsed as `key=value`
+    settings, finds none, and connects with the defaults: the local socket,
+    the operating-system user, the database named after that user. So a
+    backup line printed with the application's own URL either fails with a
+    socket error that names nothing about the URL, or -- run as a user the
+    server knows -- dumps some *other* database into a file named for this
+    one. Measured with `pg_dump` against the first; the second is the same
+    code path meeting a server that answers. The driver is the only part
+    that differs.
+    """
+    return make_url(url).set(drivername="postgresql").render_as_string(hide_password=False)
+
+
 def _server(url: str) -> Engine:
     return create_engine(
         make_url(url).set(database="postgres"),

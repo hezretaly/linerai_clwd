@@ -286,7 +286,20 @@ A group shares one database, so a manager works across its lots.
    ops history, migrated at boot and by `make migrate`. Pre-migration
    databases are adopted in place. The gate fails on a model changed without
    a revision.
-4. **Deploy.** nginx wildcard, `.env`, `docs/DEPLOY.md`.
+4. **Deploy — done.** `docs/DEPLOY.md`, *Several dealer groups on their own
+   server*: DNS and an Origin CA wildcard certificate in Cloudflare, Postgres,
+   the `.env`, `make migrate ARGS=--create`, the copy from SQLite, the
+   cut-over in an order that takes nothing down, and the rollback.
+   `deploy/liner-groups.nginx.conf` is the new box (one wildcard block; a name
+   that is not ours gets its connection closed); `deploy/liner-groups-moved.conf`
+   goes on the box keeping `linerai.us` and redirects a moved group's every
+   old address, a tag already on a dealer's site included. The Worker's
+   `ROUTES` sends the groups' mail to the new box. All of it was run: nginx
+   1.24 in front of the app on Postgres, sign-in, the dealer socket, the chat
+   stream, and an old tag followed by a browser from a dealer's page to a chat
+   on the subdomain. That run found two bugs, both fixed and gated: the
+   widget's settings could not be read after a redirect (`Origin: null`), and
+   the printed `pg_dump` lines named the database in a form libpq misreads.
 5. **Rooftops as locations inside a group.**
 
 ## Next task — port the dashboard mockups

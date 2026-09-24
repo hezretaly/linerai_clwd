@@ -30,6 +30,9 @@ interface Env {
 	WEBHOOK_SECRET: string;
 	/** Comma-separated local parts to accept, overriding the default below. */
 	ALLOWED_RECIPIENTS?: string;
+	/** Mail for some addresses goes to another host: `prefix=url` pairs,
+	 *  comma-separated, first match wins. See `targetFor`. */
+	ROUTES?: string;
 }
 
 /**
@@ -97,6 +100,44 @@ function isAcceptedRecipient(to: string, env: Env): boolean {
 function rawUrl(env: Env): string {
 	if (env.WEBHOOK_RAW_URL) return env.WEBHOOK_RAW_URL;
 	return (env.WEBHOOK_URL || "").replace(/\/+$/, "") + "/raw";
+}
+
+/**
+ * Where a message for `to` is posted: the first `ROUTES` entry whose prefix it
+ * starts with, otherwise the raw intake above.
+ *
+ * **Two servers, one Worker.** Liner's own mail -- `support@`, `founder@`,
+ * `cto@` -- is read at `/ops` on linerai.us, while a dealer group's mailbox
+ * and the `reply+<token>@` addresses on its outreach belong to the server that
+ * holds that group's database. Email Routing gives every address on the domain
+ * to this one Worker, so this is where they part:
+ *
+ *   "ROUTES": "alsbou@=https://alsbou.linerai.us/api/emails/inbound/raw,
+ *              reply+=https://alsbou.linerai.us/api/emails/inbound/raw"
+ *
+ * Any host serving the group works -- the backend routes by the envelope
+ * among the stores it holds. Both hosts must share WEBHOOK_SECRET: there is
+ * one secret here. An entry whose URL is not https is ignored rather than
+ * trusted, because this sends the message whole, headers and all.
+ */
+function routes(env: Env): [string, string][] {
+	return (env.ROUTES || "")
+		.split(",")
+		.map((pair) => pair.trim())
+		.filter(Boolean)
+		.map((pair): [string, string] => {
+			const at = pair.indexOf("=");
+			return [pair.slice(0, at).trim().toLowerCase(), pair.slice(at + 1).trim()];
+		})
+		.filter(([prefix, url]) => prefix !== "" && /^https:\/\//.test(url));
+}
+
+function targetFor(to: string, env: Env): string {
+	const addr = (to || "").toLowerCase();
+	for (const [prefix, url] of routes(env)) {
+		if (addr.startsWith(prefix)) return url;
+	}
+	return rawUrl(env);
 }
 
 type Outcome =
@@ -176,6 +217,7 @@ export default {
 			`WEBHOOK_RAW_URL: ${env.WEBHOOK_RAW_URL ? "set" : env.WEBHOOK_URL ? "derived (WEBHOOK_URL + /raw)" : "MISSING"}`,
 			`WEBHOOK_SECRET:  ${env.WEBHOOK_SECRET ? "set" : "MISSING"}`,
 			`accepting:       ${allowedPrefixes(env).join(", ")}`,
+			`routed elsewhere: ${routes(env).map(([p, u]) => `${p} -> ${new URL(u).host}`).join(", ") || "none"}`,
 			`largest message: ${Math.round(MAX_RAW / (1024 * 1024))} MB`,
 			"",
 			"A message dropped here leaves no trace in the app at all. Check the",
@@ -226,7 +268,7 @@ export default {
 			`Inbound: ${messageId} from ${message.from} to ${message.to} (${raw.byteLength} bytes)`
 		);
 
-		const outcome = await postWithRetry(rawUrl(env), raw, {
+		const outcome = await postWithRetry(targetFor(message.to, env), raw, {
 			"Content-Type": "message/rfc822",
 			// The SMTP envelope is not in the message. `to` is the recipient
 			// the mail server delivered to -- the one carrying reply+<token>

@@ -144,7 +144,7 @@ def main() -> int:
         for label, url in pg_urls():
             from app import pg
 
-            print(f"  pg_dump --format=custom --dbname='{url}' "
+            print(f"  pg_dump --format=custom --dbname='{pg.for_libpq(url)}' "
                   f"--file=backup-{stamp}/{pg.name_of(url)}.dump   # {label}")
         print("\n(Those lines carry the database password; run them, do not paste them anywhere.)\n")
         return 0

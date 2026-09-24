@@ -11,7 +11,10 @@
 
 [Unit]
 Description=Liner AI
-After=network-online.target
+# After Postgres where there is one: boot migrates every database, and a
+# server that is still starting fails that and takes the service down with it.
+# Naming a unit this box does not have is harmless -- ordering only.
+After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
@@ -26,7 +29,9 @@ ExecStart=/srv/liner/backend/.venv/bin/uvicorn app.main:app \
 Restart=on-failure
 RestartSec=2
 
-# The process needs to write only the SQLite database and its WAL sidecars.
+# The process writes only under backend/: the SQLite databases and their WAL
+# sidecars where there is no Postgres, and backend/var/ (recordings, received
+# mail, attachments) everywhere.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

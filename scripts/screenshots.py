@@ -542,6 +542,46 @@ async def main() -> int:
                 print(f"  mounted, bubble {colour}, frames {before} -> {len(frames)}, "
                       f"conversation kept on their domain: {bool(kept)}, closed {shut}")
 
+            # **A tag written for an older address follows the chat to where
+            # it lives now.** A tag pasted as `linerai.us/<dealer>/embed.js`
+            # still loads once the group has its own subdomain -- the old box
+            # redirects it (deploy/liner-groups-moved.conf) -- but a redirect
+            # does not change `currentScript.src`, so the loader has to take
+            # the config's `frame_origin` over its own: for the frame's
+            # address *and* for the origin every message is pinned to. Half of
+            # that is a frame that loads and a buyer nobody hears. The redirect
+            # is nginx's and was driven there; what is ours is the loader, so
+            # the config's answer is rewritten to name the only other origin
+            # this box has, and the handshake has to survive the move.
+            moved_ctx = await browser.new_context()
+            moved = await moved_ctx.new_page()
+
+            async def elsewhere(route):
+                answer = await route.fetch()
+                body = await answer.json()
+                body["frame_origin"] = host
+                await route.fulfill(response=answer, json=body)
+
+            await moved.route("**/api/widget/config**", elsewhere)
+            await their_page(moved)
+            if await moved.locator("[data-liner-embed]").count():
+                await moved.locator("[data-liner-embed] button.bubble").click()
+                await moved.wait_for_timeout(2500)
+                where = [f.url for f in chat_frames(moved)]
+                shook = await moved.evaluate(f"localStorage.getItem('liner.{dealer}.conversation')")
+                if not where or not where[0].startswith(f"{host}/widget/{dealer}"):
+                    failures.append(
+                        f"/embed.js: the config named {host} as the chat's home and the frame "
+                        f"loaded from {where or 'nowhere'} -- an old tag would frame the old address"
+                    )
+                elif not shook:
+                    failures.append(
+                        "/embed.js: the frame moved to the config's origin but the loader never "
+                        "heard it -- messages are still pinned to the tag's own origin"
+                    )
+                print(f"  moved: frame at {where and where[0].split('?')[0]}, handshake {bool(shook)}")
+            await moved_ctx.close()
+
             # **The whole screen on a phone.** A 380px card on a 390px screen
             # is a chat sharing its width with the page behind it.
             phone_ctx = await browser.new_context(viewport=PHONE, is_mobile=True, has_touch=True)

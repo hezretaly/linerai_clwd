@@ -153,8 +153,22 @@ def main() -> int:
     server does the same at every boot; this is for a deploy that wants the
     schema moved -- and any failure seen -- before the new code starts.
     """
+    import sys
+
+    from app import pg
+    from app.config import settings
     from app.db import engine_for, has_database, ops_engine
     from app.stores import known_stores
+
+    # `--create`: on a database server, make the two databases every boot
+    # opens -- the default store and Liner's own -- if they are not there yet.
+    # A store's own is made by `make to-postgres` or `make reset-db`; these two
+    # have nothing to be copied into them on a new server, and a boot that
+    # cannot connect to either does not start.
+    if "--create" in sys.argv:
+        for url in (settings.database_url, settings.ops_database_url):
+            if pg.is_postgres(url) and pg.create(url):
+                print(f"  created {pg.safe(url)}")
 
     targets = [("default store", engine_for(""), "store")]
     targets += [(slug, engine_for(slug), "store") for slug in known_stores() if has_database(slug)]

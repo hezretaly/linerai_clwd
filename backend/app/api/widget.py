@@ -121,16 +121,25 @@ def verdict(request: Request, hint: str = "") -> tuple[bool, str, str]:
     )
 
 
-def _cors(response: Response, origin: str) -> None:
-    """Readable from the page that asked, whichever page that is.
+def _cors(response: Response) -> None:
+    """Readable from any page, whichever page that is.
 
     The body is public -- a name and a colour -- and a refusal that arrives as
     an opaque CORS failure is one nobody on the dealer's side can read, which
     is the whole reason the verdict exists.
+
+    **`*`, not the asking page's origin echoed back.** A tag written for an
+    older address -- `linerai.us/<dealer>/embed.js`, before the group moved to
+    its own subdomain -- reaches this through a redirect across origins, and
+    after one the browser sends `Origin: null`. An echo of the dealer's origin
+    no longer matches that, so the one request that says why there is no
+    bubble failed as an opaque network error: found by driving an old tag
+    through the shipped redirect in a browser. The loader asks without
+    credentials, which is the case `*` is allowed for. The body still depends
+    on who asked, hence `Vary`.
     """
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Vary"] = "Origin"
 
 
 @router.get("/config")
@@ -142,7 +151,7 @@ def config(
 ) -> dict:
     """What the loader on a dealer's page needs, asked on every page load."""
     allowed, caller, reason = verdict(request, origin)
-    _cors(response, _caller_origin(request, origin))
+    _cors(response)
     response.headers["Cache-Control"] = f"public, max-age={CONFIG_MAX_AGE}"
 
     dealership = db.query(Dealership).first()
@@ -167,6 +176,12 @@ def config(
         # the loader knows its own origin and this host may be reached by
         # more than one name.
         "frame": f"/widget/{slug}",
+        # ...unless this dealership is served from somewhere else now: its own
+        # subdomain, or the one public address. A tag written for an older
+        # address reaches this through a redirect and still reads its own
+        # origin as the old one; the loader moves the frame, and the pin on
+        # every message, here. Empty when this deployment names no address.
+        "frame_origin": public_origin(slug),
         "launcher": {
             "label": settings_block["label"],
             "title": settings_block["title"] or (dealership.name if dealership else ""),

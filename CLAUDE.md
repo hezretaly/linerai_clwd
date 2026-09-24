@@ -25,7 +25,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
 | `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it). `ops.db` is a separate file and survives it; the store's **delivery receipts do not** |
 | `make reset-all` | **Every dealership at once**, each seeded from its own profile with its own manager and reps, passwords printed per store. `make reset-db` is one store — whichever `DEALERSHIP=` names — which on a host serving several left the others with no database. `ARGS=--only a,b` narrows it |
-| `make migrate` | Every database this deployment serves to the newest migration. The boot does the same; this is for a deploy that wants the schema moved, and any failure seen, before the new code starts |
+| `make migrate` | Every database this deployment serves to the newest migration. The boot does the same; this is for a deploy that wants the schema moved, and any failure seen, before the new code starts. `ARGS=--create` on a new Postgres server first makes the two databases every boot opens (the default store and Liner's own) |
 | `make to-postgres` | **Copy the SQLite databases into Postgres**, one per store, each built by the migrations first. The plan by default, `ARGS=--apply` to copy; refuses a target that already holds rows unless `--replace`. Run with the new server's database settings in the environment |
 | `make stores` | Every dealership this deployment can serve, and which are seeded, **each with the address its mail leaves from and its manager sign-in** — the two facts somebody opens it for, otherwise one in a profile file and one in a database. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
 | `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
@@ -71,7 +71,11 @@ each one buys: **[`docs/DEMO.md`](./docs/DEMO.md)**.
 
 Deploying to a real host: **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**. One process
 serves the API, the WebSocket, the landing page and the SPA, so nginx needs a
-single `proxy_pass`.
+single `proxy_pass`. The dealer groups' own server — a subdomain each, Postgres,
+the copy from SQLite and the cut-over from `linerai.us` — is its last section,
+*Several dealer groups on their own server*, with `deploy/liner-groups.nginx.conf`
+for that box and `deploy/liner-groups-moved.conf` for the one that keeps
+`linerai.us`.
 
 `make dev` kills those ports first — orphaned processes across sessions are the
 most common way this gets confusing.
@@ -201,6 +205,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Databases are created with `C` collation** (`app/pg.py`), because SQLite
     sorts bytes and an A-Z list, a tie-break and the order of the knowledge in
     the prompt should not change on the move.
+  - **A URL printed for `pg_dump` or `psql` goes through `pg.for_libpq`.**
+    The application's carries SQLAlchemy's driver (`postgresql+psycopg://`),
+    and libpq does not refuse that -- it reads it as `key=value` settings,
+    finds none, and connects to the local defaults. The backup lines
+    `make dump-ops ARGS=--files` printed failed with a socket error naming
+    nothing about the URL, and on a server answering on that socket they
+    would have dumped some other database under this one's file name. Found
+    by running them rather than reading them.
 - **Schema changes are migrations** (`app/migrate.py`, `backend/migrations/`),
   two histories: a store's and Liner's own. The boot migrates every database
   this process serves, `make migrate` does the same on demand, and the seed
@@ -2463,6 +2475,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     document fulfilled by `page.route` stalls cross-origin subresources, so
     the tag never loaded and the check could not fail. The gates write their
     hostile page into a real document on the host origin instead.
+  - **A tag written for an older address follows the chat to its new one.**
+    A group that moves to its own subdomain leaves tags pasted as
+    `linerai.us/<dealer>/embed.js` on sites nobody here can edit. The old box
+    redirects them, but a redirect does not change `currentScript.src`, so
+    the config names `frame_origin` -- the dealership's `public_origin` -- and
+    the loader moves the frame *and* the origin every message is pinned to.
+    The half-done version is the worse one: a frame that loads and a buyer
+    nobody hears, every message from it dropped for its origin. `make shots`
+    rewrites the config to name another origin and fails on either half; each
+    half was taken out in turn to see it fail. Never from https to http.
+  - **The config answers `*`, because a redirect turns `Origin` into `null`.**
+    It echoed the asking page's origin, and after a redirect across origins
+    the browser sends `null`, so the one request that says why there is no
+    bubble failed as an opaque CORS error -- found by driving an old tag
+    through the shipped redirect in a browser. The body is public and asked
+    for without credentials, which is the case `*` exists for; the verdict
+    still reads the page's origin from the loader's `?origin=` hint.
+  - **Nothing is posted to the frame before it says hello.** Until then its
+    window is the blank document it started as, which has the *dealer's*
+    origin, so a message pinned to ours was refused with a warning in their
+    console on every first open. `init` carries the page and whether the chat
+    is open, so waiting loses nothing.
   - It follows the storefront widget's rules rather than inventing its own:
     mounted on the first open and kept, and a closed panel is `visibility:
     hidden` so a keyboard cannot tab into an invisible chat. On a phone it is
@@ -2601,6 +2635,28 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     there and an owner cannot sign in, because the door they would be sent
     to does not exist on that host. `make smoke` drives each one through the
     middleware with a recording app.
+  - **On the group server the Host header is the store, so nginx names no
+    group.** `deploy/liner-groups.nginx.conf` is one wildcard server block
+    and one `proxy_pass`, and a group is a profile, a DNS record and a Worker
+    line. A proxied location that drops `Host` sends every request to
+    nobody's store, so `make smoke` reads the file for it. A name that is not
+    ours has its connection closed (444, `ssl_reject_handshake`): nginx
+    otherwise answers it from the first server block it read, which is a
+    dealership's. Driven for real -- nginx in front of the app in this mode,
+    on Postgres, with the dealer socket, the chat stream and sign-in through
+    it -- before it was written down (docs/DEPLOY.md).
+  - **`ALLOWED_ORIGINS` stays empty there.** The group subdomains are one
+    *site* to a browser, so a signed-in person's cookie goes along with a
+    request from one group's pages to another's host; listing them for CORS,
+    which allows credentials, would let each group read the others' API as
+    that person. Every page there calls its own host, and the website chat's
+    two public endpoints answer cross-origin by themselves.
+  - **The box that keeps `linerai.us` redirects a moved group's every
+    address** (`deploy/liner-groups-moved.conf`): 308 so a POST stays a POST,
+    the path taken from `$request_uri` because the matched one is decoded and
+    `%20` put back into a `Location` is a space, and
+    `Access-Control-Allow-Origin` on the redirect itself, which the loader's
+    cross-origin settings request needs before it will follow one.
   - **The prefix is stripped before routing, not added to every route.**
     `app/stores.py` sets the active store and rewrites `scope["path"]`, so
     `/alsbou/api/overview` arrives at the existing `/api/overview` handler.

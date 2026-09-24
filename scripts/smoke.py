@@ -4327,6 +4327,11 @@ def main() -> int:
         # widget and a bug report.
         check("and it renders inside a shadow root, out of reach of their CSS",
               "attachShadow" in loader)
+        # A tag pasted before a group moved to its own subdomain arrives by
+        # redirect with its old address still in `currentScript.src`; the
+        # config says where the chat lives now, and `make shots` drives it.
+        check("and it follows the config to wherever the chat lives now",
+              "frame_origin" in loader)
         # **Measured compressed, which is what crosses the wire.** The source
         # keeps its reasoning in comments and the build minifies the copy it
         # serves (`minifyLoader` in vite.config.ts); an unminified file here
@@ -6136,6 +6141,62 @@ def main() -> int:
           f"missing from wrangler.jsonc ALLOWED_RECIPIENTS: {missing_boxes}")
     check("and that list still carries everything the default list does",
           all(p in deployed for p in prefixes), f"{sorted(deployed)} vs {prefixes}")
+    # **Mail for a group served elsewhere.** `ROUTES` sends some addresses to
+    # the group server; a routed address the recipient filter drops never
+    # reaches the router, and a route to the JSON intake is handed raw bytes
+    # it answers 4xx -- which the Worker reads as permanent and gives up on.
+    # Read from the lines that are not comments, so the shipped example is
+    # checked only once somebody switches it on.
+    live = "\n".join(line for line in wrangler.splitlines() if not line.strip().startswith("//"))
+    routed = re.search(r'"ROUTES":\s*"([^"]*)"', live)
+    pairs = [
+        (pair.split("=", 1)[0].strip().lower(), pair.split("=", 1)[1].strip())
+        for pair in (routed.group(1) if routed else "").split(",") if "=" in pair
+    ]
+    check("the Worker can send a group's mail to the server that holds it",
+          "function targetFor" in worker and "postWithRetry(targetFor(" in worker)
+    stray_routes = [
+        f"{prefix} -> {url}" for prefix, url in pairs
+        if not url.startswith("https://") or not url.rstrip("/").endswith(("/emails/inbound/raw", "/inbound-email/raw"))
+        or not any(prefix.startswith(p) or p.startswith(prefix) for p in deployed)
+    ]
+    check("and every route it has is https, to the raw intake, for an address it accepts",
+          not stray_routes, f"{len(pairs)} route(s)" if not stray_routes else str(stray_routes))
+
+    print("\n== the group server's deploy files ==")
+    # Nothing here runs nginx, so what is checked is what a later edit could
+    # quietly lose -- and each of these was driven through a real nginx and a
+    # real browser when it was written (docs/DEPLOY.md, "Several dealer
+    # groups on their own server").
+    groups_conf = pathlib.Path("deploy/liner-groups.nginx.conf").read_text()
+    blocks = re.findall(r"location\s+[^{]+\{([^}]*)\}", groups_conf)
+    proxied = [b for b in blocks if "proxy_pass" in b]
+    # The Host header *is* the store on that box. A location that drops it
+    # sends every request there to nobody's store.
+    check("every proxied location on the group server passes the Host through",
+          proxied and all("proxy_set_header Host $host" in b for b in proxied),
+          f"{len(proxied)} proxied")
+    check("and a name that is not one of ours is closed, not served as a dealership",
+          "default_server" in groups_conf and "return 444" in groups_conf
+          and "ssl_reject_handshake on" in groups_conf)
+    moved_conf = pathlib.Path("deploy/liner-groups-moved.conf").read_text()
+    live_moved = "\n".join(line for line in moved_conf.splitlines() if not line.strip().startswith("#"))
+    named_groups = [set(m.split("|")) for m in re.findall(r"\(\?<\w+>([a-z0-9|_-]+)\)", live_moved)]
+    from app.stores import known_stores as _groups_known
+
+    check("the old box's redirect names the same groups in both of its rules, and only real ones",
+          len(named_groups) == 2 and named_groups[0] == named_groups[1]
+          and named_groups[0] <= set(_groups_known()),
+          f"{[sorted(g) for g in named_groups]} vs profiles {_groups_known()}")
+    # The loader asks for its settings under the group's old path from the
+    # dealer's page; a redirect the page may not read is a failed fetch and
+    # no bubble. And 308, so a POST stays a POST.
+    check("and its redirect is readable cross-origin, and keeps the method",
+          'add_header Access-Control-Allow-Origin "*"' in live_moved
+          and "return 308" in live_moved and "return 301" not in live_moved)
+    service = pathlib.Path("deploy/liner.service").read_text()
+    check("the service starts after the database server it needs",
+          re.search(r"^After=.*postgresql\.service", service, re.M) is not None)
 
     print("\n== a real dealer platform, parsed from its own markup ==")
     # The first adapter written against a real site rather than the JSON-LD
@@ -8061,6 +8122,14 @@ def _stores_section(before: set[str]) -> None:
                                       json={"email": "founder@linerai.us", "password": "liner-dev"})
                 check("and one of our accounts cannot sign in there at all",
                       _owner.status_code == 401, str(_owner.status_code))
+                # The loader on a dealer's page moves its frame to wherever
+                # this names -- so on a group's own host it has to name that
+                # host, or an old tag would be sent back to the shared one.
+                _home = _client.get("/api/widget/config",
+                                    params={"origin": "https://example.invalid"}).json()
+                check("the website chat on a group's subdomain names that subdomain as its home",
+                      _home.get("frame_origin") == f"https://{_slug}.linerai.test",
+                      str(_home.get("frame_origin")))
             finally:
                 _settings.store_domain = _was_domain
                 _token = _cur_store_h.set(_slug)
@@ -8399,6 +8468,19 @@ def _stores_section(before: set[str]) -> None:
     ]
     check("every database this deployment serves is at the newest revision",
           not _behind, f"behind: {_behind}")
+    # **A backup line has to name the database in a form libpq reads.** The
+    # application's URL carries SQLAlchemy's driver (`+psycopg`), and libpq
+    # does not refuse that -- it misreads it as settings, finds none, and
+    # connects to the local defaults: a socket error that says nothing about
+    # the URL, or a dump of some other database under this one's file name.
+    # Every line `make dump-ops ARGS=--files` prints goes through `for_libpq`.
+    from app import pg as _bpg
+
+    _app_url = "postgresql+psycopg://liner:s3cret@db.internal:5432/liner_alsbou"
+    check("a backup line names the database the way pg_dump reads it",
+          _bpg.for_libpq(_app_url) == "postgresql://liner:s3cret@db.internal:5432/liner_alsbou"
+          and "pg.for_libpq(url)" in pathlib.Path("scripts/dump_ops.py").read_text(),
+          _bpg.safe(_bpg.for_libpq(_app_url)))
 
     print("\n== the chat on a dealer's own website ==")
     # The loader on their page asks for its settings on every load, says
@@ -8432,18 +8514,33 @@ def _stores_section(before: set[str]) -> None:
     check("with what the bubble needs and nothing it does not",
           {"label", "side", "offset", "accent"} <= set(cfg.get("launcher", {}))
           and cfg.get("events") in ("asc", "liner", "both"), str(sorted(cfg)))
+    # `*` rather than the asking page echoed back: a tag written for an older
+    # address reaches this through a redirect across origins, after which
+    # the browser sends `Origin: null` and an echo no longer matches it. An
+    # origin this deployment lists in ALLOWED_ORIGINS -- one of our own, like
+    # this one -- gets the CORS middleware's echo on top instead, which is
+    # just as readable; the stranger and the `null` below get the `*`.
     check("readable by the page that asked, and cached for a minute at most",
-          head.get("access-control-allow-origin") == own
+          head.get("access-control-allow-origin") in ("*", own)
           and "max-age=60" in head.get("cache-control", ""),
           f"{head.get('access-control-allow-origin')} {head.get('cache-control')}")
+    check("and it names the origin the chat is served from, for a tag that came by an older one",
+          "frame_origin" in cfg, str(sorted(cfg)))
     # **A refusal the dealer's side can read.** An opaque CORS failure is
     # the one answer nobody can act on, so a site that is not theirs still
     # reads the verdict -- in words, naming itself.
     code, head, refused = _asked(f"/api/widget/config?origin={q(stranger)}", stranger)
     check("a site the dealership did not list is told so, in words, and not shown",
           code == 200 and refused.get("allowed") is False and stranger in refused.get("reason", "")
-          and head.get("access-control-allow-origin") == stranger,
+          and head.get("access-control-allow-origin") == "*",
           refused.get("reason", "")[:120])
+    # After a redirect across origins the browser's `Origin` is the word
+    # `null`; the page's own origin still arrives as the loader's hint, and
+    # the verdict is taken from that.
+    code, head, nulled = _asked(f"/api/widget/config?origin={q(own)}", "null")
+    check("a request whose Origin a redirect turned to null is still answered, and readable",
+          code == 200 and nulled.get("allowed") is True
+          and head.get("access-control-allow-origin") == "*", json.dumps(nulled)[:120])
 
     # The switch: a manager's, and it takes effect on the next page load.
     call("POST", "/api/auth/login", REP_LOGIN)

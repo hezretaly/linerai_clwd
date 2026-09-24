@@ -110,8 +110,8 @@ restore-ops: ## Read a dump-ops file back into ops.db: FILE=... [ARGS=--dry-run]
 stores: ## List the stores this deployment can serve, and whether each is seeded
 	$(PY) scripts/drop_db.py --list
 
-migrate: ## Bring every database this deployment serves to the newest migration
-	cd backend && ../$(PY) -m app.migrate
+migrate: ## Bring every database this deployment serves to the newest migration (ARGS=--create on a new server)
+	cd backend && ../$(PY) -m app.migrate $(ARGS)
 
 to-postgres: ## Copy the SQLite databases into Postgres, one per store (ARGS=--apply)
 	$(PY) scripts/to_postgres.py $(ARGS)

@@ -23,6 +23,14 @@ the address this deployment is reached at. On a server that gives each dealer
 group its own subdomain (`STORE_DOMAIN`), that address is the group's own, for
 example `https://alsbou.linerai.us/embed.js`.
 
+**A tag pasted before a group moved keeps working, and nobody has to edit the
+dealer's site.** `linerai.us` redirects a moved group's old addresses to its
+subdomain (`deploy/liner-groups-moved.conf`), so the script and its settings
+still load. A redirect does not change the address the page's `<script>` tag
+names, though, so the settings say where the chat lives now (`frame_origin`)
+and the loader opens the chat there and talks to it there. A site with a
+Content-Security-Policy needs the subdomain allowed as well as the old address.
+
 It goes wherever the site's own scripts go, on every page:
 
 - **In the site template**, just before `</body>`. The dealer's website
@@ -95,7 +103,8 @@ so in the console of any page that asks.
 ## What the buyer gets
 
 - **A bubble, and nothing loaded behind it.** The chat itself is loaded on the
-  buyer's first click, from `https://linerai.us/widget/<dealer>`.
+  buyer's first click, from `/widget/<dealer>` on the dealership's own Liner
+  address (`https://alsbou.linerai.us/widget/alsbou`).
   - A chat that loads with every page would start a conversation for every
     visitor who never clicks.
   - It would also slow down the dealer's own pages.

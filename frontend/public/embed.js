@@ -54,6 +54,9 @@
   }
   var src = new URL(script.src, window.location.href);
   var base = src.origin;
+  /** Every origin that is Liner's: the tag's, and where the config says the
+   *  chat lives now (`follow`). Not another chat product on their page. */
+  var ours = [base.toLowerCase()];
   var dealer = clean(
     script.getAttribute('data-dealer') ||
       script.getAttribute('data-store') ||
@@ -111,6 +114,24 @@
     }
   });
 
+  /**
+   * Where this dealership's chat is served now, which need not be where this
+   * tag came from. A tag pasted as `linerai.us/<dealer>/embed.js` keeps
+   * running after the dealership moves to its own subdomain -- the old
+   * address redirects -- but a redirect does not change `currentScript.src`,
+   * so the frame would be asked for at the old origin and every message from
+   * it dropped for arriving from the new one. The config names the origin, and
+   * the frame, the pin on every message and the install report follow it.
+   * An origin and nothing else, and never from https down to http.
+   */
+  function follow(origin) {
+    origin = String(origin || '').replace(/\/+$/, '');
+    if (!/^https?:\/\/[a-z0-9.:\[\]-]+$/i.test(origin) || origin === base) return;
+    if (origin.indexOf('https://') !== 0 && base.indexOf('https://') === 0) return;
+    ours.push(origin.toLowerCase());
+    base = origin;
+  }
+
   var config = null;
   var host, root, wrap, panel, bubble, badge, frame;
   var isOpen = false;
@@ -119,6 +140,7 @@
 
   function start(cfg) {
     config = cfg || {};
+    follow(config.frame_origin);
     if (!config.enabled) {
       console.info(NAME + ' the chat is switched off for ' + dealer + (config.reason ? ': ' + config.reason : '.'));
       return;
@@ -326,8 +348,14 @@
 
   // ---- talking to the frame --------------------------------------------------
 
+  /** Whether the frame has said hello. Until then its window is still the
+   *  blank document it started as -- *this* page's origin -- and a message
+   *  pinned to ours is refused with a warning in the dealer's console. Nothing
+   *  is lost by waiting: `init` carries the page and whether the chat is open. */
+  var greeted = false;
+
   function post(message) {
-    if (!frame || !frame.contentWindow) return;
+    if (!frame || !frame.contentWindow || !greeted) return;
     message.liner = 1;
     // To our origin only: a frame that has been navigated somewhere else must
     // not receive the buyer's conversation id.
@@ -339,6 +367,7 @@
     var m = e.data;
     if (!m || m.liner !== 1 || typeof m.type !== 'string') return;
     if (m.type === 'hello') {
+      greeted = true;
       post({ type: 'init', conversationId: conversation(), page: page, open: isOpen });
     } else if (m.type === 'session') {
       remember(m.conversationId);
@@ -712,11 +741,13 @@
    *  scripts well after this runs, and the buffer stops recording at 250
    *  entries -- a dealer's homepage passes that before its chat arrives. */
   var heard = {};
-  var ownOrigin = base.toLowerCase();
 
   function hear(url) {
     url = String(url || '').toLowerCase();
-    if (!url || url.indexOf(ownOrigin) === 0) return;
+    if (!url) return;
+    for (var k = 0; k < ours.length; k++) {
+      if (url.indexOf(ours[k]) === 0) return;
+    }
     for (var i = 0; i < OTHERS.length; i++) {
       for (var j = 0; j < OTHERS[i][1].length; j++) {
         if (url.indexOf(OTHERS[i][1][j]) !== -1) { heard[OTHERS[i][0]] = true; break; }
