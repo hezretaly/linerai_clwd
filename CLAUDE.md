@@ -221,15 +221,37 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     an empty database from the migrations and compares it with the models,
     on SQLite and on Postgres. Write the revision in the same change.
   - **A database from before migrations is adopted in place**: filled out with
-    any table it lacks, stamped at the baseline, upgraded. The baseline is
-    generated from the models and never edited, because it has to describe
-    exactly what `create_all` built.
+    any table *the baseline* has and it lacks, stamped at the baseline,
+    upgraded. The baseline is generated from the models and never edited,
+    because it has to describe exactly what `create_all` built. Filled from the
+    models it was wrong: a file adopted after a revision that adds a table got
+    that table early, and the revision then refused to boot on "table ...
+    already exists" -- linerai.us's files are exactly such files. Found with
+    the parked lots revision; `make smoke` builds a pre-migration file from
+    the baseline and was seen to fail with the old code.
+  - **On SQLite a migration is one real transaction with foreign keys off**
+    (`migrate._ensure_sqlite`). Python's `sqlite3` begins a transaction only
+    before a row is written, so a revision failing half-way kept what it had
+    built, and a temporary copy of the table batch mode was rebuilding, in a
+    file still stamped at the revision before -- and every boot after failed.
+    Batch mode rebuilds a table to add a foreign key, and `foreign_keys=ON`
+    refuses to drop one other rows point at. The file is checked with
+    `foreign_key_check` after; a new violation fails the migration.
+  - **No new revision without a reason that holds real rows.** On request:
+    a new server's databases are built from the latest schema, and the
+    machinery exists for the day a table that already holds a dealership's
+    buyers has to change.
   - **Constraints are named by convention** (`db.NAMING`), so a later
     revision can say which one it drops. Postgres invented names of its own
     before, and SQLite stored none.
   - Much of this file explains a table that should have been a column,
     because `create_all` could add only tables. That constraint is gone; the
     tables stay, and new work can add a column like anywhere else.
+- **The prompt's opening hours group only days that agree**
+  (`prompts.hours_sentence`). It printed the first open day's window for the
+  whole week, so Alsbou -- closing at six on Sunday -- were open until eight
+  every day to the model. Bookable times were always right; only the sentence
+  that answers "are you open Sunday evening?" was not.
 - **Naive timestamps are dealership-local**, not UTC-with-conversion.
   `check_availability` builds slots straight from `hours_json` in that frame.
   Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a

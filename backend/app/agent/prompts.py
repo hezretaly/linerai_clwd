@@ -149,18 +149,41 @@ UNFILLED = re.compile(r"\{\{[^}]*\}\}")
 
 
 def _hours_line(dealership: Dealership) -> str:
-    hours = json.loads(dealership.hours_json or "{}")
-    open_days = [day for day, window in hours.items() if window]
-    closed = [day for day, window in hours.items() if not window]
-    if not open_days:
+    return hours_sentence(json.loads(dealership.hours_json or "{}"))
+
+
+_WEEK = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def hours_sentence(hours: dict) -> str:
+    """"Open Monday-Saturday 10:00 to 20:00, Sunday 10:00 to 18:00."
+
+    **Days are grouped only where their hours agree.** This used to read the
+    first open day's window and print it for the whole run, so Alsbou -- who
+    close at six on Sunday -- were told to the model as open until eight
+    seven days a week, and a buyer asking about Sunday evening got a wrong
+    yes from the one line meant to settle it. Bookable times were always
+    right: `check_availability` reads `hours_json` itself.
+    """
+    runs: list[list] = []
+    for n, day in enumerate(_WEEK):
+        window = hours.get(day)
+        if not window:
+            continue
+        key = (window["open"], window["close"])
+        if runs and runs[-1][2] == key and runs[-1][3] == n - 1:
+            runs[-1][1], runs[-1][3] = day, n
+        else:
+            runs.append([day, day, key, n])
+    if not runs:
         return "Hours are not configured."
-    sample = hours[open_days[0]]
-    line = (
-        f"Open {open_days[0].title()}-{open_days[-1].title()}, "
-        f"{sample['open']} to {sample['close']}."
-    )
+    line = "Open " + ", ".join(
+        f"{first.title()}{'' if first == last else '-' + last.title()} {opens} to {closes}"
+        for first, last, (opens, closes), _ in runs
+    ) + "."
+    closed = [day.title() for day in _WEEK if day in hours and not hours[day]]
     if closed:
-        line += f" Closed {', '.join(d.title() for d in closed)}."
+        line += f" Closed {', '.join(closed)}."
     return line
 
 

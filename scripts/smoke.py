@@ -8418,26 +8418,126 @@ def _stores_section(before: set[str]) -> None:
                   str(_left)[:160] or _mig.current(_e))
             _e.dispose()
 
-        # **A database from before migrations is adopted in place.** The
-        # default store's own file, copied: no `alembic_version`, its rows
-        # counted before and after, and the newest revision at the end.
-        _src = _mcfg.database_url_for("")
-        if not _mpg.is_postgres(_src):
-            import shutil as _mshutil
+        # **A database from before migrations is adopted in place.** Built
+        # the way such a file was: the baseline's tables and no
+        # `alembic_version`, rows in the tables a later revision rebuilds, and
+        # two of the baseline's tables missing -- a box last booted before
+        # they existed, which is every file on linerai.us. This used to copy
+        # the default store's own file, already migrated to the newest
+        # revision, and pass for the wrong reason; the real case had
+        # `create_all` hand it every table the code has today during
+        # adoption, so the first later revision to add one refused to boot
+        # on "table ... already exists" (found with the parked lots work).
+        from alembic import command as _mcommand
+        from sqlalchemy import inspect as _minspect
 
-            _copy = f"{_mdir}/legacy.db"
-            _mshutil.copy(_src.split("///", 1)[-1], _copy)
-            _le = _mengine(f"sqlite:///{_copy}", **_margs("sqlite://"))
-            with _le.begin() as _c:
-                _c.execute(_mtext("DROP TABLE IF EXISTS alembic_version"))
-                _before = _c.execute(_mselect(_mfunc.count()).select_from(_mtext("leads"))).scalar()
-            _how = _mig.ensure(_le, "store")
-            with _le.connect() as _c:
-                _after = _c.execute(_mselect(_mfunc.count()).select_from(_mtext("leads"))).scalar()
-            check("a database built before migrations is adopted in place, every row kept",
-                  _how == "adopted" and _before == _after and _mig.current(_le) == _mig.head("store"),
-                  f"{_how}, leads {_before} -> {_after}, at {_mig.current(_le)}")
-            _le.dispose()
+        from app.models import (
+            Appointment as _MAppt, Lead as _MLead, OpsUser as _MOpsUser, Vehicle as _MVehicle,
+        )
+
+        _legacy = {
+            "store": {
+                "rows": [
+                    (_MLead, {"id": "l-legacy", "name": "Legacy Buyer"}),
+                    (_MVehicle, {"id": "v-legacy", "vin": "1HGCM82633A004353", "year": 2003,
+                                 "make": "Honda", "model": "Accord"}),
+                    (_MAppt, {"id": "a-legacy", "lead_id": "l-legacy", "vehicle_id": "v-legacy",
+                              "starts_at": datetime(2030, 1, 7, 10)}),
+                ],
+                "missing": ("conversation_pages", "widget_installs"),
+            },
+            "ops": {
+                "rows": [(_MOpsUser, {"id": "o-legacy", "email": "legacy@linerai.us",
+                                      "name": "Legacy", "password_hash": "x"})],
+                "missing": ("ops_mail_state", "ops_sms_opt_outs"),
+            },
+        }
+        for _kind, _spec in _legacy.items():
+            _lurl = f"sqlite:///{_mdir}/legacy-{_kind}.db"
+            _le = _mengine(_lurl, **_margs(_lurl))
+            try:
+                with _le.begin() as _c:
+                    _mcommand.upgrade(_mig.config(_kind, _c), _mig.BASELINE[_kind])
+                    # Through the tables, not the models' defaults for columns
+                    # a later revision adds: an INSERT naming one fails here.
+                    for _model, _values in _spec["rows"]:
+                        _c.execute(_model.__table__.insert().values(**_values))
+                    for _table in ("alembic_version", *_spec["missing"]):
+                        _c.execute(_mtext(f"DROP TABLE {_table}"))
+                try:
+                    _how = _mig.ensure(_le, _kind)
+                except Exception as exc:  # noqa: BLE001 -- named in the check below
+                    _how = f"failed: {str(exc).splitlines()[0][:100]}"
+                _have = set(_minspect(_le).get_table_names())
+                with _le.connect() as _c:
+                    _kept = [
+                        _c.execute(_mselect(_mfunc.count()).select_from(_model.__table__)).scalar()
+                        for _model, _ in _spec["rows"]
+                    ]
+                _left = _mig.drift(_le, _kind) if _how == "adopted" else []
+                check(f"a database built before migrations is adopted ({_kind}): rows kept, "
+                      "missing tables made, the models at the end",
+                      _how == "adopted" and _kept == [1] * len(_spec["rows"])
+                      and set(_spec["missing"]) <= _have
+                      and _mig.current(_le) == _mig.head(_kind) and not _left,
+                      f"{_how}; rows {_kept}; at {_mig.current(_le) or 'nothing'}; "
+                      f"still missing {sorted(set(_spec['missing']) - _have)}; drift {str(_left)[:120]}")
+            finally:
+                _le.dispose()
+
+        # **A SQLite migration that fails part-way leaves nothing behind.**
+        # Python's sqlite3 runs CREATE and DROP outside any transaction, so a
+        # revision failing half-way kept what it had built -- and the temporary
+        # copy of a table batch mode was rebuilding -- in a file still stamped
+        # at the revision before, and every boot after failed on "table ...
+        # already exists". Forced here after the upgrade has run, on a scratch
+        # file at the baseline -- 0002 rebuilds a table in batch mode.
+        from alembic import command as _acommand
+
+        _furl = f"sqlite:///{_mdir}/forced.db"
+        _fe = _mengine(_furl, **_margs(_furl))
+        try:
+            with _fe.begin() as _c:
+                _acommand.upgrade(_mig.config("store", _c), _mig.BASELINE["store"])
+            _real_upgrade = _mig.command.upgrade
+
+            def _then_fail(cfg, rev):  # noqa: ANN001
+                _real_upgrade(cfg, rev)
+                raise RuntimeError("forced after the upgrade")
+
+            _mig.command.upgrade = _then_fail
+            try:
+                _mig.ensure(_fe, "store")
+                _forced = "did not fail"
+            except Exception as exc:  # noqa: BLE001 -- the forced failure, or a real one
+                _forced = str(exc).splitlines()[0][:90]
+            finally:
+                _mig.command.upgrade = _real_upgrade
+            _stray = [t for t in _minspect(_fe).get_table_names() if t.startswith("_alembic_tmp")]
+            check("a SQLite migration that fails part-way leaves the file as it was",
+                  _forced == "forced after the upgrade"
+                  and _mig.current(_fe) == _mig.BASELINE["store"] and not _stray,
+                  f"{_forced}; at {_mig.current(_fe)}; stray {_stray}")
+            _then = _mig.ensure(_fe, "store")
+            check("and the same file then goes through",
+                  _then.startswith("upgraded") and _mig.current(_fe) == _mig.head("store"), _then)
+        finally:
+            _fe.dispose()
+
+    # The one line that settles "are you open on Sunday evening" printed the
+    # first open day's window for the whole week, so Alsbou -- closing at six
+    # on Sunday -- were open until eight every day to the model.
+    from app.agent.prompts import hours_sentence as _hours_sentence
+
+    check("opening hours are grouped only where the days agree",
+          _hours_sentence({
+              **{d: {"open": "10:00", "close": "20:00"}
+                 for d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday")},
+              "sunday": {"open": "10:00", "close": "18:00"},
+          }) == "Open Monday-Saturday 10:00 to 20:00, Sunday 10:00 to 18:00."
+          and _hours_sentence({"monday": {"open": "09:00", "close": "17:00"}, "tuesday": None})
+          == "Open Monday 09:00 to 17:00. Closed Tuesday.",
+          _hours_sentence({"sunday": {"open": "10:00", "close": "18:00"}}))
 
     if _mpg.is_postgres(_mcfg.database_url):
         _scratch = _mcfg.database_url.rsplit("/", 1)[0] + "/liner_migration_check"

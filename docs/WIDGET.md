@@ -47,6 +47,24 @@ It goes wherever the site's own scripts go, on every page:
   attributes, name the dealer in the address instead:
   `https://linerai.us/embed.js?dealer=alsbou`.
 
+**The tag to hand over today** names the dealer in the address instead:
+
+```html
+<script src="https://linerai.us/alsbou/embed.js" async></script>
+```
+
+It opens Alsbou's chat on every loader this box has ever served -- the first
+bubble (`7014d59`) read the dealer from that path and never from
+`data-dealer`, so on a box not yet updated the `data-dealer` form would open
+the *default* store's chat -- and it keeps working after Alsbou moves to its
+own subdomain, because the old box redirects `/alsbou/...`. The page
+awareness, the session on their domain, the Tag Manager events and the
+other-chat check arrive when the box runs `21558e0` or later; before that the
+bubble opens the chat and nothing more. If their platform will not take a
+script at all, an iframe of `https://linerai.us/alsbou/chat?embed=1` is the
+fallback: no bubble and no page awareness, and allowed only on the sites
+below.
+
 That is the last edit anyone makes on the dealer's site. Everything else is
 read from Liner on each page load:
 

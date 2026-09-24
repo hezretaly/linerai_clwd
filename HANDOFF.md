@@ -265,14 +265,22 @@ no proactive nudge bubble. Two rules still stand if that menu is ever built:
 
 ## Next — the new server (agreed plan, in order)
 
-`linerai.us` keeps ops. Each dealer **group** gets a subdomain, all three on
-one server behind Cloudflare:
+**Alsbou only, for now** (the user, mid-way through: "we don't have to
+implement the other stores yet. only alsbou"). `linerai.us` keeps ops and every
+group that has not moved; Craig and Landreth and Riverside stay there at their
+paths. **No new migrations**: the new server's databases are built from the
+latest schema, and the machinery is only for a later change to a table that
+already holds real rows.
 
-- `alsbou.linerai.us`
-- `craigandlandreth.linerai.us`
-- `riverside.linerai.us`
-
-A group shares one database, so a manager works across its lots.
+**Alsbou's website chat needs none of the new server.** Give Get My Auto
+`<script src="https://linerai.us/alsbou/embed.js" async></script>` (their
+`snippets` list; their `chatbox` slot holds Capital One's Chat Concierge, and
+replacing that is Alsbou's call). The path form works on every loader from
+`7014d59` on, and after the move too, because the old box's redirect covers
+`/alsbou/...`. The full spec -- page and VIN awareness, the session on their
+domain, Tag Manager events, the other-chat check -- is commit `21558e0`, which
+predates Postgres and migrations: `linerai.us` gets it by the usual pull,
+build and restart. Check `https://linerai.us/alsbou/chat` answers live first.
 
 1. **Subdomain routing — done.** `STORE_DOMAIN=linerai.us` makes the
    Host header pick the store, as the path prefix does
@@ -294,13 +302,20 @@ A group shares one database, so a manager works across its lots.
    that is not ours gets its connection closed); `deploy/liner-groups-moved.conf`
    goes on the box keeping `linerai.us` and redirects a moved group's every
    old address, a tag already on a dealer's site included. The Worker's
-   `ROUTES` sends the groups' mail to the new box. All of it was run: nginx
+   `ROUTES` sends Alsbou's mail to the new box; both files name Alsbou alone. All of it was run: nginx
    1.24 in front of the app on Postgres, sign-in, the dealer socket, the chat
    stream, and an old tag followed by a browser from a dealer's page to a chat
    on the subdomain. That run found two bugs, both fixed and gated: the
    widget's settings could not be read after a redirect (`Origin: null`), and
    the printed `pg_dump` lines named the database in a form libpq misreads.
-5. **Rooftops as locations inside a group.**
+5. **Rooftops as locations inside a group — parked** on branch
+   `claude/rooftops-parked`, complete and gated there (it carries migration
+   0003). Not needed until Craig and Landreth move; when they do, it still
+   wants the street address and hours of Clarksville and Bullitt County from
+   Austin.
+6. **Two fixes kept from it:** the prompt's opening hours (Alsbou's Sunday
+   closing at six read as eight to the assistant on every version so far), and
+   adopting a pre-migration database from the baseline rather than the models.
 
 ## Next task — port the dashboard mockups
 
