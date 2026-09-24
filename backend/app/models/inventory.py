@@ -46,6 +46,12 @@ class Vehicle(Base):
     last_seen_at: Mapped[datetime] = created()
     ingest_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     raw_json: Mapped[str] = mapped_column(Text, default="{}")
+    #: Which of the group's lots it stands on, placed by `app/locations.py`
+    #: from what the row itself says. None is a lot this dealership has not
+    #: described -- the row's own `location` text still says which.
+    location_id: Mapped[str | None] = mapped_column(
+        ForeignKey("locations.id"), nullable=True, index=True
+    )
 
 
 class IngestRun(Base):

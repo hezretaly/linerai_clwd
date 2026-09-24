@@ -278,7 +278,10 @@ export function CalendarPage() {
                         )}
                       >
                         <p className="truncate font-medium">{appointment.lead?.name}</p>
-                        <p className="truncate opacity-80">{time(appointment.starts_at)}</p>
+                        <p className="truncate opacity-80">
+                          {time(appointment.starts_at)}
+                          {appointment.location ? ` · ${appointment.location.name}` : ''}
+                        </p>
                       </button>
                     )
                   })}
@@ -464,6 +467,7 @@ function BookedList({
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {appointment.vehicle?.title ?? 'No vehicle'}
+                        {appointment.location ? ` at ${appointment.location.name}` : ''}
                         {appointment.assigned_to
                           ? ` -- ${appointment.assigned_to.name}`
                           : ' -- unassigned'}
@@ -561,6 +565,7 @@ function Agenda({
                         </span>
                         <span className="block truncate text-xs text-muted-foreground">
                           {appointment.vehicle?.title ?? 'No vehicle'}
+                          {appointment.location ? ` at ${appointment.location.name}` : ''}
                           {appointment.assigned_to
                             ? ` -- ${appointment.assigned_to.name}`
                             : ' -- unassigned'}
@@ -681,6 +686,12 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
           <p className="text-sm text-muted-foreground">
             {dateTime(appointment?.starts_at)}
           </p>
+          {appointment?.location && (
+            <p className="text-sm text-muted-foreground">
+              At the {appointment.location.name} store
+              {appointment.location.address ? `, ${appointment.location.address}` : ''}
+            </p>
+          )}
         </>
       }
     >

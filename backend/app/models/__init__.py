@@ -39,6 +39,7 @@ from app.models.dealership import (
     Dealership,
     HandoffRule,
     KnowledgeEntry,
+    Location,
     Rail,
     User,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "ConversationOnce",
     "ConversationPage",
     "Dealership",
+    "Location",
     "Escalation",
     "Event",
     "CallBuyerTrack",

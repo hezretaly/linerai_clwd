@@ -23,6 +23,42 @@ class Dealership(Base):
     website_url: Mapped[str] = mapped_column(String(255), default="")
 
 
+class Location(Base):
+    """One rooftop of a dealer group: where a car stands, and where a visit to
+    see it is booked.
+
+    A group is one database, so a manager works across all of its lots -- and
+    a car is on exactly one of them. The *primary* is the dealership row's own
+    address, phone and hours, mirrored here so every reader asks one table.
+    The rest come from the profile's `locations:` (`app/locations.py` keeps
+    the rows in step with it), and each says only what somebody wrote down:
+    a lot with no street address or no hours on file is still where its cars
+    are, but a visit cannot be booked there, because nothing here could tell
+    the buyer where to go or when it opens.
+    """
+
+    __tablename__ = "locations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: The profile's name for it, and the one fact about a row that never
+    #: changes -- appointments point at the row, so a rename is an update.
+    key: Mapped[str] = mapped_column(String(40), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    #: The street address, or "" when nobody has written it down.
+    address: Mapped[str] = mapped_column(String(255), default="")
+    phone: Mapped[str] = mapped_column(String(40), default="")
+    #: The same shape as `dealership.hours_json`, or "" when not stated.
+    hours_json: Mapped[str] = mapped_column(Text, default="")
+    #: What a car's own row calls this lot, lowercased: the name in the
+    #: dealer's export and the store id in their feed.
+    aliases_json: Mapped[str] = mapped_column(Text, default="[]")
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Off when the profile stops listing it. The row stays, because the
+    #: visits booked there are history somebody still reads.
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class User(Base):
     __tablename__ = "users"
 

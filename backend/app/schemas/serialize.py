@@ -202,7 +202,10 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
             .order_by(Appointment.starts_at.asc())
             .all()
         )
-        out["appointments"] = [appointment_out(a, db) for a in appts]
+        from app import locations
+
+        lots = locations.Lots(db)
+        out["appointments"] = [appointment_out(a, db, lots) for a in appts]
         convos = (
             db.query(Conversation).filter_by(lead_id=lead.id)
             .order_by(Conversation.started_at.asc(), Conversation.id.asc()).all()
@@ -299,7 +302,7 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
     return out
 
 
-def appointment_out(a: Appointment, db: Session | None = None) -> dict:
+def appointment_out(a: Appointment, db: Session | None = None, lots=None) -> dict:  # noqa: ANN001
     out = {
         "id": a.id,
         "lead_id": a.lead_id,
@@ -328,6 +331,13 @@ def appointment_out(a: Appointment, db: Session | None = None) -> dict:
             db.query(Outreach).filter_by(appointment_id=a.id)
             .order_by(Outreach.created_at.desc()).all(),
         )
+        # Which of the group's lots the visit is at. Null for a dealership
+        # with one, where "the showroom" is one place and a label on every
+        # row would be noise. A list passes its `lots` in, read once.
+        from app import locations
+
+        lots = lots if lots is not None else locations.Lots(db)
+        out["location"] = locations.out(lots.of_appointment(a)) if lots.several else None
     return out
 
 
@@ -522,7 +532,8 @@ def ingest_run_out(r: IngestRun) -> dict:
 
 
 def booking_card(
-    slots: list[str], slot_minutes: int, known: dict | None = None
+    slots: list[str], slot_minutes: int, known: dict | None = None,
+    visit_at: dict | None = None,
 ) -> dict:
     """Group check_availability's flat slot list into day -> times.
 
@@ -557,7 +568,7 @@ def booking_card(
             },
         )
         day["slots"].append({"starts_at": iso, "label": clock_label(when)})
-    return {
+    out = {
         "slot_minutes": slot_minutes,
         "days": list(days.values()),
         "known": {
@@ -566,3 +577,12 @@ def booking_card(
             "phone": (known or {}).get("phone") or "",
         },
     }
+    # Which store these times are at, for a group -- straight from the same
+    # result as the times, so the card cannot name one lot over another's
+    # diary. Absent for a dealership with one showroom.
+    if visit_at and visit_at.get("store"):
+        out["visit_at"] = {
+            "store": str(visit_at.get("store") or ""),
+            "address": str(visit_at.get("address") or ""),
+        }
+    return out

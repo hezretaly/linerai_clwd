@@ -363,6 +363,135 @@ def inventory() -> dict:
     }
 
 
+#: A lot's key: the profile's own name for it, which goes in a link
+#: (`?location=clarksville`) and is the one thing about its row that never
+#: changes -- visits point at the row, so renaming a lot is an update.
+_LOCATION_KEY = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+_CLOCK = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _hours(value) -> tuple[dict, str]:
+    """Opening hours in the shape `hours:` has, or ({}, why) when they are not.
+
+    Every day named, each either null (closed) or an open and a close time.
+    A lot whose hours are half-written is one whose hours are not known:
+    offering slots from a guess is how a buyer arrives at a locked door.
+    """
+    if not value:
+        return {}, ""
+    if not isinstance(value, dict):
+        return {}, "hours must be one entry per day"
+    out: dict = {}
+    for day in DAYS:
+        window = value.get(day)
+        if window is None:
+            out[day] = None
+            continue
+        if not isinstance(window, dict):
+            return {}, f"hours.{day} must be null or open/close"
+        opens, closes = str(window.get("open") or ""), str(window.get("close") or "")
+        if not (_CLOCK.match(opens) and _CLOCK.match(closes)) or opens >= closes:
+            return {}, f"hours.{day} needs an open time before a close time, as HH:MM"
+        out[day] = {"open": opens, "close": closes}
+    extra = sorted(set(value) - set(DAYS))
+    if extra:
+        return {}, f"hours has days that do not exist: {', '.join(extra)}"
+    if not any(out.values()):
+        return {}, "hours closes every day"
+    return out, ""
+
+
+def location_problems(raw: dict) -> list[str]:
+    """What is wrong with a profile's `locations:`, in words; [] when nothing.
+
+    The seed refuses on any of these rather than seeding around them. What is
+    *not* a problem is a lot with no street address or no hours: its cars are
+    still real and still there, and a visit is booked at the primary until
+    somebody writes them in -- the seed says so, and nothing is invented.
+    """
+    listed = raw.get("locations")
+    if listed is None:
+        return []
+    if not isinstance(listed, list) or not listed:
+        return ["locations must be a list with at least one lot"]
+    problems: list[str] = []
+    seen: set[str] = set()
+    primaries = 0
+    for n, entry in enumerate(listed, 1):
+        where = f"locations[{n}]"
+        if not isinstance(entry, dict):
+            problems.append(f"{where} is not a mapping")
+            continue
+        key = str(entry.get("key") or "").strip()
+        if not _LOCATION_KEY.match(key):
+            problems.append(f"{where}.key must be lowercase letters, digits and dashes")
+        elif key in seen:
+            problems.append(f"{where}.key {key!r} is listed twice")
+        seen.add(key)
+        if not str(entry.get("name") or "").strip():
+            problems.append(f"{where}.name is missing")
+        match = entry.get("match", [])
+        if not isinstance(match, list) or not all(isinstance(m, (str, int)) for m in match):
+            problems.append(f"{where}.match must be a list of the names and store ids their feed uses")
+        if entry.get("primary"):
+            primaries += 1
+            # One fact, one place. The primary is the address, phone and hours
+            # at the top of the file; restated here, the two drift apart and
+            # nothing says which one a buyer was given.
+            restated = [f for f in ("address", "phone", "hours") if entry.get(f)]
+            if restated:
+                problems.append(
+                    f"{where} is the primary, whose {', '.join(restated)} are the ones at the "
+                    "top of the file -- remove them here"
+                )
+        else:
+            _, why = _hours(entry.get("hours"))
+            if why:
+                problems.append(f"{where}.{why}")
+    if primaries != 1:
+        problems.append(
+            f"exactly one lot must say `primary: true` -- the one at the address at the top "
+            f"of the file (found {primaries})"
+        )
+    return problems
+
+
+def locations() -> list[dict]:
+    """The group's lots as this profile lists them, in order; [] for none.
+
+    Most dealerships have one address and list nothing, and `app/locations.py`
+    makes that address the only lot. Each entry is `key`, `name`, `address`,
+    `phone`, `hours` (a dict, empty when not stated), `match` (lowercased) and
+    `primary`. Read per call like every other section. A profile the seed
+    would refuse (`location_problems`) reads as listing nothing, rather than
+    as a half-understood list: one lot is a smaller error than a wrong one.
+    """
+    path = _path()
+    if not path.is_file():
+        return []
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    if not raw.get("locations") or location_problems(raw):
+        return []
+    out = []
+    for entry in raw["locations"]:
+        primary = bool(entry.get("primary"))
+        hours, _ = ({}, "") if primary else _hours(entry.get("hours"))
+        out.append({
+            "key": str(entry["key"]).strip(),
+            "name": str(entry["name"]).strip(),
+            "address": "" if primary else str(entry.get("address") or "").strip(),
+            "phone": "" if primary else str(entry.get("phone") or "").strip(),
+            "hours": hours,
+            "match": sorted({str(m).strip().lower() for m in entry.get("match") or [] if str(m).strip()}),
+            "primary": primary,
+        })
+    return out
+
+
 #: The invented showroom's own invented domain. `.example` is reserved by RFC
 #: 2606 like `.invalid`, so mail to it can never leave the building -- but it
 #: reads as a dealership's address rather than as a placeholder, which is what

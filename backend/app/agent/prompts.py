@@ -149,18 +149,41 @@ UNFILLED = re.compile(r"\{\{[^}]*\}\}")
 
 
 def _hours_line(dealership: Dealership) -> str:
-    hours = json.loads(dealership.hours_json or "{}")
-    open_days = [day for day, window in hours.items() if window]
-    closed = [day for day, window in hours.items() if not window]
-    if not open_days:
+    return hours_sentence(json.loads(dealership.hours_json or "{}"))
+
+
+_WEEK = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def hours_sentence(hours: dict) -> str:
+    """"Open Monday-Thursday 09:00 to 20:00, Friday-Saturday 09:00 to 19:00."
+
+    **Days are grouped only where their hours agree.** This used to read the
+    first open day's window and print it for the whole run, so Craig and
+    Landreth -- who close at seven on Friday and Saturday, and whose profile
+    says why that is worth keeping exact -- were told to the model as open
+    until eight all week, and a buyer asking about Saturday evening got the
+    wrong answer from the one line meant to settle it.
+    """
+    runs: list[list] = []
+    for n, day in enumerate(_WEEK):
+        window = hours.get(day)
+        if not window:
+            continue
+        key = (window["open"], window["close"])
+        if runs and runs[-1][2] == key and runs[-1][3] == n - 1:
+            runs[-1][1], runs[-1][3] = day, n
+        else:
+            runs.append([day, day, key, n])
+    if not runs:
         return "Hours are not configured."
-    sample = hours[open_days[0]]
-    line = (
-        f"Open {open_days[0].title()}-{open_days[-1].title()}, "
-        f"{sample['open']} to {sample['close']}."
-    )
+    line = "Open " + ", ".join(
+        f"{first.title()}{'' if first == last else '-' + last.title()} {opens} to {closes}"
+        for first, last, (opens, closes), _ in runs
+    ) + "."
+    closed = [day.title() for day in _WEEK if day in hours and not hours[day]]
     if closed:
-        line += f" Closed {', '.join(d.title() for d in closed)}."
+        line += f" Closed {', '.join(closed)}."
     return line
 
 
@@ -552,6 +575,28 @@ they are waiting in, so silence reads as nobody having read it.
 """
 
 
+def _lots_line(db: Session) -> str:
+    """The group's other lots, for a group; nothing for a dealership with one.
+
+    One line, because every car's own result already says which lot it is on
+    and where a visit to see it is booked; this is for "where are you?" and
+    "do you have a store in Clarksville?". A lot with no street address on
+    file says so, so the answer to "where is it?" is the number, not a guess.
+    """
+    from app import locations
+
+    lots = locations.Lots(db)
+    if not lots.several or lots.primary is None:
+        return ""
+    others = [lot for lot in lots.active if lot is not lots.primary]
+    listed = ", ".join(
+        f"{lot.name} ({'; '.join(b for b in (lot.address or 'no street address on file', lot.phone, hours_sentence(locations.hours(lot)) if locations.hours(lot) else '') if b)})"
+        for lot in others
+    )
+    return (f"\nThat is our {lots.primary.name} store. Our other lots: {listed}. "
+            "Each car's result says which lot it is on.")
+
+
 def build_system_prompt(
     db: Session,
     dealership: Dealership,
@@ -578,7 +623,7 @@ def build_system_prompt(
         fill(custom["rules"], dealership, settings_row) if custom["rules"] else OPERATING_RULES,
         f"""
 DEALERSHIP FACTS
-{dealership.name}, {dealership.address}. Phone {dealership.phone}.
+{dealership.name}, {dealership.address}. Phone {dealership.phone}.{_lots_line(db)}
 {_hours_line(dealership)} Timezone {dealership.timezone}.
 Appointment slots are {settings_row.booking_slot_length} minutes.
 

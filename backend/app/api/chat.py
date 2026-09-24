@@ -93,7 +93,7 @@ def _page_out(db: Session, row) -> dict | None:
     card = None
     if vehicle is not None:
         card = buyer_vehicles([
-            tools._vehicle_payload(vehicle, tools.home_location(db), full=False)
+            tools._vehicle_payload(vehicle, tools.lots_of(db), full=False)
         ])[0]
     return {"title": row.title, "vin": row.vin, "vehicle": card}
 
@@ -202,7 +202,8 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
         fresh = tools.check_availability(db, convo, {})
         if fresh["slots"]:
             out["booking"] = booking_card(
-                fresh["slots"], fresh["slot_minutes"], tools.contact_on(db, convo)
+                fresh["slots"], fresh["slot_minutes"], tools.contact_on(db, convo),
+                fresh.get("visit_at"),
             )
 
     # The details card **is** replayed, unlike availability -- "what is your
@@ -562,6 +563,7 @@ async def send_message(
                         avail["slots"],
                         avail.get("slot_minutes") or 30,
                         tools.contact_on(session, convo_local),
+                        avail.get("visit_at"),
                     ),
                 )
 

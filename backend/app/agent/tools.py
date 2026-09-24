@@ -28,7 +28,7 @@ from app.agent import details
 from app.agent.phrasing import cased
 from app.escalations import claim_for_owner
 from app.events import emit
-from app import conversation_once, matching
+from app import conversation_once, locations, matching
 from app.matching import match_lead
 from app.models import (
     Appointment,
@@ -425,14 +425,43 @@ def history_url(raw: dict) -> str:
     return url if url.startswith("https://") else ""
 
 
-def home_location(db: Session) -> str:
-    """The dealership's own address, lowercased, for comparing a car's lot to it.
+def lots_of(db: Session) -> "locations.Lots":
+    """The group's lots, read once per tool call rather than per vehicle: a
+    search returns five rows and the lots do not change between them."""
+    return locations.Lots(db)
 
-    Read once per tool call rather than per vehicle: a search returns five rows
-    and the address does not change between them.
-    """
-    row = db.query(Dealership).first()
-    return (row.address or "").lower() if row else ""
+
+def _lot_fields(v: Vehicle, raw: dict, lots: "locations.Lots | None") -> dict:
+    """`location` and, for a car not at the primary, `location_note`."""
+    out: dict = {}
+    lot = lots.of(v) if lots is not None else None
+    stated = str(raw.get("location") or "").strip()
+    if lot is not None and lots is not None and lots.several:
+        out["location"] = lot.name
+    elif stated:
+        out["location"] = stated
+    if lot is not None and not lot.is_primary:
+        phone = f" ({lot.phone})" if lot.phone else ""
+        if locations.bookable(lot):
+            out["location_note"] = (
+                f"This one is at our {lot.name} store, {lot.address}{phone}. A visit to "
+                "see it is booked there, in that store's hours -- say which store before "
+                "offering a time."
+            )
+        else:
+            out["location_note"] = (
+                f"This one is at our {lot.name} store{phone}, not the address above, and "
+                "nothing here says where that store is or when it opens. Say so before "
+                "offering a time: a visit is booked at the address above, and a person "
+                "checks it can be seen there."
+            )
+    elif lot is None and stated and lots is not None:
+        # A lot the dealership has not described: all there is is its name.
+        out["location_note"] = (
+            f"This one is at the {stated} store, not the address above. Say so before "
+            "offering a time, and check with a person that it can be seen there."
+        )
+    return out
 
 
 #: How many options lines a *search* result carries per car. A dealer's own
@@ -443,7 +472,7 @@ def home_location(db: Session) -> str:
 SEARCH_FEATURES = 8
 
 
-def _vehicle_payload(v: Vehicle, home: str = "", full: bool = True) -> dict:
+def _vehicle_payload(v: Vehicle, lots: "locations.Lots | None" = None, full: bool = True) -> dict:
     raw = json.loads(v.raw_json or "{}") if v.raw_json else {}
     features = json.loads(v.features_json or "[]")
     payload = {
@@ -467,24 +496,18 @@ def _vehicle_payload(v: Vehicle, home: str = "", full: bool = True) -> dict:
         "listing_url": v.listing_url,
         "status": v.status,
     }
-    # Which of the group's lots it is standing on. A dealership with more than
-    # one address lists them all in one feed, and the appointment Liner books
-    # is at the address in `dealerships` -- so a car at another store has to
-    # say so, or the buyer drives to the wrong forecourt.
+    # Which of the group's lots it is standing on, and where a visit to see it
+    # is booked: that lot, when we know where it is and when it opens
+    # (`app/locations.py`), and the address above when we do not -- so a car at
+    # another store has to say which, or the buyer drives to the wrong
+    # forecourt.
     #
-    # The *note* is only raised for a car that is somewhere else. Craig and
+    # The *note* is only raised for a car that is not at the primary. Craig and
     # Landreth's lot is 240 cars in Louisville and 246 between Clarksville and
     # Bullitt County, so a note on every row would have the assistant announce
     # the store it is standing in on every reply -- which is noise, and noise
     # is how the one row that mattered stops being read.
-    if raw.get("location"):
-        payload["location"] = raw["location"]
-        if home and raw["location"].lower() not in home:
-            payload["location_note"] = (
-                f"This one is at the {raw['location']} store, not the address above. "
-                "Say so before offering a time, and check with a person that it can "
-                "be seen there."
-            )
+    payload.update(_lot_fields(v, raw, lots))
     # The dealer's own vehicle history report -- a Carfax link, in every export
     # seen so far. We cannot fetch it (their provider will not serve a server),
     # but the buyer's browser can, so the link *is* the answer to "is there a
@@ -703,10 +726,10 @@ def search_inventory(db: Session, convo: Conversation, args: dict) -> dict:
                 "again, or ask what matters most to them."
             ),
         }
-    home = home_location(db)
+    lots = lots_of(db)
     out = {
         "count": len(rows),
-        "vehicles": [_vehicle_payload(v, home, full=False) for v in rows],
+        "vehicles": [_vehicle_payload(v, lots, full=False) for v in rows],
     }
     if any(len(json.loads(v.features_json or "[]")) > SEARCH_FEATURES for v in rows):
         out["note"] = (
@@ -729,7 +752,23 @@ def get_vehicle(db: Session, convo: Conversation, args: dict) -> dict:
     _record_mentions(db, convo.id, [vehicle])
     convo.focus_vehicle_id = vehicle.id
     db.commit()
-    return _vehicle_payload(vehicle, home_location(db))
+    return _vehicle_payload(vehicle, lots_of(db))
+
+
+def _booked_at(db: Session, lots: "locations.Lots", lot):  # noqa: ANN001
+    """Live visits at one lot, as a query to narrow further.
+
+    A row with no lot on it was booked before the group had more than one,
+    which was the primary; a dealership with one lot has one diary.
+    """
+    from sqlalchemy import or_
+
+    query = db.query(Appointment).filter(Appointment.status.in_(["booked", "confirmed"]))
+    if lot is None or not lots.several:
+        return query
+    if lot.is_primary:
+        return query.filter(or_(Appointment.location_id == lot.id, Appointment.location_id.is_(None)))
+    return query.filter(Appointment.location_id == lot.id)
 
 
 def _dealership_hours(db: Session) -> dict:
@@ -781,7 +820,17 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
     closed Sunday -- read from the config row, never hardcoded."""
     from app.api.settings import live_settings
 
-    hours = _dealership_hours(db)
+    # **At the lot the car in focus stands on**, when a buyer could be told
+    # where that is and when it opens -- its own hours, its own diary. Two
+    # visits at ten are no clash when one is in Louisville and the other in
+    # Clarksville; they are when both are here.
+    lots = lots_of(db)
+    focus = (
+        db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
+        if convo.focus_vehicle_id else None
+    )
+    lot = lots.for_visit(focus)
+    hours = locations.hours(lot) or _dealership_hours(db)
     slot_len = live_settings(db).booking_slot_length
     days_ahead = int(args.get("days_ahead") or 7)
     period = args.get("preferred_period") or "any"
@@ -789,8 +838,8 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
     now = utcnow()
     taken = {
         a.starts_at.replace(second=0, microsecond=0)
-        for a in db.query(Appointment)
-        .filter(Appointment.starts_at >= now, Appointment.status.in_(["booked", "confirmed"]))
+        for a in _booked_at(db, lots, lot)
+        .filter(Appointment.starts_at >= now)
         .all()
     }
 
@@ -836,6 +885,10 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
         "slots": slots[:12],
         "contact_known": bool(known["name"] and known["phone"]),
     }
+    if lots.several and lot is not None:
+        # Where these times are. Said only for a group, where "our showroom"
+        # is not one place.
+        result["visit_at"] = {"store": lot.name, "address": lot.address, "phone": lot.phone}
     if not result["contact_known"]:
         result["note"] = (
             "You do not have a name and a phone number for this buyer yet. Get those "
@@ -984,28 +1037,34 @@ def book_appointment(
     if starts_at.tzinfo is not None:
         starts_at = starts_at.replace(tzinfo=None)
 
-    hours = _dealership_hours(db)
+    vehicle = None
+    if args.get("vin"):
+        vehicle = db.query(Vehicle).filter_by(vin=str(args["vin"]).upper()).one_or_none()
+    elif convo.focus_vehicle_id:
+        vehicle = db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
+
+    # The lot the visit is at decides the hours and the diary, so it is
+    # settled before either is read: the car's own when we know where that is
+    # and when it opens, the primary otherwise (`locations.Lots.for_visit`).
+    lots = lots_of(db)
+    lot = lots.for_visit(vehicle)
+    where = f" at {lot.name}" if lots.several and lot is not None else ""
+    hours = locations.hours(lot) or _dealership_hours(db)
     window = hours.get(DAY_NAMES[starts_at.weekday()])
     if not window:
-        raise ToolError(f"We are closed on {DAY_NAMES[starts_at.weekday()].title()}.")
+        raise ToolError(f"We are closed{where} on {DAY_NAMES[starts_at.weekday()].title()}.")
     if not (int(window["open"][:2]) <= starts_at.hour < int(window["close"][:2])):
         raise ToolError(
-            f"That is outside our hours ({window['open']} to {window['close']})."
+            f"That is outside our hours{where} ({window['open']} to {window['close']})."
         )
 
     # Nothing here checked the slot was still free. check_availability filters
     # taken slots, but that answer ages: a buyer looking at a picked time on a
     # booking card can sit on it for minutes, and the model can offer a time it
     # read several turns ago. Two buyers then get the same 10 AM and one of
-    # them turns up to nobody. The executor is the guarantee, so it checks.
-    clash = (
-        db.query(Appointment)
-        .filter(
-            Appointment.starts_at == starts_at,
-            Appointment.status.in_(["booked", "confirmed"]),
-        )
-        .first()
-    )
+    # them turns up to nobody. The executor is the guarantee, so it checks --
+    # at this lot: the same hour at another store is somebody else's showroom.
+    clash = _booked_at(db, lots, lot).filter(Appointment.starts_at == starts_at).first()
     if clash is not None:
         raise ToolError(
             f"{when_label(starts_at)} was taken while you were deciding. "
@@ -1013,12 +1072,6 @@ def book_appointment(
         )
 
     lead = attach_lead(db, convo, name=name, email=email, phone=phone)
-
-    vehicle = None
-    if args.get("vin"):
-        vehicle = db.query(Vehicle).filter_by(vin=str(args["vin"]).upper()).one_or_none()
-    elif convo.focus_vehicle_id:
-        vehicle = db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
 
     from app.api.settings import live_settings
 
@@ -1033,6 +1086,7 @@ def book_appointment(
         booked_by=str(args.get("booked_by") or "liner"),
         conversation_id=convo.id,
         tool_call_id=tool_call_id,
+        location_id=lot.id if lot is not None else None,
     )
     db.add(appointment)
     convo.stage = "booked"
@@ -1047,13 +1101,16 @@ def book_appointment(
         "vehicle_id": vehicle.id if vehicle else None,
         "starts_at": appointment.starts_at.isoformat(),
     })
-    return {
+    result = {
         "appointment_id": appointment.id,
         "starts_at": appointment.starts_at.isoformat(),
         "duration_min": appointment.duration_min,
-        "vehicle": _vehicle_payload(vehicle) if vehicle else None,
+        "vehicle": _vehicle_payload(vehicle, lots) if vehicle else None,
         "lead_id": lead.id,
     }
+    if lots.several and lot is not None:
+        result["visit_at"] = {"store": lot.name, "address": lot.address, "phone": lot.phone}
+    return result
 
 
 def request_details(db: Session, convo: Conversation, args: dict) -> dict:

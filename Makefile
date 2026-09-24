@@ -1,4 +1,4 @@
-.PHONY: prune-ops help install deps build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores
+.PHONY: prune-ops help install deps build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores locations
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -112,6 +112,9 @@ stores: ## List the stores this deployment can serve, and whether each is seeded
 
 migrate: ## Bring every database this deployment serves to the newest migration (ARGS=--create on a new server)
 	cd backend && ../$(PY) -m app.migrate $(ARGS)
+
+locations: ## Bring every store's lots in step with its profile and place each car; prints each lot
+	cd backend && ../$(PY) -m app.locations
 
 to-postgres: ## Copy the SQLite databases into Postgres, one per store (ARGS=--apply)
 	$(PY) scripts/to_postgres.py $(ARGS)

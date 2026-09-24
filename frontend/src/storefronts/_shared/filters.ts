@@ -2,8 +2,8 @@
  * The inventory list's URL contract, shared so every storefront's list page
  * reads and writes the same query string however it is designed.
  *
- * `?q=`, `?make=`, `?body_style=`, `?min_price=` and `?max_price=` are the
- * filter state. Living in the URL is what lets a front page's search box and
+ * `?q=`, `?make=`, `?body_style=`, `?min_price=`, `?max_price=` and, for a
+ * group with more than one lot, `?location=` are the filter state. Living in the URL is what lets a front page's search box and
  * its body-style tiles land on the list already narrowed, lets the back
  * button undo a filter, and makes a filtered grid a link somebody can send.
  * One dealership's landing must be able to link into another design's list
@@ -18,9 +18,11 @@ export interface Filters {
   bodyStyle: string
   min: number | null
   max: number | null
+  /** One of a group's lots, by its key (`?location=clarksville`). */
+  location: string
 }
 
-export const NO_FILTERS: Filters = { q: '', make: '', bodyStyle: '', min: null, max: null }
+export const NO_FILTERS: Filters = { q: '', make: '', bodyStyle: '', min: null, max: null, location: '' }
 
 function num(value: string | null): number | null {
   if (value == null || value === '') return null
@@ -36,6 +38,7 @@ export function readFilters(params: URLSearchParams): Filters {
     bodyStyle: params.get('body_style') ?? '',
     min: num(params.get('min_price')),
     max: num(params.get('max_price')),
+    location: params.get('location') ?? '',
   }
 }
 
@@ -48,6 +51,7 @@ export function writeFilters(filters: Filters): URLSearchParams {
   if (filters.bodyStyle) p.set('body_style', filters.bodyStyle)
   if (filters.min != null) p.set('min_price', String(filters.min))
   if (filters.max != null) p.set('max_price', String(filters.max))
+  if (filters.location) p.set('location', filters.location)
   return p
 }
 
@@ -60,7 +64,9 @@ export function showroomQuery(filters: Filters, limit: number, sort: string): st
 }
 
 export function isFiltered(filters: Filters): boolean {
-  return Boolean(filters.q || filters.make || filters.bodyStyle || filters.min != null || filters.max != null)
+  return Boolean(
+    filters.q || filters.make || filters.bodyStyle || filters.min != null || filters.max != null || filters.location,
+  )
 }
 
 /** The path a landing page sends a search or a tile to. */

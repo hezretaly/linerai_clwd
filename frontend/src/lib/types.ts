@@ -199,6 +199,22 @@ export interface Appointment {
   conversation_id: string | null
   created_at: string
   outreach?: Outreach[]
+  /** Which of a group's lots the visit is at; null for a dealership with one. */
+  location?: DealerLocation | null
+}
+
+/** One lot of a dealer group (`app/locations.py`). Not `Location`, which is
+ *  the browser's own type for `window.location`. */
+export interface DealerLocation {
+  id: string
+  key: string
+  name: string
+  address: string
+  phone: string
+  primary: boolean
+  /** A street address and hours are on file, so a visit can be booked there. */
+  bookable: boolean
+  cars?: number
 }
 
 export interface Outreach {

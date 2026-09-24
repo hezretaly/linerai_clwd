@@ -7398,26 +7398,47 @@ def main() -> int:
     check("and nothing invented for a car with no listing at all",
           inquiry_url(SimpleNamespace(price=None, listing_url="")) == "")
 
-    def _payload(price, location, home):
+    # A dealership's lots without a database: the rows `Lots` would read,
+    # built here, and placed by the same `place` a real import uses.
+    from app.locations import Lots as _Lots
+
+    def _lots_of(*rows):
+        lots = object.__new__(_Lots)
+        lots.by_id = {r.id: r for r in rows}
+        lots.active = list(rows)
+        lots.primary = next(r for r in rows if r.is_primary)
+        lots._index = {a: r for r in rows for a in json.loads(r.aliases_json)}
+        return lots
+
+    _one_lot = _lots_of(SimpleNamespace(
+        id="lou", key="main", name="Craig and Landreth Cars", is_primary=True, active=True,
+        address="4156 Shelbyville Rd., Louisville, KY 40207", phone="502-447-3450",
+        hours_json=json.dumps({"monday": {"open": "09:00", "close": "20:00"}}), aliases_json="[]",
+    ))
+
+    def _payload(price, location, lots=None):
+        raw = {"location": location} if location else {}
+        lot = lots.place(raw) if lots is not None else None
         return _vehicle_payload(SimpleNamespace(
             vin="X", year=2020, make="BMW", model="X5", trim="", price=price,
             mileage=1000, body_style="suv", seats=5, features_json="[]",
             photo_url="", listing_url="https://x.invalid/vdp/1/car", status="available",
-            raw_json=json.dumps({"location": location}) if location else None,
+            raw_json=json.dumps(raw) if raw else None,
+            location_id=lot.id if lot is not None else None,
             rule_hold_price=False, rule_mention_warranty=False, rule_note="",
-        ), home)
+        ), lots)
 
     # Its own key. `rule_hold_price` already owns `price_note`, and two notes
     # writing to one field means whichever runs last silently wins -- the one
     # that loses being a rule the dealer set.
-    note = _payload(None, "", "")
+    note = _payload(None, "")
     check("the model is told not to quote a price that does not exist",
           "do not quote or estimate" in note["no_price_note"]
           and "price_note" not in note)
     check("and told to point at the link rather than read a URL out",
           "never say a URL on a call" in note["no_price_note"])
-    check("a priced car carries neither", "no_price_note" not in _payload(1, "", "")
-          and "inquiry_url" not in _payload(1, "", ""))
+    check("a priced car carries neither", "no_price_note" not in _payload(1, "")
+          and "inquiry_url" not in _payload(1, ""))
 
     # **A Carfax is a link.** Their provider will not serve this box, but the
     # buyer's browser can open it -- so the link is the answer to "is there a
@@ -7441,9 +7462,8 @@ def main() -> int:
     # on every row would have it announce the store it is standing in on every
     # reply, which is noise -- and noise is how the one row that mattered stops
     # being read.
-    home = "4156 shelbyville rd., louisville, ky 40207"
-    here = _payload(9000, "Louisville", home)
-    there = _payload(9000, "Clarksville", home)
+    here = _payload(9000, "Louisville", _one_lot)
+    there = _payload(9000, "Clarksville", _one_lot)
     check("a car on this lot says where it is without making a point of it",
           here["location"] == "Louisville" and "location_note" not in here)
     check("and a car at another store is flagged before a time is offered",
@@ -8418,26 +8438,71 @@ def _stores_section(before: set[str]) -> None:
                   str(_left)[:160] or _mig.current(_e))
             _e.dispose()
 
-        # **A database from before migrations is adopted in place.** The
-        # default store's own file, copied: no `alembic_version`, its rows
-        # counted before and after, and the newest revision at the end.
-        _src = _mcfg.database_url_for("")
-        if not _mpg.is_postgres(_src):
-            import shutil as _mshutil
+        # **A database from before migrations is adopted in place.** Built
+        # the way such a file was: the baseline's tables and no
+        # `alembic_version`, rows in the tables a later revision rebuilds, and
+        # two of the baseline's tables missing -- a box last booted before
+        # they existed, which is every file on linerai.us. This used to copy
+        # the default store's own file, already migrated to the newest
+        # revision, and pass for the wrong reason; the real case had
+        # `create_all` hand it `locations` during adoption and 0003 then
+        # refuse to boot on "table locations already exists".
+        from alembic import command as _mcommand
+        from sqlalchemy import inspect as _minspect
 
-            _copy = f"{_mdir}/legacy.db"
-            _mshutil.copy(_src.split("///", 1)[-1], _copy)
-            _le = _mengine(f"sqlite:///{_copy}", **_margs("sqlite://"))
-            with _le.begin() as _c:
-                _c.execute(_mtext("DROP TABLE IF EXISTS alembic_version"))
-                _before = _c.execute(_mselect(_mfunc.count()).select_from(_mtext("leads"))).scalar()
-            _how = _mig.ensure(_le, "store")
-            with _le.connect() as _c:
-                _after = _c.execute(_mselect(_mfunc.count()).select_from(_mtext("leads"))).scalar()
-            check("a database built before migrations is adopted in place, every row kept",
-                  _how == "adopted" and _before == _after and _mig.current(_le) == _mig.head("store"),
-                  f"{_how}, leads {_before} -> {_after}, at {_mig.current(_le)}")
-            _le.dispose()
+        from app.models import (
+            Appointment as _MAppt, Lead as _MLead, OpsUser as _MOpsUser, Vehicle as _MVehicle,
+        )
+
+        _legacy = {
+            "store": {
+                "rows": [
+                    (_MLead, {"id": "l-legacy", "name": "Legacy Buyer"}),
+                    (_MVehicle, {"id": "v-legacy", "vin": "1HGCM82633A004353", "year": 2003,
+                                 "make": "Honda", "model": "Accord"}),
+                    (_MAppt, {"id": "a-legacy", "lead_id": "l-legacy", "vehicle_id": "v-legacy",
+                              "starts_at": datetime(2030, 1, 7, 10)}),
+                ],
+                "missing": ("conversation_pages", "widget_installs"),
+            },
+            "ops": {
+                "rows": [(_MOpsUser, {"id": "o-legacy", "email": "legacy@linerai.us",
+                                      "name": "Legacy", "password_hash": "x"})],
+                "missing": ("ops_mail_state", "ops_sms_opt_outs"),
+            },
+        }
+        for _kind, _spec in _legacy.items():
+            _lurl = f"sqlite:///{_mdir}/legacy-{_kind}.db"
+            _le = _mengine(_lurl, **_margs(_lurl))
+            try:
+                with _le.begin() as _c:
+                    _mcommand.upgrade(_mig.config(_kind, _c), _mig.BASELINE[_kind])
+                    # Through the tables, not the models' defaults for columns
+                    # a later revision adds: an INSERT naming one fails here.
+                    for _model, _values in _spec["rows"]:
+                        _c.execute(_model.__table__.insert().values(**_values))
+                    for _table in ("alembic_version", *_spec["missing"]):
+                        _c.execute(_mtext(f"DROP TABLE {_table}"))
+                try:
+                    _how = _mig.ensure(_le, _kind)
+                except Exception as exc:  # noqa: BLE001 -- named in the check below
+                    _how = f"failed: {str(exc).splitlines()[0][:100]}"
+                _have = set(_minspect(_le).get_table_names())
+                with _le.connect() as _c:
+                    _kept = [
+                        _c.execute(_mselect(_mfunc.count()).select_from(_model.__table__)).scalar()
+                        for _model, _ in _spec["rows"]
+                    ]
+                _left = _mig.drift(_le, _kind) if _how == "adopted" else []
+                check(f"a database built before migrations is adopted ({_kind}): rows kept, "
+                      "missing tables made, the models at the end",
+                      _how == "adopted" and _kept == [1] * len(_spec["rows"])
+                      and set(_spec["missing"]) <= _have
+                      and _mig.current(_le) == _mig.head(_kind) and not _left,
+                      f"{_how}; rows {_kept}; at {_mig.current(_le) or 'nothing'}; "
+                      f"still missing {sorted(set(_spec['missing']) - _have)}; drift {str(_left)[:120]}")
+            finally:
+                _le.dispose()
 
     if _mpg.is_postgres(_mcfg.database_url):
         _scratch = _mcfg.database_url.rsplit("/", 1)[0] + "/liner_migration_check"
@@ -8735,6 +8800,276 @@ def _stores_section(before: set[str]) -> None:
             _cur_store.reset(token)
     if not listed:
         print("  [skip] no seeded store has a car with its own page on the dealer's site")
+
+    print("\n== a group's lots ==")
+    # A group is one database, so a manager works across all of its lots --
+    # and a car is on exactly one of them, and a visit to see it is booked
+    # there when we know where that is and when it opens (`app/locations.py`).
+    # Before this, every visit was booked at the one address in `dealership`,
+    # and a buyer who wanted a Clarksville car was told it was elsewhere and
+    # then booked where it was not.
+    from app import locations as _loc, profile as _lprof
+    from app.agent import prompts as _lprompts, tools as _ltools
+    from app.api.outreach import _draft as _lconfirm
+    from app.db import SessionLocal as _LLocal, current_store as _lstore
+    from app.models import (
+        Appointment as _LAppt, CapturedField as _LField, Conversation as _LConvo,
+        Dealership as _LShop, Lead as _LLead, Location as _LLoc, User as _LUser,
+        Vehicle as _LVehicle,
+    )
+    from app.recap import conversation_recap as _lrecap
+    from app.schemas.serialize import appointment_out as _lappt_out
+
+    # The profile's shape is refused in words rather than seeded around; a
+    # lot that has no street address or hours yet is not a problem, because
+    # its cars are real and still on it.
+    _good = {"locations": [{"key": "a", "name": "A", "primary": True, "match": ["a"]},
+                           {"key": "b-2", "name": "B", "phone": "1", "match": ["b", 12]}]}
+    check("a group's lots in a profile are read as listed, a lot with no address yet included",
+          not _lprof.location_problems(_good), str(_lprof.location_problems(_good)))
+    _bad = {
+        "two primaries": [{"key": "a", "name": "A", "primary": True},
+                          {"key": "b", "name": "B", "primary": True}],
+        "no primary": [{"key": "a", "name": "A"}],
+        "a key that is not a slug": [{"key": "A B", "name": "A", "primary": True}],
+        "a key twice": [{"key": "a", "name": "A", "primary": True}, {"key": "a", "name": "B"}],
+        "the primary restating its address": [{"key": "a", "name": "A", "primary": True,
+                                               "address": "1 Main St"}],
+        "half-written hours": [{"key": "a", "name": "A", "primary": True},
+                               {"key": "b", "name": "B", "hours": {"monday": {"open": "09:00"}}}],
+    }
+    _accepted = [why for why, rows in _bad.items() if not _lprof.location_problems({"locations": rows})]
+    check("and a malformed list is refused, naming what is wrong", not _accepted,
+          f"accepted: {_accepted}")
+    # The one line that settles "are you open on Saturday evening" read the
+    # first open day's window and printed it for the whole week.
+    check("opening hours are grouped only where the days agree",
+          _lprompts.hours_sentence({
+              "monday": {"open": "09:00", "close": "20:00"},
+              "tuesday": {"open": "09:00", "close": "20:00"},
+              "friday": {"open": "09:00", "close": "19:00"},
+              "saturday": {"open": "09:00", "close": "19:00"},
+              "sunday": None,
+          }) == "Open Monday-Tuesday 09:00 to 20:00, Friday-Saturday 09:00 to 19:00. Closed Sunday.",
+          _lprompts.hours_sentence({"monday": {"open": "09:00", "close": "20:00"},
+                                    "saturday": {"open": "09:00", "close": "19:00"}}))
+
+    # **A failed migration leaves nothing behind, and a rebuild works with
+    # rows pointing at the table.** Python's sqlite3 runs CREATE and DROP
+    # outside any transaction, so 0003 failing half-way kept `locations` and a
+    # temporary copy of `vehicles` in a file still stamped 0002 -- and the
+    # next boot failed on "table locations already exists", for ever. It
+    # failed because `foreign_keys=ON` refused to drop `vehicles` for its
+    # rebuild while an appointment pointed at it. Both are driven here on a
+    # scratch file at 0002 with exactly that row in it.
+    from alembic import command as _lcommand
+    from sqlalchemy import create_engine as _lengine, inspect as _linspect, text as _ltext
+    from sqlalchemy.pool import NullPool as _LNull
+
+    from app import migrate as _lmig
+
+    _scratch_db = pathlib.Path("backend/var/lots-migration-check.db").resolve()
+    for _suffix in ("", "-wal", "-shm"):
+        pathlib.Path(f"{_scratch_db}{_suffix}").unlink(missing_ok=True)
+    _le = _lengine(f"sqlite:///{_scratch_db}", poolclass=_LNull)
+    try:
+        with _le.begin() as _conn:
+            _lcommand.upgrade(_lmig.config("store", _conn), "0002_one_part_per_version")
+            # Through the tables, not the models: the models already carry the
+            # column 0003 adds, and an INSERT naming it fails at 0002.
+            _conn.execute(_LVehicle.__table__.insert().values(
+                id="v-mig", vin="1HGCM82633A004352", year=2003, make="Honda", model="Accord"))
+            _conn.execute(_LLead.__table__.insert().values(id="l-mig", name="Migration Check"))
+            _conn.execute(_LAppt.__table__.insert().values(
+                id="a-mig", lead_id="l-mig", vehicle_id="v-mig", starts_at=datetime(2030, 1, 7, 10)))
+        _real_upgrade = _lmig.command.upgrade
+
+        def _then_fail(cfg, rev):  # noqa: ANN001
+            _real_upgrade(cfg, rev)
+            raise RuntimeError("forced after the upgrade")
+
+        _lmig.command.upgrade = _then_fail
+        try:
+            _lmig.ensure(_le, "store")
+            _forced = "did not fail"
+        except Exception as exc:  # noqa: BLE001 -- the forced failure, or a real one
+            _forced = str(exc).splitlines()[0][:90]
+        finally:
+            _lmig.command.upgrade = _real_upgrade
+        _left = set(_linspect(_le).get_table_names())
+        check("a SQLite migration that fails part-way leaves the file as it was",
+              _forced == "forced after the upgrade" and _lmig.current(_le) == "0002_one_part_per_version"
+              and "locations" not in _left and not any(t.startswith("_alembic_tmp") for t in _left),
+              f"{_forced}; at {_lmig.current(_le)}; stray: "
+              f"{sorted(t for t in _left if t == 'locations' or t.startswith('_alembic_tmp'))}")
+        try:
+            _what = _lmig.ensure(_le, "store")
+        except Exception as exc:  # noqa: BLE001 -- named in the check below
+            _what = f"failed: {str(exc).splitlines()[0][:90]}"
+        with _le.connect() as _conn:
+            _kept = _conn.execute(_ltext("SELECT COUNT(*) FROM appointments WHERE vehicle_id IS NOT NULL")).scalar()
+            _fk = _conn.execute(_ltext("PRAGMA foreign_key_check")).fetchall()
+        check("and it goes through with rows pointing at a table it has to rebuild",
+              _what.startswith("upgraded") and _lmig.current(_le) == _lmig.head("store")
+              and _kept == 1 and not _fk, f"{_what}; {_kept} kept; {len(_fk)} broken")
+    finally:
+        _le.dispose()
+        for _suffix in ("", "-wal", "-shm"):
+            pathlib.Path(f"{_scratch_db}{_suffix}").unlink(missing_ok=True)
+
+    # Every seeded store had its lots made at boot -- the rows exist because
+    # a car and an appointment have to be able to name one.
+    _no_lots = []
+    for _slug in [""] + [s for s in _store_files() if _exists(s)]:
+        _token = _lstore.set(_slug) if _slug else None
+        try:
+            with _LLocal() as _ldb:
+                if _ldb.query(_LShop).first() is not None and not _ldb.query(_LLoc).filter_by(active=True).count():
+                    _no_lots.append(_slug or "default")
+        finally:
+            if _token is not None:
+                _lstore.reset(_token)
+    check("every seeded store has its lots, made at boot", not _no_lots, f"none in: {_no_lots}")
+
+    def _lots_listed(slug: str) -> list:
+        _t = _lstore.set(slug)
+        try:
+            return _lprof.locations()
+        finally:
+            _lstore.reset(_t)
+
+    _group = next((s for s in sorted(_store_files()) if len(_lots_listed(s)) > 1), "")
+    if not _group:
+        print("  [skip] no seeded store lists more than one lot")
+    else:
+        _token = _lstore.set(_group)
+        _made: list[str] = []
+        _ldb = _LLocal()
+        try:
+            _lots = _loc.Lots(_ldb)
+            _primary = _lots.primary
+            _other = next(l for l in _lots.active if not l.is_primary)
+            # Placement, on the rules the module states.
+            _placed = {
+                "a feed store id": _lots.place({"dealer_id": next(iter(json.loads(_other.aliases_json)), "")}),
+                "the lot's name, any case": _lots.place({"location": _other.name.upper()}),
+                "nothing said at all": _lots.place({}),
+                "a lot nobody described": _lots.place({"location": "Somewhere Else Entirely"}),
+            }
+            check("a car is placed by what its own row says",
+                  _placed["a feed store id"] is _other and _placed["the lot's name, any case"] is _other
+                  and _placed["nothing said at all"] is _primary and _placed["a lot nobody described"] is None,
+                  str({k: (v.key if v else None) for k, v in _placed.items()}))
+            # Against the rows: every car whose own row names a lot is on it.
+            _misplaced = 0
+            for _v in _ldb.query(_LVehicle).all():
+                _raw = json.loads(_v.raw_json or "{}") or {}
+                _want = _lots.place(_raw if isinstance(_raw, dict) else {})
+                if (_want.id if _want else None) != _v.location_id:
+                    _misplaced += 1
+            check("and every car in the group stands where its row says",
+                  _misplaced == 0, f"{_misplaced} misplaced")
+
+            _prompt = _lprompts.build_system_prompt(
+                _ldb, _ldb.query(_LShop).first(),
+                __import__("app.api.settings", fromlist=["live_settings"]).live_settings(_ldb))
+            check("the assistant is told the group's other lots, with what is known of each",
+                  "Our other lots:" in _prompt and _other.name in _prompt
+                  and (_other.phone in _prompt if _other.phone else True), _other.name)
+
+            _car = _ltools.offerable(_ldb.query(_LVehicle)).filter(
+                _LVehicle.location_id == _other.id).first()
+            _car2 = _ltools.offerable(_ldb.query(_LVehicle)).filter(
+                _LVehicle.location_id == _other.id, _LVehicle.id != _car.id).first()
+
+            def _convo(car):  # noqa: ANN001
+                row = _LConvo(channel="chat", focus_vehicle_id=car.id)
+                _ldb.add(row)
+                _ldb.commit()
+                _made.append(row.id)
+                return row
+
+            # A lot we cannot book at: the buyer is told which store and its
+            # number, and the times are the primary's.
+            _other.address, _other.hours_json = "", ""
+            _ldb.commit()
+            _lots = _loc.Lots(_ldb)
+            _note = _ltools._vehicle_payload(_car, _lots, full=False).get("location_note", "")
+            _avail = _ltools.check_availability(_ldb, _convo(_car), {})
+            check("a car at a lot with no address on file says which store, and is booked at the primary",
+                  _other.name in _note and "nothing here says where" in _note
+                  and (_avail.get("visit_at") or {}).get("store") == _primary.name, _note[:110])
+
+            # The same lot with an address and one hour a day: its own hours,
+            # its own diary.
+            _other.address = "1 Gate Check Way, Nowhere 00000"
+            _other.hours_json = json.dumps({d: {"open": "13:00", "close": "14:00"} for d in
+                                            ("monday", "tuesday", "wednesday", "thursday", "friday",
+                                             "saturday")} | {"sunday": None})
+            _ldb.commit()
+            _c1 = _convo(_car)
+            _avail = _ltools.check_availability(_ldb, _c1, {})
+            _hours_ok = bool(_avail["slots"]) and all(s[11:13] == "13" for s in _avail["slots"])
+            check("at a lot we can book at, the times are its own hours",
+                  _hours_ok and (_avail.get("visit_at") or {}).get("store") == _other.name,
+                  f"{_avail['slots'][:3]} at {(_avail.get('visit_at') or {}).get('store')}")
+            _slot = _avail["slots"][0]
+            _booked = _ltools.book_appointment(_ldb, _c1, {
+                "name": "Lots Check", "phone": "5025550191", "starts_at": _slot})
+            _appt = _ldb.query(_LAppt).filter_by(id=_booked["appointment_id"]).one()
+            check("and the visit is booked at that lot",
+                  _appt.location_id == _other.id and (_booked.get("visit_at") or {}).get("store") == _other.name,
+                  str(_booked.get("visit_at")))
+            # The diary each lot books against: this visit is in its own
+            # lot's and not in the primary's, which is what lets the same
+            # hour be taken at both.
+            _lots = _loc.Lots(_ldb)
+            _in_own = _ltools._booked_at(_ldb, _lots, _other).filter(_LAppt.id == _appt.id).count()
+            _in_home = _ltools._booked_at(_ldb, _lots, _primary).filter(_LAppt.id == _appt.id).count()
+            check("the same hour at another of the group's lots is not a clash",
+                  _in_own == 1 and _in_home == 0, f"own {_in_own}, primary {_in_home}")
+            try:
+                _ltools.book_appointment(_ldb, _convo(_car2), {
+                    "name": "Lots Check Three", "phone": "5025550193", "starts_at": _slot})
+                _clash = "not refused"
+            except _ltools.ToolError as exc:
+                _clash = str(exc)
+            check("while the same hour at the same lot is", "taken" in _clash, _clash[:80])
+
+            _manager = _ldb.query(_LUser).filter_by(role="manager").first()
+            _letter = _lconfirm(_ldb, _appt, _ldb.query(_LShop).first(), _manager)["body"]
+            _card = _lappt_out(_appt, _ldb)
+            check("the confirmation, the calendar and the recap all name that store",
+                  f"our {_other.name} store, {_other.address}" in _letter
+                  and (_card.get("location") or {}).get("key") == _other.key
+                  and f"at {_other.name}" in _lrecap(_ldb, _c1),
+                  f"{(_card.get('location') or {}).get('key')} / {_lrecap(_ldb, _c1)[:90]}")
+        finally:
+            _ldb.rollback()
+            _gone = _ldb.query(_LConvo).filter(_LConvo.id.in_(_made)).all()
+            _leads = {c.lead_id for c in _gone if c.lead_id}
+            _ldb.query(_LAppt).filter(_LAppt.conversation_id.in_(_made)).delete(synchronize_session=False)
+            for _row in _gone:
+                _ldb.delete(_row)
+            _ldb.flush()
+            for _lid in _leads:
+                _ldb.query(_LField).filter_by(lead_id=_lid).delete()
+                _ldb.query(_LLead).filter_by(id=_lid).delete()
+            _ldb.commit()
+            # The lot's own row back to what the profile says.
+            _loc.sync(_ldb)
+            _ldb.close()
+            _lstore.reset(_token)
+
+        # The storefront's filter and its counts, over HTTP.
+        _all = call("GET", f"/{_group}/api/showroom?limit=1")
+        _facet = (_all.get("facets") or {}).get("locations") or []
+        _by_key = {f["key"]: f["count"] for f in _facet}
+        _narrowed = {k: call("GET", f"/{_group}/api/showroom?limit=1&location={k}")["total"] for k in _by_key}
+        _nowhere = call("GET", f"/{_group}/api/showroom?limit=1&location=nowhere-at-all")["total"]
+        check("the storefront counts each lot, and each count is what its filter shows",
+              len(_facet) > 1 and _narrowed == _by_key and sum(_by_key.values()) <= _all["total"]
+              and _nowhere == 0, f"{_by_key} vs {_narrowed}; unknown {_nowhere}")
 
     print("\n== what one dealership's chat may cost in five minutes ==")
     # `/chat` is public by design and, as an iframe on a dealership's own

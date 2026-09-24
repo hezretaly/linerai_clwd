@@ -296,6 +296,12 @@ class Appointment(Base):
     conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     tool_call_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     created_at: Mapped[datetime] = created()
+    #: Which of the group's lots the visit is at. None on a row booked before
+    #: a group had more than one, which is the primary -- `app/locations.py`
+    #: reads it that way rather than rewriting history.
+    location_id: Mapped[str | None] = mapped_column(
+        ForeignKey("locations.id"), nullable=True, index=True
+    )
 
 
 class Escalation(Base):

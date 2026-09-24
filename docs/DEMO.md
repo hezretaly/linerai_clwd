@@ -88,6 +88,33 @@ appointment nobody is there for. Filling a gap with something plausible is
 worse than leaving it — an invented address survives a demo and gets repeated
 back to a customer.
 
+**Their three lots are in `locations:`** — Louisville (the primary, the
+address above), Clarksville IN and Bullitt County, with the name and store id
+each car carries in their own export, so every car is placed on its lot:
+240, 176 and 70. A visit to see a car is booked at *its* lot, in that lot's
+hours — once the lot's street address and hours are written in. They are not
+yet for Clarksville and Bullitt County: their site is refused from here, so
+the phone numbers (from their export) are all the profile states. Until then a
+buyer who wants one of those cars is told which store it is at and its number,
+and the visit is booked at Louisville. **Ask Austin for both addresses and
+both stores' hours**, fill them in, and run `make locations` — the change is
+immediate and needs no reseed:
+
+```yaml
+locations:
+  - key: clarksville
+    name: Clarksville
+    phone: 812-280-8018
+    match: [Clarksville, "1129"]
+    address: "<street>, Clarksville, IN 47129"
+    hours:
+      monday: { open: "09:00", close: "20:00" }   # every day; null for closed
+```
+
+A dealership with one showroom lists no `locations:` at all and has one lot,
+its own address. `make locations` prints each lot, its cars, and whether a
+visit can be booked there.
+
 **`knowledge:` has their doc fee and nothing else yet** — $690 at Louisville
 and Bullitt County, $260 at Clarksville, confirmed by Austin. Policy answers
 are returned to a buyer verbatim and never composed, so every topic that is

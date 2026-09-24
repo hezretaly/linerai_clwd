@@ -18,7 +18,7 @@ export function Showroom() {
   const [shown, setShown] = useState(PAGE)
   const [sort, setSort] = useState(SORTS[0].key)
   const [draft, setDraft] = useState(filters.q)
-  const query = useMemo(() => showroomQuery(filters, shown, sort), [filters.q, filters.make, filters.bodyStyle, filters.min, filters.max, shown, sort])
+  const query = useMemo(() => showroomQuery(filters, shown, sort), [filters.q, filters.make, filters.bodyStyle, filters.min, filters.max, filters.location, shown, sort])
   const { data } = useStorefront(query)
   const shop = data?.dealership
   const facets = data?.facets
@@ -58,6 +58,16 @@ export function Showroom() {
                 </button>
               )}
             </div>
+            {(facets?.locations?.length ?? 0) > 1 && (
+              <>
+                <h3 className="mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Location</h3>
+                {facets!.locations!.map((l) =>
+                  row(l.name, l.count, filters.location === l.key, () =>
+                    narrow({ location: filters.location === l.key ? '' : l.key }),
+                  ),
+                )}
+              </>
+            )}
             <h3 className="mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Price</h3>
             {(facets?.price_bands ?? []).map((b) =>
               row(b.label, b.count, filters.min === b.min && filters.max === b.max, () =>

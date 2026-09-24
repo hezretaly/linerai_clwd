@@ -1234,7 +1234,9 @@ quickest way to see what is actually deployed.
 ### Adding a group later
 
 1. Its profile, `backend/config/dealerships/<slug>.yaml` (docs/DEMO.md), pushed
-   and pulled onto the new box.
+   and pulled onto the new box. A group with more than one showroom lists its
+   lots under `locations:`; `make locations` then prints each one, its cars,
+   and whether a visit can be booked there yet.
 2. Its database: `sudo -u liner env DEALERSHIP=<slug> make reset-db` there —
    on Postgres that creates `liner_<slug>` and seeds it, printing the logins.
 3. A proxied `A` record for `<slug>` in Cloudflare.

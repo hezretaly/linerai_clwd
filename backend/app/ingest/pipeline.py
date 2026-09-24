@@ -429,5 +429,11 @@ def publish(db: Session, run: IngestRun) -> dict:
         applied["removed"] += 1
 
     run.status = "published"
+    # Each car on the lot its own row names: a new one arrives with none, and
+    # a car the dealer moved between stores comes back with another store's id.
+    from app import locations
+
+    db.flush()
+    locations.place(db)
     db.commit()
     return applied

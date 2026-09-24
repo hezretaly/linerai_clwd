@@ -229,6 +229,9 @@ def overview(
         {**vehicle_out(v, mentions=count), "quoted_to": count} for v, count in stale_rows
     ]
 
+    from app import locations
+
+    lots = locations.Lots(db)
     return {
         "dealership": dealership_out(dealership),
         "generated_at": stamp(now),
@@ -290,8 +293,8 @@ def overview(
         },
         "queues": {
             "needs_a_person": [escalation_out(e, db) for e in open_escalations],
-            "unconfirmed_appointments": [appointment_out(a, db) for a in unconfirmed],
-            "unassigned_appointments": [appointment_out(a, db) for a in unassigned],
+            "unconfirmed_appointments": [appointment_out(a, db, lots) for a in unconfirmed],
+            "unassigned_appointments": [appointment_out(a, db, lots) for a in unassigned],
             # The whole day, newest activity first. The client shows the
             # last two hours and expands to the rest -- see happening_now_since.
             "active_conversations": day_payload,

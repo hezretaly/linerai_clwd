@@ -71,6 +71,16 @@ async def lifespan(app: FastAPI):
     # dealership's own login carried on answering 200, so it read as "/ops is
     # broken" rather than as a step missed. Measured by deleting the file.
     create_ops_all()
+    # Each store's lots in step with its profile, and every car placed on one.
+    # A failure here is logged rather than raised: the tables still hold the
+    # last lots that were synced, and a dealership with its site up and one
+    # stale lot beats one with no site at all.
+    from app import locations
+
+    try:
+        locations.sync_all()
+    except Exception:  # noqa: BLE001
+        log.exception("Could not bring the lots in step with the profiles; serving what the tables hold.")
 
     # Sync endpoints run in a threadpool; events.emit needs a handle on the
     # main loop to reach connected sockets from there.
@@ -183,6 +193,7 @@ def create_app() -> FastAPI:
         ingest,
         inventory,
         lead_import,
+        lots,
         leads,
         mail_reader,
         mailbox,
@@ -209,6 +220,7 @@ def create_app() -> FastAPI:
         leads.router,
         drafts.router,
         lead_import.router,
+        lots.router,
         appointments.router,
         outreach.router,
         inbound_email.router,

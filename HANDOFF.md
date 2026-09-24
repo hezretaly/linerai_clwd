@@ -300,7 +300,19 @@ A group shares one database, so a manager works across its lots.
    on the subdomain. That run found two bugs, both fixed and gated: the
    widget's settings could not be read after a redirect (`Origin: null`), and
    the printed `pg_dump` lines named the database in a form libpq misreads.
-5. **Rooftops as locations inside a group.**
+5. **Rooftops as locations inside a group — done.** `locations` (migration
+   0003), written in each profile's `locations:` and synced at boot, seed,
+   import and `make locations`. Every car is placed on its lot; a visit is
+   booked at the car's own lot in that lot's hours with its own diary, when
+   the lot's street address and hours are on file, and at the primary
+   otherwise; every sentence that says where to go names the store; the
+   calendar, the booking card and the storefront (a counted Location filter)
+   show it. **Still to ask Craig and Landreth (Austin): the street address and
+   opening hours of Clarksville and of Bullitt County** — their site is
+   refused from here, so neither was read and neither is guessed. Fill them in
+   their profile and run `make locations`. Alsbou's Riverside site stays a
+   link in their nav until somebody decides it is one of their lots and we
+   have its cars.
 
 ## Next task — port the dashboard mockups
 

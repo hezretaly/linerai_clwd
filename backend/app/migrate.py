@@ -19,8 +19,8 @@ schema and no `alembic_version` was built by `create_all`, and its tables are
 the baseline's, because nothing ever altered one -- near enough: a constraint
 added to a model after its table existed never reached that file (`drift`
 names any, and on Alsbou's it is one unique index on `handoff_rules.key`). So
-it is filled out with any table it lacks, stamped at the baseline and upgraded
-from there. The rows are never touched.
+it is filled out with any table *the baseline* has and it lacks, stamped at
+the baseline and upgraded from there. The rows are never touched.
 
 **A model changed without a migration is a failure in the gate**, not a
 surprise on the server: `make smoke` builds an empty database from the
@@ -85,22 +85,130 @@ def current(engine: Engine) -> str:
 
 def ensure(engine: Engine, kind: str) -> str:
     """Bring one database to the newest revision. Returns what it did."""
+    if engine.dialect.name == "sqlite":
+        return _ensure_sqlite(engine, kind)
     with engine.begin() as conn:
-        tables = set(inspect(conn).get_table_names())
-        cfg = config(kind, conn)
-        if "alembic_version" in tables:
-            before = MigrationContext.configure(conn).get_current_revision() or ""
-            command.upgrade(cfg, "head")
-            return "current" if before == head(kind) else f"upgraded from {before}"
-        if MARKER[kind] in tables:
-            # Built by `create_all`: fill in any table added since, then say
-            # which revision that is, then carry on from there.
-            metadata(kind).create_all(bind=conn)
-            command.stamp(cfg, BASELINE[kind])
-            command.upgrade(cfg, "head")
-            return "adopted"
+        return _bring_up(conn, kind)
+
+
+def _bring_up(conn, kind: str) -> str:  # noqa: ANN001
+    tables = set(inspect(conn).get_table_names())
+    cfg = config(kind, conn)
+    if "alembic_version" in tables:
+        before = MigrationContext.configure(conn).get_current_revision() or ""
         command.upgrade(cfg, "head")
-        return "built"
+        return "current" if before == head(kind) else f"upgraded from {before}"
+    if MARKER[kind] in tables:
+        # Built by `create_all`, before migrations: fill in whatever *the
+        # baseline* has and this file lacks, say it is at the baseline, and
+        # carry on from there.
+        _fill_from_baseline(conn, kind, tables)
+        command.stamp(cfg, BASELINE[kind])
+        command.upgrade(cfg, "head")
+        return "adopted"
+    command.upgrade(cfg, "head")
+    return "built"
+
+
+def _fill_from_baseline(conn, kind: str, tables: set[str]) -> None:  # noqa: ANN001
+    """Build the baseline's tables this file lacks, and nothing after it.
+
+    **From the baseline revision, never from the models.** This was
+    `metadata.create_all()`, which builds every table the code has *today* --
+    so the first file adopted after 0003 was given `locations` here, stamped
+    at the baseline, and then 0003 failed on "table locations already
+    exists": every box whose files predate migrations would have stopped
+    booting on the upgrade that introduced it, and `linerai.us` is exactly
+    such a box. The baseline's own `upgrade()` is run instead, told to skip
+    each table the file already has, so what is filled in is what the
+    revisions after it expect to find.
+    """
+    import importlib.util
+    from contextlib import contextmanager
+
+    from alembic.operations import Operations
+
+    path = HERE / kind / "versions" / f"{BASELINE[kind]}.py"
+    spec = importlib.util.spec_from_file_location(f"liner_baseline_{kind}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    ops = Operations(MigrationContext.configure(conn))
+
+    class _Nothing:
+        def __getattr__(self, name):  # noqa: ANN001, ANN204
+            return lambda *a, **k: None
+
+    class _MissingOnly:
+        def f(self, name):  # noqa: ANN001, ANN201
+            return ops.f(name)
+
+        def create_table(self, name, *columns, **kw):  # noqa: ANN001, ANN201
+            return None if name in tables else ops.create_table(name, *columns, **kw)
+
+        def create_index(self, name, table, *columns, **kw):  # noqa: ANN001, ANN201
+            return None if table in tables else ops.create_index(name, table, *columns, **kw)
+
+        @contextmanager
+        def batch_alter_table(self, name, **kw):  # noqa: ANN001, ANN201
+            if name in tables:
+                yield _Nothing()
+            else:
+                with ops.batch_alter_table(name, **kw) as batch:
+                    yield batch
+
+    module.op = _MissingOnly()
+    module.upgrade()
+
+
+def _ensure_sqlite(engine: Engine, kind: str) -> str:
+    """The same, on SQLite, where two things have to be done by hand.
+
+    **One real transaction.** Python's `sqlite3` begins a transaction only
+    before a row is written, never before `CREATE` or `DROP`, so a migration
+    that failed half-way kept every table it had made: `locations` and a
+    temporary copy of `vehicles` were left in a file still stamped at the
+    revision before, and the next boot failed on "table locations already
+    exists" -- for ever, on the box that has to start. With the driver told
+    to stay out of it, `BEGIN` here covers the DDL too, and a failure takes
+    all of it back.
+
+    **Foreign keys off while it runs.** SQLite cannot add a foreign key to a
+    table that exists, so batch mode rebuilds it -- copies it, drops the
+    original, renames the copy -- and the application's `foreign_keys=ON`
+    refuses to drop a table other rows point at: `vehicles` failed exactly
+    that way. It can only be switched off outside a transaction, and it is
+    switched back on before the connection returns to the pool. Anything the
+    migration broke would then go unnoticed, so the file is checked after and
+    a violation that was not there before fails the migration.
+
+    Found by migrating the development databases; the first file it reached
+    was left half-built and was restored from a copy.
+    """
+    with engine.connect() as conn:
+        raw = conn.connection.dbapi_connection
+        saved = raw.isolation_level
+        raw.isolation_level = None
+        try:
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            before = len(conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall())
+            conn.exec_driver_sql("BEGIN")
+            try:
+                what = _bring_up(conn, kind)
+                after = len(conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall())
+                if after > before:
+                    raise RuntimeError(
+                        f"the migration left {after - before} row(s) pointing at nothing "
+                        "(PRAGMA foreign_key_check); nothing was changed"
+                    )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            return what
+        finally:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            conn.commit()
+            raw.isolation_level = saved
 
 
 def drift(engine: Engine, kind: str) -> list:

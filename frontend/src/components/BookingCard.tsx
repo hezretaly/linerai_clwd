@@ -24,6 +24,10 @@ export interface BookingCardData {
    *  for a number you gave two turns ago reads as not having been listened
    *  to. Optional so an older payload still renders. */
   known?: { name?: string; email?: string; phone?: string }
+  /** Which of a group's stores these times are at. Sent only where there is
+   *  more than one, from the same result as the times -- so the card cannot
+   *  put one store's name over another's diary. */
+  visit_at?: { store: string; address: string }
 }
 
 export interface BookingResult {
@@ -124,6 +128,14 @@ export function BookingCard({
       )}
     >
       <div className="space-y-3">
+        {data.visit_at && (
+          <p className="text-sm">
+            At our <span className="font-semibold">{data.visit_at.store}</span> store
+            {data.visit_at.address && (
+              <span className="block text-xs text-muted-foreground">{data.visit_at.address}</span>
+            )}
+          </p>
+        )}
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {day ? 'Day' : 'Pick a day'}

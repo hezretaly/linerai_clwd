@@ -124,13 +124,14 @@ def reschedule(
     if when < utcnow():
         raise HTTPException(400, "That time has already passed.")
 
+    # At the visit's own lot, through the same query booking uses: a clash
+    # is two visits at one showroom, not the same hour anywhere in the group.
+    from app.agent.tools import _booked_at, lots_of
+
+    lots = lots_of(db)
     clash = (
-        db.query(Appointment)
-        .filter(
-            Appointment.id != appointment.id,
-            Appointment.starts_at == when,
-            Appointment.status.in_(["booked", "confirmed"]),
-        )
+        _booked_at(db, lots, lots.of_appointment(appointment))
+        .filter(Appointment.id != appointment.id, Appointment.starts_at == when)
         .first()
     )
     if clash is not None:
@@ -264,11 +265,18 @@ def _draft(db: Session, appointment: Appointment, dealership: Dealership, sender
 
     first_name = (lead.name or "there").split()[0] if lead else "there"
     subject = f"Your {slot} appointment at {dealership.name}"
+    # The lot the visit is at, which in a group is not always the address on
+    # the dealership's row -- a confirmation sending a Clarksville buyer to
+    # Louisville is a wasted drive with our name on it.
+    from app import locations
+
+    lots = locations.Lots(db)
+    where, phone = locations.at(lots, lots.of_appointment(appointment), dealership)
     body = (
         f"Hi {first_name},\n\n"
         f"You're booked in for {slot} to see {car}.{personal}\n\n"
-        f"We're at {dealership.address}. Ask for {sender.name} when you arrive, "
-        f"or call {dealership.phone} if anything changes.\n\n"
+        f"We're at {where}. Ask for {sender.name} when you arrive, "
+        f"or call {phone} if anything changes.\n\n"
         f"See you then,\n{sender.name}\n{dealership.name}"
     )
     return {

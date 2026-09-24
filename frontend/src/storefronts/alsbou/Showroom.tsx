@@ -97,7 +97,7 @@ export function Showroom() {
 
   const query = useMemo(
     () => showroomQuery(filters, shown, sort),
-    [shown, sort, filters.q, filters.make, filters.bodyStyle, filters.min, filters.max],
+    [shown, sort, filters.q, filters.make, filters.bodyStyle, filters.min, filters.max, filters.location],
   )
 
   const { data } = useStorefront(query)

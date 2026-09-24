@@ -584,13 +584,18 @@ async def main() -> int:
 
             # **The whole screen on a phone.** A 380px card on a 390px screen
             # is a chat sharing its width with the page behind it.
+            # `handset`, never `phone`: that name is the flag `shot()` reads to
+            # decide which folder a picture goes in and which checks run, and
+            # a Page is truthy -- so every desktop shot after this one went to
+            # `mobile/`, to be overwritten by the real phone pass, and the
+            # desktop store and dealer pictures silently stopped being taken.
             phone_ctx = await browser.new_context(viewport=PHONE, is_mobile=True, has_touch=True)
-            phone = await phone_ctx.new_page()
-            await their_page(phone)
-            if await phone.locator("[data-liner-embed]").count():
-                await phone.locator("[data-liner-embed] button.bubble").tap()
-                await phone.wait_for_timeout(2000)
-                box = await phone.locator("[data-liner-embed] .panel").bounding_box()
+            handset = await phone_ctx.new_page()
+            await their_page(handset)
+            if await handset.locator("[data-liner-embed]").count():
+                await handset.locator("[data-liner-embed] button.bubble").tap()
+                await handset.wait_for_timeout(2000)
+                box = await handset.locator("[data-liner-embed] .panel").bounding_box()
                 if not box or box["width"] < PHONE["width"] - 1 or box["height"] < PHONE["height"] - 1:
                     failures.append(f"/embed.js: the chat is not the whole screen on a phone: {box}")
                 print(f"  phone: panel {box and round(box['width'])}x{box and round(box['height'])}")
@@ -627,22 +632,7 @@ async def main() -> int:
         async with page.expect_event("load"):
             await page.click('button[type="submit"]')
         await page.wait_for_url("**/app", timeout=10_000)
-        # Then land on it deterministically. Signing in is a *document load*
-        # now -- the server decides which store the address belongs to, and
-        # crossing into one has to reload so the router mounts with the right
-        # basename. `wait_for_url` matches the URL the instant
-        # `location.assign` sets it, which is measurably before the new
-        # document exists: 1723ms against a load event at 1799ms. The next
-        # `page.evaluate` then ran in a context that was about to be
-        # destroyed. `wait_until` does not help, because it settles the *old*
-        # document. Navigating to where we already are removes the race.
         await page.wait_for_load_state("networkidle")
-        # Signing in is a *document load* now, not a client-side navigation:
-        # the server decides which store the address belongs to, and crossing
-        # into one has to reload so the router mounts with the right basename.
-        # `wait_for_url` returns the moment the URL matches, while that load is
-        # still in flight, so the very next `page.evaluate` ran in a context
-        # that was about to be destroyed -- "Execution context was destroyed,
 
         # The buyer page needs a real id, so it is discovered rather than
         # listed. It is the page most likely to overflow -- a timeline, a rail

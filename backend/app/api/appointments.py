@@ -56,7 +56,10 @@ def list_appointments(
     if end:
         query = query.filter(Appointment.starts_at < end.replace(tzinfo=None))
     rows = query.order_by(Appointment.starts_at.asc()).all()
-    return {"appointments": [appointment_out(a, db) for a in rows]}
+    from app import locations
+
+    lots = locations.Lots(db)
+    return {"appointments": [appointment_out(a, db, lots) for a in rows]}
 
 
 @router.get("/{appointment_id}")

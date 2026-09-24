@@ -34,7 +34,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.agent.phrasing import cased
-from app.agent.tools import home_location, inquiry_url, offerable
+from app import locations
+from app.agent.tools import inquiry_url, offerable
 from app.api.settings import live_settings
 from app.profile import brand, site
 from app.config import settings
@@ -149,19 +150,25 @@ def _specs(v: Vehicle, raw: dict) -> list[dict]:
     return cells
 
 
-def _car(v: Vehicle, home: str = "") -> dict:
+def _car(v: Vehicle, lots: "locations.Lots | None" = None) -> dict:
     """One card. Every field here is on the dealer's own public listing.
 
-    `home` is the dealership's own address, lowercased, and it is what decides
-    whether the card says where the car is standing. Alsbou's export stamps
-    "Santa Ana" on all 91 of their cars, which is the address at the top of the
-    page -- printed on every row it is noise, and noise is how the one row that
-    says *Riverside* stops being read. The same comparison `tools.home_location`
-    makes for the note the assistant raises, so a card and a sentence about the
-    same car cannot disagree about whether it is somewhere else.
+    `lots` is the group's lots, and it is what decides whether the card says
+    where the car is standing. Alsbou's export stamps "Santa Ana" on all 91 of
+    their cars, which is the address at the top of the page -- printed on
+    every row it is noise, and noise is how the one row that says *Riverside*
+    stops being read. The same placement the assistant's note is raised from
+    (`app/locations.py`), so a card and a sentence about the same car cannot
+    disagree about whether it is somewhere else.
     """
     raw = loads(v.raw_json or "{}", {})
-    where = str(raw.get("location") or "")
+    lot = lots.of(v) if lots is not None else None
+    if lot is not None:
+        where = "" if lot.is_primary else lot.name
+    else:
+        # Unplaced: a lot the dealership has not described, which placement
+        # has already failed to find in any lot's address.
+        where = str(raw.get("location") or "") if lots is not None else ""
     return {
         # The six cells a used-car card prints under the photo, in the order
         # the dealer's own page prints them, already cased and formatted.
@@ -206,7 +213,7 @@ def _car(v: Vehicle, home: str = "") -> dict:
         # addresses lists them in one feed, and a car 90 minutes away should
         # say where the buyer would be driving; a car on the forecourt they
         # are reading about should not.
-        "location": where if where and where.lower() not in home else "",
+        "location": where,
         # Derived, never stored: their own enquiry form is the listing URL with
         # `?mode=inquiry`, and it only exists where there is no price to show.
         "inquiry_url": inquiry_url(v),
@@ -335,7 +342,25 @@ def _facets(db: Session) -> dict:
         if high is not None:
             query = query.filter(Vehicle.price < high)
         bands.append({"label": label, "min": low, "max": high, "count": query.count()})
+    # Which lot, for a group: their own site lists three stores on one page,
+    # and a buyer in Clarksville wants the cars in Clarksville. Counted from
+    # placed rows like every other facet, and absent for a dealership with one
+    # lot, where it would be a single link to the page they are on.
+    lots = locations.Lots(db)
+    lot_counts = []
+    if lots.several:
+        counted = dict(
+            offerable(db.query(Vehicle.location_id, func.count(Vehicle.id)))
+            .filter(Vehicle.location_id.isnot(None))
+            .group_by(Vehicle.location_id)
+            .all()
+        )
+        lot_counts = [
+            {"key": lot.key, "name": lot.name, "count": counted.get(lot.id, 0)}
+            for lot in lots.active if counted.get(lot.id)
+        ]
     return {
+        "locations": lot_counts,
         "makes": [{"name": cased(name), "count": count} for name, count in makes],
         # Empty for a Dealer Car Search lot, and that is a real answer rather
         # than a gap: body style lives only in their sidebar filters, so the
@@ -356,6 +381,7 @@ def showroom(
     min_price: int | None = Query(None, ge=0),
     max_price: int | None = Query(None, ge=0),
     sort: str = Query(DEFAULT_SORT),
+    location: str = Query(""),
     db: Session = Depends(get_db),
 ) -> dict:
     """The page's whole payload: who they are, what is on the lot, what works.
@@ -372,6 +398,13 @@ def showroom(
     and then asks the same question in the chat gets the same cars.
     """
     query = offerable(db.query(Vehicle))
+    lots = locations.Lots(db)
+    if location.strip():
+        # One of the group's lots, by the key the facet below hands out. An
+        # unknown key is an empty grid, not the whole lot: a link that names a
+        # store the group does not have is not a request for every store.
+        lot = lots.by_key(location)
+        query = query.filter(Vehicle.location_id == (lot.id if lot is not None else "-"))
     if make.strip():
         query = query.filter(func.lower(Vehicle.make) == make.strip().lower())
     if body_style.strip():
@@ -416,9 +449,8 @@ def showroom(
         raise HTTPException(400, f"Unknown sort: {sort}")
 
     total = query.count()
-    # Once per request, not once per card: a page is 24 rows and the
-    # dealership's address does not change between them.
-    home = home_location(db)
+    # Once per request, not once per card (above): a page is 24 rows and the
+    # group's lots do not change between them.
     cars = (
         query.order_by(*SORTS[sort], Vehicle.vin.asc())
         .offset(offset)
@@ -428,7 +460,7 @@ def showroom(
     return {
         "dealership": identity(db),
         "greeting": live_settings(db).greeting,
-        "vehicles": [_car(v, home) for v in cars],
+        "vehicles": [_car(v, lots) for v in cars],
         "total": total,
         "offset": offset,
         "facets": _facets(db),
@@ -511,9 +543,9 @@ def vehicle_page(vin: str, db: Session = Depends(get_db)) -> dict:
     if car is None:
         raise HTTPException(404, "That car is not on the lot any more.")
 
-    home = home_location(db)
+    lots = locations.Lots(db)
     raw = loads(car.raw_json or "{}", {})
-    detail = _car(car, home)
+    detail = _car(car, lots)
     # The whole list here: a card prints four lines, a car's page prints them
     # all -- which is what their page's SPECIFICATIONS section is.
     detail["features"] = loads(car.features_json, [])
@@ -547,7 +579,7 @@ def vehicle_page(vin: str, db: Session = Depends(get_db)) -> dict:
     return {
         "dealership": identity(db),
         "vehicle": detail,
-        "similar": [_car(v, home) for v in others.limit(SIMILAR).all()],
+        "similar": [_car(v, lots) for v in others.limit(SIMILAR).all()],
         "channels": {
             "chat": True,
             "voice": bool(settings.voice_provider) and settings.calling,

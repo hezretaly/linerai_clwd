@@ -211,7 +211,8 @@ def availability(
     convo = _get(db, conversation_id)
     fresh = tools.check_availability(db, convo, {})
     return booking_card(
-        fresh["slots"], fresh["slot_minutes"], tools.contact_on(db, convo)
+        fresh["slots"], fresh["slot_minutes"], tools.contact_on(db, convo),
+        fresh.get("visit_at"),
     )
 
 

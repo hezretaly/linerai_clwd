@@ -18,7 +18,7 @@ import yaml
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from app import profile
+from app import locations, profile
 from app.add_user import initials
 from app.config import settings
 from app.db import SessionLocal, create_all, create_ops_all, ops_session, utcnow
@@ -45,6 +45,7 @@ from app.models import (
     KnowledgeEntry,
     Lead,
     LeadAddress,
+    Location,
     Message,
     OpsUser,
     Outreach,
@@ -308,7 +309,7 @@ def _clear(db: Session) -> None:
         CallSegment, CallUsage, CallBuyerTrack, CallRecording,
         EmailReplyDue, LeadAddress, RuntimeFlag, UserSignature,
         VehicleMention, Outreach, Escalation, Appointment, CapturedField, Message,
-        ConversationOnce, ConversationPage, Conversation, Lead, IngestRun, Vehicle, Rail,
+        ConversationOnce, ConversationPage, Conversation, Lead, IngestRun, Vehicle, Location, Rail,
         KnowledgeEntry, HandoffRule,
         AssistantPart, AssistantPrompt, AssistantSettings, User, Dealership, Event,
     ):
@@ -392,6 +393,11 @@ def _check_profile(raw: dict, path) -> None:
     hours = raw.get("hours") or {}
     if not any(hours.values()):
         missing.append("hours (every day is null, so the calendar has no slots)")
+    # A group's other lots are checked for shape, never for completeness: one
+    # with no street address or hours yet is real and its cars are too.
+    from app.profile import location_problems
+
+    missing += location_problems(raw)
     if missing:
         raise SystemExit(
             f"\n{path} is not filled in yet.\n\n"
@@ -1140,6 +1146,31 @@ def _seed_history(db: Session, users: list[User], vehicles: list[Vehicle]) -> No
     db.commit()
 
 
+def _report_lots(db: Session) -> None:
+    """Each of a group's lots, and whether a visit can be booked there.
+
+    Said at the seed because a lot with no street address or hours is not an
+    error -- its cars are real -- but it is a gap somebody has to fill, and a
+    gap nobody is told about stays one.
+    """
+    lots = locations.Lots(db)
+    if not lots.several:
+        return
+    print("\nLots:")
+    for lot in lots.active:
+        cars = db.query(Vehicle).filter(Vehicle.location_id == lot.id).count()
+        if locations.bookable(lot):
+            state = "visits booked here"
+        else:
+            gaps = [g for g, v in (("street address", lot.address), ("hours", lot.hours_json)) if not v]
+            state = (f"no {' or '.join(gaps)} on file -- visits for these cars are booked "
+                     f"at {lots.primary.name if lots.primary else 'the primary'}")
+        print(f"  {lot.name:18} {cars:>4} cars   {state}")
+    unplaced = db.query(Vehicle).filter(Vehicle.location_id.is_(None)).count()
+    if unplaced:
+        print(f"  {unplaced} car(s) name a lot the profile does not describe")
+
+
 def seed(db: Session | None = None) -> None:
     create_all()
     # Ours, built once and never per store.
@@ -1157,6 +1188,8 @@ def seed(db: Session | None = None) -> None:
             _seed_csv_inventory(db)
         else:
             _seed_profile_inventory(db)
+        # The group's lots, after the cars, so each car is placed on one.
+        locations.sync(db)
         _seed_settings(db, users[0], raw)
         _seed_rules_and_knowledge(db, raw)
         _seed_rails(db)
@@ -1169,6 +1202,7 @@ def seed(db: Session | None = None) -> None:
             f"{db.query(Appointment).count()} appointments, "
             f"{db.query(Rail).count()} rails."
         )
+        _report_lots(db)
         if not _has_fixture(raw):
             # Not an error and not a half-seed: this profile is a real
             # dealership, so the only rows here are the ones it actually

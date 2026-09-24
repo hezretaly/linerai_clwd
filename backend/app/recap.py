@@ -117,7 +117,7 @@ def conversation_recap(db: Session, c: Conversation) -> str:
         from app.agent.tools import when_label
 
         word = "Confirmed" if appt.status == "confirmed" else "Booked"
-        parts.append(f"{word} for {when_label(appt.starts_at)}")
+        parts.append(f"{word} for {when_label(appt.starts_at)}{_lot_of(db, appt)}")
 
     escalation = (
         db.query(Escalation)
@@ -145,6 +145,19 @@ def conversation_recap(db: Session, c: Conversation) -> str:
         )
 
     return " ".join(_sentence(p) for p in parts if p)
+
+
+def _lot_of(db: Session, appt: Appointment) -> str:
+    """" at Clarksville" for a visit at one of a group's other lots, else "".
+
+    In a group, "booked for Tuesday at ten" does not say which showroom the
+    buyer is driving to, and a rep ringing to confirm has to know.
+    """
+    from app import locations
+
+    lots = locations.Lots(db)
+    lot = lots.of_appointment(appt)
+    return f" at {lot.name}" if lots.several and lot is not None else ""
 
 
 def _site_of(db: Session, c: Conversation) -> str:
@@ -267,7 +280,7 @@ def lead_recap(db: Session, lead: Lead) -> str:
         from app.agent.tools import when_label
 
         word = "Confirmed" if appt.status == "confirmed" else "Booked"
-        parts.append(f"{word} for {when_label(appt.starts_at)}")
+        parts.append(f"{word} for {when_label(appt.starts_at)}{_lot_of(db, appt)}")
 
     escalation = (
         db.query(Escalation)
@@ -382,15 +395,21 @@ def buyer_summary(db: Session, c: Conversation) -> str:
             if appt.vehicle_id else None
         )
         when = appt.starts_at.strftime("%A %d %B at %-I:%M %p")
+        # At the visit's own lot, which in a group is not always the address
+        # on the dealership's row.
+        from app import locations
+
+        lots = locations.Lots(db)
+        where, phone = locations.at(lots, lots.of_appointment(appt), dealership)
         lines += ["", "Your appointment:"]
         lines.append(f"  {when}")
         if car is not None:
             lines.append(f"  To see the {_title(car)}")
-        lines.append(f"  {dealership.address}")
+        lines.append(f"  {where[0].upper()}{where[1:]}" if where else "")
         lines += [
             "",
             "If you need to move it, reply to this email or call "
-            f"{dealership.phone}.",
+            f"{phone}.",
         ]
     else:
         lines += [

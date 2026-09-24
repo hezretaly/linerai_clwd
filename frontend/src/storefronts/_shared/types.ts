@@ -49,6 +49,8 @@ export interface Car {
 }
 
 export interface Facets {
+  /** A group's lots, counted; empty for a dealership with one. */
+  locations?: { key: string; name: string; count: number }[]
   makes: { name: string; count: number }[]
   body_styles: { name: string; count: number }[]
   price_bands: { label: string; min: number | null; max: number | null; count: number }[]

@@ -68,9 +68,12 @@ class DealerCarSearch(ListAdapter):
     name = "dealercarsearch"
 
     def __init__(self, dealer_id: str = "") -> None:
-        #: Empty takes every lot the page lists, which is right for a
-        #: single-location dealer and wrong for this one.
+        #: Which stores' cards to keep. Empty takes every lot the page lists,
+        #: which is right for a single-location dealer; one id keeps one lot;
+        #: several, comma-separated, keep a group's lots -- each car then
+        #: carries its own id, which is how `app/locations.py` places it.
         self.dealer_id = str(dealer_id or "").strip()
+        self.dealer_ids = frozenset(p.strip() for p in self.dealer_id.split(",") if p.strip())
 
     def for_dealer(self, dealer_id: str) -> "DealerCarSearch":
         """A copy pinned to one store, built per crawl.
@@ -114,7 +117,7 @@ class DealerCarSearch(ListAdapter):
                 if owner:
                     break
             listing.raw["dealer_id"] = owner
-            if self.dealer_id and owner and owner != self.dealer_id:
+            if self.dealer_ids and owner and owner not in self.dealer_ids:
                 continue
 
             listing.vin = _feature(card, "Vin").upper()

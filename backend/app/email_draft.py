@@ -393,7 +393,7 @@ def _focus_vehicle(db: Session, lead: Lead | None, convo: Conversation | None) -
 
 
 def _vehicle_block(db: Session, vehicle: Vehicle) -> str:
-    payload = tools._vehicle_payload(vehicle, tools.home_location(db))
+    payload = tools._vehicle_payload(vehicle, tools.lots_of(db))
     # A rule for the floor is not a line in a buyer's email. Same cut
     # `buyer_tool_calls` makes on the rehydrate, for the same reason.
     payload.pop("internal_note", None)

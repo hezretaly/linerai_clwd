@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, find_staff, get_dealership
 from app.integrations.base import NotConfigured
 from app.db import get_db, utcnow
-from app import email_outbound
+from app import email_outbound, locations
 from app.events import emit
 from app import matching
 from app.matching import match_lead
@@ -356,6 +356,7 @@ def _lead_draft(
     first_name = (lead.name or "there").split()[0] if lead.name else "there"
     fields = {f.key: f.value for f in db.query(CapturedField).filter_by(lead_id=lead.id).all()}
     appointment = _upcoming(db, lead)
+    lots = locations.Lots(db)
 
     if appointment is not None:
         when = appointment.starts_at
@@ -367,6 +368,7 @@ def _lead_draft(
             if appointment.vehicle_id else None
         )
         car = f"the {vehicle.year} {vehicle.make} {vehicle.model}" if vehicle else "your visit"
+        where, phone = locations.at(lots, lots.of_appointment(appointment), dealership)
         return {
             "kind": "reminder",
             "to": lead.email,
@@ -374,7 +376,7 @@ def _lead_draft(
             "body": (
                 f"Hi {first_name},\n\n"
                 f"Just a reminder that you're booked in for {slot} to see {car}.\n\n"
-                f"We're at {dealership.address}. Reply here or call {dealership.phone} "
+                f"We're at {where}. Reply here or call {phone} "
                 f"if you need a different time.\n\n"
                 f"See you then,\n{sender.name}\n{dealership.name}"
             ),
@@ -417,6 +419,9 @@ def _lead_draft(
         ask = "Tell me what you're looking for and I'll see what we have."
 
     source = f" via {fields['lead_source']}" if fields.get("lead_source") else ""
+    # Where to come and see it: the car's own lot when a visit can be booked
+    # there, which in a group is not always the address on the dealership row.
+    where, phone = locations.at(lots, lots.for_visit(match if match is not None and match.rule_discuss else None), dealership)
     return {
         "kind": "follow_up",
         "to": lead.email,
@@ -424,7 +429,7 @@ def _lead_draft(
         "body": (
             f"Hi {first_name},\n\n"
             f"{line} {ask}\n\n"
-            f"We're at {dealership.address}, or call {dealership.phone}.\n\n"
+            f"We're at {where}, or call {phone}.\n\n"
             f"Best,\n{sender.name}\n{dealership.name}"
         ),
         "appointment_id": None,

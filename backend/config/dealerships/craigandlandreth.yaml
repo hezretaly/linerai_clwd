@@ -12,8 +12,9 @@
 
 name: Craig and Landreth Cars
 
-# The St. Matthews store. Their site lists three lots on one page; which one
-# this instance is comes from `inventory.dealer_id` further down.
+# The St. Matthews store -- their primary, and the address a visit is booked
+# at unless the car is at one of their other two lots with its own address and
+# hours written in below (`locations:`).
 timezone: America/Kentucky/Louisville
 address: 4156 Shelbyville Rd., Louisville, KY 40207
 phone: 502-447-3450
@@ -40,6 +41,39 @@ hours:
   friday:    { open: "09:00", close: "19:00" }
   saturday:  { open: "09:00", close: "19:00" }
   sunday:    null   # closed
+
+# Their three lots. One group, one database: a manager works across all of
+# them, a car is on exactly one, and a visit to see it is booked at that one
+# once its street address and hours are written in here.
+#
+# `match` is what their own data calls each lot -- the `location` column of
+# their export and the store id on each card of their listing page -- and is
+# how every car is placed. Each phone number is the `dealer_phone` their export
+# carries for that lot's cars; the towns are from their own car-page addresses.
+#
+# STILL TO ASK AUSTIN: the street address and the opening hours of Clarksville
+# and of Bullitt County. Their site is refused from here, so neither could be
+# read, and neither is guessed. Until they are filled in, a buyer who wants a
+# car at one of those lots is told which lot it is on and that store's number,
+# and a visit is booked here at St. Matthews. Fill in both and run
+# `make locations`: visits for those cars are then booked where they stand.
+locations:
+  - key: louisville
+    name: Louisville
+    primary: true          # the address, phone and hours above
+    match: [Louisville, "1123"]
+  - key: clarksville
+    name: Clarksville
+    phone: 812-280-8018
+    match: [Clarksville, "1129"]
+    # address: "..., Clarksville, IN 47129"
+    # hours:   { monday: { open: "..", close: ".." }, ... }  -- every day, null for closed
+  - key: bullitt-county
+    name: Bullitt County
+    phone: 502-543-6276
+    match: [Bullitt County, "3833"]
+    # address: "..., KY 40165"
+    # hours:   as above
 
 # Their livery. Only the accent family moves -- every structural token still
 # comes from the one theme layer, so their colour cannot restyle the product
@@ -116,16 +150,15 @@ inventory:
   #
   # NOTE this is all three of their stores -- Louisville (240), Clarksville IN
   # (176) and Bullitt County (70) -- which is what their own site lists. Each
-  # car carries its `location`, and a car at another store says so before
-  # Liner offers a time, because the appointment is at the address in
-  # `dealerships` and that is only one of the three.
+  # car carries its `location`, which `locations:` above places on its lot.
   fixture_csv: "craigandlandreth/inventory.csv"
   source_url: "https://www.craigsbestcars.com/newandusedcars"
   # Their listing page mixes three stores -- Louisville (1123), Clarksville IN
-  # (1129) and Bullitt County (3833) -- each card carrying its own id. This app
-  # holds exactly one dealership, so without this Liner offers a buyer a car
-  # that is a two-hour drive from the showroom it says it is standing in.
-  dealer_id: "1123"
+  # (1129) and Bullitt County (3833) -- each card carrying its own id. All three
+  # are theirs and all three are lots above, so a crawl keeps all three and each
+  # car is placed by its id. A store listed on that page and not here would be
+  # a car nobody could say the lot of, which is why this is a list, not empty.
+  dealer_id: "1123,1129,3833"
 
 # Their people, so a reseed rebuilds them. `make add-user` adds somebody to a
 # live box without one; this is the other half, so a prospect's own manager

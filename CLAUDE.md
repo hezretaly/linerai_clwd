@@ -27,6 +27,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make reset-all` | **Every dealership at once**, each seeded from its own profile with its own manager and reps, passwords printed per store. `make reset-db` is one store — whichever `DEALERSHIP=` names — which on a host serving several left the others with no database. `ARGS=--only a,b` narrows it |
 | `make migrate` | Every database this deployment serves to the newest migration. The boot does the same; this is for a deploy that wants the schema moved, and any failure seen, before the new code starts. `ARGS=--create` on a new Postgres server first makes the two databases every boot opens (the default store and Liner's own) |
 | `make to-postgres` | **Copy the SQLite databases into Postgres**, one per store, each built by the migrations first. The plan by default, `ARGS=--apply` to copy; refuses a target that already holds rows unless `--replace`. Run with the new server's database settings in the environment |
+| `make locations` | **Each store's lots in step with its profile** (`locations:`), every car placed on one, and a line per lot: its cars, its address, and whether a visit can be booked there. The boot does the same; this is for a profile edited on a running box |
 | `make stores` | Every dealership this deployment can serve, and which are seeded, **each with the address its mail leaves from and its manager sign-in** — the two facts somebody opens it for, otherwise one in a profile file and one in a database. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
 | `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
 | `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
@@ -227,9 +228,24 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Constraints are named by convention** (`db.NAMING`), so a later
     revision can say which one it drops. Postgres invented names of its own
     before, and SQLite stored none.
+  - **On SQLite a migration is one real transaction with foreign keys off**
+    (`migrate._ensure_sqlite`). Python's `sqlite3` begins a transaction only
+    before a row is written, so 0003 failing half-way kept `locations` and a
+    temporary copy of `vehicles` in a file still stamped 0002, and every boot
+    after failed on "table locations already exists". It failed because batch
+    mode rebuilds a table to add a foreign key, and `foreign_keys=ON` refused
+    to drop `vehicles` while an appointment pointed at it. The file is checked
+    with `foreign_key_check` after, and a violation that was not there before
+    fails the migration. Found on the development databases; `make smoke`
+    drives both halves on a scratch file, and was seen to fail without them.
   - Much of this file explains a table that should have been a column,
     because `create_all` could add only tables. That constraint is gone; the
     tables stay, and new work can add a column like anywhere else.
+- **The prompt's opening hours group only days that agree**
+  (`prompts.hours_sentence`). It printed the first open day's window for the
+  whole week, so Craig and Landreth -- closing at seven on Friday and Saturday
+  -- were open until eight all week to the model, and Alsbou's Sunday closing
+  at six read as eight.
 - **Naive timestamps are dealership-local**, not UTC-with-conversion.
   `check_availability` builds slots straight from `hours_json` in that frame.
   Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a
@@ -3093,8 +3109,8 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
       Alsbou's export stamps their own city on all 91 of their cars, so every
       card read "· Santa Ana" under an address strip already saying Santa Ana.
       Noise on every row is how the one row that says *Riverside* stops being
-      read — the same comparison `tools.home_location` makes for the note the
-      assistant raises, so a card and a sentence about one car cannot disagree
+      read — the same placement (`app/locations.py`) the assistant's note is
+      raised from, so a card and a sentence about one car cannot disagree
       about whether it is somewhere else.
     - **Their footer's body-style shortcuts are the one group left out.**
       `?bodystyle=SUV` returns nothing for a lot whose export carries no body
@@ -3590,12 +3606,45 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **The stub says the same thing the prompt asks for.** `phrasing.money`
     is the one formatter — a second copy in `stub.py` said "priced on request"
     where it said "price on request", harmless while every car had a price.
-- **A car at another of the group's lots says so before a time is offered.**
-  Craig and Landreth list three stores in one feed and the appointment is at
-  the one address in `dealerships`. The *note* is raised only for a car that is
-  somewhere else, compared against that address: on every row it would have the
-  assistant announce the store it is standing in on every reply, and noise is
-  how the one row that mattered stops being read.
+- **A group's lots are rows, and a visit is booked at the car's own.** A group
+  is one database, so a manager works across its lots -- and a car is on one of
+  them. Craig and Landreth's export is three stores; before `locations` every
+  visit was booked at the one address in `dealership`, and a buyer who wanted a
+  Clarksville car was told it was elsewhere and then booked where it was not.
+  `app/locations.py` holds the rules, `make locations` prints each lot.
+  - **The profile is the source, the table is what can be pointed at.** Lots
+    are dealership facts, written in its profile's `locations:` like its
+    address; they are rows because a car and an appointment have to name one.
+    `sync` makes the rows say what the profile says -- at every boot and seed,
+    and after an import places the cars -- and a lot the profile stops listing
+    is switched off, never deleted, because visits booked there are history.
+    A dealership that lists none has one lot, `main`, its own address.
+  - **The primary is the dealership row, mirrored**, and a profile's primary
+    entry may not restate its address, phone or hours: one fact, one place.
+  - **A lot is where you can book only if we know where it is and when it
+    opens.** No street address or no hours on file and its cars are still
+    placed there and say so -- with that lot's number -- but the visit is
+    booked at the primary. Craig's other two lots are exactly that today:
+    their site is refused from here, so the addresses were not read and are
+    not guessed; the profile says who to ask.
+  - **A car is placed by what its own row says**: the feed's store id or the
+    export's lot name against each lot's `match`, else the lot's own address
+    (Alsbou's "Santa Ana" on every car finds the Santa Ana showroom), else the
+    primary when the row says nothing. A lot nobody described stays unplaced
+    and its own words still say where it is. With one lot, a feed id means
+    nothing -- it is how a single store's crawl kept its own cards.
+  - **Each lot keeps its own diary.** Two visits at ten are no clash when one
+    is in Louisville and the other in Clarksville; `tools._booked_at` is the
+    one query booking, availability and reschedule all read, and a row with
+    no lot is the primary's, which is where every visit before this was.
+  - **The note is raised only for a car not at the primary**, for the reason
+    it always was: on every row it has the assistant announce the store it is
+    standing in on every reply, and noise is how the one row that mattered
+    stops being read. The storefront card follows the same placement.
+  - **Every sentence that says where to go names the store**: confirmation,
+    reminder, follow-up, buyer summary, recap, the booking card and the
+    calendar all read `locations.at` / the appointment's lot, never the
+    dealership row's address.
 - **An appointment can be moved without being destroyed.** There was no
   reschedule, so a rep shifting somebody by an hour had to cancel and rebook —
   which mints a new row, losing the id, the assigned salesperson and the
