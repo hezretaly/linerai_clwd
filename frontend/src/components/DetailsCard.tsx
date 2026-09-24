@@ -132,7 +132,8 @@ export function DetailsCard({
                 placeholder={field.placeholder}
                 disabled={frozen}
                 onChange={(e) => set(field.key, e.target.value)}
-                className="w-full min-w-0 rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus:border-ring disabled:opacity-60"
+                // 16px on a phone, or iOS zooms the page in when the box is tapped.
+                className="w-full min-w-0 rounded-lg border border-input bg-background px-3 py-2 text-base outline-none focus:border-ring disabled:opacity-60 sm:text-sm"
               />
             )}
 

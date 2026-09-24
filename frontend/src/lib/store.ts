@@ -28,21 +28,33 @@ const OURS = new Set([
   'assets',
   'r',         // the outreach click hop
   's',         // signature images
+  'widget',    // the website chat, framed on a dealer's own site
 ])
 
 function firstSegment(path: string): string {
   return path.split('/')[1] ?? ''
 }
 
+/** This page is the website chat, framed on a dealer's own site by
+ *  `embed.js`: `/widget/<dealer>`. The one address that names its store
+ *  *second*, because it goes into a tag on somebody else's website and reads
+ *  there as what it is. */
+export const WIDGET: boolean =
+  typeof window !== 'undefined' && firstSegment(window.location.pathname) === 'widget'
+
 /** The store slug in the current URL, or "" when there is none. */
 export const STORE: string = (() => {
   if (typeof window === 'undefined') return ''
-  const first = firstSegment(window.location.pathname)
+  const path = window.location.pathname
+  if (WIDGET) return (path.split('/')[2] ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '')
+  const first = firstSegment(path)
   return OURS.has(first) ? '' : first
 })()
 
-/** The router basename for this page, or undefined for an unprefixed one. */
-export const BASENAME: string | undefined = STORE ? `/${STORE}` : undefined
+/** The router basename for this page, or undefined for an unprefixed one.
+ *  The widget has none: its route is `/widget/:dealer` as it stands, and the
+ *  store reaches its API calls through `withStore` like everywhere else. */
+export const BASENAME: string | undefined = STORE && !WIDGET ? `/${STORE}` : undefined
 
 /** Put the store back on an absolute API path.
  *

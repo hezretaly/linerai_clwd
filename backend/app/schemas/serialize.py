@@ -275,6 +275,18 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
         from app.recap import conversation_recap
 
         out["recap"] = conversation_recap(db, c)
+        # Where they were on the dealer's website while chatting, newest
+        # first: the page is what a rep opens to see what the buyer saw.
+        from app.models import ConversationPage
+
+        out["pages"] = [
+            {"url": p.url, "title": p.title, "vin": p.vin, "seen_at": stamp(p.seen_at)}
+            for p in db.query(ConversationPage)
+            .filter_by(conversation_id=c.id)
+            .order_by(ConversationPage.seen_at.desc())
+            .limit(5)
+            .all()
+        ]
         if c.focus_vehicle_id:
             v = db.query(Vehicle).filter_by(id=c.focus_vehicle_id).one_or_none()
             out["focus_vehicle"] = vehicle_out(v) if v else None

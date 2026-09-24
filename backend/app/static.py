@@ -31,7 +31,7 @@ DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 # own ops pages, the login form -- gets `'self'` and nothing more: a dealer
 # page has no business being framed anywhere, and a login form inside somebody
 # else's page is the classic clickjack.
-EMBEDDABLE = ("/chat", "/call")
+EMBEDDABLE = ("/chat", "/call", "/widget/")
 
 
 def _frame_ancestors(path: str) -> str:
@@ -72,7 +72,14 @@ def _framed(response: FileResponse, path: str) -> FileResponse:
 # from here: the whole dashboard answered `{"detail":"Not found"}` on a real
 # host while every gate was green. `make smoke` now reads main.tsx and fails
 # on a route that is not listed.
-SPA_PREFIXES = ("/chat", "/call", "/login", "/app", "/ops", "/showroom")
+SPA_PREFIXES = ("/chat", "/call", "/login", "/app", "/ops", "/showroom", "/widget")
+
+#: How long a browser or Cloudflare may keep the loader before asking again.
+#: It is the one file on somebody else's website, pasted once and never
+#: edited, so a fix to it reaches every dealer only as fast as this lets it --
+#: five minutes, which is short enough to roll a fix out in a coffee break and
+#: long enough that a busy site is not asking on every page view.
+LOADER_MAX_AGE = 300
 
 # Never let a request walk out of dist/ via the catch-all.
 # /r is the outreach click hop -- a real route, not an SPA path.
@@ -114,7 +121,18 @@ def mount_frontend(app: FastAPI) -> bool:
         # ADF -- anything Vite copied from public/.
         candidate = (DIST / full_path).resolve()
         if candidate.is_file() and candidate.is_relative_to(DIST.resolve()):
+            if candidate.name == "embed.js":
+                return FileResponse(candidate, headers={
+                    "Cache-Control": f"public, max-age={LOADER_MAX_AGE}",
+                })
             return FileResponse(candidate)
+
+        # `/widget/<dealer>` for a dealer this host does not serve is a 404,
+        # not the SPA: the page would render a chat for nobody, framed on
+        # whichever site asked. `StorePrefix` sets the store only for a
+        # dealer it knows.
+        if full_path.startswith("widget/") and not current_store.get():
+            raise HTTPException(404, "No such dealership")
 
         if any(("/" + full_path).startswith(prefix) for prefix in SPA_PREFIXES):
             return _framed(FileResponse(index), "/" + full_path)

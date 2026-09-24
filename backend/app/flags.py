@@ -78,6 +78,21 @@ FLAGS = {
             default=PHONE_LINER,
             values=PHONE_PERSONAS,
         ),
+        Flag(
+            key="website_chat",
+            label="The chat bubble on the dealership's website",
+            # **On, and for the reason `phone_persona` is:** the permissive
+            # side cannot be reached quietly. The bubble appears only where the
+            # dealer's website provider pasted the tag *and* the site is on
+            # this dealership's `embed_origins` list -- two deliberate acts by
+            # two different people. Defaulting off would mean both of those
+            # done and a site with no bubble on it, which reads as "the tag is
+            # broken" rather than "a switch is off". This is the half a manager
+            # can throw from the dashboard without touching their website: the
+            # loader asks on every page load, so off takes effect on the next.
+            default="on",
+            values=("on", "off"),
+        ),
     )
 }
 

@@ -102,6 +102,17 @@ OWN_CAR = re.compile(
     re.IGNORECASE,
 )
 
+#: "Is this one still available?" -- a question about the car in front of
+#: them, which on a dealer's own site is the car on the page they opened the
+#: chat from (`page_context` put it in focus). The live prompt is told the
+#: same thing in words; this is the script's version of it.
+THIS_CAR = re.compile(
+    r"\b(this|that)\s+(one|car|truck|suv|van|vehicle)\b|\bis\s+it\b|\bit\s+still\b|"
+    r"\bstill\s+(available|here|there|for sale|in stock)\b",
+    re.IGNORECASE,
+)
+STILL_THERE = re.compile(r"\bstill\b|\bavailable\b|\bin stock\b|\bsold\b", re.IGNORECASE)
+
 
 ORDINALS = [
     (r"\bfirst\b|\bone\b(?!\s*more)|\b1st\b", 0),
@@ -260,6 +271,20 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
     if switched is not None:
         next_stage = "vehicle_focus"
 
+    # **"This one" on a car's own page is that car.** The website chat puts
+    # the page's car in focus before anybody types; asked about it with
+    # nothing else named, the script answers about it rather than running a
+    # search on the words "is this one still available".
+    about_page_car = (
+        switched is None
+        and convo.focus_vehicle_id is not None
+        and next_stage == stage
+        and stage in {"opening", "browsing"}
+        and THIS_CAR.search(text) is not None
+    )
+    if about_page_car:
+        next_stage = "vehicle_focus"
+
     # ---- browsing: search real inventory --------------------------------
     if next_stage == "browsing" or stage in {"opening", "browsing"} and next_stage == stage:
         args: dict = {"keywords": text}
@@ -296,7 +321,17 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         # An explicitly named car wins over "the one we were talking about" --
         # `_referenced_vin` falls back to the current focus, which is exactly
         # the car the buyer has just moved off.
-        vin = switched.vin if switched is not None else _referenced_vin(db, convo, text)
+        if switched is not None:
+            vin = switched.vin
+        elif about_page_car:
+            # Not `_referenced_vin`: its "one" would read "this one" as "the
+            # first one" of an earlier list.
+            from app.models import Vehicle
+
+            focus = db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
+            vin = focus.vin if focus is not None else None
+        else:
+            vin = _referenced_vin(db, convo, text)
         if vin is None:
             found = call("search_inventory", {"keywords": text})
             if not found["vehicles"]:
@@ -311,7 +346,18 @@ def run_turn(db: Session, convo: Conversation, text: str) -> tuple[str, list[dic
         if convo.stage != "booked":
             convo.stage = "vehicle_focus"
         db.commit()
+        # The page's car can sell while the tab is open, and `get_vehicle`
+        # answers for a sold car too -- it carries the status rather than
+        # refusing, so the status is what answers "is it still here?".
+        if about_page_car and v.get("status") != "available":
+            return (
+                "That one has sold, I'm afraid. Tell me what you liked about it and "
+                "I'll find you the closest thing we have.",
+                calls,
+            )
         parts = [phrasing.detail_line(v)]
+        if about_page_car and STILL_THERE.search(text):
+            parts.insert(0, "Yes, it's still here.")
         if v.get("features"):
             parts.append(f"It has {', '.join(v['features'][:3])}.")
         if v.get("warranty_note"):

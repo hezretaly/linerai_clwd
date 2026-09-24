@@ -84,6 +84,7 @@ const INVALIDATES: Record<string, string[]> = {
   'sms.status': ['timeline', 'lead-sms'],
   'sms.opt_out': ['reach', 'lead-sms', 'timeline', 'ops-phone'],
   'sms.resumed': ['reach', 'lead-sms', 'timeline', 'ops-phone'],
+  'widget.report': ['widget-installs'],
 }
 
 /**

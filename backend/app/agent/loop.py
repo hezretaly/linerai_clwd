@@ -87,6 +87,7 @@ def run_turn(
     *,
     channel: str = "",
     addendum: str = "",
+    facts: list[dict] | None = None,
 ) -> tuple[str, list[dict]]:
     """One buyer turn. Returns (reply, tool_calls).
 
@@ -103,6 +104,12 @@ def run_turn(
     as the buyer speaking. The follow-up on a quiet buyer is the case: sent as
     a user message it makes the model answer somebody who said nothing, which
     is the same failure the guard's retry note had to be rewritten for.
+
+    ``facts`` is what this system itself put in front of the model this turn
+    outside a tool -- the car on the page the buyer has open on the dealer's
+    site (`page_context.facts`). It grounds the guards the way a tool *input*
+    does: naming that car's make or year is not inventing one. It carries no
+    price and no mileage, so a figure still has to come from a tool this turn.
     """
     provider = provider or get_provider()
     dealership = db.query(Dealership).first()
@@ -183,7 +190,8 @@ def run_turn(
             attempt=attempt,
             assistant_turns=assistant_turns,
             booked=convo.stage == "booked",
-            tool_inputs=[c["input"] for c in calls if isinstance(c["input"], dict)],
+            tool_inputs=[c["input"] for c in calls if isinstance(c["input"], dict)]
+            + list(facts or []),
             buyer_text=buyer_text,
             # A car the model named that no tool ever returned. The executor
             # cannot serve a sold one; nothing stopped the model mentioning it.

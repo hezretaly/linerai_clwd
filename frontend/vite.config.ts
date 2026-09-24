@@ -2,6 +2,8 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import { transform } from 'esbuild'
 
 /**
  * `/` serves landing.html; everything else serves the SPA.
@@ -29,8 +31,40 @@ function landingAtRoot(): Plugin {
   }
 }
 
+/**
+ * `public/embed.js` is written to be read and shipped to be small.
+ *
+ * It is the one file that runs on somebody else's homepage, pasted there once
+ * and loaded on every page view of their site -- and its reasoning lives in
+ * its comments, which are most of its bytes. Vite copies `public/` untouched,
+ * so the build minifies that one copy after the fact: 38 KB as written, a
+ * third of that served. ASCII out, because a script with no declared charset
+ * is read in the host page's encoding.
+ */
+function minifyLoader(): Plugin {
+  let outDir = 'dist'
+  return {
+    name: 'minify-loader',
+    apply: 'build',
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    async closeBundle() {
+      const file = resolve(outDir, 'embed.js')
+      const source = await readFile(file, 'utf8')
+      const { code } = await transform(source, {
+        minify: true,
+        target: 'es2015',
+        charset: 'ascii',
+        legalComments: 'none',
+      })
+      await writeFile(file, code)
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), landingAtRoot()],
+  plugins: [react(), tailwindcss(), landingAtRoot(), minifyLoader()],
   build: {
     rollupOptions: {
       input: {

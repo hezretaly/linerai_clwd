@@ -159,6 +159,56 @@ def embed_origins() -> list[str]:
     return out
 
 
+#: How the website chat sits on a dealer's own page. Each is a choice between
+#: a few safe values rather than a free style, because every one of them lands
+#: in a stylesheet on somebody else's website.
+WIDGET_SIDES = ("right", "left")
+
+#: What the Tag Manager events are called: the car industry's own GA4 names
+#: (`asc_comm_submission` and friends, which an agency already counts), ours
+#: (`liner_lead`), or both for a container being moved from one to the other.
+WIDGET_EVENTS = ("asc", "liner", "both")
+
+
+def widget() -> dict:
+    """The website chat's settings, as this dealership's profile states them.
+
+    Served to the loader on every page load rather than written into the tag,
+    which is the point of having a loader: a dealer's website provider pastes
+    one line once, and the label, the side, the offset and whether lead events
+    go to their Google Tag Manager can all change here without anybody editing
+    their site again.
+
+    The colour is the brand's accent, not a second setting -- two colours for
+    one dealership are two things that can disagree.
+    """
+    raw = _section("widget") or {}
+    label = str(raw.get("label") or "Chat with us").strip()[:40] or "Chat with us"
+    title = str(raw.get("title") or "").strip()[:60]
+    side = str(raw.get("side") or "right").strip().lower()
+    events = str(raw.get("events") or "asc").strip().lower()
+    try:
+        offset = int(raw.get("offset", 20))
+    except (TypeError, ValueError):
+        offset = 20
+    b = brand()
+    return {
+        "label": label,
+        "title": title,
+        "side": side if side in WIDGET_SIDES else "right",
+        # Clamped: it is a number of pixels from the corner, and a typo of
+        # 2000 would put the bubble off the screen.
+        "offset": max(8, min(offset, 120)),
+        "accent": b["accent"],
+        "accent_ink": b["accent_ink"],
+        # On unless the profile says otherwise: a dealer who installed the tag
+        # through Tag Manager expects the events, and they carry nothing
+        # personal (see docs/WIDGET.md). `gtm: false` stops the pushes.
+        "gtm": raw.get("gtm", True) is not False,
+        "events": events if events in WIDGET_EVENTS else "asc",
+    }
+
+
 def _links(raw, limit: int) -> list[dict]:
     out = []
     for item in (raw or [])[:limit]:

@@ -209,7 +209,8 @@ export function BookingCard({
                     setErrors((prev) => ({ ...prev, [field.key]: '' }))
                   }}
                   className={clsx(
-                    'mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none',
+                    // 16px on a phone, or iOS zooms the page in when the box is tapped.
+                    'mt-1 w-full rounded-lg border bg-background px-3 py-2 text-base outline-none sm:text-sm',
                     'focus:border-primary',
                     errors[field.key] ? 'border-destructive' : 'border-border',
                   )}

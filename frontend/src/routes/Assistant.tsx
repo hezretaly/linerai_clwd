@@ -7,6 +7,7 @@ import { withStore } from '../lib/store'
 import type { AssistantSettings, HandoffRule, KnowledgeEntry, Rail } from '../lib/types'
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
 import { AgentSwitch } from '../components/AgentSwitch'
+import { WebsiteChatCard } from '../components/WebsiteChat'
 import { Icon, type IconName } from '../components/Icon'
 import { PageHeader } from '../components/dashboard/AppShell'
 
@@ -103,6 +104,10 @@ export function AssistantPage() {
           <AgentSwitch />
           <CreditLinkCard saved={data.live.credit_application_url} />
         </div>
+
+        {/* Live too: the switch hides the bubble on every site within a
+            minute, and the rest is what the tag has reported from them. */}
+        <WebsiteChatCard />
 
         <Card>
           <div className="px-4 pt-2">

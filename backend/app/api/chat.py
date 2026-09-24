@@ -67,8 +67,43 @@ def _conversation(db: Session, conversation_id: str) -> Conversation:
     return convo
 
 
+class PageReport(BaseModel):
+    """The page of the dealer's own site the chat is open on, as the loader
+    read it. Every field is a claim from a browser; `page_context` decides
+    what, if anything, is kept."""
+
+    url: str = ""
+    title: str = ""
+    vin: str = ""
+
+
+class SessionStart(BaseModel):
+    page: PageReport | None = None
+
+
+def _page_out(db: Session, row) -> dict | None:
+    """The open page as the buyer's chat shows it: its title, and its car when
+    that car is one Liner may talk about -- re-read now, in the buyer's shape
+    (`buyer_vehicles`), never the model's."""
+    from app import page_context
+
+    if row is None:
+        return None
+    vehicle = page_context.vehicle_of(db, row)
+    card = None
+    if vehicle is not None:
+        card = buyer_vehicles([
+            tools._vehicle_payload(vehicle, tools.home_location(db), full=False)
+        ])[0]
+    return {"title": row.title, "vin": row.vin, "vehicle": card}
+
+
 @router.post("/sessions")
-def start_session(channel: str = "chat", db: Session = Depends(get_db)) -> dict:
+def start_session(
+    channel: str = "chat",
+    body: SessionStart | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
     # Public, and on a dealership's own website once the chat is an iframe --
     # so a script can mint conversations as fast as it can post. Per store,
     # because every one of those is a fresh conversation id and a ceiling
@@ -84,9 +119,19 @@ def start_session(channel: str = "chat", db: Session = Depends(get_db)) -> dict:
     settings_row = live_settings(db)
     emit(db, "conversation.started", {"conversation_id": convo.id, "channel": channel})
 
+    # Opened from the website chat on a page of the dealer's site: which page,
+    # and the car on it. Recorded before the first turn so "is this one still
+    # here?" -- very often the first thing typed -- already means that car.
+    page = None
+    if channel == "chat" and body is not None and body.page is not None:
+        from app import page_context
+
+        page = _page_out(db, page_context.record(db, convo, body.page.model_dump()))
+
     return {
         "conversation_id": convo.id,
         "greeting": settings_row.greeting,
+        "page": page,
         "dealership": {
             "name": dealership.name if dealership else "",
             # Their colours, so the buyer's screen looks like the site they
@@ -138,6 +183,11 @@ def rehydrate(conversation_id: str, db: Session = Depends(get_db)) -> dict:
         ],
         "rails": [rail_out(r) for r in rails_for(db, convo)],
     }
+    # The page the chat was last open on, so a refresh keeps the "Viewing"
+    # line. Re-read now: a car that sold since is simply not shown.
+    from app import page_context
+
+    out["page"] = _page_out(db, page_context.latest(db, convo)) if convo.channel == "chat" else None
     # The opening line is client-side only -- it is never a message row -- so a
     # rehydrated thread would start abruptly at the buyer's first question.
     out["greeting"] = live_settings(db).greeting
@@ -342,6 +392,27 @@ async def live(conversation_id: str) -> StreamingResponse:
     )
 
 
+@router.post("/sessions/{conversation_id}/page")
+def report_page(
+    conversation_id: str, body: PageReport, db: Session = Depends(get_db)
+) -> dict:
+    """The buyer moved to another page of the dealer's site with the chat open.
+
+    Nothing is answered here and no model is asked anything: this only files
+    where they are, so the next turn knows. A page that is not on one of the
+    dealership's own sites is dropped, and the answer says the page stayed as
+    it was rather than failing -- a buyer's chat must not error because of
+    what their browser reported about the page around it.
+    """
+    from app import page_context
+
+    convo = _conversation(db, conversation_id)
+    if convo.channel != "chat":
+        raise HTTPException(409, "Only the website chat has a page.")
+    row = page_context.record(db, convo, body.model_dump())
+    return {"accepted": row is not None, "page": _page_out(db, row or page_context.latest(db, convo))}
+
+
 @router.get("/sessions/{conversation_id}/rails")
 def get_rails(conversation_id: str, db: Session = Depends(get_db)) -> dict:
     convo = _conversation(db, conversation_id)
@@ -401,6 +472,10 @@ async def send_message(
         session = SessionLocal()
         try:
             convo_local = session.query(Conversation).filter_by(id=convo_id).one()
+            # Whether somebody could ring or write to this buyer before the
+            # turn -- so the turn that changes it can be told apart.
+            before = tools.contact_on(session, convo_local)
+            reachable_before = bool(before["phone"] or before["email"])
             try:
                 # Re-read in this session: the row above belongs to the
                 # request's session, and the turn runs on its own.
@@ -522,6 +597,26 @@ async def send_message(
                 yield _sse("finance", {"card": tools.CREDIT_CARD})
 
             session.refresh(convo_local)
+
+            # **What the turn achieved, read off the rows.** The website chat
+            # tells the dealer's Tag Manager when a buyer becomes a lead or
+            # books, and a model's sentence saying "you're booked" is not a
+            # booking. So: a number or an address now on file that was not
+            # before the turn, and an appointment `book_appointment` actually
+            # wrote (a replayed card's `already_booked` is not a second one).
+            after = tools.contact_on(session, convo_local)
+            reached = {
+                "lead": not reachable_before and bool(after["phone"] or after["email"]),
+                "appointment": any(
+                    call.get("name") == "book_appointment"
+                    and (call.get("result") or {}).get("appointment_id")
+                    and not (call.get("result") or {}).get("already_booked")
+                    for call in payload["tool_calls"]
+                ),
+            }
+            if any(reached.values()):
+                yield _sse("reached", reached)
+
             yield _sse("rails", {
                 "stage": convo_local.stage,
                 "rails": [rail_out(r) for r in rails_for(session, convo_local)],

@@ -196,6 +196,7 @@ def create_app() -> FastAPI:
         signature,
         team,
         voice,
+        widget,
         ws,
     )
 
@@ -225,6 +226,7 @@ def create_app() -> FastAPI:
         phone.ops,
         showroom.router,
         signature.router,
+        widget.router,
     ):
         app.include_router(router, prefix="/api")
 

@@ -159,9 +159,17 @@ def run_agent_turn(
         return record_assistant_message(db, convo, _guarded(db, convo, reply, calls, text), calls)
 
     if settings.llm_mode == "live":
+        from app import page_context
         from app.agent import loop
 
-        reply, calls = loop.run_turn(db, convo, text)
+        # The page the buyer has open on the dealer's site, when the chat is
+        # the website widget: a note on this turn, and the car's identity as
+        # grounding. Nothing for a call or an email, which have no page.
+        reply, calls = loop.run_turn(
+            db, convo, text,
+            addendum=page_context.addendum(db, convo),
+            facts=page_context.facts(db, convo),
+        )
     else:
         reply, calls = stub.run_turn(db, convo, text)
         reply = _guarded(db, convo, reply, calls, text)
@@ -185,7 +193,14 @@ def run_nudge_turn(db: Session, convo: Conversation) -> Message | None:
     if settings.llm_mode == "live":
         from app.agent import loop
 
-        reply, calls = loop.run_turn(db, convo, "", addendum=nudge.NUDGE_ADDENDUM)
+        from app import page_context
+
+        page = page_context.addendum(db, convo)
+        reply, calls = loop.run_turn(
+            db, convo, "",
+            addendum="\n".join(x for x in (page, nudge.NUDGE_ADDENDUM) if x),
+            facts=page_context.facts(db, convo),
+        )
     else:
         # The stub is a state machine over `stage` and has no notion of a
         # silence, so asking it for a follow-up would re-run whatever the last

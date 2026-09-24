@@ -3,8 +3,17 @@ import clsx from 'clsx'
 
 import { applyBrand } from '../lib/brand'
 import { api, ApiError, streamMessages } from '../lib/api'
-import { STORE, withStore } from '../lib/store'
+import { STORE, WIDGET, withStore } from '../lib/store'
 import { useDealership } from '../lib/dealership'
+import {
+  PARENT,
+  onParentPage,
+  onParentVisibility,
+  parentInit,
+  parentOpen,
+  postToParent,
+  type PageReport,
+} from '../lib/widgetBridge'
 import { BookingCard } from '../components/BookingCard'
 import type { BookingCardData, BookingResult } from '../components/BookingCard'
 import { DetailsCard } from '../components/DetailsCard'
@@ -75,6 +84,33 @@ interface ChatMessage {
   role: string
   content: string
   tool_calls: { name: string; result: Record<string, unknown> }[]
+}
+
+/** The page of the dealer's site the chat is open on, as the server kept it:
+ *  its title, and its car only when that car is one Liner may talk about --
+ *  re-read on the server, so a car that sold is simply absent. */
+interface PageView {
+  title: string
+  vin: string
+  vehicle: VehicleCardData | null
+}
+
+/** What the dealer's Tag Manager is told. The page's car, by name and VIN --
+ *  it is on their page already -- and nothing about the buyer, ever. */
+function track(name: 'chat_start' | 'lead' | 'appointment' | 'credit_app',
+               conversationId: string | null, page: PageView | null): void {
+  const car = page?.vehicle
+  postToParent('event', {
+    name,
+    conversationId,
+    data: {
+      vin: car?.vin ?? page?.vin ?? '',
+      vehicle: car ? `${car.year} ${car.make} ${car.model}` : '',
+      car: car
+        ? { vin: car.vin, year: car.year, make: car.make, model: car.model, trim: car.trim }
+        : null,
+    },
+  })
 }
 
 /** Survives a refresh. The conversation itself has always been on the server;
@@ -183,7 +219,9 @@ export function Chat() {
    * iframe, replaces the chat with the landing page in a 24rem box. The
    * transcript, the rails and the composer are the same in both. */
   const query = new URLSearchParams(window.location.search)
-  const embedded = query.get('embed') === '1'
+  // The website chat on a dealer's own site is embedded too: the loader's
+  // panel carries the name and the close button.
+  const embedded = query.get('embed') === '1' || WIDGET
   // Decided once: the frame's parent does not change while the page is open.
   const [linkTarget] = useState(carPageHost)
   /* Same flag `/call` takes, and for the same reason: the scripted-assistant
@@ -221,11 +259,44 @@ export function Chat() {
   // provider changed, telling a tester to set a key the system no longer uses.
   const [stubbed, setStubbed] = useState<string[] | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
+  /** Which page of the dealer's site the chat is open on, when it is on one. */
+  const [page, setPage] = useState<PageView | null>(null)
+  /** Whether the panel around the chat is open. Always true off a dealer's
+   *  site, where there is no panel. */
+  const [shown, setShown] = useState(parentOpen)
+  /** The buyer has said something in this conversation -- the moment it
+   *  counts as started (`app/threads.py`), and the one Tag Manager hears. */
+  const started = useRef(false)
+  /** Replies already on screen the last time the panel was open. */
+  const seen = useRef(0)
+
+  /** File the page the buyer is on now, and show what the server made of it. */
+  const reportPage = async (id: string, report: PageReport) => {
+    try {
+      const result = await api.post<{ accepted: boolean; page: PageView | null }>(
+        `/api/chat/sessions/${encodeURIComponent(id)}/page`, report,
+      )
+      setPage(result.page)
+    } catch {
+      // Where the buyer is browsing is context, never a reason for the chat
+      // to fail in front of them. The last page stands.
+    }
+  }
 
   useEffect(() => {
     void (async () => {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored && (await resume(stored, setConversationId, setItems, setRails))) {
+      // **On a dealer's site the conversation id is the page's to keep.** A
+      // frame from another origin gets storage the browser partitions and, in
+      // Safari, clears after a week -- so the loader keeps it on the dealer's
+      // own domain and hands it over here. Off a dealer's site (or with no
+      // loader answering) it is this page's localStorage, as it always was.
+      const parent = await parentInit
+      if (parent) setShown(parent.open)
+      const stored = parent ? parent.conversationId : localStorage.getItem(STORAGE_KEY)
+      if (stored && (await resume(stored, setConversationId, setItems, setRails, setPage, started))) {
+        // Where they are *now*: a returning buyer may be on another car.
+        if (parent?.page) void reportPage(stored, parent.page)
+        postToParent('session', { conversationId: stored })
         void loadIntegrations(setStubbed)
         return
       }
@@ -234,14 +305,53 @@ export function Chat() {
         conversation_id: string
         greeting: string
         rails: Rail[]
-      }>('/api/chat/sessions')
-      localStorage.setItem(STORAGE_KEY, session.conversation_id)
+        page: PageView | null
+      }>('/api/chat/sessions', parent?.page ? { page: parent.page } : undefined)
+      if (!parent) localStorage.setItem(STORAGE_KEY, session.conversation_id)
+      postToParent('session', { conversationId: session.conversation_id })
       setConversationId(session.conversation_id)
       setRails(session.rails)
       setItems([{ kind: 'text', id: 'greeting', role: 'assistant', content: session.greeting }])
+      setPage(session.page ?? null)
       void loadIntegrations(setStubbed)
     })()
   }, [])
+
+  // The buyer followed a link on the dealer's site with the chat open. Filed,
+  // not answered: the next turn knows where they are, and nothing is said
+  // until they ask.
+  useEffect(() => {
+    if (!conversationId || !PARENT) return
+    return onParentPage((report) => void reportPage(conversationId, report))
+  }, [conversationId])
+
+  useEffect(() => {
+    if (!PARENT) return
+    const stop = onParentVisibility(setShown)
+    // The loader has its own Escape for its own page; this one is for a
+    // buyer whose focus is inside the frame, where the page never hears it.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') postToParent('close')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      stop()
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [])
+
+  // **A reply that arrives while the panel is shut is counted on the bubble.**
+  // A rep answering from the dashboard, or a turn that finished after the
+  // buyer closed the panel, is otherwise a message nobody knows is there.
+  useEffect(() => {
+    if (!PARENT) return
+    const replies = items.filter((i) => i.kind === 'text' && i.role !== 'buyer').length
+    if (shown) {
+      seen.current = replies
+      return
+    }
+    postToParent('unread', { count: Math.max(0, replies - seen.current) })
+  }, [items, shown])
 
   useEffect(() => {
     applyBrand(dealership?.brand)
@@ -376,7 +486,18 @@ export function Chat() {
 
     try {
       await streamMessages(conversationId, payload, (event, data) => {
-        if (event === 'token') {
+        if (event === 'buyer_message') {
+          // Filed by the server, so the conversation has started -- once.
+          if (!started.current) {
+            started.current = true
+            track('chat_start', conversationId, page)
+          }
+        } else if (event === 'reached') {
+          // The turn made the buyer reachable, or booked them in: facts the
+          // server read off rows after the turn, not claims in the reply.
+          if (data.lead) track('lead', conversationId, page)
+          if (data.appointment) track('appointment', conversationId, page)
+        } else if (event === 'token') {
           clearTimeout(timer)
           setTyping(false)
           streamed += String(data.text ?? '')
@@ -459,6 +580,9 @@ export function Chat() {
   }
 
   const onBooked = (bookingItemId: string) => (result: BookingResult) => {
+    // A booking takes a name and a number, so it is a lead as well.
+    track('lead', conversationId, page)
+    track('appointment', conversationId, page)
     setItems((prev) => [
       ...prev.filter((i) => i.id !== bookingItemId),
       {
@@ -504,6 +628,27 @@ export function Chat() {
           {stubbed.length === 1 ? 'is' : 'are'} not set. It calls the real tools and books real
           appointments, but the wording is canned and it can't improvise.
         </p>
+      )}
+
+      {/* **The car on the page the chat is open on.** Liner is told the same
+          thing, so "is this one still here?" means this car -- and the buyer
+          can see that it does, rather than wondering whether the chat knows
+          where they are. Name only: the price is on their page already, and
+          a second one here that disagreed with it would be worse than none. */}
+      {page?.vehicle && (
+        <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-5 py-2">
+          <CarPhoto
+            vin={page.vehicle.vin}
+            photoUrl={page.vehicle.photo_url}
+            className="h-9 w-12 shrink-0 rounded object-cover"
+          />
+          <p className="min-w-0 truncate text-sm">
+            <span className="text-muted-foreground">Asking about </span>
+            <span className="font-medium">
+              {page.vehicle.year} {page.vehicle.make} {page.vehicle.model} {page.vehicle.trim}
+            </span>
+          </p>
+        </div>
       )}
 
       <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
@@ -629,6 +774,7 @@ export function Chat() {
                     href={financeHref()}
                     target="_blank"
                     rel="noreferrer"
+                    onClick={() => track('credit_app', conversationId, page)}
                     className="mt-2 inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                   >
                     Start the application
@@ -649,6 +795,7 @@ export function Chat() {
                     assistant_message: ChatMessage
                     rails: Rail[]
                   }>(`/api/chat/sessions/${conversationId}/details`, { values })
+                  track('lead', conversationId, page)
                   // Appended where the card sits, like every other entry --
                   // the transcript is one ordered list and what the buyer was
                   // shown stays where it was shown.
@@ -731,7 +878,10 @@ export function Chat() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder="Ask about anything on the lot..."
-          className="h-11 flex-1 rounded-full border border-input bg-background px-4 text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          // 16px on a phone: iOS zooms the whole page into any field smaller
+          // than that the moment it is tapped, and in a full-screen chat the
+          // zoom does not come back out.
+          className="h-11 min-w-0 flex-1 rounded-full border border-input bg-background px-4 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-[15px]"
         />
         <button
           type="submit"
@@ -759,6 +909,8 @@ async function resume(
   setConversationId: (id: string) => void,
   setItems: (items: Item[]) => void,
   setRails: (rails: Rail[]) => void,
+  setPage: (page: PageView | null) => void,
+  started: { current: boolean },
 ): Promise<boolean> {
   let payload: {
     id: string
@@ -767,13 +919,15 @@ async function resume(
     rails: Rail[]
     booking: BookingCardData | null
     details: DetailsCardData | null
+    page?: PageView | null
   }
   try {
-    payload = await api.get(`/api/chat/sessions/${id}`)
+    payload = await api.get(`/api/chat/sessions/${encodeURIComponent(id)}`)
   } catch {
     localStorage.removeItem(STORAGE_KEY)
     return false
   }
+  started.current = payload.messages.some((m) => m.role === 'buyer')
 
   let rebuilt: Item[] = [
     { kind: 'text', id: 'greeting', role: 'assistant', content: payload.greeting },
@@ -825,5 +979,6 @@ async function resume(
   setConversationId(payload.id)
   setItems(rebuilt)
   setRails(payload.rails)
+  setPage(payload.page ?? null)
   return true
 }

@@ -445,64 +445,111 @@ async def main() -> int:
         print(f"  flagged  {len(flagged.strip()):>5} chars, names them")
 
         # **The bubble a dealership pastes onto its own site**, driven on a
-        # page that is not ours. Asserted in a browser because every claim it
-        # makes is a browser claim: that their stylesheet cannot reach our
-        # button, that the iframe is not created until somebody clicks, and
-        # that a closed panel is out of the tab order rather than merely
-        # transparent. `make smoke` reads the file; only this runs it.
+        # page that is not ours and from another origin -- `localhost` hosts
+        # the page, `127.0.0.1` serves the tag and the chat, which are two
+        # origins to a browser exactly as a dealer's site and ours are.
+        # Asserted in a browser because every claim it makes is a browser
+        # claim: that their stylesheet cannot reach our button, that the
+        # iframe is not created until somebody clicks, that the conversation
+        # is kept on *their* domain, that the loader and the chat really talk
+        # across the two origins, and that a closed panel is out of the tab
+        # order rather than merely transparent. `make smoke` reads the file;
+        # only this runs it.
         #
-        # The host page is fulfilled by the router rather than served, so this
-        # needs no second web server -- and it is on the app's own origin,
-        # which `frame-ancestors 'self'` allows, so the frame really loads.
-        # Their CSS is deliberately hostile: every button pink on lime.
-        print("\nthe embeddable bubble, on somebody else's page:")
-        HOSTILE = (
-            "<!doctype html><html><head><title>dealer</title><style>"
-            "button{background:hotpink!important;border:4px dotted lime!important}"
-            "</style></head><body><h1>Their site</h1><button>Theirs</button>"
-            '<script src="/embed.js" defer></script></body></html>'
-        )
-
-        async def _host_page(route):
-            await route.fulfill(status=200, content_type="text/html", body=HOSTILE)
-
-        await page.route("**/__embed_host", _host_page)
-        await page.goto(BASE + "/__embed_host", wait_until="networkidle")
-        await page.wait_for_timeout(500)
-        widget = page.locator("[data-liner-embed]")
-        if await widget.count() != 1:
-            failures.append("/embed.js: the widget did not mount on the host page")
+        # **Their page is written into a real document on the host origin**
+        # rather than fulfilled by the router: a route-fulfilled document
+        # stalls cross-origin subresources in this Chromium, so the tag never
+        # loaded -- measured, and a check that cannot load the thing it
+        # checks passes nothing. Their CSS is deliberately hostile: every
+        # button pink on lime.
+        print("\nthe website chat, on somebody else's page:")
+        dealers = stores_with_a_file()
+        host = BASE.replace("127.0.0.1", "localhost")
+        if not dealers:
+            print("  NOTE: no dealership is seeded, so there is no tag to install")
         else:
-            bubble = widget.locator("button[aria-label='Chat with us']")
-            colour = await bubble.evaluate("el => getComputedStyle(el).backgroundColor")
-            if "255, 105, 180" in colour:  # hotpink, i.e. their CSS reached in
-                failures.append(
-                    f"/embed.js: the host page's CSS restyled our button ({colour}) -- "
-                    "the shadow root is not isolating it"
-                )
-            before = len([f for f in page.frames if "chat" in f.url])
-            if before:
-                failures.append(
-                    "/embed.js: a chat frame exists before anybody clicked -- that starts "
-                    "a conversation for every visitor who never does"
-                )
-            await bubble.click()
-            await page.wait_for_timeout(1500)
-            after = [f for f in page.frames if "chat" in f.url]
-            if not after:
-                failures.append("/embed.js: clicking the bubble loaded no chat frame")
-            await widget.locator("button[aria-label='Close chat']").click()
-            await page.wait_for_timeout(500)
-            shut = await widget.locator(".panel").evaluate(
-                "el => getComputedStyle(el).visibility"
+            dealer = dealers[0]
+            hostile = (
+                "<!doctype html><html><head><meta charset='windows-1252'>"
+                "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+                "<title>dealer</title><style>"
+                "button{background:hotpink!important;border:4px dotted lime!important}"
+                "</style></head><body><h1>Their site</h1><button>Theirs</button>"
+                f'<script src="{BASE}/embed.js" data-dealer="{dealer}" async></script>'
+                "</body></html>"
             )
-            if shut != "hidden":
-                failures.append(
-                    f"/embed.js: a closed panel is {shut}, so a keyboard can still tab "
-                    "into an invisible chat"
+
+            async def their_page(tab):
+                await tab.goto(f"{host}/embed.js", wait_until="load")
+                await tab.evaluate("localStorage.clear(); sessionStorage.clear()")
+                await tab.set_content(hostile, wait_until="load")
+                await tab.wait_for_timeout(1500)
+
+            def chat_frames(tab):
+                return [f for f in tab.frames if f"/widget/{dealer}" in f.url]
+
+            await their_page(page)
+            widget = page.locator("[data-liner-embed]")
+            if await widget.count() != 1:
+                failures.append("/embed.js: the widget did not mount on the host page")
+            else:
+                bubble = widget.locator("button.bubble")
+                colour = await bubble.evaluate("el => getComputedStyle(el).backgroundColor")
+                if "255, 105, 180" in colour:  # hotpink, i.e. their CSS reached in
+                    failures.append(
+                        f"/embed.js: the host page's CSS restyled our button ({colour}) -- "
+                        "the shadow root is not isolating it"
+                    )
+                before = len(chat_frames(page))
+                if before:
+                    failures.append(
+                        "/embed.js: a chat frame exists before anybody clicked -- that starts "
+                        "a conversation for every visitor who never does"
+                    )
+                await bubble.click()
+                await page.wait_for_timeout(2500)
+                frames = chat_frames(page)
+                if not frames:
+                    failures.append("/embed.js: clicking the bubble loaded no chat frame")
+                kept = await page.evaluate(f"localStorage.getItem('liner.{dealer}.conversation')")
+                if not kept:
+                    failures.append(
+                        "/embed.js: the loader kept no conversation on the dealer's own domain -- "
+                        "the chat and the page never shook hands across the two origins"
+                    )
+                # A page served as windows-1252 reads an undeclared script in
+                # that encoding: a literal multiplication sign on the close
+                # button arrived as two letters.
+                close = widget.locator("button[aria-label='Close chat']")
+                glyph = (await close.inner_text()).strip()
+                if glyph != "×":
+                    failures.append(f"/embed.js: the close button reads {glyph!r} on a windows-1252 page")
+                await close.click()
+                await page.wait_for_timeout(500)
+                shut = await widget.locator(".panel").evaluate(
+                    "el => getComputedStyle(el).visibility"
                 )
-            print(f"  mounted, bubble {colour}, frames {before} -> {len(after)}, closed {shut}")
-        await page.unroute("**/__embed_host")
+                if shut != "hidden":
+                    failures.append(
+                        f"/embed.js: a closed panel is {shut}, so a keyboard can still tab "
+                        "into an invisible chat"
+                    )
+                print(f"  mounted, bubble {colour}, frames {before} -> {len(frames)}, "
+                      f"conversation kept on their domain: {bool(kept)}, closed {shut}")
+
+            # **The whole screen on a phone.** A 380px card on a 390px screen
+            # is a chat sharing its width with the page behind it.
+            phone_ctx = await browser.new_context(viewport=PHONE, is_mobile=True, has_touch=True)
+            phone = await phone_ctx.new_page()
+            await their_page(phone)
+            if await phone.locator("[data-liner-embed]").count():
+                await phone.locator("[data-liner-embed] button.bubble").tap()
+                await phone.wait_for_timeout(2000)
+                box = await phone.locator("[data-liner-embed] .panel").bounding_box()
+                if not box or box["width"] < PHONE["width"] - 1 or box["height"] < PHONE["height"] - 1:
+                    failures.append(f"/embed.js: the chat is not the whole screen on a phone: {box}")
+                print(f"  phone: panel {box and round(box['width'])}x{box and round(box['height'])}")
+            await phone_ctx.close()
 
         # **A dealership's own two pages, under its prefix.** `/` unprefixed is
         # Liner's marketing document and `/showroom` unprefixed is the default

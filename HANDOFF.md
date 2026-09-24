@@ -227,33 +227,69 @@ separate base branch exists.
 **The working tree rolled back once mid-session**, losing a whole commit from git
 *and* disk. Commit in small steps and push after each meaningful chunk.
 
-## Embeddable chat widget — agreed, not built yet
+## The website chat — built, first for Alsbou
 
-`dash/hastead_motors.html` is a fictional dealer site carrying the widget design:
-a launcher FAB with badge, a proactive nudge bubble, and a panel with two
-screens — a home menu of action cards, and the conversation itself. ~150 CSS
-rules, all `.lnr`-prefixed.
+One tag on the dealer's own site, `docs/WIDGET.md` end to end:
+`<script src="https://linerai.us/embed.js" data-dealer="alsbou" async>`.
 
-**Decisions taken:**
+**What it does:**
 
-- **Ship it as a script tag from day one**, injecting into a **Shadow DOM** so
-  the host page's CSS cannot leak in and the widget's cannot leak out. Today it
-  is same-origin, so it just calls `/api/chat/*` directly and needs no CORS. When
-  a real dealer's site needs it later, the same artifact works with an absolute
-  URL plus their origin in `ALLOWED_ORIGINS` — no rewrite.
-- **Host the copied dealer site ourselves at `/demo`**, the same way `/` serves
-  the landing page: a standalone document via the `landingAtRoot` plugin pattern
-  in `vite.config.ts`. We will not have access to a real dealer's site.
+- It draws a bubble in a shadow root.
+- On first click it frames the real chat from `/widget/<dealer>`.
+- It reads its settings from `/<dealer>/api/widget/config` on every load, so
+  nothing on their site is edited twice.
+- It keeps the conversation id on *their* domain.
+- It tells the chat which car the page is about. The server decides by the
+  page's address against `listing_url` first.
+- It pushes ASC-named events to their Tag Manager, and never anything
+  personal.
+- It reports another chat product on the page.
 
-**What the home actions can honestly do.** Three map to real tools —
-"Check a vehicle" → `search_inventory`, "Book a test drive" → `book_appointment`,
-"Talk to a person" → `escalate_to_human`. **"Value my trade" has nothing behind
-it**: there is no valuation anywhere in this system, no VIN lookup, no number to
-give. It answers from the real trade-in `knowledge_entries` row ("bring it in,
-we appraise while you wait") and offers to book. Do not simulate a figure.
+The Website chat card on Liner setup has the tag, the switch and what each
+site has reported.
 
-Likewise the mockup's "Jordan is on call until 11" is invented staffing —
-availability comes from `hours_json`, and no table records who is on shift.
+**Open, and the dealer's call:**
+
+- Alsbou's Get My Auto site keeps Capital One's *Chat Concierge* in its
+  `chatbox` slot. The loader reports it; it never removes it.
+- Their `embed_origins` already lists both spellings of their host.
+
+**Not built from the old mockup (`dash/hastead_motors.html`).** The chat
+opens straight into the conversation, with no home menu of action cards and
+no proactive nudge bubble. Two rules still stand if that menu is ever built:
+
+- "Value my trade" has nothing behind it. There is no valuation, so it
+  answers from the trade-in `knowledge_entries` row and offers to book.
+- "Jordan is on call until 11" is invented staffing. Nothing records who is
+  on shift.
+
+## Next — the new server (agreed plan, in order)
+
+`linerai.us` keeps ops. Each dealer **group** gets a subdomain, all three on
+one server behind Cloudflare:
+
+- `alsbou.linerai.us`
+- `craigandlandreth.linerai.us`
+- `riverside.linerai.us`
+
+A group shares one database, so a manager works across its lots.
+
+1. **Subdomain routing.** The Host header picks the store, as the path
+   prefix does now, and nginx serves `*.linerai.us`.
+2. **Postgres, one database per group, plus a data copy.** An audit of the
+   code found these blockers:
+   - the SQLite pragma listener runs on every connection;
+   - `database_url_for` is SQLite-only;
+   - `has_database` always answers true on Postgres;
+   - "no such table" handlers catch only `OperationalError`;
+   - NUL bytes in text;
+   - over-long strings are now errors;
+   - `events.id` commit order;
+   - the non-atomic email-reply claim;
+   - row-order-dependent `.first()` calls.
+3. **Alembic across every database.** `create_all` never adds a column.
+4. **Deploy.** nginx wildcard, `.env`, `docs/DEPLOY.md`.
+5. **Rooftops as locations inside a group.**
 
 ## Next task — port the dashboard mockups
 

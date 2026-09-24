@@ -91,6 +91,11 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/showroom" element={<StorefrontPage kind="showroom" />} />
           <Route path="/showroom/:vin" element={<StorefrontPage kind="vehicle" />} />
           <Route path="/chat" element={<BuyerTheme><Chat /></BuyerTheme>} />
+          {/* The same chat, framed on a dealership's own website by
+              `embed.js`. Not a second client: `Chat` reads `WIDGET` and adds
+              the conversation with the page around it -- which car the buyer
+              is looking at, where their conversation id is kept. */}
+          <Route path="/widget/:dealer" element={<BuyerTheme><Chat /></BuyerTheme>} />
           <Route path="/call" element={<BuyerTheme><Call /></BuyerTheme>} />
           <Route path="/login" element={<Login />} />
 

@@ -36,7 +36,7 @@ log = logging.getLogger("liner.stores")
 #: file. `api` and `ws` are this app's own; `assets` and `r` belong to the
 #: built frontend and the outreach click hop; `ops` is Liner's own dashboard
 #: and is deliberately *not* per-store.
-RESERVED = frozenset({"api", "ws", "r", "assets", "ops", "s", "static"})
+RESERVED = frozenset({"api", "ws", "r", "assets", "ops", "s", "static", "widget"})
 
 
 def known_stores() -> list[str]:
@@ -61,6 +61,22 @@ def split(path: str) -> tuple[str, str]:
     if not head or head in RESERVED or head not in known_stores():
         return "", path
     return head, "/" + rest
+
+
+def widget_store(path: str) -> str:
+    """`/widget/alsbou` -> `alsbou`: the dealership a website chat frame is for.
+
+    The website chat is served at `/widget/<dealer>` rather than under the
+    usual `/<dealer>/` prefix, because it is the one address that goes into a
+    tag on somebody else's website and it reads as what it is. The path is
+    left exactly as it came -- the page reads the dealer back off it -- and
+    only the active store is set, so that whatever serves the document can ask
+    that dealership's profile who may frame it.
+    """
+    if not path.startswith("/widget/"):
+        return ""
+    slug = path.split("/")[2] if path.count("/") >= 2 else ""
+    return slug if slug and slug not in RESERVED and slug in known_stores() else ""
 
 
 async def _not_seeded(scope, receive, send, slug: str) -> None:  # noqa: ANN001
@@ -94,6 +110,14 @@ class StorePrefix:
     async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
         if scope.get("type") not in ("http", "websocket"):
             return await self.app(scope, receive, send)
+
+        widget = widget_store(scope.get("path", "/"))
+        if widget:
+            token = current_store.set(widget)
+            try:
+                return await self.app(scope, receive, send)
+            finally:
+                current_store.reset(token)
 
         slug, rest = split(scope.get("path", "/"))
         if not slug:

@@ -71,6 +71,12 @@ def conversation_recap(db: Session, c: Conversation) -> str:
     # --- Who, and about what -------------------------------------------------
     who = name or "An unnamed buyer"
     opening = f"{who} {CHANNEL_VERB.get(c.channel, 'got in touch')}"
+    # Opened from the chat on the dealer's own website: which site. A rep
+    # reading "started a chat" cannot tell the storefront demo from their live
+    # site, and the difference is who this buyer is likely to be.
+    site = _site_of(db, c)
+    if site:
+        opening += f" on {site}"
 
     # The car they are coming in to see settles it, even when no focus was ever
     # set -- Devon booked a Sienna and the recap called it a Pacifica, because
@@ -139,6 +145,26 @@ def conversation_recap(db: Session, c: Conversation) -> str:
         )
 
     return " ".join(_sentence(p) for p in parts if p)
+
+
+def _site_of(db: Session, c: Conversation) -> str:
+    """The dealer website a chat was opened on, as a bare host, or ""."""
+    if c.channel != "chat":
+        return ""
+    from urllib.parse import urlsplit
+
+    from app.models import ConversationPage
+
+    row = (
+        db.query(ConversationPage)
+        .filter_by(conversation_id=c.id)
+        .order_by(ConversationPage.seen_at.asc())
+        .first()
+    )
+    if row is None:
+        return ""
+    host = urlsplit(row.url).netloc
+    return host[4:] if host.startswith("www.") else host
 
 
 def _title(v: Vehicle) -> str:

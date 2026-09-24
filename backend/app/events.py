@@ -86,6 +86,11 @@ EVENT_TYPES = {
     # because it changes what every composer on the dashboard may do next.
     "sms.opt_out",
     "sms.resumed",
+    # The website chat's loader reported from a dealer's site for the first
+    # time, or reported something new (another chat widget, the tag twice),
+    # or the bubble was switched on or off. The Website card on the Liner
+    # setup page reads it; nothing else needs to.
+    "widget.report",
 }
 
 

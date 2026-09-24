@@ -43,6 +43,7 @@ from app.models.dealership import (
     User,
 )
 from app.models.inventory import IngestRun, Vehicle, VehicleMention
+from app.models.widget import ConversationPage, WidgetInstall
 # Ours, in their own tables. Imported last so the `ops_` prefix is the
 # first thing anyone reading this list notices about them.
 from app.models.ops import (
@@ -78,6 +79,7 @@ __all__ = [
     "CapturedField",
     "Conversation",
     "ConversationOnce",
+    "ConversationPage",
     "Dealership",
     "Escalation",
     "Event",
@@ -101,4 +103,5 @@ __all__ = [
     "User",
     "Vehicle",
     "VehicleMention",
+    "WidgetInstall",
 ]

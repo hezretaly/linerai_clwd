@@ -2350,25 +2350,75 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   the two React ones — their page is somebody else's HTML with somebody
   else's CSS and no build step of ours. What keeps that duplication honest is
   how little it is allowed to do: a button, a panel, and an iframe of the
-  real `/chat`. A second chat *client* is the thing it must never become,
-  because that is how one surface quietly stops drawing the booking card.
-  - **The store comes from the script's own URL.** `/<slug>/embed.js` names
-    that dealership, because `StorePrefix` strips the slug before the file is
-    served and `currentScript.src` still carries it — so a dealer copies one
-    line and the line already names them. The resolved store is logged, since
-    opening the wrong one is silent and looks entirely normal, which is the
-    failure the prefix exists to prevent. One file, byte for byte, under
-    every prefix.
+  real chat at `/widget/<dealer>`. A second chat *client* is the thing it
+  must never become, because that is how one surface quietly stops drawing
+  the booking card — `make smoke` fails if the loader names a chat endpoint.
+  The whole of it for a dealer's website provider is **[`docs/WIDGET.md`](./docs/WIDGET.md)**.
+  - **The tag names its dealer and everything else is asked for.**
+    `data-dealer="alsbou"` (or `?dealer=`, or the old `/<slug>/embed.js`),
+    and on every page load the loader reads `/<dealer>/api/widget/config`:
+    label, side, colour, the Tag Manager setting and the `website_chat`
+    runtime flag. A provider pastes one line once, so a change that needed a
+    re-install would never reach the site. The config is public and readable
+    from any origin, and a refusal is a sentence in the page's console — an
+    opaque CORS failure is the one answer nobody on the dealer's side can act
+    on. Cached a minute; the loader itself five, which is how fast a fix
+    reaches every dealer.
+  - **The conversation id is kept on the dealer's domain, not in the frame.**
+    A frame from another site gets partitioned storage that Safari clears
+    after a week, which loses the buyer on exactly the return visit that
+    matters. The loader keeps it in *their* localStorage for thirty days and
+    hands it over a `postMessage` handshake (`lib/widgetBridge.ts`); both
+    directions are pinned to one origin, and a frame with no loader answering
+    carries on as the plain `/chat` after a timeout.
+  - **Which car the page is about is decided by the server, not the page.**
+    `app/page_context.py` compares the page's *path* with every car's
+    `listing_url` first — Alsbou's car pages carry four cars' structured data
+    (the car and three "similar vehicles"), their addresses hold six
+    characters of the VIN and Craig and Landreth's none — then the VIN the
+    loader read, which it takes only where the page is about exactly one car.
+    Either becomes a car only through `offerable`. The model is told the
+    car's identity and never its price (`facts` grounds the guards on year
+    and make alone), the title arrives labelled as a label, and query
+    parameters that can carry somebody's details are dropped before a rep
+    ever sees the address. Pages on a site the dealership did not list are
+    dropped whole; our own origins count, because our storefront is theirs.
+  - **Tag Manager gets the car industry's own event names, and nothing
+    personal.** ASC's `asc_comm_engagement`, `asc_comm_submission(_sales)`,
+    `asc_comm_submission_sales_appt` and `asc_cta_interaction`, pushed to
+    their `dataLayer` with `event_owner: liner` — the names an agency already
+    counts and imports into Google Ads. A lead and a booking are read off
+    rows after the turn (the stream's `reached` event), never off a reply. No
+    name, number, address or typed words: Google's terms forbid it and every
+    tag in their container can read the data layer. Every key on every push,
+    because the data layer remembers a key between pushes.
+  - **Another chat on the page is reported, never removed.** Fingerprints
+    from the vendors' own live code; only what *means* a chat — Capital One's
+    loader also draws pre-qualification buttons and Elfsight's also draws
+    reviews, both on Alsbou's site with no chat, so neither counts. A
+    `PerformanceObserver`, because Tag Manager injects them late and the
+    timing buffer stops at 250 entries. Reported to the page's console and
+    to the Website chat card on Liner setup, which is where somebody acts.
   - **Everything is in a shadow root.** Their stylesheet cannot reach our
     button and ours cannot touch their page. On a site nobody here has seen,
     that is the difference between a widget and a bug report — `make shots`
-    mounts it on a page whose CSS is hostile on purpose and fails if our
-    button comes back their pink.
+    mounts it on a page whose CSS is hostile on purpose, **from another
+    origin**, and fails if our button comes back their pink.
+  - **ASCII, and minified on the way out.** A script with no declared charset
+    is read in the host page's encoding, so a literal `×` on the close button
+    arrived as `Ã—` on a windows-1252 page — caught by the shots gate's
+    hostile page, which declares exactly that. The source keeps its
+    reasoning in comments; `minifyLoader` in `vite.config.ts` serves a third
+    of it, and the gate measures the gzipped size.
+  - **A route-fulfilled host page cannot test it.** In this Chromium a
+    document fulfilled by `page.route` stalls cross-origin subresources, so
+    the tag never loaded and the check could not fail. The gates write their
+    hostile page into a real document on the host origin instead.
   - It follows the storefront widget's rules rather than inventing its own:
     mounted on the first open and kept, and a closed panel is `visibility:
-    hidden` so a keyboard cannot tab into an invisible chat.
-  - `data-color` is validated to a hex before it reaches a stylesheet, the
-    same rule the profile's accent follows and for the same reason.
+    hidden` so a keyboard cannot tab into an invisible chat. On a phone it is
+    the whole screen, and an open chat is not reopened on the next page there
+    — a buyer who went back a page is looking for the page.
 - **The chat panel is a sheet on a phone and a card on a laptop.** At 390px
   the old fixed 24rem box left the chat 358px wide with the page showing round
   three sides of it — and that is the width a keyboard, a booking card and a
