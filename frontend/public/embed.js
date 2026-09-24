@@ -326,8 +326,14 @@
 
   // ---- talking to the frame --------------------------------------------------
 
+  /** Whether the frame has said hello. Until then its window is still the
+   *  blank document it started as -- *this* page's origin -- and a message
+   *  pinned to ours is refused with a warning in the dealer's console. Nothing
+   *  is lost by waiting: `init` carries the page and whether the chat is open. */
+  var greeted = false;
+
   function post(message) {
-    if (!frame || !frame.contentWindow) return;
+    if (!frame || !frame.contentWindow || !greeted) return;
     message.liner = 1;
     // To our origin only: a frame that has been navigated somewhere else must
     // not receive the buyer's conversation id.
@@ -339,6 +345,7 @@
     var m = e.data;
     if (!m || m.liner !== 1 || typeof m.type !== 'string') return;
     if (m.type === 'hello') {
+      greeted = true;
       post({ type: 'init', conversationId: conversation(), page: page, open: isOpen });
     } else if (m.type === 'session') {
       remember(m.conversationId);

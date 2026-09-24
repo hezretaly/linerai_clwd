@@ -540,12 +540,17 @@ async def main() -> int:
             # **The whole screen on a phone.** A 380px card on a 390px screen
             # is a chat sharing its width with the page behind it.
             phone_ctx = await browser.new_context(viewport=PHONE, is_mobile=True, has_touch=True)
-            phone = await phone_ctx.new_page()
-            await their_page(phone)
-            if await phone.locator("[data-liner-embed]").count():
-                await phone.locator("[data-liner-embed] button.bubble").tap()
-                await phone.wait_for_timeout(2000)
-                box = await phone.locator("[data-liner-embed] .panel").bounding_box()
+            # `handset`, never `phone`: that name is the flag `shot()` reads to
+            # decide which folder a picture goes in and which checks run, and
+            # a Page is truthy -- so every desktop shot after this one went to
+            # `mobile/`, to be overwritten by the real phone pass, and the
+            # desktop store and dealer pictures silently stopped being taken.
+            handset = await phone_ctx.new_page()
+            await their_page(handset)
+            if await handset.locator("[data-liner-embed]").count():
+                await handset.locator("[data-liner-embed] button.bubble").tap()
+                await handset.wait_for_timeout(2000)
+                box = await handset.locator("[data-liner-embed] .panel").bounding_box()
                 if not box or box["width"] < PHONE["width"] - 1 or box["height"] < PHONE["height"] - 1:
                     failures.append(f"/embed.js: the chat is not the whole screen on a phone: {box}")
                 print(f"  phone: panel {box and round(box['width'])}x{box and round(box['height'])}")

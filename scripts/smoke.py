@@ -7870,6 +7870,45 @@ def main() -> int:
     check("the brief never invents a price, because it has none to read",
           "Never quote a number of any kind" in _persona.instructions())
 
+    print("\n== the prompt's opening hours ==")
+    # The one line that settles "are you open on Sunday evening" printed the
+    # first open day's window for the whole week, so Alsbou -- closing at six
+    # on Sunday -- were open until eight every day to the model.
+    from app.agent.prompts import hours_sentence as _hours_sentence
+
+    check("opening hours are grouped only where the days agree",
+          _hours_sentence({
+              **{d: {"open": "10:00", "close": "20:00"}
+                 for d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday")},
+              "sunday": {"open": "10:00", "close": "18:00"},
+          }) == "Open Monday-Saturday 10:00 to 20:00, Sunday 10:00 to 18:00."
+          and _hours_sentence({"monday": {"open": "09:00", "close": "17:00"}, "tuesday": None})
+          == "Open Monday 09:00 to 17:00. Closed Tuesday.",
+          _hours_sentence({
+              **{d: {"open": "10:00", "close": "20:00"}
+                 for d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday")},
+              "sunday": {"open": "10:00", "close": "18:00"},
+          }) + " | " + _hours_sentence({"monday": {"open": "09:00", "close": "17:00"}, "tuesday": None}))
+
+    # The loader waits for the frame's hello before posting anything: until
+    # then the frame's window is the blank document it started as, with the
+    # dealer page's origin, and a message pinned to ours is refused with an
+    # error in the dealer's console on every first open.
+    _gloader = pathlib.Path("frontend/public/embed.js").read_text(encoding="utf-8")
+    check("the loader posts nothing to the chat before it says hello",
+          "!greeted) return;" in _gloader and "greeted = true;" in _gloader)
+
+    # **The Website card hands out the path form**, `/<dealer>/embed.js`: the
+    # first loader here read the dealer only from the path, and a moved
+    # group's old box redirects `/<dealer>/...` but not a bare `/embed.js`.
+    # Checked in the card's two builders (the server's `loader` when a public
+    # address is set, the page's own fallback when not) because nothing loads
+    # the card's tag in a browser.
+    _wsrc = pathlib.Path("backend/app/api/widget.py").read_text()
+    _wcard = pathlib.Path("frontend/src/components/WebsiteChat.tsx").read_text()
+    check("the Website card's tag names the dealer in its path",
+          'f"{base}/{slug}/embed.js"' in _wsrc and "/${data.dealer}` : ''}/embed.js" in _wcard)
+
     _stores_section(_stores_before)
 
     print("\n== the run gives back the slots it took ==")

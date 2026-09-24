@@ -273,13 +273,21 @@ def installs(
     # The address the tag loads from: the public one where the deployment
     # names it. Without it the page uses the address it was opened at, which
     # is the same host serving this API.
+    #
+    # **With the dealer in the path, as well as in `data-dealer`.** The first
+    # loader on this box read the store from `/<dealer>/embed.js` and never
+    # from the attribute, and the box that later redirects a moved group
+    # redirects `/<dealer>/...` and not a bare `/embed.js`. So the path form is
+    # the one tag that works on every loader ever served here and keeps
+    # working after the dealership moves to its own subdomain. The current
+    # loader reads either; the attribute stays for anybody reading the tag.
     base = settings.public_base_url.rstrip("/")
     return {
         "dealer": slug,
         "switch": flags.get(db, "website_chat"),
         "origins": profile.embed_origins(),
         "settings": profile.widget(),
-        "loader": f"{base}/embed.js" if base else "",
+        "loader": f"{base}/{slug}/embed.js" if base and slug else (f"{base}/embed.js" if base else ""),
         "version": LOADER_VERSION,
         "installs": [
             {

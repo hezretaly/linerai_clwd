@@ -263,6 +263,15 @@ no proactive nudge bubble. Two rules still stand if that menu is ever built:
 - "Jordan is on call until 11" is invented staffing. Nothing records who is
   on shift.
 
+## This branch is the linerai.us release for Alsbou's website chat
+
+`claude/alsbou-release` is `21558e0` plus the Sunday-hours fix, the loader's
+hello fix and the path-form tag on the setup card -- no migrations, no
+Postgres, no subdomains. **[`docs/RELEASE-alsbou.md`](./docs/RELEASE-alsbou.md)**
+has how it works, how to deploy it (a pinned checkout, never a pull), the
+checks before the tag goes on their site, the launch checklist and rollback.
+Everything below is the main branch's plan for later.
+
 ## Next — the new server (agreed plan, in order)
 
 `linerai.us` keeps ops. Each dealer **group** gets a subdomain, all three on

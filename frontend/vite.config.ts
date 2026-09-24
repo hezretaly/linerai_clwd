@@ -23,8 +23,14 @@ function landingAtRoot(): Plugin {
       // only the exact root leaves /chat, /call, /login and /app/* to fall
       // through to index.html as usual.
       server.middlewares.use((req, _res, next) => {
-        const path = (req.url ?? '/').split('?')[0]
+        const [path, query] = (req.url ?? '/').split('?')
         if (path === '/' || path === '/index.html') req.url = '/landing.html'
+        // The website chat's loader under a dealer's prefix, which is the tag
+        // the Liner setup card hands out. In production `StorePrefix` strips
+        // the prefix and the API serves the file; here `public/` serves it at
+        // the root only, and anything else falls through to index.html -- so
+        // the card's own tag answered with HTML in development.
+        else if (/^\/[^/]+\/embed\.js$/.test(path)) req.url = '/embed.js' + (query ? `?${query}` : '')
         next()
       })
     },

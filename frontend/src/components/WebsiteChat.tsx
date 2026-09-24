@@ -77,7 +77,7 @@ export function WebsiteChatCard() {
 
   if (!data) return null
   const on = data.switch === 'on'
-  const tag = `<script src="${data.loader || `${window.location.origin}/embed.js`}" data-dealer="${data.dealer}" async></script>`
+  const tag = `<script src="${data.loader || `${window.location.origin}${data.dealer ? `/${data.dealer}` : ''}/embed.js`}" data-dealer="${data.dealer}" async></script>`
   const style = data.settings.events
 
   return (
