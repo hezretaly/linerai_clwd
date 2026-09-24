@@ -1,4 +1,4 @@
-.PHONY: prune-ops help install deps build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots
+.PHONY: prune-ops help install deps build set-password add-user ingest mail-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -109,6 +109,12 @@ restore-ops: ## Read a dump-ops file back into ops.db: FILE=... [ARGS=--dry-run]
 
 stores: ## List the stores this deployment can serve, and whether each is seeded
 	$(PY) scripts/drop_db.py --list
+
+migrate: ## Bring every database this deployment serves to the newest migration
+	cd backend && ../$(PY) -m app.migrate
+
+to-postgres: ## Copy the SQLite databases into Postgres, one per store (ARGS=--apply)
+	$(PY) scripts/to_postgres.py $(ARGS)
 
 agent-ping: ## One real turn against the configured model, errors printed in full
 	$(PY) scripts/agent_ping.py

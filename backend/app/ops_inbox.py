@@ -22,10 +22,9 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy.exc import OperationalError
 
 from app.config import settings
-from app.db import SessionLocal, has_database
+from app.db import MISSING_TABLE, SessionLocal, has_database
 from app.models import InboundEmail
 from app.stores import known_stores
 
@@ -58,7 +57,7 @@ def _each(fn):
         try:
             with SessionLocal(slug) as db:
                 out.append((slug, fn(db)))
-        except OperationalError:
+        except MISSING_TABLE:
             continue
     return out
 
@@ -116,7 +115,7 @@ def _unresolved_in(db, limit: int) -> list[dict]:  # noqa: ANN001 -- a store's S
     try:
         envelopes = email_envelopes.for_receipts_many(db, [m.id for m in receipts])
         files = email_envelopes.attachments_of(db, [e.id for e in envelopes.values()])
-    except OperationalError:
+    except MISSING_TABLE:
         # A store file from before envelopes were kept, on a box that has not
         # restarted since. Its mail still lists; it just has nothing more.
         db.rollback()

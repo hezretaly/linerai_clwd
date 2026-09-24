@@ -30,12 +30,11 @@ from typing import Union
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import or_
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app import email_addresses, email_envelopes, email_files, email_html, outreach_send
 from app.config import settings
-from app.db import get_ops_db, utcnow
+from app.db import MISSING_TABLE, get_ops_db, utcnow
 from app.api.deps import require_owner
 from app.email_addresses import Recipient
 from app.email_envelopes import AttachmentError
@@ -748,7 +747,7 @@ def _receipt_thread(receipt_id: str) -> tuple[str, str, str]:
         env = None
         try:
             env = email_envelopes.for_receipt(db, receipt.id)
-        except OperationalError:
+        except MISSING_TABLE:
             # A store file from before envelopes were kept. The receipt's own
             # Message-ID still threads the reply.
             db.rollback()
@@ -821,7 +820,7 @@ def _received_files(ids: list[str]) -> dict[str, _Received]:
                 .filter(EmailAttachment.id.in_(ids), InboundEmail.outcome == "unresolved")
                 .all()
             )
-        except OperationalError:
+        except MISSING_TABLE:
             db.rollback()
             return []
         return [

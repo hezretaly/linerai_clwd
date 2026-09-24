@@ -88,13 +88,32 @@ def stores() -> list[str]:
     dealership, and any demo request written while that store was the default.
     Those rows are real and this is the only thing that will ever find them.
     """
-    found = [OPS] if _ops_files() and _ops_files()[0].exists() else []
-    if _files_for("")[0].exists():
+    found = [OPS] if _present(settings.ops_database_url, _ops_files()) else []
+    if _present(settings.database_url_for(""), _files_for("")):
         found.append("")
     for slug in settings.store_slugs:
-        if _files_for(slug)[0].exists():
+        if _present(settings.database_url_for(slug), _files_for(slug)):
             found.append(slug)
     return found
+
+
+def _present(url: str, files: list[pathlib.Path]) -> bool:
+    """Whether there is a database here to read -- its file on SQLite, the
+    database itself on a server. Neither question creates one."""
+    if files:
+        return files[0].exists()
+    from app import pg
+
+    return pg.is_postgres(url) and pg.exists(url)
+
+
+def pg_urls() -> list[tuple[str, str]]:
+    """Every server database this deployment names, labelled, or []."""
+    from app import pg
+
+    named = [(OPS, settings.ops_database_url), ("default store", settings.database_url_for(""))]
+    named += [(slug, settings.database_url_for(slug)) for slug in settings.store_slugs]
+    return [(label, url) for label, url in named if pg.is_postgres(url) and pg.exists(url)]
 
 
 def dump_store(slug: str) -> dict:
@@ -116,6 +135,19 @@ def dump_store(slug: str) -> dict:
 
 
 def main() -> int:
+    if "--files" in sys.argv and pg_urls():
+        # On a server there are no files to copy: the backup is `pg_dump`,
+        # one per database, in its own format so `pg_restore` can read it.
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        print("\nDump each database before dropping anything:\n")
+        print(f"  mkdir -p backup-{stamp}")
+        for label, url in pg_urls():
+            from app import pg
+
+            print(f"  pg_dump --format=custom --dbname='{url}' "
+                  f"--file=backup-{stamp}/{pg.name_of(url)}.dump   # {label}")
+        print("\n(Those lines carry the database password; run them, do not paste them anywhere.)\n")
+        return 0
     if "--files" in sys.argv:
         print("\nCopy the database files themselves before dropping anything.")
         print("All three per store: WAL keeps recent writes in the sidecars, so")

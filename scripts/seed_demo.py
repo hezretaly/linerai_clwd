@@ -867,7 +867,10 @@ def build(db, count: int) -> dict[str, int]:
     # could not have mentioned one, and a demo row saying it did would
     # contradict the rule the executor enforces.
     vehicles = [
-        v for v in db.query(Vehicle).filter_by(status="available").all() if v.rule_discuss
+        # By VIN, so the "deterministic" seed is: `rng.choice` over rows in
+        # whatever order the database returns them differs per engine.
+        v for v in db.query(Vehicle).filter_by(status="available").order_by(Vehicle.vin).all()
+        if v.rule_discuss
     ]
     if not vehicles:
         raise SystemExit("No vehicles. Run `make seed` first.")

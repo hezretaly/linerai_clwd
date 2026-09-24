@@ -51,7 +51,7 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
         followups = (
             db.query(Rail)
             .filter_by(kind="opener", enabled=True)
-            .order_by(Rail.sort_order.asc())
+            .order_by(Rail.sort_order.asc(), Rail.label.asc(), Rail.id.asc())
             .all()
         )
     elif settings.llm_mode == "live":
@@ -96,7 +96,7 @@ def rails_for(db: Session, convo: Conversation) -> list[Rail]:
     knowledge = (
         db.query(Rail)
         .filter_by(kind="knowledge", enabled=True)
-        .order_by(Rail.sort_order.asc())
+        .order_by(Rail.sort_order.asc(), Rail.label.asc(), Rail.id.asc())
         .limit(2)
         .all()
     )

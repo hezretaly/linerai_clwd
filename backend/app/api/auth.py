@@ -5,7 +5,6 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -17,7 +16,9 @@ from app.api.deps import (
     verify_password,
 )
 from app.config import settings
-from app.db import SessionLocal, current_host, current_store, get_db, has_database, ops_session
+from app.db import (
+    MISSING_TABLE, SessionLocal, current_host, current_store, get_db, has_database, ops_session,
+)
 from app.models import OpsUser, User
 from app.ratelimit import SlidingWindow
 from app.stores import known_stores
@@ -148,7 +149,7 @@ def locate_store(email: str) -> str:
         with ops_session() as ops:
             if ops.query(OpsUser.id).filter_by(email=email, active=True).first():
                 return settings.dealership.strip()
-    except OperationalError:
+    except MISSING_TABLE:
         pass
 
     default = settings.dealership.strip()
@@ -162,7 +163,7 @@ def locate_store(email: str) -> str:
         try:
             with SessionLocal(slug) as db:
                 found = db.query(User.id).filter_by(email=email, active=True).first()
-        except OperationalError:
+        except MISSING_TABLE:
             # Still caught, because the check above cannot cover every case:
             # a file that exists but holds no tables is exactly the debris
             # this used to leave, and a Postgres deployment has no path to

@@ -274,20 +274,18 @@ one server behind Cloudflare:
 
 A group shares one database, so a manager works across its lots.
 
-1. **Subdomain routing.** The Host header picks the store, as the path
-   prefix does now, and nginx serves `*.linerai.us`.
-2. **Postgres, one database per group, plus a data copy.** An audit of the
-   code found these blockers:
-   - the SQLite pragma listener runs on every connection;
-   - `database_url_for` is SQLite-only;
-   - `has_database` always answers true on Postgres;
-   - "no such table" handlers catch only `OperationalError`;
-   - NUL bytes in text;
-   - over-long strings are now errors;
-   - `events.id` commit order;
-   - the non-atomic email-reply claim;
-   - row-order-dependent `.first()` calls.
-3. **Alembic across every database.** `create_all` never adds a column.
+1. **Subdomain routing — done.** `STORE_DOMAIN=linerai.us` makes the
+   Host header pick the store, as the path prefix does
+   (`stores.host_store`, `stores.public_link`).
+2. **Postgres, one database per group — done.** `DATABASE_URL_TEMPLATE`,
+   `app/pg.py`, and `make to-postgres` for the copy. The full `make smoke`
+   passes against Postgres 16 with every checkout database copied in; each
+   audit blocker is fixed and written up in CLAUDE.md under "What differs
+   between the two engines".
+3. **Alembic across every database — done.** `app/migrate.py`, a store and an
+   ops history, migrated at boot and by `make migrate`. Pre-migration
+   databases are adopted in place. The gate fails on a model changed without
+   a revision.
 4. **Deploy.** nginx wildcard, `.env`, `docs/DEPLOY.md`.
 5. **Rooftops as locations inside a group.**
 

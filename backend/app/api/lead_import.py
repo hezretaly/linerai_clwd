@@ -30,6 +30,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, find_staff, get_dealership
@@ -95,14 +96,22 @@ def _match_vehicle(db: Session, prospect) -> Vehicle | None:
         if hit is not None:
             return hit
     if prospect.vehicle_make and prospect.vehicle_model:
+        # Compared by equality on the lowered value, never `ilike`: the make
+        # comes out of somebody's XML, and as a LIKE pattern a `%` in it
+        # matches everything and a trailing backslash is an error on Postgres.
+        # Ordered, because several cars share a year, make and model and the
+        # one a lead is matched to must not change between reads -- priced
+        # first, cheapest first, then by VIN.
         query = db.query(Vehicle).filter(
             Vehicle.status == "available",
-            Vehicle.make.ilike(prospect.vehicle_make),
-            Vehicle.model.ilike(prospect.vehicle_model),
+            func.lower(Vehicle.make) == prospect.vehicle_make.lower(),
+            func.lower(Vehicle.model) == prospect.vehicle_model.lower(),
         )
         if prospect.vehicle_year:
             query = query.filter(Vehicle.year == prospect.vehicle_year)
-        return query.first()
+        return query.order_by(
+            Vehicle.price.is_(None), Vehicle.price.asc(), Vehicle.vin.asc()
+        ).first()
     return None
 
 
@@ -381,12 +390,14 @@ def _lead_draft(
         if make and model:
             query = db.query(Vehicle).filter(
                 Vehicle.status == "available",
-                Vehicle.make.ilike(make),
-                Vehicle.model.ilike(model),
+                func.lower(Vehicle.make) == make.lower(),
+                func.lower(Vehicle.model) == model.lower(),
             )
             if year:
                 query = query.filter(Vehicle.year == year)
-            match = query.first()
+            match = query.order_by(
+                Vehicle.price.is_(None), Vehicle.price.asc(), Vehicle.vin.asc()
+            ).first()
 
     if match is not None and match.rule_discuss:
         line = (

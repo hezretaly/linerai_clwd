@@ -408,7 +408,8 @@ def _vehicle_block(db: Session, vehicle: Vehicle) -> str:
 def _knowledge_block(db: Session) -> str:
     entries = (
         db.query(KnowledgeEntry)
-        .order_by(KnowledgeEntry.use_count.desc())
+        .order_by(KnowledgeEntry.use_count.desc(), KnowledgeEntry.topic.asc(),
+                  KnowledgeEntry.id.asc())
         .limit(MAX_KNOWLEDGE)
         .all()
     )

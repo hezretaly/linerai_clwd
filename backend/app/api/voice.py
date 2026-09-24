@@ -143,6 +143,10 @@ def _spoken_words(db: Session) -> list[str]:
         db.query(Vehicle.make, Vehicle.model, Vehicle.trim)
         .filter(Vehicle.status == "available")
         .distinct()
+        # A DISTINCT has no order of its own, and the comment below counts on
+        # a stable one: on Postgres the rows come back however the plan
+        # found them, and a reshuffled list invalidates the prompt cache.
+        .order_by(Vehicle.make, Vehicle.model, Vehicle.trim)
         .all()
     ):
         words += [part for part in (make, model, trim) if part]

@@ -496,7 +496,12 @@ def patch_knowledge(
 def list_rails(db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
     from app.agent.rail_actions import retired
 
-    rows = db.query(Rail).order_by(Rail.kind.asc(), Rail.stage.asc(), Rail.sort_order.asc()).all()
+    rows = (
+        db.query(Rail)
+        .order_by(Rail.kind.asc(), Rail.stage.asc(), Rail.sort_order.asc(), Rail.label.asc(),
+                  Rail.id.asc())
+        .all()
+    )
     # A withdrawn chip is not listed as one a manager could switch back on:
     # nothing would offer it, so the toggle would be a control for nothing.
     return {"rails": [rail_out(r) for r in rows if not retired(r)]}

@@ -107,10 +107,15 @@ def stores_with_a_file() -> list[str]:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend"))
     from app.config import settings
 
-    return [
-        slug for slug in settings.store_slugs
-        if pathlib.Path(settings.database_url_for(slug).split("///", 1)[-1]).exists()
-    ]
+    from app import pg
+
+    def present(slug: str) -> bool:
+        url = settings.database_url_for(slug)
+        if pg.is_postgres(url):
+            return pg.exists(url)
+        return pathlib.Path(url.split("///", 1)[-1]).exists()
+
+    return [slug for slug in settings.store_slugs if present(slug)]
 
 
 PHONE = {"width": 390, "height": 844}

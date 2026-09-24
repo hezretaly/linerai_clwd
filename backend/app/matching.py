@@ -100,7 +100,14 @@ def candidates_for(
 
     clean_email = (email or "").lower().strip()
     if clean_email:
-        for lead in db.query(Lead).filter(Lead.email == clean_email).all():
+        # Oldest first on every rung, and by id after that: the first
+        # candidate is the one a reply or a booking attaches to, and on
+        # Postgres an unordered query can return a different row after any
+        # update. The oldest row is the buyer the rest were duplicated from.
+        for lead in (
+            db.query(Lead).filter(Lead.email == clean_email)
+            .order_by(Lead.created_at.asc(), Lead.id.asc()).all()
+        ):
             if lead.id != exclude_id and lead.id not in seen:
                 seen.add(lead.id)
                 found.append((lead, "same email"))
@@ -115,7 +122,10 @@ def candidates_for(
     # buyer page by a rep who knows the two are one person; nothing infers one,
     # because a name is not identity and neither is a shared domain.
     if clean_email:
-        for link in db.query(LeadAddress).filter(LeadAddress.address == clean_email).all():
+        for link in (
+            db.query(LeadAddress).filter(LeadAddress.address == clean_email)
+            .order_by(LeadAddress.created_at.asc(), LeadAddress.id.asc()).all()
+        ):
             if link.lead_id == exclude_id or link.lead_id in seen:
                 continue
             lead = db.query(Lead).filter_by(id=link.lead_id).one_or_none()
@@ -127,7 +137,10 @@ def candidates_for(
     # Under ten digits is an extension or a fragment, not a number that
     # identifies anyone.
     if len(tail) >= 7:
-        for lead in db.query(Lead).filter(Lead.phone != "").all():
+        for lead in (
+            db.query(Lead).filter(Lead.phone != "")
+            .order_by(Lead.created_at.asc(), Lead.id.asc()).all()
+        ):
             if digits(lead.phone) == tail and lead.id != exclude_id and lead.id not in seen:
                 seen.add(lead.id)
                 found.append((lead, "same phone"))

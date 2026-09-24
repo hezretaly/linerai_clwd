@@ -12,12 +12,17 @@ import json
 import logging
 from typing import Any
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models import Event
 from app.schemas.serialize import stamp
 
 log = logging.getLogger("liner.events")
+
+#: The advisory lock that orders event ids on Postgres (see `emit`). Any
+#: constant; it only has to be the same one everywhere an event is written.
+EVENTS_LOCK = 7_401_551
 
 EVENT_TYPES = {
     "conversation.started",
@@ -280,6 +285,14 @@ def emit(db: Session, type_: str, payload: dict | None = None) -> Event:
     if type_ not in EVENT_TYPES:
         log.warning("emitting unregistered event type %r", type_)
 
+    # **Ids have to commit in the order they are handed out**, because the
+    # socket replays with `?since=<id>`: a dashboard that saw 42 and
+    # reconnects never asks for 41 again. SQLite's single writer gives that
+    # for free. On Postgres two threads can take 41 and 42 and commit 42
+    # first, and the dashboard that saw it has lost 41 for good -- so writing
+    # an event takes one lock, held to the commit that follows.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": EVENTS_LOCK})
     event = Event(type=type_, payload_json=json.dumps(payload or {}, default=str))
     db.add(event)
     db.commit()

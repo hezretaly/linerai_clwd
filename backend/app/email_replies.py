@@ -22,8 +22,11 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from sqlalchemy import update
+
 from app.config import settings
 from app.db import SessionLocal, utcnow
+from app.models import EmailReplyDue
 
 log = logging.getLogger("liner.email")
 
@@ -55,23 +58,41 @@ def drain(*, provider=None) -> list[dict]:
     for slug in [""] + [s for s in known_stores() if has_database(s)]:
         with mailboxes.using(slug), SessionLocal(slug) as db:
             for row in email_reply.due_now(db):
-                # Claimed before it is answered, not after. Two processes
-                # draining this queue is a misconfiguration -- the event bus
-                # already requires one worker -- but the failure it produces
-                # is a buyer getting the same reply twice, which is the one
-                # worth spending a write to prevent.
-                row.state = "sending"
+                # Claimed before it is answered, not after, and claimed with
+                # one conditional write: `waiting` to `sending` only if it is
+                # still waiting, and only the caller whose write changed a row
+                # sends. Setting the attribute and committing -- what this
+                # was -- let two drainers both read `waiting` and both send.
+                # Two drainers is a misconfiguration (the event bus already
+                # requires one worker), but the failure it produces is a buyer
+                # getting the same reply twice, which is the one worth
+                # spending a write to prevent.
+                claimed = db.execute(
+                    update(EmailReplyDue)
+                    .where(EmailReplyDue.id == row.id, EmailReplyDue.state == "waiting")
+                    .values(state="sending")
+                ).rowcount
                 db.commit()
+                if not claimed:
+                    continue
+                db.refresh(row)
                 try:
                     done.append({
                         "id": row.id, "store": slug,
                         **email_reply.send_due(db, row, provider=provider),
                     })
                 except Exception as exc:  # a bad reply must not stop the queue
-                    row.state = "failed"
-                    row.detail = str(exc)[:500]
-                    row.resolved_at = utcnow()
-                    db.commit()
+                    # Rolled back first: after a database error the session
+                    # refuses every statement until it is, and the row would
+                    # sit at `sending` for ever -- a reply that is neither
+                    # sent nor failed, which nothing looks at again.
+                    db.rollback()
+                    failed = db.get(EmailReplyDue, row.id)
+                    if failed is not None:
+                        failed.state = "failed"
+                        failed.detail = str(exc)[:500]
+                        failed.resolved_at = utcnow()
+                        db.commit()
                     log.exception("email reply %s failed", row.id)
                     done.append({"id": row.id, "store": slug, "sent": False, "reason": "error"})
     return done

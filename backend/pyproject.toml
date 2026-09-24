@@ -31,6 +31,15 @@ dependencies = [
     # breaks the day uvicorn switches to wsproto. Declared because it is a
     # dependency of ours.
     "websockets>=12",
+    # The server's database. One Postgres, a database per dealer group and one
+    # for Liner's own; SQLite stays the default on a laptop, so nothing
+    # imports this until a `postgresql+psycopg://` URL is configured.
+    "psycopg[binary]>=3.2",
+    # Schema changes as migrations, run at boot against every database this
+    # process serves. `create_all` adds a table but never a column, which is
+    # the whole reason several features here are tables that should have been
+    # columns; a migration can do both.
+    "alembic>=1.13",
     # HTML in email, both directions: a rep's formatted message is cleaned to
     # an allowlist before it is sent, and a buyer's HTML is cleaned before a
     # rep's browser draws it. The Rust ammonia sanitiser; bleach, the usual

@@ -71,6 +71,9 @@ def _price_drops(db: Session) -> tuple[int, list[dict]]:
             VehicleMention.quoted_price.is_not(None),
             Vehicle.price < VehicleMention.quoted_price,
         )
+        # Newest quote first, so "was" is the last price they were told --
+        # the one they will remember -- and the same one on every read.
+        .order_by(VehicleMention.created_at.desc(), VehicleMention.id.asc())
         .all()
     )
     # One buyer per car, not one per time it was mentioned: a buyer told about

@@ -1,8 +1,22 @@
 """Engine and session factory.
 
-SQLite in WAL mode. Everything goes through SQLAlchemy and no SQLite-only SQL is
-used anywhere, so moving to Postgres is a connection-string change plus a data
-copy (see the plan, §4).
+SQLite in WAL mode on a laptop, Postgres on a server -- one database per store
+either way, and Liner's own beside them. Everything goes through SQLAlchemy and
+no SQLite-only SQL is used anywhere; what differs between the two is here and
+in nothing that reads a row:
+
+* The pragmas are SQLite's alone, and a Postgres connection is never handed
+  one: a failed statement leaves a Postgres transaction aborted, and the pool
+  would hand that connection to the next request.
+* `String(n)` is an unbounded `VARCHAR` on Postgres. SQLite never enforced a
+  length, so every row on disk and every writer was built without one; a
+  Postgres that enforced them would fail an insert this app has always made,
+  and the lengths stay in the models as a statement of intent.
+* A NUL character is taken out of any string before it is written, on both.
+  Postgres refuses one in text and the writer would fail; SQLite kept it, and
+  a mail part decoded in the wrong charset is exactly where one appears.
+* Whether a store has a database is asked of the file on SQLite and of the
+  server on Postgres, and neither asking creates one.
 """
 
 from __future__ import annotations
@@ -17,16 +31,32 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import Engine, event
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import Engine, MetaData, String, event, inspect, text
+from sqlalchemy.exc import DBAPIError, OperationalError, ProgrammingError
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy import create_engine
 
 from app.config import settings
 
 
+#: How a constraint is named when the model does not name it. Without one,
+#: SQLite stores them unnamed and Postgres invents names of its own, and a
+#: migration that has to drop or alter a constraint later cannot say which --
+#: so every database built by the migrations names them the same way.
+NAMING = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
 class Base(DeclarativeBase):
     """The dealership's tables. One set of these per store."""
+
+    metadata = MetaData(naming_convention=NAMING)
 
 
 class OpsBase(DeclarativeBase):
@@ -43,6 +73,15 @@ class OpsBase(DeclarativeBase):
     because nothing needs to: the only foreign keys among the `ops_` tables
     point at each other, and nothing on the dealership's side points back.
     """
+
+    metadata = MetaData(naming_convention=NAMING)
+
+
+#: What a query against a table this database does not have raises: SQLite
+#: says `OperationalError` ("no such table"), Postgres `ProgrammingError`
+#: ("relation does not exist"). Every handler written for the first missed
+#: the second, so on Postgres the path it guarded became a 500.
+MISSING_TABLE = (OperationalError, ProgrammingError)
 
 
 def utcnow() -> datetime:
@@ -97,9 +136,63 @@ def engine_for(slug: str = "") -> Engine:
             # and WAL writes two sidecars beside it.
             path = Path(url.split("///", 1)[-1])
             path.parent.mkdir(parents=True, exist_ok=True)
-        args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        _engines[slug] = create_engine(url, connect_args=args, future=True)
+        _engines[slug] = create_engine(url, future=True, **engine_args(url))
     return _engines[slug]
+
+
+def engine_args(url: str) -> dict:
+    """How to open one engine, by what it is.
+
+    **On Postgres every store has a pool of its own**, so the pools are kept
+    small: a server with three groups and Liner's own database holds four of
+    them. `pool_pre_ping` because a server restart otherwise hands the next
+    request a dead connection. `lock_timeout` stands in for SQLite's
+    `busy_timeout` -- without it a Postgres lock is waited on for ever -- and
+    the idle-in-transaction limit is generous because a chat turn holds its
+    transaction across the model's reply.
+    """
+    if url.startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}}
+    return {
+        "pool_pre_ping": True,
+        "pool_size": 5,
+        "max_overflow": 5,
+        "pool_recycle": 1800,
+        "connect_args": {
+            "options": "-c timezone=UTC -c lock_timeout=5000 "
+                       "-c idle_in_transaction_session_timeout=300000",
+        },
+    }
+
+
+def is_postgres(db_or_engine) -> bool:  # noqa: ANN001 - a Session or an Engine
+    """Whether this session or engine talks to Postgres."""
+    bind = db_or_engine.get_bind() if isinstance(db_or_engine, Session) else db_or_engine
+    return bind.dialect.name == "postgresql"
+
+
+@compiles(String, "postgresql")
+def _unbounded_varchar(type_, compiler, **kw) -> str:  # noqa: ANN001
+    """`String(n)` as `VARCHAR`, unbounded, on Postgres (see the module doc)."""
+    return "VARCHAR"
+
+
+@event.listens_for(Session, "before_flush")
+def _no_nul(session, flush_context, instances) -> None:  # noqa: ANN001
+    """Take NUL characters out of every string about to be written.
+
+    Read off each object's *loaded* state rather than through `getattr`, so an
+    expired attribute is not fetched just to be looked at.
+    """
+    for obj in list(session.new) + list(session.dirty):
+        state = inspect(obj)
+        for column in state.mapper.columns:
+            if not isinstance(column.type, String):
+                continue
+            key = state.mapper.get_property_by_column(column).key
+            value = state.dict.get(key)
+            if isinstance(value, str) and "\x00" in value:
+                setattr(obj, key, value.replace("\x00", ""))
 
 
 def session_factory(slug: str = "") -> sessionmaker:
@@ -126,15 +219,19 @@ def _sqlite_pragmas(dbapi_connection, connection_record) -> None:  # noqa: ANN00
     missing `foreign_keys=ON` is the one that turns a bad delete into silent
     orphan rows rather than an error.
     """
+    # **SQLite's alone.** This used to try the pragmas on every connection and
+    # swallow the failure -- which on Postgres leaves the transaction the
+    # failed statement opened *aborted*, and SQLAlchemy has already run its
+    # own first-connect checks by then, so the pool accepted the connection
+    # and the next request's first query failed with "current transaction is
+    # aborted". Asked of the driver's connection type rather than attempted.
+    if not isinstance(dbapi_connection, sqlite3.Connection):
+        return
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=5000")
-    except Exception:
-        # Not SQLite. Nothing to set, and a Postgres connection must not fail
-        # because of a pragma that does not exist there.
-        pass
     finally:
         cursor.close()
 
@@ -181,8 +278,7 @@ def ops_engine() -> Engine:
         url = settings.ops_database_url
         if url.startswith("sqlite") and "///" in url:
             Path(url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
-        args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        _ops_engine = create_engine(url, connect_args=args, future=True)
+        _ops_engine = create_engine(url, future=True, **engine_args(url))
     return _ops_engine
 
 
@@ -211,11 +307,16 @@ def get_ops_db() -> Iterator[Session]:
 
 
 def create_ops_all() -> None:
-    """Build the six `ops_` tables, in one place, once."""
-    from app.models import ops  # noqa: F401  (registers the mappers)
+    """Bring Liner's own database to the newest migration (`app/migrate.py`).
+
+    Kept under the name it has always had, because every caller -- the boot,
+    the seed, `add-owners`, `restore-ops` -- means exactly "make sure the ops
+    schema is there", and that is still what it does.
+    """
+    from app import migrate
 
     try:
-        OpsBase.metadata.create_all(bind=ops_engine())
+        migrate.ensure(ops_engine(), "ops")
     except OperationalError as exc:
         if "readonly database" not in str(exc) and "unable to open" not in str(exc):
             raise
@@ -260,7 +361,7 @@ def has_database(slug: str | None = None) -> bool:
     """
     path = sqlite_path(slug)
     if path is None:
-        return True
+        return _server_has_database(active_store() if slug is None else slug)
     if not path.exists():
         return False
     try:
@@ -271,6 +372,33 @@ def has_database(slug: str | None = None) -> bool:
         return row is not None
     except sqlite3.Error:
         return False
+
+
+#: Stores whose database answered, and when. The middleware asks on every
+#: prefixed request, so a yes is kept for a minute; a no is never kept, so a
+#: store seeded a moment ago is served on the next request.
+_present: dict[str, float] = {}
+
+
+def _server_has_database(slug: str) -> bool:
+    """`has_database` for a database server: the database exists and holds a
+    dealership. Connecting to a Postgres database that does not exist fails
+    rather than creating it, so this can simply try."""
+    import time
+
+    seen = _present.get(slug)
+    if seen is not None and time.monotonic() - seen < 60:
+        return True
+    try:
+        with engine_for(slug).connect() as conn:
+            found = conn.execute(
+                text("SELECT to_regclass('public.dealership') IS NOT NULL")
+            ).scalar()
+    except DBAPIError:
+        return False
+    if found:
+        _present[slug] = time.monotonic()
+    return bool(found)
 
 
 def readonly_help() -> str:
@@ -323,7 +451,12 @@ def readonly_help() -> str:
 
 
 def create_all(slug: str | None = None) -> None:
-    """Build the dealership's schema in one store's file.
+    """Bring one store's database to the newest migration (`app/migrate.py`).
+
+    The name is kept for the same reason `create_ops_all`'s is. What changed
+    is underneath: this was `Base.metadata.create_all`, which adds a table to
+    a database that already exists but never a column; the migrations do
+    both, and a database built the old way is adopted in place.
 
     `Base.metadata` and nothing else, which is the whole reason `OpsBase` is a
     second metadata. This used to build the *whole* thing into every store --
@@ -339,10 +472,10 @@ def create_all(slug: str | None = None) -> None:
     `make restore-ops` reads them into `ops.db`, de-duplicating the `founder@`
     copies on the address.
     """
-    from app import models  # noqa: F401  (registers the mappers)
+    from app import migrate
 
     try:
-        Base.metadata.create_all(bind=engine_for(active_store() if slug is None else slug))
+        migrate.ensure(engine_for(active_store() if slug is None else slug), "store")
     except OperationalError as exc:
         if "readonly database" not in str(exc) and "unable to open" not in str(exc):
             raise

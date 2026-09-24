@@ -190,7 +190,10 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
             db.query(User).filter_by(id=lead.assigned_user_id).one_or_none()
             if lead.assigned_user_id else None
         )
-        fields = db.query(CapturedField).filter_by(lead_id=lead.id).all()
+        fields = (
+            db.query(CapturedField).filter_by(lead_id=lead.id)
+            .order_by(CapturedField.key.asc(), CapturedField.id.asc()).all()
+        )
         out["captured_fields"] = [captured_out(f) for f in fields]
     if detail and db is not None:
         appts = (
@@ -200,7 +203,10 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
             .all()
         )
         out["appointments"] = [appointment_out(a, db) for a in appts]
-        convos = db.query(Conversation).filter_by(lead_id=lead.id).all()
+        convos = (
+            db.query(Conversation).filter_by(lead_id=lead.id)
+            .order_by(Conversation.started_at.asc(), Conversation.id.asc()).all()
+        )
         out["conversations"] = [conversation_out(c, db) for c in convos]
         reach = (
             db.query(Outreach)

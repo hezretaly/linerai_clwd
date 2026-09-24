@@ -27,12 +27,11 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app import email_addresses, email_envelopes, email_files, email_html, ops_inbox
 from app.api.deps import current_user, require_owner
-from app.db import active_store, get_db, get_ops_db, utcnow
+from app.db import MISSING_TABLE, active_store, get_db, get_ops_db, utcnow
 from app.email_addresses import Recipient
 from app.email_envelopes import AttachmentError
 from app.email_intake import REPLY_RE, is_ours
@@ -574,7 +573,7 @@ def read_ops(
                 return None
             try:
                 env = email_envelopes.for_receipt(store_db, receipt.id)
-            except OperationalError:
+            except MISSING_TABLE:
                 # A store file from before envelopes were kept, on a box that
                 # has not restarted since. The receipt still reads.
                 store_db.rollback()

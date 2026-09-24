@@ -75,7 +75,12 @@ class EventListener:
                             event = json.loads(await socket.recv())
                             if event.get("type"):
                                 self.seen.append(event["type"])
-                asyncio.run(asyncio.wait_for(listen(), timeout=45))
+                # The whole run, not the first forty-five seconds of it: on
+                # Postgres the run reaches the lead import after that, and the
+                # event arrived at a socket nobody was listening to any more
+                # -- written, and reported missing. A daemon thread, so it
+                # ends with the process however long this is.
+                asyncio.run(asyncio.wait_for(listen(), timeout=900))
             except (TimeoutError, asyncio.TimeoutError):
                 pass
             except Exception as exc:
@@ -459,10 +464,24 @@ def _store_files() -> set[str]:
     _sys.path.insert(0, "backend")
     from app.config import settings as _s
 
-    return {
-        slug for slug in _s.store_slugs
-        if _pl.Path(_s.database_url_for(slug).split("///", 1)[-1]).exists()
-    }
+    return {slug for slug in _s.store_slugs if _exists(slug)}
+
+
+def _exists(slug: str) -> bool:
+    """Whether a store has a database at all, asked without creating one:
+    its file on SQLite -- tables or not, which is what the stray-file checks
+    need -- and the database on the server on Postgres."""
+    import pathlib as _pl
+    import sys as _sys
+
+    _sys.path.insert(0, "backend")
+    from app import pg as _pg
+    from app.config import settings as _s
+
+    url = _s.database_url_for(slug)
+    if _pg.is_postgres(url):
+        return _pg.exists(url)
+    return _pl.Path(url.split("///", 1)[-1]).exists()
 
 
 def main() -> int:
@@ -4220,7 +4239,7 @@ def main() -> int:
         from app.config import settings as _cfg_spa
         with_file = [
             slug for slug in _cfg_spa.store_slugs
-            if pathlib.Path(_cfg_spa.database_url_for(slug).split("///", 1)[-1]).exists()
+            if _exists(slug)
         ]
         marketing = re.search(r"<title>([^<]*)", pathlib.Path("frontend/landing.html").read_text())
         ours = marketing.group(1) if marketing else "Liner AI"
@@ -5486,7 +5505,7 @@ def main() -> int:
     # time in this codebase that a lookup created the thing it was looking for.
     seeded = [
         slug for slug in _cfg.store_slugs
-        if pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1]).exists()
+        if _exists(slug)
     ]
     unpriced_seen = 0
     for slug in ["", *seeded]:
@@ -5582,7 +5601,7 @@ def main() -> int:
     # seeded, because the check needs a store that is genuinely absent.
     unseeded = [
         slug for slug in _cfg.store_slugs
-        if not pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1]).exists()
+        if not _exists(slug)
     ]
     if unseeded:
         slug = unseeded[0]
@@ -5591,7 +5610,7 @@ def main() -> int:
               code == 503 and "reset-db" in body and f"DEALERSHIP={slug}" in body,
               f"{code} {body[:90]}")
         check("and asking did not create its database",
-              not pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1]).exists())
+              not _exists(slug))
         check("while its front page document still serves, so the page can say so",
               status_of("GET", f"/{slug}/api/showroom/dealership")[0] == 503
               and status_of("GET", f"/{slug}")[0] in (200, 404),
@@ -5602,9 +5621,19 @@ def main() -> int:
         # the first query 500ed, which is the exact page this refusal was
         # written to replace. An empty file is planted at the unseeded
         # store's path, asked about, and removed; it must read as unseeded.
-        stray = pathlib.Path(_cfg.database_url_for(slug).split("///", 1)[-1])
-        stray.parent.mkdir(parents=True, exist_ok=True)
-        stray.write_bytes(b"")
+        from app import pg as _stray_pg
+
+        _stray_url = _cfg.database_url_for(slug)
+        # On a server the stray is an empty *database*: made, asked about and
+        # dropped, the same three steps as the empty file.
+        on_server = _stray_pg.is_postgres(_stray_url)
+        stray = pathlib.Path("/nonexistent") if on_server else pathlib.Path(
+            _stray_url.split("///", 1)[-1])
+        if on_server:
+            _stray_pg.create(_stray_url)
+        else:
+            stray.parent.mkdir(parents=True, exist_ok=True)
+            stray.write_bytes(b"")
         try:
             code, body = status_of("GET", f"/{slug}/api/showroom?limit=1")
             check("and a stray empty file at a store's path still reads as unseeded",
@@ -5616,12 +5645,14 @@ def main() -> int:
                   re.search(rf"{slug}\s+.*no tables", listed) is not None,
                   next((l.strip() for l in listed.splitlines() if slug in l), "")[:80])
         finally:
+            if on_server:
+                _stray_pg.drop(_stray_url)
             for side in ("", "-wal", "-shm"):
                 p = pathlib.Path(str(stray) + side)
                 if p.exists():
                     p.unlink()
         check("and asking about the stray did not leave a database behind",
-              not stray.exists())
+              not _exists(slug))
     else:
         print("  (every profile is seeded here, so the unseeded-store refusal is not exercised)")
 
@@ -5637,9 +5668,7 @@ def main() -> int:
     # above had to be pulled out of. It is skipped rather than failed where
     # their store has no file, and `has_database` is asked *before* the
     # request, because requesting `/alsbou/api/...` would create one.
-    if pathlib.Path(
-        _cfg.database_url_for("alsbou").split("///", 1)[-1]
-    ).exists() and "alsbou" in _cfg.store_slugs:
+    if "alsbou" in _cfg.store_slugs and _exists("alsbou"):
         lot = call("GET", "/alsbou/api/showroom?limit=100")["vehicles"]
         labelled = [c for c in lot if len(c.get("specs") or []) >= 5]
         check("their cards carry the specifications their own listing prints",
@@ -8075,7 +8104,7 @@ def _stores_section(before: set[str]) -> None:
 
     seeded = [
         slug for slug in _settings.store_slugs
-        if _pl.Path(_settings.database_url_for(slug).split("///", 1)[-1]).exists()
+        if _exists(slug)
     ]
     if len(seeded) < 2:
         print(f"      (only {len(seeded)} store seeded, so the rest of this "
@@ -8294,6 +8323,82 @@ def _stores_section(before: set[str]) -> None:
     unknown = status_of("GET", "/nosuchdealership/api/showroom")[0]
     check("an unknown prefix is not a store and does not answer as one",
           unknown == 404, str(unknown))
+
+    print("\n== the migrations build exactly the models ==")
+    # A model changed without a migration is a server that never gets the
+    # change: every database there is migrated, never `create_all`ed. So an
+    # empty database is built from the migrations alone and compared with the
+    # models -- on SQLite always, and on Postgres too when that is what this
+    # deployment runs on, in a scratch database made and dropped here.
+    import tempfile as _mtmp
+
+    from sqlalchemy import create_engine as _mengine, func as _mfunc, select as _mselect, text as _mtext
+
+    from app import migrate as _mig, pg as _mpg
+    from app.config import settings as _mcfg
+    from app.db import engine_args as _margs
+
+    with _mtmp.TemporaryDirectory() as _mdir:
+        for _kind in ("store", "ops"):
+            _url = f"sqlite:///{_mdir}/{_kind}.db"
+            _e = _mengine(_url, **_margs(_url))
+            _did = _mig.ensure(_e, _kind)
+            _left = _mig.drift(_e, _kind)
+            check(f"an empty {_kind} database built from the migrations is the models, on SQLite",
+                  _did == "built" and not _left and _mig.current(_e) == _mig.head(_kind),
+                  str(_left)[:160] or _mig.current(_e))
+            _e.dispose()
+
+        # **A database from before migrations is adopted in place.** The
+        # default store's own file, copied: no `alembic_version`, its rows
+        # counted before and after, and the newest revision at the end.
+        _src = _mcfg.database_url_for("")
+        if not _mpg.is_postgres(_src):
+            import shutil as _mshutil
+
+            _copy = f"{_mdir}/legacy.db"
+            _mshutil.copy(_src.split("///", 1)[-1], _copy)
+            _le = _mengine(f"sqlite:///{_copy}", **_margs("sqlite://"))
+            with _le.begin() as _c:
+                _c.execute(_mtext("DROP TABLE IF EXISTS alembic_version"))
+                _before = _c.execute(_mselect(_mfunc.count()).select_from(_mtext("leads"))).scalar()
+            _how = _mig.ensure(_le, "store")
+            with _le.connect() as _c:
+                _after = _c.execute(_mselect(_mfunc.count()).select_from(_mtext("leads"))).scalar()
+            check("a database built before migrations is adopted in place, every row kept",
+                  _how == "adopted" and _before == _after and _mig.current(_le) == _mig.head("store"),
+                  f"{_how}, leads {_before} -> {_after}, at {_mig.current(_le)}")
+            _le.dispose()
+
+    if _mpg.is_postgres(_mcfg.database_url):
+        _scratch = _mcfg.database_url.rsplit("/", 1)[0] + "/liner_migration_check"
+        _mpg.drop(_scratch)
+        _mpg.create(_scratch)
+        try:
+            for _kind in ("store", "ops"):
+                _pe = _mengine(_scratch, **_margs(_scratch))
+                with _pe.begin() as _c:
+                    _c.execute(_mtext("DROP SCHEMA public CASCADE; CREATE SCHEMA public"))
+                _did = _mig.ensure(_pe, _kind)
+                _left = _mig.drift(_pe, _kind)
+                check(f"and on Postgres, for the {_kind} schema",
+                      _did == "built" and not _left, str(_left)[:160] or _did)
+                _pe.dispose()
+        finally:
+            _mpg.drop(_scratch)
+    # The boot migrates every database this process serves; one left behind
+    # is a store answering from last week's schema.
+    from app.db import engine_for as _mfor, has_database as _mhas, ops_engine as _mops
+    from app.stores import known_stores as _mknown
+
+    _behind = [
+        label for label, engine, kind in
+        [("default", _mfor(""), "store"), ("ops", _mops(), "ops")]
+        + [(s, _mfor(s), "store") for s in _mknown() if _mhas(s)]
+        if _mig.current(engine) != _mig.head(kind)
+    ]
+    check("every database this deployment serves is at the newest revision",
+          not _behind, f"behind: {_behind}")
 
     print("\n== the chat on a dealer's own website ==")
     # The loader on their page asks for its settings on every load, says

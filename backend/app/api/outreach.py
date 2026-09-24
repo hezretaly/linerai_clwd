@@ -362,7 +362,8 @@ def send_outreach(
         .filter_by(id=appointment.conversation_id)
         .one_or_none()
         if appointment.conversation_id
-        else db.query(Conversation).filter_by(lead_id=lead.id).first()
+        else db.query(Conversation).filter_by(lead_id=lead.id)
+        .order_by(Conversation.started_at.desc(), Conversation.id.asc()).first()
     )
     if convo is not None and sent.ok:
         db.add(Message(

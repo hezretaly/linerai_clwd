@@ -47,10 +47,14 @@ def list_appointments(
         query = query.filter(Appointment.status == status)
     if user_id:
         query = query.filter(Appointment.assigned_user_id == user_id)
+    # Naive, like every stored time: `starts_at` is dealership wall-clock time.
+    # An offset on the query (`?start=...Z`) is dropped rather than converted,
+    # which is what SQLite always did; Postgres would otherwise shift an aware
+    # value by the session's zone and answer a different window.
     if start:
-        query = query.filter(Appointment.starts_at >= start)
+        query = query.filter(Appointment.starts_at >= start.replace(tzinfo=None))
     if end:
-        query = query.filter(Appointment.starts_at < end)
+        query = query.filter(Appointment.starts_at < end.replace(tzinfo=None))
     rows = query.order_by(Appointment.starts_at.asc()).all()
     return {"appointments": [appointment_out(a, db) for a in rows]}
 

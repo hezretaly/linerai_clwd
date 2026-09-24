@@ -57,7 +57,7 @@ def rows(slug: str) -> str:
     """
     paths = files_for(slug)
     if not paths:
-        return "not SQLite"
+        return _server_rows(slug)
     if not paths[0].exists():
         return "not seeded"
     # A file with no tables in it is the stray a pre-fix 500 left behind, not
@@ -105,7 +105,9 @@ def managers(slug: str) -> str:
     prints a new one, or `make set-password EMAIL=...` sets it.
     """
     paths = files_for(slug)
-    if not paths or not paths[0].exists():
+    if not paths:
+        return _server_managers(slug)
+    if not paths[0].exists():
         return ""
     try:
         with sqlite3.connect(f"file:{paths[0]}?mode=ro", uri=True) as conn:
@@ -116,6 +118,54 @@ def managers(slug: str) -> str:
             ]
     except sqlite3.Error:
         return ""
+    return ", ".join(found)
+
+
+def where(slug: str) -> str:
+    """Where one store's database is: its file, or its server URL."""
+    paths = files_for(slug)
+    if paths:
+        return str(paths[0])
+    from app import pg
+
+    return pg.safe(settings.database_url_for(slug))
+
+
+def _server_rows(slug: str) -> str:
+    """`rows` for a database on a server: its size, or why there is none."""
+    from app import pg
+    from app.db import has_database
+
+    url = settings.database_url_for(slug)
+    if not pg.is_postgres(url):
+        return "unknown engine"
+    if not pg.exists(url):
+        return "not seeded"
+    if not has_database(slug):
+        return f"{pg.size(url)} database with no tables -- not seeded; run: DEALERSHIP={slug} make reset-db"
+    return pg.size(url)
+
+
+def _server_managers(slug: str) -> str:
+    """`managers` for a database on a server. A database that does not exist
+    fails to connect rather than being created, so this can simply ask."""
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.exc import DBAPIError
+    from sqlalchemy.pool import NullPool
+
+    from app.models import User
+
+    engine = create_engine(settings.database_url_for(slug), poolclass=NullPool)
+    try:
+        with engine.connect() as conn:
+            found = conn.execute(
+                select(User.email).where(User.role == "manager", User.active.is_(True))
+                .order_by(User.email)
+            ).scalars().all()
+    except DBAPIError:
+        return ""
+    finally:
+        engine.dispose()
     return ", ".join(found)
 
 
@@ -148,21 +198,33 @@ def main() -> int:
         print(f"\nStores in {settings.dealership_dir}:\n")
         for slug in slugs:
             here = " <- DEALERSHIP=" if slug == current else ""
-            print(f"  {slug:22} {rows(slug):>12}   {files_for(slug)[0]}{here}")
+            print(f"  {slug:22} {rows(slug):>12}   {where(slug)}{here}")
             _detail(slug)
         if not current:
-            print(f"\n  (no DEALERSHIP set, so the default store is {settings.database_url})")
+            print(f"\n  (no DEALERSHIP set, so the default store is {where('')})")
             _detail("")
         print()
         return 0
 
     slug = settings.dealership.strip()
+    label = slug or "the default store"
+    url = settings.database_url_for(slug)
+    from app import pg
+
+    if pg.is_postgres(url):
+        # Dropped and made again empty, because the seed that follows builds
+        # its schema into a database that has to exist -- and a reset that
+        # left none would make the next request fail to connect rather than
+        # answer "not seeded".
+        dropped = pg.drop(url)
+        pg.create(url)
+        print(f"{'Dropped and recreated' if dropped else 'Created'} {pg.safe(url)} for {label}")
+        return 0
     removed = []
     for path in files_for(slug):
         if path.exists():
             path.unlink()
             removed.append(path.name)
-    label = slug or "the default store"
     print(f"Deleted {len(removed)} file(s) for {label}: {', '.join(removed) or 'nothing to delete'}")
     return 0
 

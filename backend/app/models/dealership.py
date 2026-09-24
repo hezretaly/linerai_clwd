@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, utcnow
@@ -112,6 +112,13 @@ class AssistantPart(Base):
     """
 
     __tablename__ = "assistant_parts"
+    # **One row per part per version.** Nothing said so, so a second row for
+    # the same part was possible -- and then which wording an assistant ran
+    # under was whichever row the database returned last: insertion order on
+    # SQLite, anything on Postgres. The settings API's own `one_or_none` would
+    # have failed on the pair outright. Migration 0002 keeps the newest of any
+    # pair already written, then adds this.
+    __table_args__ = (UniqueConstraint("settings_id", "part"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     settings_id: Mapped[str] = mapped_column(ForeignKey("assistant_settings.id"), index=True)

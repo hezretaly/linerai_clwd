@@ -520,6 +520,14 @@ class Settings(BaseSettings):
     #: missed entirely.
     ops_database_url: str = f"sqlite:///{BACKEND_DIR / 'var' / 'ops.db'}"
 
+    #: One database per store on a database server, e.g.
+    #: `postgresql+psycopg://liner:<password>@127.0.0.1:5432/liner_{slug}`.
+    #: `{slug}` is the store's name with `-` written as `_`, so every name is
+    #: a database name Postgres takes unquoted. Empty keeps one SQLite file
+    #: per store under `stores_dir`, which is every deployment before the
+    #: group server. The default store is `DATABASE_URL` either way.
+    database_url_template: str = ""
+
     def database_url_for(self, slug: str) -> str:
         """Where one store's rows live.
 
@@ -530,6 +538,8 @@ class Settings(BaseSettings):
         slug = (slug or "").strip()
         if not slug:
             return self.database_url
+        if self.database_url_template:
+            return self.database_url_template.replace("{slug}", slug.replace("-", "_"))
         return f"sqlite:///{self.stores_dir / f'{slug}.db'}"
 
     # A sample lot, loaded on top of the curated fixtures by `make seed`. One

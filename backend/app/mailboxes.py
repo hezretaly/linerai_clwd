@@ -27,10 +27,9 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from sqlalchemy import func
-from sqlalchemy.exc import OperationalError
 
 from app import profile
-from app.db import SessionLocal, current_store, has_database
+from app.db import MISSING_TABLE, SessionLocal, current_store, has_database
 from app.stores import known_stores
 
 #: The one reading of `reply+<token>@`, shared with the intake rather than
@@ -111,7 +110,7 @@ def store_for_token(token: str) -> str:
                     .filter(func.lower(Outreach.reply_token) == wanted)
                     .first()
                 )
-        except OperationalError:
+        except MISSING_TABLE:
             continue
         if hit is not None:
             return slug

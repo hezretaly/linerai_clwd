@@ -655,9 +655,16 @@ def main() -> int:
         from app.api.settings import live_settings as _live  # noqa: E402
         from app.models import AssistantPart  # noqa: E402
 
-        _row = AssistantPart(settings_id=_live(db).id, part="composer",
-                             text="Write like {{DEALER_NAME}}'s oldest salesman. OWN-WRITER")
-        db.add(_row)
+        # The version's own row, changed and put back -- never a second row
+        # beside it: every version carries one per part, and two was the pair
+        # whose winner depended on the engine (migration 0002).
+        _row = (db.query(AssistantPart)
+                .filter_by(settings_id=_live(db).id, part="composer").one_or_none())
+        _was = None if _row is None else _row.text
+        if _row is None:
+            _row = AssistantPart(settings_id=_live(db).id, part="composer", text="")
+            db.add(_row)
+        _row.text = "Write like {{DEALER_NAME}}'s oldest salesman. OWN-WRITER"
         db.commit()
         try:
             own = FakeProvider([say("Hi there, it is still here.")])
@@ -668,7 +675,10 @@ def main() -> int:
                   and "{{DEALER_NAME}}" not in own.seen_systems[0],
                   own.seen_systems[0][:80])
         finally:
-            db.delete(_row)
+            if _was is None:
+                db.delete(_row)
+            else:
+                _row.text = _was
             db.delete(anon)
             db.commit()
 

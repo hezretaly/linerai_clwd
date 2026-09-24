@@ -25,6 +25,8 @@ feature reports itself as unavailable rather than simulating a result.
 | `make demo-db` | **The populated dashboard, in one command.** Reset, seed, then the demo buyers — `make reset-db` alone leaves six leads and reads as an empty product |
 | `make reset-db` | Delete **this store's** database and reseed (`DEALERSHIP=` picks it). `ops.db` is a separate file and survives it; the store's **delivery receipts do not** |
 | `make reset-all` | **Every dealership at once**, each seeded from its own profile with its own manager and reps, passwords printed per store. `make reset-db` is one store — whichever `DEALERSHIP=` names — which on a host serving several left the others with no database. `ARGS=--only a,b` narrows it |
+| `make migrate` | Every database this deployment serves to the newest migration. The boot does the same; this is for a deploy that wants the schema moved, and any failure seen, before the new code starts |
+| `make to-postgres` | **Copy the SQLite databases into Postgres**, one per store, each built by the migrations first. The plan by default, `ARGS=--apply` to copy; refuses a target that already holds rows unless `--replace`. Run with the new server's database settings in the environment |
 | `make stores` | Every dealership this deployment can serve, and which are seeded, **each with the address its mail leaves from and its manager sign-in** — the two facts somebody opens it for, otherwise one in a profile file and one in a database. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
 | `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
 | `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
@@ -165,10 +167,57 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
 
 ## Conventions
 
-- **String UUID primary keys, naive UTC timestamps, no SQLite-only SQL.** The
-  Postgres door stays open: a connection-string change plus a data copy.
-  `events.id` is the one autoincrement integer, because the WebSocket replays
-  with `?since=` and needs a monotonic cursor.
+- **String UUID primary keys, naive UTC timestamps, no SQLite-only SQL.**
+  SQLite on a laptop, Postgres on the group server -- one database per store
+  either way, chosen by `DATABASE_URL_TEMPLATE` -- and `make smoke` passes on
+  both. `events.id` is the one autoincrement integer, because the WebSocket
+  replays with `?since=` and needs a monotonic cursor.
+- **What differs between the two engines lives in `app/db.py`, and a few rules
+  keep it that way.** Each was found by running the gate on Postgres:
+  - **The SQLite pragmas are never tried on a Postgres connection.** They were
+    tried and the failure swallowed, which left the transaction aborted and
+    the pool handed the connection on: the next request's first query failed
+    "current transaction is aborted".
+  - **`String(n)` is an unbounded `VARCHAR` on Postgres.** SQLite never
+    enforced a length, so every row and every writer was built without one;
+    the lengths stay in the models as intent.
+  - **A NUL is taken out of any string before a flush**, on both: Postgres
+    refuses one in text, and a mail part decoded in the wrong charset is
+    where one appears.
+  - **"No such table" is `db.MISSING_TABLE`**, which is SQLite's
+    `OperationalError` *and* Postgres's `ProgrammingError`. A handler catching
+    only the first became a 500 on the second.
+  - **An unordered `.first()` is a bug.** SQLite returns insertion order and
+    Postgres returns whatever the heap has, which changes after any update --
+    so the lead a reply attaches to, the knowledge answer among equal scores
+    and the wording an assistant runs under all changed between reads. Every
+    query whose first row decides something is ordered, down to a tie-break.
+  - **Event ids commit in order**, under an advisory lock on Postgres: two
+    threads can take 41 and 42 and commit 42 first, and a dashboard that saw
+    42 never replays 41.
+  - **A claim is one conditional write** (`UPDATE ... WHERE state='waiting'`),
+    never read-then-set -- the email reply drain did the second, which lets
+    two drainers send one reply twice on either engine.
+  - **Databases are created with `C` collation** (`app/pg.py`), because SQLite
+    sorts bytes and an A-Z list, a tie-break and the order of the knowledge in
+    the prompt should not change on the move.
+- **Schema changes are migrations** (`app/migrate.py`, `backend/migrations/`),
+  two histories: a store's and Liner's own. The boot migrates every database
+  this process serves, `make migrate` does the same on demand, and the seed
+  and the copy to Postgres build theirs the same way.
+  - **A model changed without a revision fails the gate**: `make smoke` builds
+    an empty database from the migrations and compares it with the models,
+    on SQLite and on Postgres. Write the revision in the same change.
+  - **A database from before migrations is adopted in place**: filled out with
+    any table it lacks, stamped at the baseline, upgraded. The baseline is
+    generated from the models and never edited, because it has to describe
+    exactly what `create_all` built.
+  - **Constraints are named by convention** (`db.NAMING`), so a later
+    revision can say which one it drops. Postgres invented names of its own
+    before, and SQLite stored none.
+  - Much of this file explains a table that should have been a column,
+    because `create_all` could add only tables. That constraint is gone; the
+    tables stay, and new work can add a column like anywhere else.
 - **Naive timestamps are dealership-local**, not UTC-with-conversion.
   `check_availability` builds slots straight from `hours_json` in that frame.
   Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a
@@ -3562,10 +3611,11 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 
 ## Deliberately not built
 
-No Alembic (`create_all` + `make reset-db`), no pytest suite, no Playwright
-suite, no generated OpenAPI types, no shadcn CLI. These were scoped out on
-request; `smoke.py` plus screenshots is the whole verification story. If you add
-migrations later, do it before there is production data to preserve.
+No pytest suite, no Playwright suite, no generated OpenAPI types, no shadcn
+CLI. These were scoped out on request; `smoke.py` plus screenshots is the whole
+verification story. Alembic was on this list and is not any more: the group
+server holds databases that cannot be reseeded, so schema changes are
+migrations now (above).
 
 Also out: multi-tenancy, billing, CRM/DMS sync, scheduled ingest,
 model-generated rail chips. Each is additive against the current schema.

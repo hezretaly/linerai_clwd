@@ -59,7 +59,12 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
     if not ids:
         return {}
 
-    convos = db.query(Conversation).filter(Conversation.lead_id.in_(ids)).all()
+    # Newest first: `mine[0]` below is the thread a row opens, and on
+    # Postgres an unordered read hands back whichever the heap has first.
+    convos = (
+        db.query(Conversation).filter(Conversation.lead_id.in_(ids))
+        .order_by(Conversation.started_at.desc(), Conversation.id.asc()).all()
+    )
     appts = db.query(Appointment).filter(Appointment.lead_id.in_(ids)).all()
     # Email is contact. `channels` and `last_touch_at` counted conversations
     # only, so a buyer you had exchanged four emails with showed no channel at
@@ -103,7 +108,12 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
     }
     by_label: dict[str, Vehicle] = {}
     if wanted:
-        for v in db.query(Vehicle).filter(Vehicle.status == "available").all():
+        # Ordered, so two cars with one label resolve to the same one each
+        # time: the last written wins the dict, and that has to be stable.
+        for v in (
+            db.query(Vehicle).filter(Vehicle.status == "available")
+            .order_by(Vehicle.vin.desc()).all()
+        ):
             by_label[f"{v.year} {v.make} {v.model}".lower()] = v
 
     out: dict[str, dict] = {}

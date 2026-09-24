@@ -1634,7 +1634,10 @@ def answer_from_knowledge(db: Session, convo: Conversation, args: dict) -> dict:
     if entry is None:
         return {
             "found": False,
-            "topics": [e.topic for e in db.query(KnowledgeEntry).all()],
+            "topics": [
+                e.topic for e in
+                db.query(KnowledgeEntry).order_by(KnowledgeEntry.topic, KnowledgeEntry.id).all()
+            ],
             "guidance": (
                 "The dealership has no written answer to this. Do not compose one -- "
                 "say a colleague will confirm, and escalate if it matters to the sale."
@@ -1689,7 +1692,10 @@ def lookup_knowledge(db: Session, question: str) -> KnowledgeEntry | None:
         return None
 
     best, best_score = None, 0.0
-    for entry in db.query(KnowledgeEntry).all():
+    # In a fixed order, so a tie goes the same way every time: the first of
+    # equal scores wins, and on Postgres an unordered read reshuffles after
+    # every `use_count` update -- the same question, a different answer.
+    for entry in db.query(KnowledgeEntry).order_by(KnowledgeEntry.topic, KnowledgeEntry.id).all():
         topic_words = _terms(entry.topic)
         answer_words = _terms(entry.answer)
         score = 3.0 * len(words & topic_words) + len(words & answer_words)
