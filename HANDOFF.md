@@ -279,8 +279,41 @@ replacing that is Alsbou's call). The path form works on every loader from
 `7014d59` on, and after the move too, because the old box's redirect covers
 `/alsbou/...`. The full spec -- page and VIN awareness, the session on their
 domain, Tag Manager events, the other-chat check -- is commit `21558e0`, which
-predates Postgres and migrations: `linerai.us` gets it by the usual pull,
-build and restart. Check `https://linerai.us/alsbou/chat` answers live first.
+predates Postgres and migrations. **Never `git pull` on linerai.us**: that
+brings this branch's head, which migrates every database at boot and cannot be
+downgraded. Pin the commit instead, in this order:
+
+1. Record the running commit (`git -C /srv/liner log -1`) and back up:
+   `make dump-ops`, and `sqlite3 <file> ".backup ..."` for `backend/liner.db`,
+   `backend/var/stores/*.db` and `backend/var/ops.db`.
+2. If the box predates the ops split (`git merge-base --is-ancestor 8ea16b5
+   HEAD` fails, or there is no `backend/var/ops.db`), `make dump-ops` before
+   and `make restore-ops FILE=...` after, or founder@/cto@ cannot sign in.
+3. `.env` must have a real `TWILIO_AUTH_TOKEN` (`openssl rand -hex 32` if the
+   phone line is not used): production refuses to boot without one.
+4. `git fetch origin && git checkout --detach 21558e0`, then `make build`
+   (it installs the new dependencies) and restart.
+5. Check: `/alsbou/api/widget/config?origin=https://www.alsboucars.com` and
+   `?origin=https://alsboucars.com` both say `allowed` and `enabled`;
+   `/widget/alsbou` sends `frame-ancestors` naming both; nginx adds no
+   `X-Frame-Options`; `https://linerai.us/alsbou/chat` answers live.
+6. Paste the tag into a live alsboucars.com page from the browser's devtools
+   first -- only that browser sees it -- then hand it to Get My Auto. Tag last:
+   a pre-`21558e0` bubble on their site has no off switch.
+
+`21558e0` does **not** carry the Sunday-hours fix or the loader's `greeted`
+fix (a console error on the dealer's page on first open); both are on this
+branch's head only. A release ref -- `21558e0` plus those two hunks and
+nothing else -- is the clean way to give linerai.us them without migrations.
+
+Also before launch, and not code: the other chat (Capital One's Chat
+Concierge) has to come out of their `chatbox` slot for the spec's "no other
+chat" to hold; their Tag Manager owner has to add a GA4 tag on the `asc_`
+events for the lead events to show anywhere; and Alsbou's lot is a CSV
+snapshot -- a fresh export imported at `/app/inventory` keeps it true, and a
+car missing from it is marked sold by hand. The domain lock is a browser
+control (the frame and the config); the chat API itself is public and rate
+limited, not locked to alsboucars.com.
 
 1. **Subdomain routing — done.** `STORE_DOMAIN=linerai.us` makes the
    Host header pick the store, as the path prefix does

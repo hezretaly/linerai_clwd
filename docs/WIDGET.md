@@ -60,7 +60,9 @@ the *default* store's chat -- and it keeps working after Alsbou moves to its
 own subdomain, because the old box redirects `/alsbou/...`. The page
 awareness, the session on their domain, the Tag Manager events and the
 other-chat check arrive when the box runs `21558e0` or later; before that the
-bubble opens the chat and nothing more. If their platform will not take a
+bubble opens the chat and nothing more. Check that commit out by name rather
+than pulling -- a pull brings the migrations as well -- in the order
+HANDOFF.md gives, and hand the tag over last. If their platform will not take a
 script at all, an iframe of `https://linerai.us/alsbou/chat?embed=1` is the
 fallback: no bubble and no page awareness, and allowed only on the sites
 below.
