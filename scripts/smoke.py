@@ -7637,6 +7637,71 @@ def main() -> int:
     check("carrying the call id, so the socket is not asked who it is",
           "?call=" in twiml)
 
+    # **A call with nowhere to stream to says so, and its row says so too.**
+    # The running server always has a base, so this is driven in-process with
+    # PUBLIC_BASE_URL cleared and a request with no Host: the one shape in
+    # which there is no address to hand Twilio. Read back through a fresh
+    # session, because the row is Liner's -- a change committed on the
+    # store's session looks right on the object and never reaches ops.db.
+    import asyncio as _pasyncio
+
+    from starlette.requests import Request as _Request
+
+    from app.api.phone import incoming_call as _incoming
+    from app.config import settings as _pcfg
+    from app.db import SessionLocal as _PLocal, ops_session as _pops
+    from app.models import Event as _PEvent, PhoneCall as _PhoneCall
+
+    _lost = {"CallSid": f"CAnobase{stamp}", "From": "+15025550143",
+             "To": "+15025550100", "CallStatus": "ringing"}
+    import logging as _plogging
+
+    _plog = _plogging.getLogger("liner.phone")
+    _was_base, _was_level = _pcfg.public_base_url, _plog.level
+    try:
+        _pcfg.public_base_url = ""
+        _plog.setLevel(_plogging.CRITICAL)  # "No base URL" is the expected path
+        _lost_sig = _twilio.signature_for(
+            _twilio.webhook_url("/api/phone/incoming", ""), _lost, _pcfg.twilio_auth_token)
+        _lost_form = urllib.parse.urlencode(_lost).encode()
+
+        async def _lost_body():
+            return {"type": "http.request", "body": _lost_form, "more_body": False}
+
+        _lost_req = _Request({
+            "type": "http", "method": "POST", "path": "/api/phone/incoming",
+            "root_path": "", "query_string": b"", "scheme": "http", "server": None,
+            "headers": [(b"content-type", b"application/x-www-form-urlencoded"),
+                        (b"x-twilio-signature", _lost_sig.encode())],
+        }, _lost_body)
+        try:
+            with _PLocal() as _pdb:
+                _lost_said = _pasyncio.run(_incoming(_lost_req, _pdb)).body.decode()
+        except Exception as exc:
+            _lost_said = f"{type(exc).__name__}: {exc}"
+    finally:
+        _pcfg.public_base_url = _was_base
+        _plog.setLevel(_was_level)
+    with _pops() as _pops_db:
+        _lost_row = _pops_db.query(_PhoneCall).filter_by(call_sid=f"CAnobase{stamp}").one_or_none()
+    check("a call with no address to stream to is told so rather than connected",
+          "<Say>" in _lost_said and "<Connect>" not in _lost_said, _lost_said[:90])
+    check("and its row says it failed, rather than in progress for ever",
+          _lost_row is not None and _lost_row.status == "failed"
+          and _lost_row.ended_at is not None,
+          f"{_lost_row.status} {_lost_row.ended_at}" if _lost_row else "no row")
+    with _PLocal("") as _pdb:
+        _lost_ended = [
+            e for e in _pdb.query(_PEvent).filter_by(type="phone.ended").all()
+            if _lost_row is not None
+            and json.loads(e.payload_json).get("call_id") == _lost_row.id
+        ]
+    check("and /ops/phone is told it ended, on the default store's stream",
+          len(_lost_ended) == 1, str(len(_lost_ended)))
+    with _pops() as _pops_db:
+        _pops_db.query(_PhoneCall).filter_by(call_sid=f"CAnobase{stamp}").delete()
+        _pops_db.commit()
+
     _done = {"CallSid": f"CAsmoke{stamp}", "CallStatus": "completed",
              "CallDuration": "91"}
     _surl = _twilio.webhook_url("/api/phone/status", BASE)

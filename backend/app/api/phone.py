@@ -120,6 +120,11 @@ async def incoming_call(request: Request, db: Session = Depends(get_db)) -> Resp
             "Please try again later."
         )
 
+    # Decided on the base, never on the stream URL built from it: that is
+    # `ws:///ws/phone/media` when there is none, so asking it for a `://`
+    # always said yes and a call with nowhere to go was connected anyway.
+    base = _base(request)
+
     # The number is Liner's, so the call log is Liner's: `ops_phone_calls`
     # lives in our own database and never in a dealership's. `db` above is
     # still the store's, because the persona flag is a `runtime_flags` row.
@@ -141,23 +146,28 @@ async def incoming_call(request: Request, db: Session = Depends(get_db)) -> Resp
         })
         call_id, from_number = call.id, call.from_number
 
-    stream = twilio_voice.stream_url(_base(request))
-    if "://" not in stream:
-        # Nothing to hand Twilio: no PUBLIC_BASE_URL and a request that carried
-        # no origin either. Said out loud rather than returning TwiML with an
-        # empty url, which Twilio answers with an application error the caller
-        # hears as a fault.
-        log.error("No base URL; cannot give Twilio a stream address")
-        # The row stays -- somebody really did ring, and a misconfiguration is
-        # exactly when you want to see that they did -- but it says what
-        # happened rather than sitting at in-progress for ever.
-        call.status = "failed"
-        call.ended_at = utcnow()
-        db.commit()
-        return _spoken_error(
-            "Thanks for calling. This line is not finished being set up. "
-            "Please try again later."
-        )
+        if not base:
+            # Nothing to hand Twilio: no PUBLIC_BASE_URL and a request that
+            # carried no origin either. Said out loud rather than returning
+            # TwiML with an empty url, which Twilio answers with an application
+            # error the caller hears as a fault.
+            log.error("No base URL; cannot give Twilio a stream address")
+            # The row stays -- somebody really did ring, and a misconfiguration
+            # is exactly when you want to see that they did -- but it says what
+            # happened rather than sitting at in-progress for ever. On `ops`,
+            # the row's own session: committed on `db` it never reached ops.db.
+            call.status = "failed"
+            call.ended_at = utcnow()
+            ops.commit()
+            # `/ops/phone` heard `phone.started` a moment ago and has no other
+            # reason to look at this row again.
+            emit_ops("phone.ended", {"call_id": call_id, "status": call.status})
+            return _spoken_error(
+                "Thanks for calling. This line is not finished being set up. "
+                "Please try again later."
+            )
+
+    stream = twilio_voice.stream_url(base)
 
     # The call id rides along as a custom parameter, so the socket knows which
     # row it belongs to without a second lookup by SID -- and without trusting
