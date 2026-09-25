@@ -86,7 +86,7 @@ export function CampaignsPage() {
         subtitle={
           tab === 'mailbox'
             ? 'Everything sent and received. Out through Resend, back through Cloudflare.'
-            : 'Going back to buyers who already talked to you, and the mail that comes with it.'
+            : "Going back to buyers who already talked to you. Click a name to message them from their own page -- nothing here sends on its own."
         }
       />
 
@@ -118,11 +118,6 @@ export function CampaignsPage() {
         <Spinner />
       ) : (
         <>
-          {/* Said once, at the top, rather than repeated on every card. */}
-          <div className="mb-6 rounded-md border border-warning/30 bg-warning-muted p-3">
-            <p className="text-xs leading-relaxed text-warning-foreground">{data.note}</p>
-          </div>
-
           <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             {data.campaigns.map((c) => (
               <CampaignCard key={c.key} campaign={c} />

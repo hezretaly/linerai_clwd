@@ -307,38 +307,15 @@ interface Recipient {
   email: string
 }
 
-interface Send {
-  id: string
-  reply_token: string
-  subject: string
-  to_address: string
-  lead_id: string
-  lead_name: string
-  created_at: string
-}
-
-const OUTCOME_TONE: Record<string, string> = {
-  accepted: 'border-success/30 bg-success/10 text-success',
-  duplicate: 'border-border text-muted-foreground',
-  unresolved: 'border-warning/30 bg-warning/10 text-warning',
-  // The only two that mean something is actually broken.
-  bad_signature: 'border-destructive/30 bg-destructive/10 text-destructive',
-  malformed: 'border-destructive/30 bg-destructive/10 text-destructive',
-}
-
 /** `heading` is false where this is a *section* rather than the page -- which
  * is everywhere now, since `/app/email` redirects and Campaigns is the only
  * caller. It renders its own `PageIntro` otherwise, and two stacked headings
  * on the screen somebody lands on reads as a page that failed to lay out. */
 export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
   const queryClient = useQueryClient()
-  const [to, setTo] = useState('')
-  const [target, setTarget] = useState('')
-  const [sendResult, setSendResult] = useState<string | null>(null)
   const [box, setBox] = useState<Box>('all')
   const [people, setPeople] = useState<ThreadBox>('open')
   const [query, setQuery] = useState('')
-  const [openSetup, setOpenSetup] = useState(false)
   const [reading, setReading] = useState<Mail | null>(null)
   const [composing, setComposing] = useState<Compose | null>(null)
   // How far down the list goes. Grown rather than paged, because a mailbox is
@@ -376,60 +353,37 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
     refetchOnWindowFocus: true,
   })
 
-  const { data: integrations } = useQuery({
-    queryKey: ['integrations'],
-    queryFn: () => api.get<IntegrationsPayload>('/api/integrations'),
-  })
+  // `reply_domain` is the only field of this still read on the page (the Cc
+  // suggestions' "others" list, below) -- the setup/diagnostics tools that
+  // read `receipts`, `endpoint` and `signature_header` were the only reason
+  // this page ever showed a dealer a raw HMAC-signing curl command.
   const { data, isLoading } = useQuery({
     queryKey: ['email-receipts'],
     queryFn: () => api.get<ReceiptsPayload>('/api/email/receipts'),
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: true,
   })
-  const { data: sends } = useQuery({
-    queryKey: ['email-replyable'],
-    queryFn: () => api.get<{ sends: Send[] }>('/api/email/replyable'),
-  })
 
   useEffect(() => setShown(PAGE), [box, query])
 
   // `MAIL_PAGE_KEYS` (lib/ws.ts) -- not a second hand-written list. This one
-  // left out `email-threads` entirely, so the "Check now" button, a test
-  // send and a replayed inbound each refreshed the message list and the
-  // "Checked Xm ago" line while the People tabs ('Waiting on us' among them)
-  // stayed exactly as stale as before pressing it (item 37).
+  // left out `email-threads` entirely, so the "Check now" button and a
+  // replayed inbound each refreshed the message list and the "Checked Xm
+  // ago" line while the People tabs ('Waiting on us' among them) stayed
+  // exactly as stale as before pressing it (item 37).
   const refresh = () => {
     for (const key of MAIL_PAGE_KEYS) void queryClient.invalidateQueries({ queryKey: [key] })
   }
 
-  const sendTest = useMutation({
-    mutationFn: () => api.post<{ status: string; error: string; provider: string }>(
-      '/api/email/test-send', { to },
-    ),
-    onSuccess: (r) => {
-      // Verbatim, including the failure. This is the screen that answers "why
-      // did nothing arrive?", and a summarised error sends you looking in the
-      // wrong place.
-      setSendResult(
-        r.status === 'sent'
-          ? `Accepted by ${r.provider}. Delivery is not confirmed -- there is no delivery webhook yet.`
-          : `${r.status}: ${r.error}`,
-      )
-      refresh()
-    },
-    onError: (e) => setSendResult((e as ApiError).message),
+  // Read for the composer's own outbound-limit warning and whether a send
+  // actually delivers, below -- not for a setup/diagnostics view any more.
+  const { data: integrations } = useQuery({
+    queryKey: ['integrations'],
+    queryFn: () => api.get<IntegrationsPayload>('/api/integrations'),
   })
-
-  const replay = useMutation({
-    mutationFn: () => api.post('/api/email/test-inbound', { outreach_id: target }),
-    onSuccess: refresh,
-  })
+  const email = integrations?.integrations.find((i) => i.key === 'email')
 
   if (isLoading || !data) return <Spinner />
-
-  const email = integrations?.integrations.find((i) => i.key === 'email')
-  const inbound = integrations?.integrations.find((i) => i.key === 'inbound_email')
-  const chosen = sends?.sends.find((s) => s.id === target)
 
   return (
     <main className="p-4 md:p-6">
@@ -693,207 +647,6 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
           </div>
         )}
       </Card>
-
-      {/* ---- setup and diagnostics ---- */}
-      <button
-        onClick={() => setOpenSetup(!openSetup)}
-        className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-      >
-        <Icon name={openSetup ? 'back' : 'sliders'} className="h-3.5 w-3.5 shrink-0" />
-        {openSetup ? 'Hide setup and diagnostics' : 'Setup and diagnostics'}
-      </button>
-
-      {!openSetup ? null : (
-      <>
-      <div className="mb-6 grid min-w-0 gap-4 lg:grid-cols-2">
-        <StatusCard
-          title="Sending"
-          configured={Boolean(email?.configured)}
-          impl={email?.impl ?? '?'}
-          detail={email?.detail ?? ''}
-          missing={email?.missing ?? []}
-        />
-        <StatusCard
-          title="Receiving"
-          configured={Boolean(inbound?.configured)}
-          impl={inbound?.impl ?? '?'}
-          detail={inbound?.detail ?? ''}
-          missing={inbound?.missing ?? []}
-        />
-      </div>
-
-      <div className="grid min-w-0 gap-6 lg:grid-cols-2">
-        {/* ---- outbound ---- */}
-        <Card className="min-w-0 p-5">
-          <h2 className="text-sm font-semibold">Send a test</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Goes through the real path, limits included — this page does not
-            bypass them, or it would prove the bypass works.
-          </p>
-          <OutboundScope
-            scope={integrations?.outbound_scope ?? ''}
-            recipients={integrations?.outbound_recipients}
-          />
-          <div className="mt-3 space-y-2">
-            <Field label="To">
-              <Input
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                placeholder="you@example.com"
-                type="email"
-              />
-            </Field>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={!to.trim() || sendTest.isPending}
-              onClick={() => {
-                setSendResult(null)
-                sendTest.mutate()
-              }}
-            >
-              {sendTest.isPending ? 'Sending...' : 'Send'}
-            </Button>
-          </div>
-          {sendResult && (
-            <pre className="scroll-thin mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-2.5 text-xs">
-              {sendResult}
-            </pre>
-          )}
-        </Card>
-
-        {/* ---- inbound ---- */}
-        <Card className="min-w-0 p-5">
-          <h2 className="text-sm font-semibold">Receive a test</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Posts a signed sample to the live endpoint. Not a simulation: the
-            signature check, the dedupe and the whole resolution ladder really
-            run. It lands on a real buyer's timeline, so you pick which one.
-          </p>
-          <div className="mt-3 space-y-2">
-            <Field label="Reply to which send">
-              <select
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-              >
-                <option value="">Pick a send...</option>
-                {sends?.sends.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.lead_name} — {s.subject || '(no subject)'}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {chosen && (
-              <p className="text-xs text-muted-foreground">
-                Arrives as{' '}
-                <code>
-                  reply+{chosen.reply_token}@{data.reply_domain || '<SENDING_DOMAIN>'}
-                </code>{' '}
-                and lands on{' '}
-                <Link to={`/app/leads/${chosen.lead_id}`} className="text-primary hover:underline">
-                  {chosen.lead_name}
-                </Link>
-                .
-              </p>
-            )}
-            <Button
-              size="sm"
-              disabled={!target || replay.isPending}
-              onClick={() => replay.mutate()}
-            >
-              {replay.isPending ? 'Posting...' : 'Post a signed reply'}
-            </Button>
-            {replay.error && (
-              <p className="text-xs text-destructive">{(replay.error as ApiError).message}</p>
-            )}
-          </div>
-
-          <div className="mt-4 border-t border-border pt-3">
-            <p className="text-xs font-medium">Or by hand</p>
-            <pre className="scroll-thin mt-1.5 overflow-x-auto rounded-md border border-border bg-muted/40 p-2.5 text-[11px] leading-relaxed">
-{`BODY='{"messageId":"<test-1>","from":"buyer@example.com",
-  "to":"reply+TOKEN@${data.reply_domain || 'your-domain'}","subject":"Re:","text":"hello"}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -r | cut -d' ' -f1)
-curl -X POST ${data.endpoint} \\
-  -H 'Content-Type: application/json' \\
-  -H "${data.signature_header}: $SIG" \\
-  -d "$BODY"`}
-            </pre>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-              The signature is over the exact bytes posted. Signing a
-              re-serialised object instead is the usual reason every delivery
-              returns 401.
-            </p>
-          </div>
-        </Card>
-      </div>
-
-      {/* ---- receipts ---- */}
-      <Card className="mt-6">
-        <div className="flex flex-wrap items-center gap-2 border-b border-border p-4">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold">Everything the endpoint was handed</h2>
-            <p className="text-xs text-muted-foreground">
-              Refusals included. A reply that never arrives looks the same from the
-              dashboard whether the secret is wrong, the Cloudflare route was never
-              created, or the buyer simply has not written back — this is how you tell.
-            </p>
-          </div>
-          <Button size="sm" className="ml-auto" onClick={refresh}>
-            Refresh
-          </Button>
-        </div>
-
-        {data.receipts.length === 0 ? (
-          <p className="p-8 text-center text-sm text-muted-foreground">
-            Nothing has reached the endpoint yet.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {data.receipts.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-start gap-3 px-4 py-3">
-                <span
-                  className={clsx(
-                    'inline-flex shrink-0 items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] font-medium',
-                    OUTCOME_TONE[r.outcome] ?? 'border-border text-muted-foreground',
-                  )}
-                >
-                  {r.outcome.replace('_', ' ')}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm">
-                    {r.subject || <span className="text-muted-foreground">(no subject)</span>}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {r.from_address || 'unknown sender'} → {r.to_address || 'unknown recipient'}
-                    {r.matched_by && ` · matched by ${r.matched_by.replace('_', ' ')}`}
-                  </div>
-                  {r.detail && (
-                    <div className="mt-0.5 text-xs text-muted-foreground">{r.detail}</div>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {r.lead_id && (
-                    <Link
-                      to={`/app/leads/${r.lead_id}`}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      Open buyer
-                    </Link>
-                  )}
-                  <span className="tnum whitespace-nowrap text-xs text-muted-foreground">
-                    {dateTime(r.created_at)}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-      </>
-      )}
 
       <Composer
         draft={composing}
@@ -1496,86 +1249,6 @@ function Composer({
  *  This used to be DEMO_MODE plus EMAIL_ALLOWLIST -- two settings to express
  *  one rule, and a name that read like an inbound access list. Nothing here
  *  has ever filtered incoming mail. */
-function OutboundScope({
-  scope,
-  recipients,
-}: {
-  scope: string
-  recipients?: string[] | null
-}) {
-  const unrestricted = recipients === null
-  const nobody = Array.isArray(recipients) && recipients.length === 0
-  return (
-    <div
-      className={clsx(
-        'mt-3 rounded-md border p-2.5',
-        unrestricted
-          ? 'border-warning/30 bg-warning-muted'
-          : 'border-border bg-muted/40',
-      )}
-    >
-      <p
-        className={clsx(
-          'text-xs leading-relaxed',
-          unrestricted ? 'text-warning-foreground' : 'text-muted-foreground',
-        )}
-      >
-        {unrestricted && <strong>No limit. </strong>}
-        {scope}
-      </p>
-      {!unrestricted && (
-        <pre className="scroll-thin mt-1.5 overflow-x-auto rounded border border-border bg-background p-2 text-[11px]">
-{nobody
-  ? 'OUTBOUND_ONLY_TO=you@yourdomain.com     # or: everyone'
-  : 'OUTBOUND_ONLY_TO=everyone               # to lift the limit'}
-        </pre>
-      )}
-    </div>
-  )
-}
-
-function StatusCard({
-  title,
-  configured,
-  impl,
-  detail,
-  missing,
-}: {
-  title: string
-  configured: boolean
-  impl: string
-  detail: string
-  missing: string[]
-}) {
-  return (
-    <Card className="min-w-0 p-5">
-      <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <Badge tone={configured ? 'success' : 'warning'}>
-          {configured ? impl : 'not configured'}
-        </Badge>
-      </div>
-      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{detail}</p>
-      {missing.length > 0 && (
-        <div className="mt-3">
-          {/* Named, not "check your configuration". The whole cost of an
-              unconfigured integration is the hour spent finding out which
-              variable it wanted. */}
-          <p className="text-[11px] font-medium text-muted-foreground">Set these:</p>
-          <ul className="mt-1 space-y-0.5">
-            {missing.map((key) => (
-              <li key={key} className="flex items-center gap-1.5 text-xs">
-                <Icon name="alert" className="h-3 w-3 shrink-0 text-warning" />
-                <code>{key}</code>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </Card>
-  )
-}
-
 /** One correspondent. A buyer opens their page; a stranger has none to open,
  *  which is the whole reason they are listed here rather than nowhere. */
 function ThreadRow({ row }: { row: Thread }) {

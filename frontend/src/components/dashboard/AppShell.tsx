@@ -306,27 +306,8 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <Icon name="menu" className="h-5 w-5" />
       </button>
 
-      <div className="relative w-full max-w-sm">
-        <Icon
-          name="search"
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-        />
-        <input
-          type="search"
-          disabled
-          placeholder="Search is not built yet"
-          title="No search index exists. Filter from the Leads, Conversations or Inventory pages."
-          className="h-9 w-full cursor-not-allowed rounded-md border border-input bg-muted/40 pl-9 pr-3 text-sm text-muted-foreground outline-none placeholder:text-muted-foreground"
-        />
-      </div>
       <div className="ml-auto flex items-center gap-2">
         <PublicDemoChip />
-        <span
-          title="Notifications are not built. Work waiting for a person is on the Overview."
-          className="inline-flex h-9 w-9 cursor-not-allowed items-center justify-center rounded-md text-muted-foreground/40"
-        >
-          <Icon name="bell" className="h-4 w-4" />
-        </span>
         <div className="h-5 w-px bg-border" />
         <span
           className="tnum hidden text-sm text-muted-foreground sm:inline"
