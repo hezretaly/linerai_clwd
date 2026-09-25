@@ -73,14 +73,17 @@ def switched_on(db: Session) -> Verdict:
     if not settings.email_agent:
         return Verdict(
             False, "off_in_env",
-            "EMAIL_AGENT is not set, so Liner does not answer email on this "
-            "deployment. Taking over a mailbox is a decision a dealership "
-            "makes, not a side effect of configuring the chat agent.",
+            # No mention of EMAIL_AGENT or .env: this reaches a dealer's
+            # screen (AgentSwitch.tsx), and turning it on needs a restart
+            # only Liner can do -- naming an env var to someone who cannot
+            # set one just sends them looking in the wrong place.
+            "Liner isn't set up to answer email for this dealership yet. "
+            "Contact Liner to turn this on.",
         )
     if flags.get(db, "email_agent") != "on":
         return Verdict(
             False, "switched_off",
-            "Liner's email replies are switched off in the dashboard.",
+            "Email replies are switched off. Turn them on with the button above when you're ready.",
         )
     return Verdict(True)
 
@@ -129,10 +132,11 @@ def have_model(*, has_provider: bool = False) -> Verdict:
     if not has_provider and settings.llm_mode != "live":
         return Verdict(
             False, "no_model",
-            "LLM_MODE is stub, so there is no model to write with. The "
-            "scripted agent answers a screen -- it points at a booking card "
-            "and rail chips, neither of which exists in an inbox. Set "
-            "LLM_MODE=live and OPENAI_API_KEY.",
+            # Same rule as off_in_env: this reaches a dealer's screen, and
+            # LLM_MODE/OPENAI_API_KEY are not theirs to set.
+            "Liner isn't connected to a live assistant on this deployment "
+            "yet, so it has nothing to write email replies with. Contact "
+            "Liner to set this up.",
         )
     return Verdict(True)
 

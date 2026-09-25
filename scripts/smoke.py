@@ -7804,9 +7804,11 @@ def main() -> int:
     check("email replies are off unless a deployment turned them on",
           not state["on"] and not state["allowed_by_env"],
           f"on={state['on']} env={state['allowed_by_env']}")
-    check("and the refusal names which of the two switches is shut",
-          state["reason"] == "off_in_env" and "EMAIL_AGENT" in state["detail"],
-          state["reason"])
+    check("and the refusal names which of the two switches is shut, in "
+          "words a dealer can act on -- never an env var they cannot set",
+          state["reason"] == "off_in_env" and "Contact Liner" in state["detail"]
+          and "EMAIL_AGENT" not in state["detail"] and ".env" not in state["detail"],
+          state["detail"])
     check("the flag defaults off as well, so neither alone opens the door",
           state["flag"] == "off", state["flag"])
 
@@ -7822,15 +7824,31 @@ def main() -> int:
             cfg_settings.email_agent = True
             runtime_flags.set(_db, "email_agent", "on", reason="smoke")
             stub_verdict = agent.enabled(_db)
-            check("with no model there is no reply, and it says which setting",
+            check("with no model there is no reply, in words a dealer can "
+                  "act on -- never an env var they cannot set",
                   not stub_verdict.allowed and stub_verdict.reason == "no_model"
-                  and "LLM_MODE" in stub_verdict.detail,
-                  stub_verdict.reason)
+                  and "Contact Liner" in stub_verdict.detail
+                  and "LLM_MODE" not in stub_verdict.detail,
+                  stub_verdict.detail)
         finally:
             cfg_settings.email_agent = was
             runtime_flags.set(_db, "email_agent", "off", reason="smoke reset")
     check("and every refusal is listed where a person would look for it",
           "declined" in state, str(sorted(state)))
+
+    # This card is read by a dealership manager, not a developer -- naming an
+    # environment variable in the words it RENDERS sends them looking for a
+    # file they have no access to and cannot open. Checked on the "checks"
+    # array specifically, not the whole file: the comments above it -- for
+    # whoever maintains this next -- correctly keep naming EMAIL_AGENT and
+    # LLM_MODE, and are not what a dealer reads.
+    _agent_switch = pathlib.Path("frontend/src/components/AgentSwitch.tsx").read_text()
+    _checks_array = _agent_switch[_agent_switch.index("const checks"):].split("\n  ]", 1)[0]
+    check("the email-agent card never shows a dealer a raw setting to change",
+          not re.search(r"\b(EMAIL_AGENT|LLM_MODE|OPENAI_API_KEY|\.env)\b", _checks_array),
+          "found: " + ", ".join(
+              m for m in ("EMAIL_AGENT", "LLM_MODE", "OPENAI_API_KEY", ".env")
+              if re.search(rf"\b{re.escape(m)}\b", _checks_array)))
 
     # The dashboard switch takes effect on the next request, not the next
     # deploy. That is the whole reason it is a table and not a `.env` line: it

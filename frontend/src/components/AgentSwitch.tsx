@@ -83,12 +83,15 @@ function Switch({
 }) {
   if (!state) return null
   const flagOn = state.flag === 'on'
-  // Named checks, in the order they are cheapest to fix. Each says where it
-  // lives, because "not configured" costs an hour of looking in the wrong file.
+  // Named checks, in the order they are cheapest to fix. Plain words only --
+  // this card is read by a dealership manager, not a developer, so nothing
+  // here names an environment variable or a file: the first and third are
+  // Liner's to turn on (a restart neither a manager nor a rep can do), and
+  // say so; only the second is a button on this very card.
   const checks: [boolean, string, string][] = [
-    [state.allowed_by_env, 'Turned on for this deployment', 'EMAIL_AGENT=true in .env, then restart'],
-    [flagOn, 'Switched on here', 'the button on this card -- it takes effect on the next delivery'],
-    [state.live_model, 'A model to write with', 'LLM_MODE=live and OPENAI_API_KEY'],
+    [state.allowed_by_env, 'Turned on for your dealership', 'Contact Liner to turn this on for you'],
+    [flagOn, 'Switched on here', 'Use the button above -- it takes effect on the next email'],
+    [state.live_model, 'Connected to a live assistant', 'Contact Liner to set this up'],
   ]
   // The flag's own note. Set by the hourly ceiling when it trips itself, so
   // the morning after does not read as somebody having switched it off by hand.
