@@ -30,7 +30,8 @@ import sys
 from passlib.context import CryptContext
 
 from app.config import DEV_SEED_PASSWORD, settings
-from app.db import SessionLocal, ops_session
+from app.add_user import dealership_in, store_label
+from app.db import SessionLocal, active_store, ops_session
 from app.models import OpsUser, User
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -51,22 +52,38 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    db = SessionLocal()
+    # The store is searched only when it holds a dealership. Opening a SQLite
+    # store creates its file, so asking an unseeded one left an empty database
+    # behind and then failed on "no such table" before reaching our accounts.
+    slug = active_store()
+    db = SessionLocal() if dealership_in(slug) else None
     ops = ops_session()
     try:
         # Both tables: our accounts are in `ops_users` and a password change
         # is exactly as much a password change for one of them.
         email = args.email.strip().lower()
-        user = (
-            db.query(User).filter(User.email == email).one_or_none()
-            # Ours are in Liner's own database, not this store's.
-            or ops.query(OpsUser).filter(OpsUser.email == email).one_or_none()
-        )
+        # The row is committed through the session it was read from. It was
+        # always `db.commit()`, so an owner's new hash sat in the ops session
+        # and was dropped at exit -- while this printed "Password updated".
+        user = db.query(User).filter(User.email == email).one_or_none() if db else None
+        owner = db
         if user is None:
-            known = [u.email for u in db.query(User).order_by(User.email).all()] + [
+            # Ours are in Liner's own database, not this store's.
+            user = ops.query(OpsUser).filter(OpsUser.email == email).one_or_none()
+            owner = ops
+        if user is None:
+            known = ([u.email for u in db.query(User).order_by(User.email).all()] if db else []) + [
                 u.email for u in ops.query(OpsUser).order_by(OpsUser.email).all()
             ]
             print(f"No account with the email {args.email!r}.", file=sys.stderr)
+            # Say where it looked. A dealership's staff are in that store's
+            # database, so on a box whose unprefixed store is empty on purpose
+            # the answer to "not found" is almost always a missing DEALERSHIP.
+            print(f"Looked in {store_label(slug)} and in Liner's own accounts.", file=sys.stderr)
+            if db is None:
+                print("That store has no dealership in it. Name the store:  "
+                      "DEALERSHIP=<store> make set-password EMAIL=...  (`make stores` lists them)",
+                      file=sys.stderr)
             if known:
                 print("Accounts on this database:", file=sys.stderr)
                 for email in known:
@@ -111,12 +128,14 @@ def main() -> int:
             password = password.strip()
 
         user.password_hash = pwd.hash(password)
-        db.commit()
+        owner.commit()
         print(f"Password updated for {user.name} <{user.email}> ({user.role}).")
         print("Existing sessions stay signed in -- the cookie is not tied to the password.")
         return 0
     finally:
-        db.close()
+        if db is not None:
+            db.close()
+        ops.close()
 
 
 if __name__ == "__main__":

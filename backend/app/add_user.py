@@ -38,8 +38,8 @@ import sys
 
 from passlib.context import CryptContext
 
-from app.db import SessionLocal, ops_session, create_all
-from app.models import OpsUser, User
+from app.db import MISSING_TABLE, SessionLocal, active_store, create_all, has_database, ops_session
+from app.models import Dealership, OpsUser, User
 
 #: Its own context rather than importing the seed's. The dependency has to run
 #: this way round -- `seed` builds a profile's `staff:` list through `initials`
@@ -80,6 +80,33 @@ def initials(name: str) -> str:
     return (parts[0][0] + parts[-1][0]).upper()
 
 
+def store_label(slug: str) -> str:
+    """How a store is named to whoever is at the terminal."""
+    return f"store {slug!r}" if slug else "the unprefixed store (no DEALERSHIP set)"
+
+
+def dealership_in(slug: str) -> str:
+    """The dealership seeded in this store, or "" -- asked without creating it.
+
+    **An account in a store with no dealership is a login to nothing.** A
+    deployment that serves its groups by prefix or subdomain can leave the
+    unprefixed store empty on purpose -- linerai.us's production does -- and
+    this ran against whichever store `DEALERSHIP=` named, which on that box is
+    none. Forgetting it created a manager nobody could ever find, with a
+    password printed as though it had worked. `has_database` first, because
+    opening a SQLite store creates its file; then the row, because on a
+    database server the tables exist from `make migrate` before any seed.
+    """
+    if not has_database(slug):
+        return ""
+    with SessionLocal() as db:
+        try:
+            row = db.query(Dealership).first()
+        except MISSING_TABLE:
+            return ""
+        return row.name if row else ""
+
+
 def add_user(email: str, name: str, role: str) -> int:
     email = (email or "").strip().lower()
     name = (name or "").strip()
@@ -101,6 +128,15 @@ def add_user(email: str, name: str, role: str) -> int:
         # on every row they touch.
         name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
         print(f"No NAME given, using {name!r} from the address.")
+
+    slug = active_store()
+    dealership = dealership_in(slug)
+    if not dealership:
+        print(f"{store_label(slug)} has no dealership in it, so nobody could sign in there.",
+              file=sys.stderr)
+        print("Name the store:  DEALERSHIP=<store> make add-user ...  "
+              "(`make stores` lists them and says which are seeded)", file=sys.stderr)
+        return 1
 
     create_all()
     db = SessionLocal()
@@ -126,7 +162,8 @@ def add_user(email: str, name: str, role: str) -> int:
                   f"({existing.role}{'' if existing.active else ', deactivated'}).")
             print("Nothing changed -- their password is not touched, in case they have "
                   "changed it themselves.")
-            print(f"To change it:  make set-password EMAIL={email}")
+            print(f"To change it:  DEALERSHIP={slug} make set-password EMAIL={email}"
+                  if slug else f"To change it:  make set-password EMAIL={email}")
             return 0
 
         password = secrets.token_urlsafe(PASSWORD_BYTES)
@@ -139,11 +176,12 @@ def add_user(email: str, name: str, role: str) -> int:
     finally:
         db.close()
 
-    print(f"\nAdded {name} <{email}> as a {role}.")
+    print(f"\nAdded {name} <{email}> as a {role} of {dealership} ({store_label(slug)}).")
     print(f"  {ROLES[role]}")
     print(f"\n  Password:  {password}")
     print("\nThis is the only time it is shown -- only the bcrypt hash is stored.")
-    print(f"They can be given a new one with:  make set-password EMAIL={email}")
+    print("They can be given a new one with:  "
+          + (f"DEALERSHIP={slug} " if slug else "") + f"make set-password EMAIL={email}")
     return 0
 
 

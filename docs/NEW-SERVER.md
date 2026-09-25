@@ -131,35 +131,71 @@ the same commit; tell the user which one it is.
 
 The templates are `deploy/production.env.example` and
 `deploy/demo.env.example`. This fills each `__GENERATE__` with its own random
-value, and `__PGPASS__` with one value per instance, and prints none of them:
+value, and `__PGPASS__` with one value per instance, and prints none of them.
+
+**No value may appear on a command line.** `sudo` writes every command line
+it runs to `/var/log/auth.log` and the journal, so `sudo sed -i
+"s/x/$(openssl rand ...)/"` puts the secret it just made into both -- which
+is what the first version of this step did, on the first server it ran on.
+The values are made *inside* one root shell whose script arrives on stdin
+(sudo logs `bash -s <files>` and nothing else), and awk writes each one from
+its environment:
 
 ```bash
-fill() {  # fill FILE: a random value per __GENERATE__, one shared __PGPASS__
-  sudo sed -i "s/__PGPASS__/$(openssl rand -hex 24)/g" "$1"
-  while sudo grep -q '__GENERATE__' "$1"; do
-    sudo sed -i "0,/__GENERATE__/s//$(openssl rand -hex 24)/" "$1"
-  done
-}
 sudo install -m 600 -o liner -g liner /srv/liner/deploy/production.env.example /srv/liner/.env
 sudo install -m 600 -o linerdemo -g linerdemo /srv/liner-demo/deploy/demo.env.example /srv/liner-demo/.env
-fill /srv/liner/.env
-fill /srv/liner-demo/.env
+sudo bash -s /srv/liner/.env /srv/liner-demo/.env <<'FILL'
+set -eu; umask 077
+for f in "$@"; do  # a random value per __GENERATE__, one shared __PGPASS__ per file
+  t=$(mktemp)
+  PG=$(openssl rand -hex 24) awk '{
+    gsub(/__PGPASS__/, ENVIRON["PG"])
+    while (index($0, "__GENERATE__")) {
+      c = "openssl rand -hex 24"; c | getline v; close(c); sub(/__GENERATE__/, v) }
+    print }' "$f" > "$t"
+  cat "$t" > "$f"; rm -f "$t"   # cat keeps the file's owner and mode
+done
+FILL
 sudo grep -c '__' /srv/liner/.env /srv/liner-demo/.env    # 0 and 0
 ```
 
 ## 4. Postgres: a role per instance, and nobody else connects
 
 Each role's password is read back out of its own `.env`, so it never exists
-anywhere else:
+anywhere else -- and, for the reason in step 3, never on a command line: the
+statement reaches `psql` on stdin, from a root shell whose script is itself
+on stdin. A role that already exists is reported and left alone, because a
+failed `CREATE ROLE` is logged by Postgres *with the statement*, password
+and all.
 
 ```bash
-pgpass() { sudo grep -oP '^DATABASE_URL=postgresql\+psycopg://[a-z]+:\K[0-9a-f]+' "$1"; }
-P=$(pgpass /srv/liner/.env)
-sudo -u postgres psql -v ON_ERROR_STOP=1 -qc "CREATE ROLE liner LOGIN CREATEDB PASSWORD '$P'"
-P=$(pgpass /srv/liner-demo/.env)
-sudo -u postgres psql -v ON_ERROR_STOP=1 -qc "CREATE ROLE linerdemo LOGIN CREATEDB PASSWORD '$P'"
-unset P
+sudo bash -s <<'ROLES'
+set -eu
+for pair in liner:/srv/liner/.env linerdemo:/srv/liner-demo/.env; do
+  role=${pair%%:*}; f=${pair#*:}
+  if runuser -u postgres -- psql -Atc "SELECT 1 FROM pg_roles WHERE rolname = '$role'" | grep -q 1; then
+    echo "role $role already exists -- left alone"; continue; fi
+  P=$(grep -oP '^DATABASE_URL=postgresql\+psycopg://[a-z]+:\K[0-9a-f]+' "$f")
+  printf "CREATE ROLE %s LOGIN CREATEDB PASSWORD '%s';\n" "$role" "$P" \
+    | runuser -u postgres -- psql -v ON_ERROR_STOP=1 -q
+done
+ROLES
 sudo -u postgres psql -Atc "SELECT rolname FROM pg_roles WHERE rolname LIKE 'liner%'"
+```
+
+To see that nothing reached the logs -- it names a key whose value is in
+`/var/log/auth.log`, and never prints a value:
+
+```bash
+sudo bash -s <<'CHECK'
+for f in /srv/liner/.env /srv/liner-demo/.env; do
+  { grep -E '^[A-Z_]*(SECRET|PASSWORD|_KEY|TOKEN)[A-Z_]*=.' "$f"
+    grep -oP '^DATABASE_URL=postgresql\+psycopg://[a-z]+:\K[0-9a-f]+' "$f" | sed 's/^/DATABASE_PASSWORD=/'
+  } | while IFS= read -r line; do
+    grep -qF -f <(printf '%s\n' "${line#*=}") /var/log/auth.log && echo "$f ${line%%=*}: IN THE LOG"
+  done
+done | grep . || echo "no secret from either .env is in /var/log/auth.log"
+CHECK
 ```
 
 `CREATEDB` is there because the app makes its own databases, with UTF-8 and
