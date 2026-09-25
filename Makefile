@@ -1,4 +1,4 @@
-.PHONY: prune-ops help install deps build set-password add-user ingest mail-check live-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores
+.PHONY: import-ops prune-ops help install deps build set-password add-user ingest mail-check live-check agent-check agent-ping dev backend frontend seed seed-demo reset-db reset-dealership add-owners smoke accept accept-ui ops-ui cal-ui e2e fixture-site stop placeholders shots migrate to-postgres stores
 
 PY := backend/.venv/bin/python
 # How many demo buyers `make seed-demo` adds. Override: make seed-demo N=200
@@ -102,6 +102,10 @@ dump-ops: ## Save every ops_ row to JSON before a migration: ARGS=--files for th
 
 prune-ops: ## Drop the pre-split ops_ tables out of the store files: ARGS=--apply
 	$(PY) scripts/prune_ops.py $(ARGS)
+
+import-ops: ## Liner's mail and demo bookings from an export_ops.py file, nothing generated: FILE=... [ARGS=--apply]
+	@test -n "$(FILE)" || (echo 'Usage: make import-ops FILE=ops-export-<stamp>.tar.gz [ARGS=--apply]'; exit 1)
+	$(PY) scripts/import_ops.py $(FILE) $(ARGS)
 
 restore-ops: ## Read a dump-ops file back into ops.db: FILE=... [ARGS=--dry-run]
 	@test -n "$(FILE)" || (echo 'Usage: make restore-ops FILE=backend/var/ops-dump-<stamp>.json'; exit 1)
