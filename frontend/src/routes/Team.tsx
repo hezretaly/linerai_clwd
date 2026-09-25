@@ -179,7 +179,7 @@ export function TeamPage() {
                           demote them. A button that can only 403 is worse
                           than no button. */}
                       {member.role === 'rep' && (
-                        <div className="flex justify-end gap-1 whitespace-nowrap">
+                        <div className="flex flex-wrap justify-end gap-1">
                           <Button
                             size="sm"
                             variant="ghost"
