@@ -71,7 +71,7 @@ def without_offer_more(text: str) -> str:
     """Drop a trailing "is there anything else?" from a turn that is asking.
 
     **Two questions in one turn get the wrong one answered.** Every turn ends
-    by offering more -- that is the behaviour `BRIEF` asks for, and it is how
+    by offering more -- the behaviour Liner's default prompt asks for, and how
     the second thing a buyer came for gets found. But a turn that has just put
     a card on their screen is already a question, and a real reply read:
 

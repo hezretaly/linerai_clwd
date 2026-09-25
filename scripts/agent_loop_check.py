@@ -551,6 +551,20 @@ def main() -> int:
               drafted_under.startswith(loop.DRAFT_SYSTEM)
               and "GREETING -- ALREADY ON THEIR SCREEN" not in drafted_under,
               drafted_under[:80])
+        # **And told what kind of message it is helping with**, in the
+        # owner's words for the job: an email is composed or polished from
+        # the conversation, the emails so far and the email at hand; a chat
+        # reply is for a person who has taken the chat over. Product code,
+        # per channel -- `composer_system` takes no database.
+        from app.agent.prompts import COMPOSER_FOR, composer_system  # noqa: E402
+
+        check("an email draft is told it is helping with an email, and from what",
+              COMPOSER_FOR["email"].strip() in drafted_under
+              and "THE EMAILS SO FAR" in drafted_under
+              and "TAKEN OVER" not in drafted_under, drafted_under[-160:])
+        check("and a reply or a forward is an email too",
+              composer_system("email_reply") == composer_system("email_forward")
+              == composer_system("email"))
         check("nothing was written into the buyer's transcript",
               db.query(Message).filter_by(conversation_id=drafted.id).count() == 0,
               "a draft landed in the thread")
@@ -582,6 +596,11 @@ def main() -> int:
               "under 300 characters" in last_turn and "THEIR SUBJECT" not in last_turn)
         check("and the text comes back as written", sent_text.startswith("Does Saturday"),
               sent_text[:60])
+        check("a text is drafted under the core alone -- neither an email's nor a chat's",
+              texter.seen_systems[0].startswith(loop.DRAFT_SYSTEM)
+              and "AN EMAIL" not in texter.seen_systems[0]
+              and "TAKEN OVER" not in texter.seen_systems[0],
+              texter.seen_systems[0][len(loop.DRAFT_SYSTEM):][:120])
         # Empty box: the old request, unchanged.
         fresh = FakeProvider([say("Does Saturday still work for you?")])
         loop.draft_text(db, drafted, brief=noted, channel="sms", provider=fresh)
@@ -650,36 +669,113 @@ def main() -> int:
               and "Do not write a subject line" in loop.DRAFT_REQUESTS["email_reply"],
               answer[:60])
 
-        # **The writing assistant's instructions are the dealership's to
-        # rewrite** (Liner setup -> Instructions), published like every part.
+        # **The manager's prompt is Liner's, never the writing assistant's.**
+        # What a manager writes on the Instructions tab is addressed to Liner
+        # talking to a buyer -- "you are the assistant at ..." -- and a rep's
+        # email written under it speaks as an assistant above the rep's own
+        # name. And the boxes the tab used to have (`assistant_parts`) are not
+        # read at all now: each channel's instructions are product code.
+        from app.agent.prompts import build_system_prompt as _built  # noqa: E402
         from app.api.settings import live_settings as _live  # noqa: E402
-        from app.models import AssistantPart  # noqa: E402
+        from app.models import AssistantPart, AssistantPrompt, Dealership  # noqa: E402
 
-        # The version's own row, changed and put back -- never a second row
-        # beside it: every version carries one per part, and two was the pair
+        # The live version's own rows, changed and put back -- never a second
+        # row beside one: a version carries one of each, and two was the pair
         # whose winner depended on the engine (migration 0002).
-        _row = (db.query(AssistantPart)
-                .filter_by(settings_id=_live(db).id, part="composer").one_or_none())
-        _was = None if _row is None else _row.text
-        if _row is None:
-            _row = AssistantPart(settings_id=_live(db).id, part="composer", text="")
-            db.add(_row)
-        _row.text = "Write like {{DEALER_NAME}}'s oldest salesman. OWN-WRITER"
+        _settings = _live(db)
+        _prompt_row = db.query(AssistantPrompt).filter_by(settings_id=_settings.id).one_or_none()
+        _had_prompt = None if _prompt_row is None else (_prompt_row.brief, _prompt_row.rules)
+        if _prompt_row is None:
+            _prompt_row = AssistantPrompt(settings_id=_settings.id)
+            db.add(_prompt_row)
+        _prompt_row.brief = "OWN-PROMPT for {{DEALER_NAME}}: treat every buyer like family."
+        _legacy = {}
+        for _part, _text in (("voice", "LEGACY-VOICE"), ("composer", "LEGACY-WRITER")):
+            _row = (db.query(AssistantPart)
+                    .filter_by(settings_id=_settings.id, part=_part).one_or_none())
+            _legacy[_part] = (_row, None if _row is None else _row.text)
+            if _row is None:
+                _row = AssistantPart(settings_id=_settings.id, part=_part)
+                db.add(_row)
+                _legacy[_part] = (_row, None)
+            _row.text = _text
         db.commit()
         try:
             own = FakeProvider([say("Hi there, it is still here.")])
             loop.draft_text(db, drafted, brief=written, channel="chat", provider=own)
-            check("a dealership's own writing-assistant wording is what a draft runs under",
-                  own.seen_systems[0].startswith("Write like ")
-                  and "OWN-WRITER" in own.seen_systems[0]
-                  and "{{DEALER_NAME}}" not in own.seen_systems[0],
-                  own.seen_systems[0][:80])
+            under = own.seen_systems[0]
+            check("a chat draft runs under the writing assistant, told the chat was taken over",
+                  under.startswith(loop.DRAFT_SYSTEM) and COMPOSER_FOR["chat"].strip() in under
+                  and "AN EMAIL" not in under, under[len(loop.DRAFT_SYSTEM):][:120])
+            check("and the manager's prompt never reaches it, nor an old box's wording",
+                  "OWN-PROMPT" not in under and "LEGACY-WRITER" not in under, under[:80])
+            _shop = db.query(Dealership).first()
+            _channels = {ch: _built(db, _shop, _settings, ch) for ch in ("chat", "voice", "email")}
+            check("while every buyer-facing channel is told it, the name filled in",
+                  all(f"OWN-PROMPT for {_shop.name}:" in p for p in _channels.values()),
+                  str({ch: "OWN-PROMPT" in p for ch, p in _channels.items()}))
+            check("and a call keeps the product's own call instructions, not an old box's",
+                  "ON A PHONE CALL" in _channels["voice"] and "LEGACY-VOICE" not in _channels["voice"])
+            # The manager's words replace Liner's default whole, and the rules
+            # still follow them: they are code, not a box a rewrite can empty.
+            check("the manager's words replace the default, and the rules still follow them",
+                  all("You help people who are thinking about buying a car" not in p
+                      and "EVERY CAR FACT COMES FROM A TOOL RESULT" in p
+                      and p.index("OWN-PROMPT") < p.index("HOW THIS PLACE ACTUALLY WORKS")
+                      for p in _channels.values()))
         finally:
-            if _was is None:
-                db.delete(_row)
+            if _had_prompt is None:
+                db.delete(_prompt_row)
             else:
-                _row.text = _was
+                _prompt_row.brief, _prompt_row.rules = _had_prompt
+            for _row, _was in _legacy.values():
+                if _was is None:
+                    db.delete(_row)
+                else:
+                    _row.text = _was
             db.delete(anon)
+            db.commit()
+
+        # **An email draft reads the emails so far.** Its "conversation" was
+        # one thread's messages, and a rep's own emails to a lead are
+        # `outreach` rows that are never messages -- so a follow-up was
+        # written blind to what had already been said by email.
+        from app.models import Outreach  # noqa: E402
+        from datetime import timedelta  # noqa: E402
+        from app.db import utcnow as _now  # noqa: E402
+
+        _t = _now()
+        _mails = [
+            Outreach(lead_id=buyer.id, channel="email", direction="out", status="sent",
+                     subject="Your Saturday visit", body="THREAD-FIRST: see you Saturday?",
+                     created_at=_t - timedelta(days=2)),
+            Outreach(lead_id=buyer.id, channel="email", direction="in", status="received",
+                     subject="Re: Your Saturday visit",
+                     body="THREAD-REPLY: Saturday works.\n\nOn Mon, 1 Sep 2026, Dana wrote:\n"
+                          "> QUOTED-BACK see you Saturday?",
+                     created_at=_t - timedelta(days=1)),
+            Outreach(lead_id=buyer.id, channel="email", direction="out", status="failed",
+                     subject="Never arrived", body="THREAD-FAILED", created_at=_t),
+            Outreach(lead_id=buyer.id, channel="sms", direction="out", status="sent",
+                     body="THREAD-TEXT", created_at=_t),
+        ]
+        db.add_all(_mails)
+        db.commit()
+        try:
+            _email = email_draft.brief(db, buyer, drafted, author=writer, channel="email")
+            _block = _email[_email.find("--- THE EMAILS SO FAR ---"):]
+            check("an email draft carries the emails so far, both ways, oldest first",
+                  "--- THE EMAILS SO FAR ---" in _email
+                  and 0 < _block.find("THREAD-FIRST") < _block.find("THREAD-REPLY"),
+                  _block[:200])
+            check("with a reply's quoted history taken off, and nothing that never arrived",
+                  "QUOTED-BACK" not in _block and "THREAD-FAILED" not in _block
+                  and "THREAD-TEXT" not in _block, _block[:300])
+            _text = email_draft.brief(db, buyer, drafted, author=writer, channel="sms")
+            check("and a text's brief does not", "THE EMAILS SO FAR" not in _text)
+        finally:
+            for _mail in _mails:
+                db.delete(_mail)
             db.commit()
 
         # **The guards run on a draft too.** A price nothing sourced is the
@@ -770,33 +866,67 @@ def main() -> int:
         check("and both carry the dealership's own facts",
               dealership.name in spoken and dealership.phone in spoken)
 
-        print("\n== the brief, and the method it replaced ==")
-        from app.agent.prompts import BRIEF, METHOD, UNFILLED, fill
+        print("\n== the default prompt, and the method it replaced ==")
+        from app.agent import prompts as prompt_mod
+        from app.agent.prompts import DEFAULT_PROMPT, METHOD, UNFILLED, default_prompt, fill
         from app import profile as dealer_profile
-        # **The 21KB method is off, and the prompt is a brief.** It was two
-        # thirds of every prompt this system sent, and a model handed two
-        # thirds of a script answers like one. The three objectives are what
-        # replaced it -- help, get a number, book -- and they are what every
-        # turn is now choosing between, so the gate reads for all three rather
-        # than for a section count.
+        mailed_prompt = build_system_prompt(db, dealership, live_settings(db), channel="email")
+        # **The 21KB method is off, and the prompt is short and plain.** It
+        # was two thirds of every prompt this system sent, and a model handed
+        # two thirds of a script answers like one. What replaced it is the one
+        # text a manager edits on the Instructions tab, and the gate reads it
+        # for the owner's priorities rather than for a section count.
         check("the method is off unless a dealership asks for it",
               not dealer_profile.assistant()["sales_method"])
-        for label, prompt in (("a call", spoken), ("a chat", written)):
-            check(f"{label} opens with the brief, not the script",
-                  fill(BRIEF, dealership, live_settings(db)).strip() in prompt,
-                  f"{len(BRIEF)} chars")
+        # One definition of "Liner's default": the page serves it, the save
+        # compares with it, and every channel starts from it.
+        check("and with it off, Liner's default is the plain prompt",
+              default_prompt() == DEFAULT_PROMPT.strip())
+        for label, prompt in (("a call", spoken), ("a chat", written), ("an email", mailed_prompt)):
+            check(f"{label} carries the default prompt, not the script",
+                  fill(default_prompt(), dealership, live_settings(db)).strip() in prompt,
+                  f"{len(DEFAULT_PROMPT)} chars")
             check(f"and the 21KB method is nowhere in {label}",
                   METHOD[:400] not in prompt, f"{len(METHOD)} chars of script")
-        check("all three objectives are stated, since a turn picks between them",
-              all(k in written for k in ("Help them more", "Get a way to reach them",
-                                         "Book them in")))
+        # **Written for the person who edits it.** A sales manager, not an
+        # engineer: no tool names, no placeholders, no headings. How the
+        # product works is the code after it, where a rewrite cannot delete it.
+        _tool_names = [t["name"] for t in tools.TOOL_DEFS]
+        check("the default prompt names no tool, no placeholder and no heading",
+              not any(n in DEFAULT_PROMPT for n in _tool_names)
+              and "{{" not in DEFAULT_PROMPT and "##" not in DEFAULT_PROMPT
+              and "====" not in DEFAULT_PROMPT,
+              str([n for n in _tool_names if n in DEFAULT_PROMPT]))
+        # The owner's words: contact info first, the credit application for
+        # any question about paying, and a booking once the number is in.
+        check("and it states the owner's three priorities, in their order",
+              0 < DEFAULT_PROMPT.find("name and phone number")
+              < DEFAULT_PROMPT.find("credit application")
+              < DEFAULT_PROMPT.find("book a visit or a test drive"),
+              DEFAULT_PROMPT[DEFAULT_PROMPT.find("What matters"):][:200])
+        check("down payment and bad credit among what gets the application",
+              all(w in DEFAULT_PROMPT for w in ("down payment", "bad credit", "financing")))
+        # A manager may rewrite all of that, and a call has no per-turn note,
+        # so the two that ask for a tool call are in the rules as well -- code
+        # every channel carries whatever the dealership's own words say.
+        for label, prompt in (("a call", spoken), ("a chat", written), ("an email", mailed_prompt)):
+            check(f"{label}'s rules send money questions to the application and a number to a booking",
+                  "MONEY QUESTIONS GET THE APPLICATION" in prompt
+                  and "ONCE YOU CAN REACH THEM, BOOK THEM" in prompt)
         # It has to actually be short. Without a number here "shorten the
         # prompt" is a thing that happened once and drifts straight back --
         # every rule anybody adds is a paragraph, and nothing pushes the other
         # way. The prompt is also the cached prefix on every turn of every
-        # conversation, so this is a bill as well as a behaviour.
-        check("and the whole prompt stays short enough to be a brief",
-              len(written) < 12_000, f"{len(written):,} chars")
+        # conversation, so this is a bill as well as a behaviour. Every
+        # channel, because each is handed its own.
+        _lengths = {"chat": len(written), "voice": len(spoken), "email": len(mailed_prompt)}
+        check("and every channel's whole prompt stays under the ceiling",
+              max(_lengths.values()) < prompt_mod.PROMPT_MAX, str(_lengths))
+        # And the product's own prompt must fit the room it leaves a manager:
+        # a dealership that presses Reset must be able to save what it gets.
+        _room = prompt_mod.prompt_room(db, dealership, live_settings(db))
+        check("with Liner's default inside the room a manager is shown",
+              len(default_prompt()) <= _room, f"{len(default_prompt())} of {_room}")
         # **A car's history is Liner's to give.** A real chat answered the
         # Carfax summary in full, then told the buyer twice that it "cannot
         # retrieve or provide" it and pushed the form -- because the rules
@@ -813,8 +943,8 @@ def main() -> int:
         # is a tool, and the rules have to say so or the model escalates anyway.
         check("the rules point at a car's history link rather than escalating it",
               "A CARFAX IS A LINK" in written and "history_url" in written)
-        check("and the finance application is an objective with its own tool",
-              "Start their finance application" in written
+        check("and the finance application is a rule with its own tool",
+              "MONEY QUESTIONS GET THE APPLICATION" in written
               and "offer_credit_application" in written
               and "cannot send the credit application" not in written)
         check("and a price only a person gives asks for a way to reach them",
@@ -826,7 +956,7 @@ def main() -> int:
               "Call it the contact form" in written, "no contact-form wording")
         # A placeholder left in braces is one a model will eventually type at a
         # buyer -- "you were trying to get out of the {{CURRENT_CAR}}".
-        for label, prompt in (("a call", spoken), ("a chat", written)):
+        for label, prompt in (("a call", spoken), ("a chat", written), ("an email", mailed_prompt)):
             check(f"and no placeholder reaches {label} unfilled",
                   not UNFILLED.findall(prompt), str(UNFILLED.findall(prompt))[:80])
         # The method is kept rather than deleted -- it is the operator's
@@ -835,6 +965,173 @@ def main() -> int:
         check("the archived method still fills without leaving a placeholder",
               not UNFILLED.findall(fill(METHOD, dealership, live_settings(db))),
               f"{len(METHOD)} chars archived")
+
+        print("\n== the Behaviour tab reaches what a buyer is told ==")
+        # **Tone and push level did nothing a buyer could see.** They reached
+        # the model only through placeholders in the archived method, so on
+        # the default prompt a manager changing the tone changed the writing
+        # assistant and not one word of the chat. They are in the facts every
+        # channel carries now, in words.
+        _row = live_settings(db)
+        _was = (_row.tone, _row.push_level, _row.financing_mode)
+        try:
+            for tone, push in (("energetic", "assertive"), ("neutral", "gentle")):
+                _row.tone, _row.push_level = tone, push
+                db.commit()
+                _chat = build_system_prompt(db, dealership, _row, "chat")
+                _call = build_system_prompt(db, dealership, _row, "voice")
+                check(f"the {tone} tone and the {push} push level reach the chat and the call",
+                      all(prompt_mod.TONE[tone] in p and prompt_mod.PUSH[push] in p
+                          for p in (_chat, _call)),
+                      _chat[_chat.find("HOW THIS DEALERSHIP"):][:200])
+                check("and the other settings' words do not",
+                      all(prompt_mod.TONE[t] not in _chat for t in prompt_mod.TONE if t != tone)
+                      and all(prompt_mod.PUSH[p] not in _chat for p in prompt_mod.PUSH if p != push))
+            # The financing posture must not argue with the owner's rule: both
+            # wordings keep the application in play.
+            for mode in prompt_mod.FINANCING:
+                _row.financing_mode = mode
+                db.commit()
+                _chat = build_system_prompt(db, dealership, _row, "chat")
+                check(f"the {mode} financing posture reaches the chat, and never says hand off",
+                      prompt_mod.FINANCING[mode] in _chat
+                      and "Hand off to a rep" not in prompt_mod.FINANCING[mode])
+        finally:
+            _row.tone, _row.push_level, _row.financing_mode = _was
+            db.commit()
+
+        print("\n== the owner's priorities, told on the turn they apply to ==")
+        # **A prompt asks; the turn is told.** Any question about paying for
+        # the car gets the finance application, and a number that has just
+        # come in gets a visit offered -- each a tool call, and the second call
+        # in a turn is the one a model drops. So `priorities.note` reads the
+        # turn and says so, and these drive it through the real loop.
+        from app.agent import priorities, runner  # noqa: E402
+        from app.models import Appointment, Lead, Message  # noqa: E402
+
+        _link_row = live_settings(db)
+        _link_was = _link_row.credit_application_url
+        if not (_link_was or "").strip():
+            _link_row.credit_application_url = "https://example.invalid/finance-application"
+            db.commit()
+        try:
+            money = fresh_conversation(db)
+            asked = FakeProvider([call_tool("offer_credit_application"),
+                                  say("Here is our finance application -- it is just below.")])
+            reply, calls = loop.run_turn(db, money, "How much would I need for a down payment?",
+                                         provider=asked)
+            flat = " ".join(asked.seen_systems[0].split())
+            check("a down-payment question is told to offer the application in this reply",
+                  "A QUESTION ABOUT PAYING FOR THE CAR" in flat
+                  and "Call offer_credit_application in this reply" in flat, flat[-300:])
+            check("and it is the last thing the prompt says, after the channel's own",
+                  flat.rfind("A QUESTION ABOUT PAYING") > flat.rfind("ON A SCREEN"))
+            check("and the button is drawn",
+                  any(c["name"] == "offer_credit_application"
+                      and c["result"].get("card") == tools.CREDIT_CARD for c in calls),
+                  str([c["name"] for c in calls]))
+            runner.record_assistant_message(db, money, reply, calls)
+            # Offered once, it is on their screen: pointed at, not drawn again.
+            again = FakeProvider([say("The application is the button above.")])
+            loop.run_turn(db, money, "And what would the monthly payments be?", provider=again)
+            flat = " ".join(again.seen_systems[0].split())
+            check("asked again after it was offered, the turn is told to point at it instead",
+                  "already on their screen" in flat
+                  and "do not call offer_credit_application again" in flat
+                  and "Call offer_credit_application in this reply" not in flat, flat[-300:])
+
+            plain = fresh_conversation(db)
+            quiet = FakeProvider([say("It is -- want to see it?")])
+            loop.run_turn(db, plain, "Is the Civic still available?", provider=quiet)
+            check("a question that is not about paying carries no such note",
+                  "PAYING FOR THE CAR" not in quiet.seen_systems[0])
+            # "No financing, paying cash" names financing and is the opposite
+            # of a question about it; pushing the application at somebody who
+            # just said they do not need one is the pushiness the prompt rules
+            # out. "No credit" is the other way round: exactly who it is for.
+            cash = FakeProvider([say("Cash is fine.")])
+            loop.run_turn(db, fresh_conversation(db),
+                          "No financing needed, I'm paying cash. Is the RAV4 still there?",
+                          provider=cash)
+            check("a buyer paying cash is not pushed the application",
+                  "PAYING FOR THE CAR" not in cash.seen_systems[0])
+            check("while no credit, bad credit, APR and $300 a month all count",
+                  all(priorities.about_money(t) for t in (
+                      "I have no credit history", "can I get approved with bad credit?",
+                      "what's the APR?", "could I do around $300 a month?")))
+            check("and a credit card, an interested buyer and a first-rate car do not",
+                  not any(priorities.about_money(t) for t in (
+                      "do you take credit cards?", "I'm interested in the Q7",
+                      "it's a first-rate car")))
+            # An inbox has nothing to point at, and a call has no per-turn
+            # hook at all: its rules carry the priority, checked above.
+            by_mail = Conversation(channel="email", stage="opening")
+            db.add(by_mail)
+            db.commit()
+            check("by email the note asks for the link in this reply",
+                  "Call offer_credit_application in this reply"
+                  in " ".join(priorities.note(db, by_mail, "Can I finance it?", "email").split()))
+            check("and a call gets no per-turn note",
+                  priorities.note(db, by_mail, "Can I finance it?", "voice") == "")
+            _link_row.credit_application_url = ""
+            db.commit()
+            check("with no application link set there is nothing to offer, so no note",
+                  priorities.note(db, fresh_conversation(db), "Can I finance it?", "chat") == "")
+        finally:
+            _link_row.credit_application_url = _link_was
+            db.commit()
+
+        # **Once the number is in, a visit.** The contact card's submit is
+        # the moment: its own reply offers to check times, and the buyer's
+        # next turn is told the number has just come in.
+        import secrets as _secrets  # noqa: E402
+        from app.api.chat import DetailsForm, details_from_card  # noqa: E402
+
+        _phone = f"+1502555{_secrets.randbelow(100) + 100:04d}"
+        reached = Lead(name="Priority Buyer", phone="", source="chat")
+        db.add(reached)
+        db.commit()
+        booker = Conversation(channel="chat", stage="qualifying", lead_id=reached.id)
+        db.add(booker)
+        db.commit()
+        _visit = None
+        try:
+            got = details_from_card(
+                booker.id, DetailsForm(values={"name": "Priority Buyer", "phone": _phone}), db)
+            check("the contact card's own reply offers to check times for a visit",
+                  "come in for a look or a test drive" in got["assistant_message"]["content"],
+                  got["assistant_message"]["content"])
+            yes = FakeProvider([call_tool("check_availability"), say("Here is what's open.")])
+            _r, _c = loop.run_turn(db, booker, "Yes please, Saturday if you can", provider=yes)
+            flat = " ".join(yes.seen_systems[0].split())
+            check("and the next turn is told the number has just come in, so book",
+                  "THEIR NUMBER HAS JUST COME IN" in flat and "call check_availability now" in flat,
+                  flat[-300:])
+            runner.record_assistant_message(db, booker, _r, _c)
+            later = FakeProvider([say("It does.")])
+            loop.run_turn(db, booker, "Does it have heated seats?", provider=later)
+            check("but only that turn -- after it, the push level on the Behaviour tab decides",
+                  "THEIR NUMBER HAS JUST COME IN" not in later.seen_systems[0])
+            # With a visit already booked, the card asks for nothing more.
+            _visit = Appointment(lead_id=reached.id, conversation_id=booker.id,
+                                 starts_at=_now() + timedelta(days=30), status="booked")
+            db.add(_visit)
+            db.commit()
+            again = details_from_card(
+                booker.id, DetailsForm(values={"name": "Priority Buyer", "phone": _phone}), db)
+            check("a buyer with a visit booked is not asked to book another",
+                  "test drive" not in again["assistant_message"]["content"]
+                  and not priorities.contact_just_given(db, booker),
+                  again["assistant_message"]["content"])
+        finally:
+            if _visit is not None:
+                db.delete(_visit)
+            db.query(Message).filter_by(conversation_id=booker.id).delete()
+            db.delete(booker)
+            from app.models import CapturedField as _Field  # noqa: E402
+            db.query(_Field).filter_by(lead_id=reached.id).delete()
+            db.delete(reached)
+            db.commit()
 
         # Where the method and this system disagree, this system is last and
         # says so. Section 5 asks "what days and times are you usually free?",

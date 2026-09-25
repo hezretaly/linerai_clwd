@@ -568,7 +568,8 @@ def assistant() -> dict:
     One key so far. `sales_method` puts the operator's full 21KB method back in
     front of every prompt; it is **off by default**, because a model handed two
     thirds of a script answers like one -- long, staged and reluctant to just
-    say what a car costs. `agent/prompts.BRIEF` replaced it.
+    say what a car costs. `agent/prompts.DEFAULT_PROMPT` replaced it, and the
+    method becomes the default a manager starts from when this is on.
 
     The file is kept rather than deleted and this is what keeps it reachable:
     an archive nobody can switch on is a dead file, and it is the operator's

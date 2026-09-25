@@ -335,6 +335,21 @@ async def main() -> int:
             body = await page.inner_text("body")
             if len(body.strip()) < 40:
                 failures.append(f"{route}: page is empty")
+            # **Liner setup has one box, and the rendered page is what says
+            # so.** The source can name the right endpoint and still draw the
+            # old list of assistants -- a page wired correctly and showing the
+            # wrong thing is how the closed-thread bug was found. The
+            # Instructions tab is the one it opens on.
+            if route == "/app/assistant":
+                boxes = await page.locator("textarea").count()
+                prompt_box = await page.locator("textarea#assistant-prompt").count()
+                retired = [w for w in ("Every assistant", "Writing assistant",
+                                       "Phone call instructions") if w in body]
+                if boxes != 1 or prompt_box != 1 or retired:
+                    failures.append(
+                        f"{route}: expected one prompt box, found {boxes} textarea(s), "
+                        f"#assistant-prompt x{prompt_box}, old labels {retired}"
+                    )
             # A React crash leaves the root blank; console errors catch the rest.
             real = [e for e in errors if "favicon" not in e.lower()]
 

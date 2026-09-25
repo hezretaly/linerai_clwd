@@ -273,13 +273,18 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `check_availability` builds slots straight from `hours_json` in that frame.
   Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a
   hardcoded 9 PM produced an appointment the calendar could not draw.
-- **The prompt is a brief, not a script.** `BRIEF` in `prompts.py` states the
-  job in a paragraph — every turn either helps the buyer more, gets a way to
-  reach them, or books them in — and leaves the selling to a model that
-  already knows how to sell. `OPERATING_RULES` follows with what no executor
-  can enforce. Together they are about 4KB; the whole prompt is 7.6KB and most
-  of the rest is *data*: the dealership's facts, its pricing posture, the
-  knowledge table it wrote, the greeting already on screen.
+- **The prompt is a brief, not a script.** `DEFAULT_PROMPT` in `prompts.py`
+  says the job in a few plain paragraphs — answer straight away with real cars
+  and real prices, one question at a time, nothing invented — and the owner's
+  three priorities in order: a name and a number early, the credit
+  application for any question about paying, a visit once the number is in.
+  It leaves the selling to a model that already knows how to sell, and it is
+  the one text a manager edits (below). Everything after it is code: a line
+  saying who Liner is ahead of it, then `OPERATING_RULES` (what no executor
+  can enforce), the dealership's facts with the Behaviour tab in words, the
+  knowledge table, the greeting already on screen and one channel addendum.
+  About 1.2KB of it is the dealership's; the whole prompt is 9-11.7KB per
+  channel on the seeded profiles, most of it rules and *data*.
   - **It replaced 21KB of NEPQ script, and that was the point.**
     `agent/sales_method.md` was two thirds of every prompt this system sent,
     and a model handed two thirds of a script answers like one: long, staged,
@@ -310,6 +315,46 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     follow up next week, and every one of those is a promise nobody here can
     keep. The credit application was on that list and is not any more: it is
     a tool now (below).
+  - **The Behaviour tab reaches what a buyer is told.** Tone, push level,
+    financing posture and discount authority reached the model only through
+    placeholders in the archived method, so on the default prompt a manager
+    changing the tone changed the writing assistant and not one word of the
+    chat. They are stated in words in the facts block every channel carries
+    (`prompts._manner`), and both financing postures keep the application in
+    play -- "hand off to a rep" argued with the owner's rule. `make
+    agent-check` changes each and reads the chat and the call for it.
+- **The owner's priorities are told on the turn they apply to, not only
+  written down.** Contact info first; any question about credit, financing,
+  a loan, a down payment, payments, APR or approval gets the credit
+  application; once the number is in, a visit. The default prompt says all
+  three and `OPERATING_RULES` says the last two (so they hold under a
+  manager's own words and on a call) -- but those two are tool calls, and the
+  second call in a turn is the one a model drops. So `agent/priorities.py`
+  reads the turn, in `loop.run_turn` where no caller can forget it, and
+  appends a few lines for that turn only: *call offer_credit_application in
+  this reply* on a money question with a link configured; *point at the
+  button already on their screen* once it has been offered in the thread (by
+  email the link goes in again -- an inbox has nothing to point at); and
+  *their number has just come in, book* on the turn after one went on file
+  with nothing booked. Four rules keep it honest:
+  - **The words are a curated list in one place** (`MONEY_WORDS`), whole
+    words, and the gate reads it both ways: "no credit", "$300 a month" and
+    "APR" count; "credit card", "interested" and "first-rate" do not.
+  - **A buyer paying cash is not pushed the application.** "No financing,
+    I'm paying cash" names financing and is the opposite of a question
+    about it (`PAYING_CASH`); "no credit" is never on that list, because a
+    buyer with none is exactly who the application is for.
+  - **"Offered", not "unused".** A press goes through the counted hop,
+    which files a `link_clicks` row naming no conversation, so which thread
+    pressed it is not something this system knows; pointing somebody who did
+    at the same button is still right.
+  - **The booking note is the turn after, not every turn.** Told on every
+    turn once a number is on file, the model would steer every reply at a
+    visit whatever the push level says. And the contact card's own reply --
+    composed, not a model turn -- now asks whether they would like a look or
+    a test drive, unless a visit is already booked; the yes lands on the turn
+    that note is for. A call has no per-turn hook (the realtime session is
+    minted once), so there the rules are the whole of it.
 - **The greeting is already on the buyer's screen, and the prompt has to say
   so.** It is client-side only and never a message row, so the model cannot
   see that anything was said — and the method's own section 1 tells it to
@@ -536,7 +581,7 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
 - **Every turn ends by offering more, and the last one asks for a number.**
   Two halves of the operator's rule, and they sit in different places for the
   usual reason. "Is there anything else I can help with" is a *behaviour* and
-  lives in `BRIEF` and each addendum — it is not a sign-off, it is the
+  lives in `DEFAULT_PROMPT` and each addendum — it is not a sign-off, it is the
   question that finds the second thing the buyer came for, and most buyers
   have one. What cannot be left to a prompt is the moment they say there is
   nothing else: a conversation that ends with nobody able to ring them is
@@ -1175,24 +1220,30 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   `/api/drafts/available` says so first and the button is drawn unavailable
   with the reason on it. The built drafts (Follow-up, Credit application)
   stay as a source for the email box.
-  - **Each assistant's instructions are editable, on the Instructions tab.**
-    The brief and rules every buyer-facing assistant shares, then one part
-    each for the website chat, the phone line, the email replies and the
-    writing assistant (`prompts.PARTS`) -- those were constants, so a manager
-    could rewrite what every conversation starts from but not how Liner talks
-    on the phone. `assistant_prompts` and `assistant_parts` both hang off a
-    settings *version*, so an edit is drafted and published with everything
-    else; `_ensure_draft` copies both into each new draft, or the next
-    unrelated edit would publish the default over them. Empty means ours, so
-    an untouched dealership follows every improvement. Manager only,
-    `{{NAME}}`s `fill` cannot answer are refused, and three ceilings are said
-    in numbers: `OWN_PROMPT_MAX` for the brief and rules, `PART_MAX` per part
-    (a call's is the gate's 1,500), and `PROMPT_MAX` -- no assistant's whole
-    assembled prompt past 12,000, measured on the draft at save. Riverside's
-    chat already sits at about 11,900 of it, so the page shows each
-    assistant's total rather than only a count per box. What no wording can
-    change is said on the page: prices, sold cars, clashes and provenance are
-    executors and guards.
+  - **One prompt, on the Instructions tab, in plain words.** There is one
+    assistant, so there is one box: "How Liner talks to your buyers", which
+    Liner uses on the website chat, on calls and in email and adapts to each
+    by itself. It was six -- a brief, operating rules, one each for the chat,
+    the phone, the email replies and the writing assistant -- and a manager
+    who is not technical was being asked to edit tool mechanics to change how
+    Liner sounds. Now the rules, the facts, each channel's addendum and the
+    writing assistant are product code, **never served to the page**: the
+    settings payload carries the prompt (`default`, `live`, `draft`) and the
+    numbers, and no assembled prompt at all. The text is
+    `assistant_prompts.brief` on a settings *version*, so it is drafted and
+    published with everything else and `_ensure_draft` copies it into each new
+    draft; `rules` and `assistant_parts` are no longer read. Empty means
+    Liner's, so an untouched dealership follows every improvement, and saving
+    the default verbatim stores nothing. Manager only; a PUT naming an old
+    box (`brief`, `voice`, ...) is refused by name, not dropped; a `{{NAME}}`
+    `fill` cannot answer is refused in plain words; and two ceilings are said
+    in numbers -- `OWN_PROMPT_MAX` for the text, `PROMPT_MAX` for every
+    channel's whole prompt, measured on the draft at save. The page shows one
+    number, `room` (`prompts.prompt_room`: what the facts and knowledge leave
+    of the 12,000), and mentions length only near it. On the Riverside
+    fixture that is about 1,490 against a 1,170 default; on a real store's
+    shorter knowledge table about 3,100-3,300. `make shots` fails unless the
+    rendered page has exactly one box.
   - **Polish improves the rep's message; it never writes another one.** The
     draft sat in the brief under a closing *"Draft this email now"*, and a
     model does what it read last — so Polish came back as a fresh email from
@@ -1211,15 +1262,31 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     above a rep's signature. `email_draft._author_block` names them and their
     role and says first person; roles are turned into words a buyer reads
     (`rep` is nobody's job title).
-  - **Its own prompt, not the buyer assistant's.** `loop.DRAFT_SYSTEM` plus
-    the brief, and nothing from `build_system_prompt`. That prompt says who
-    Liner is and hands anything unanswerable to "a colleague" -- right for
+  - **Its own prompt, not the buyer assistant's.** `composer_system(channel)`
+    plus the brief, and nothing from `build_system_prompt`. That prompt says
+    who Liner is and hands anything unanswerable to "a colleague" -- right for
     Liner, and it came through in a rep's own email as *"a colleague can
     discuss the price"*, written by the person who would. The facts it
     carried are all in the brief already; the pricing and financing posture
     travels there in words written for a rep (`DRAFT_PRICE`), because the
-    assistant's say "hand off to a rep". `make agent-check` asserts the draft
-    ran under `DRAFT_SYSTEM` and that no line of the brief says "colleague".
+    assistant's say "hand off to a rep". `composer_system` is `DRAFT_SYSTEM`
+    plus what kind of message it is helping with (`COMPOSER_FOR`): an email
+    is composed or polished from the conversation, the emails so far and the
+    email at hand; a chat reply is for a person who has taken the chat over;
+    a text is the core alone. It takes no database, so **the manager's prompt
+    never reaches it** -- that is written to Liner, and a rep's email drafted
+    under it speaks as an assistant. `make agent-check` asserts the draft
+    ran under `DRAFT_SYSTEM`, with its kind and without the manager's words,
+    and that no line of the brief says "colleague".
+  - **An email draft reads the emails so far.** Its conversation history was
+    one thread's `Message` rows, and a rep's own emails to a lead are
+    `outreach` rows that are never messages -- so a follow-up was drafted
+    blind to what had already gone back and forth by email.
+    `email_draft._email_thread_block` puts the newest eight, both ways and
+    oldest first, into an email's brief: text only, a reply's quoted history
+    taken off with `just_the_reply`, each cut at 1,200 characters, nothing
+    that failed or bounced, and not the one being answered (it is above,
+    whole). A text or a chat reply does not get it.
   - **It closes with their first name, and the sign-off carries the rest.**
     With no signature of their own, `signature_for` was the dealership's
     block alone, so a first-person email went out with no human name on it
@@ -1802,7 +1869,9 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   generates no output audio — the dearest thing on a realtime call.
 - **The voice addendum stays short.** Every token of it is re-read on every turn
   of every call, and the chat prompt it appends to is already long.
-  `make agent-check` fails if it grows past 1500 characters.
+  `make agent-check` fails if it grows past 1500 characters -- the only thing
+  holding that now, since it is internal and not on the setup page, so no
+  save measures it.
 - **A half-transcript must say it is half.** `VOICE_TRANSCRIBE=false` saves a
   separate bill and costs the buyer's side of every call — which then renders
   as Liner talking to nobody, indistinguishable from the failure above. The
@@ -1981,6 +2050,8 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   covers spoken words only, numbers said the way people say them, one car at a
   time, and taking the email by ear because there is no card. Appended, because
   two full prompts is how the price rule ends up stricter on one channel.
+  Internal, like the chat's and the inbox's: the manager's one prompt is the
+  same on a call, and "it is a voice model" is ours to tell it, not theirs.
 - **A key alone does not answer the phone.** `VOICE_PROVIDER` empty means voice
   is off even with `OPENAI_API_KEY` present. Taking calls is a decision a
   dealership makes, not a side effect of configuring the chat agent. The key
@@ -2880,7 +2951,9 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     What an *operator* writes — the `assistant:` block, their knowledge table,
     their site copy and brand — is in their profile, read through
     `active_store()` and never through the `DEALERSHIP=` fixed at startup.
-    Only `BRIEF` and `OPERATING_RULES` are shared, and those are product code.
+    Liner's default prompt, the rules, each channel's addendum and the writing
+    assistant are shared, and those are product code; a manager's own prompt
+    is a row in that store's own file.
     `make smoke` builds both stores' prompts and fails if they come out the
     same or if one carries the other's name: "they are separate" is exactly
     the claim that is cheap to assert and easy to get wrong, and a single

@@ -69,8 +69,9 @@ booked.
 - **Campaigns** — reasons to go back to buyers who already talked to you: a
   car they asked about that has come down, one still sitting there, somebody
   who went quiet. Audiences are counted from real rows.
-- **Liner setup** — the assistant's behaviour, its knowledge table, and the
-  compiled prompt read-only. An edit is a draft until it is published.
+- **Liner setup** — the assistant's one prompt (plain words a manager edits,
+  drafted and published), its behaviour and its knowledge table. An edit is a
+  draft until it is published.
 - **Team** — the roster, daily caps, and who is carrying what.
 
 ### Underneath

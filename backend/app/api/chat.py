@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.agent import details as agent_details, nudge, tools
+from app.agent import details as agent_details, nudge, priorities, tools
 from app.agent.runner import (
     rails_for,
     record_assistant_message,
@@ -832,6 +832,15 @@ def details_from_card(
     # so the honest promise is that a person will ring -- never that we will
     # text, which is the thing a buyer handing over a mobile number expects.
     reply = "Got it, thank you. Someone here will give you a call about it."
+    # **And then the visit, which is the owner's next step once the number is
+    # in.** This reply is composed, not a model turn, so it is the one moment
+    # nothing else would say it: it closed on "someone will call" and the
+    # buyer's next message was about whatever they typed next. A yes to this
+    # question is answered by a turn told the number has just come in
+    # (`priorities.BOOK_NOW`), which calls check_availability. Not asked of
+    # somebody who already has a visit booked.
+    if not priorities.booked(db, result["lead_id"]):
+        reply += " Would you like me to check when you could come in for a look or a test drive?"
     assistant_message = record_assistant_message(
         db, convo, reply, [{"name": "save_details", "input": {}, "result": result}]
     )

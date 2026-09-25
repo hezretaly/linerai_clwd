@@ -33,7 +33,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.agent import guards, tools
+from app.agent import guards, priorities, tools
 from app.agent.prompts import COMPOSER, build_system_prompt, composer_system
 from app.agent.providers import Provider, get_provider
 from app.api.settings import live_settings
@@ -105,6 +105,13 @@ def run_turn(
     a user message it makes the model answer somebody who said nothing, which
     is the same failure the guard's retry note had to be rewritten for.
 
+    **The owner's priorities are added here, not by the callers**
+    (`priorities.note`): a money question gets the finance application, and
+    a number that has just come in gets a visit offered. Here rather than in
+    the chat runner and the email replier separately, for the reason
+    ``channel`` defaults to the conversation's own -- a caller cannot forget,
+    and a third caller gets it without knowing it exists.
+
     ``facts`` is what this system itself put in front of the model this turn
     outside a tool -- the car on the page the buyer has open on the dealer's
     site (`page_context.facts`). It grounds the guards the way a tool *input*
@@ -113,13 +120,14 @@ def run_turn(
     """
     provider = provider or get_provider()
     dealership = db.query(Dealership).first()
-    system = build_system_prompt(
-        db, dealership, live_settings(db), channel=channel or convo.channel or "chat"
-    )
-    if addendum:
-        # Last, like every other addendum here, so it is what was read most
-        # recently where it narrows something above it.
-        system = f"{system}\n{addendum.strip()}"
+    channel = channel or convo.channel or "chat"
+    system = build_system_prompt(db, dealership, live_settings(db), channel=channel)
+    # Last, like every other addendum here, so it is what was read most
+    # recently where it narrows something above it -- and the priority note
+    # after the caller's, because it is the one asking for a tool call.
+    for extra in (addendum, priorities.note(db, convo, text, channel)):
+        if extra.strip():
+            system = f"{system}\n{extra.strip()}"
 
     messages = _history(db, convo)
     # The caller normally persists the buyer's message before getting here, so
@@ -282,10 +290,12 @@ def draft_text(
     # discuss the price" in the next, as though the writer were somebody
     # else. The facts it carried are all in the brief; the pricing posture is
     # the one rule that has to travel, and it does, in the dealership block.
-    # The dealership's own wording for the writing assistant where it has one
-    # (Liner setup → Instructions), published like every other part.
-    dealership = db.query(Dealership).first()
-    system = f"{composer_system(db, dealership, live_settings(db))}\n\n{brief.strip()}"
+    # **Nor the dealership's prompt.** What a manager writes on the Liner
+    # setup page is addressed to Liner talking to a buyer; this writes as the
+    # rep, so `composer_system` takes no database and cannot pick it up. What
+    # kind of message it is helping with -- an email, a chat taken over --
+    # is the product's, per channel.
+    system = f"{composer_system(channel)}\n\n{brief.strip()}"
 
     # The transcript, so the draft can refer to what was actually said. The
     # instruction itself is the last user turn, which is what a model reads
@@ -379,9 +389,9 @@ DRAFT_REQUEST = (
 )
 
 
-#: The writing assistant's default instructions, which now live beside the
-#: other assistants' in `prompts` -- a dealership can rewrite them on the Liner
-#: setup page. Kept under this name because it is what a draft ran under.
+#: The writing assistant's core, which every `composer_system(channel)` starts
+#: with. Product code, not the dealership's to rewrite; kept under this name
+#: because it is what a draft runs under and what the gate reads.
 DRAFT_SYSTEM = COMPOSER
 
 #: The shape each channel needs, asked for in the last turn rather than the

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import clsx from 'clsx'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
@@ -8,44 +7,37 @@ import type { AssistantSettings, HandoffRule, KnowledgeEntry, Rail } from '../li
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
 import { AgentSwitch } from '../components/AgentSwitch'
 import { WebsiteChatCard } from '../components/WebsiteChat'
-import { Icon, type IconName } from '../components/Icon'
 import { PageHeader } from '../components/dashboard/AppShell'
 
 interface SettingsPayload {
   live: AssistantSettings
   draft: AssistantSettings | null
   has_unpublished_changes: boolean
-  compiled_prompt: string
-  /** What each assistant is told now, from the published version. */
-  compiled: Record<'chat' | 'voice' | 'email' | 'composer', string>
   prompt: PromptPayload
 }
 
-type PartKey = 'brief' | 'rules' | 'chat' | 'voice' | 'email' | 'composer'
-type OwnPart = 'chat' | 'voice' | 'email' | 'composer'
-
-/** The assistants' wording: ours, and this dealership's where it has its own.
- *  `""` in `draft`/`live` means that version uses the default. */
+/** The dealership's one prompt. `""` in `draft`/`live` means that version
+ *  uses Liner's own, which is `default`. */
 interface PromptPayload {
-  defaults: Record<PartKey, string>
-  live: Record<PartKey, string>
-  draft: Record<PartKey, string>
-  /** The brief and rules together. */
+  default: string
+  live: string
+  draft: string
   max_chars: number
-  part_max: Record<OwnPart, number>
-  /** Every assistant's whole assembled prompt. */
+  /** The whole prompt Liner is handed, per channel. */
   prompt_max: number
+  /** The most the box can hold on this store right now, measured by the
+   *  server: the smaller of `max_chars` and what `prompt_max` leaves. */
+  room: number
 }
 
 /**
- * Liner setup: what the assistants are told, and how they behave.
+ * Liner setup: what Liner is told, and how it behaves.
  *
- * **Four assistants, one page.** Liner answers the website chat, the phone
- * and (when switched on) email, and it writes for the team when a rep presses
- * Auto-generate or Polish. They share a brief and its rules; each has
- * instructions of its own on top, and each of those is editable here -- they
- * used to be constants, so a manager could rewrite what every conversation
- * starts from but not how Liner talks on the phone.
+ * **One assistant, one prompt.** Liner answers the website chat, the phone
+ * and (when switched on) email, and a manager tells it how to treat their
+ * buyers in one box of plain words. How it adapts to each of those -- no
+ * screen on a call, no card in an inbox -- and the writing assistant a rep
+ * presses Auto-generate or Polish on are the product's and not on this page.
  *
  * **Two kinds of setting, kept visibly apart.** Everything in the tabs is
  * drafted and reaches a buyer when the draft is published, so a tweak cannot
@@ -125,9 +117,7 @@ export function AssistantPage() {
           </div>
 
           <div className="p-4">
-            {tab === 'instructions' && (
-              <Instructions wording={data.prompt} compiled={data.compiled} />
-            )}
+            {tab === 'instructions' && <Instructions wording={data.prompt} />}
             {tab === 'behaviour' && <Behaviour data={data} />}
             {tab === 'handoff' && <HandoffRules />}
             {tab === 'knowledge' && <Knowledge />}
@@ -477,112 +467,33 @@ function Rails() {
   )
 }
 
-type Channel = 'chat' | 'voice' | 'email'
-
-/** The assistants, in the order a manager thinks of them. `channels` is which
- *  assembled prompts the wording lands in, for the length shown beside it. */
-const ASSISTANTS: {
-  key: string
-  label: string
-  icon: IconName
-  where: string
-  parts: PartKey[]
-  channels: Channel[]
-}[] = [
-  {
-    key: 'shared',
-    label: 'Every assistant',
-    icon: 'sliders',
-    where:
-      'The brief and rules the website chat, phone calls and email replies all start from. ' +
-      'Each of them adds its own instructions below.',
-    parts: ['brief', 'rules'],
-    channels: ['chat', 'voice', 'email'],
-  },
-  {
-    key: 'chat',
-    label: 'Website chat',
-    icon: 'chat',
-    where:
-      'Added for the chat on your website and storefront: keeping replies short, the ' +
-      'contact form and the booking card on the buyer’s screen.',
-    parts: ['chat'],
-    channels: ['chat'],
-  },
-  {
-    key: 'voice',
-    label: 'Phone calls',
-    icon: 'phone',
-    where:
-      'Added when Liner answers a call: words only, one question at a time, reading a ' +
-      'number back before saving it, and hanging up.',
-    parts: ['voice'],
-    channels: ['voice'],
-  },
-  {
-    key: 'email',
-    label: 'Email replies',
-    icon: 'mail',
-    where:
-      'Added when Liner answers a buyer’s email on its own -- only while the Email ' +
-      'replies switch above is on.',
-    parts: ['email'],
-    channels: ['email'],
-  },
-  {
-    key: 'composer',
-    label: 'Writing assistant',
-    icon: 'pencil',
-    where:
-      'What your team gets from Auto-generate and Polish on emails, texts and chat ' +
-      'replies. It writes as the person pressing the button, under their name.',
-    parts: ['composer'],
-    channels: [],
-  },
-]
-
-const PART_LABEL: Record<PartKey, { label: string; hint: string }> = {
-  brief: { label: 'Brief', hint: 'The job: who Liner is and what every turn is for.' },
-  rules: {
-    label: 'Operating rules',
-    hint: 'What Liner must and must not do here, beyond what the tools enforce.',
-  },
-  chat: { label: 'Website chat instructions', hint: '' },
-  voice: { label: 'Phone call instructions', hint: '' },
-  email: { label: 'Email reply instructions', hint: '' },
-  composer: { label: 'Writing assistant instructions', hint: '' },
-}
-
-const CHANNEL_NAME: Record<Channel, string> = {
-  chat: 'Website chat',
-  voice: 'Phone calls',
-  email: 'Email replies',
-}
+/** How near the limit the box has to be before the page mentions length at
+ *  all. Below it a count is noise to somebody writing a few sentences; the
+ *  limit is what `room` says, measured by the server on this store. */
+const NEAR_LIMIT = 0.85
 
 /**
- * What each assistant is told, one editor per assistant.
+ * What Liner is told about how to treat buyers: one box, in plain words.
  *
- * **A list on the left and one assistant at a time on the right**, because
- * the texts are long and a page of six stacked boxes is one nobody reads. The
- * list says which ones are the product's wording and which are yours, and
- * which have an edit waiting to be published.
+ * **One text, because there is one assistant.** It used to be six boxes -- a
+ * brief, operating rules, one per channel and the writing assistant's -- and
+ * a manager who is not technical was being asked to edit tool mechanics to
+ * change how Liner sounds. How a call differs from the chat, what an email
+ * needs, and the rules that keep Liner honest are the product's, added after
+ * these words and never shown here.
  *
- * **Every box starts from the text in use** -- the draft's own wording, or
- * ours -- and Reset to default puts ours back. Saving ours verbatim stores
- * nothing, so an untouched box keeps following the product as it improves.
+ * **The box starts from the text in use** -- the draft's own, or Liner's --
+ * and Reset puts Liner's back. Saving Liner's verbatim stores nothing, so a
+ * dealership that never edits it keeps following the default as it improves.
+ * Save lands on the draft; the Publish button at the top of the page is what
+ * puts it in front of buyers, like every other change here.
  *
- * **Lengths are said in the unit that costs.** Each box has its own ceiling,
- * and under it the whole prompt that assistant would be handed, against the
- * 12,000 every turn re-reads. The server measures that exactly on save; the
- * figure here is the published prompt adjusted by what you have typed.
+ * **Length is mentioned only near the limit**, and the limit is `room`: what
+ * this store's facts and knowledge answers leave of the whole prompt, as the
+ * server measures it. A counter under every keystroke is jargon to somebody
+ * writing four sentences.
  */
-function Instructions({
-  wording,
-  compiled,
-}: {
-  wording: PromptPayload
-  compiled: SettingsPayload['compiled']
-}) {
+function Instructions({ wording }: { wording: PromptPayload }) {
   const queryClient = useQueryClient()
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -590,262 +501,106 @@ function Instructions({
     staleTime: 5 * 60_000,
   })
   const manager = me?.user.role === 'manager'
-  const [active, setActive] = useState(ASSISTANTS[0].key)
-  const assistant = ASSISTANTS.find((a) => a.key === active) ?? ASSISTANTS[0]
 
-  /** What a box shows: the draft's own wording, else ours. */
-  const inUse = (part: PartKey) => wording.draft[part] || wording.defaults[part].trim()
-  const [texts, setTexts] = useState<Record<PartKey, string>>(() => ({
-    brief: inUse('brief'),
-    rules: inUse('rules'),
-    chat: inUse('chat'),
-    voice: inUse('voice'),
-    email: inUse('email'),
-    composer: inUse('composer'),
-  }))
+  const fallback = wording.default.trim()
+  /** What the box shows: the draft's own words, else Liner's. */
+  const inUse = wording.draft || fallback
+  const [text, setText] = useState(inUse)
   const [problem, setProblem] = useState('')
-  const [saved, setSaved] = useState('')
+  const [saved, setSaved] = useState(false)
 
-  const edited = (part: PartKey) => texts[part].trim() !== inUse(part).trim()
-  const dirty = assistant.parts.some(edited)
+  const dirty = text.trim() !== inUse.trim()
+  const isDefault = text.trim() === fallback
+  const length = text.trim().length
+  const over = length - wording.room
 
   const save = useMutation({
-    mutationFn: () =>
-      api.put('/api/assistant-settings/prompt', Object.fromEntries(
-        assistant.parts.map((part) => [part, texts[part]]),
-      )),
+    mutationFn: () => api.put('/api/assistant-settings/prompt', { prompt: text }),
     onSuccess: () => {
       setProblem('')
-      setSaved(assistant.key)
+      setSaved(true)
       queryClient.invalidateQueries({ queryKey: ['assistant-settings'] })
     },
     onError: (err: unknown) => {
-      setSaved('')
+      setSaved(false)
       const payload = (err as ApiError)?.payload as { detail?: string } | undefined
       setProblem(payload?.detail || String((err as Error)?.message ?? err))
     },
   })
 
-  /** Ours, theirs, and whether an edit is waiting to be published. */
-  const state = (a: (typeof ASSISTANTS)[number]) => {
-    const own = a.parts.some((p) => wording.draft[p])
-    const pending = a.parts.some((p) => wording.draft[p] !== wording.live[p])
-    return { own, pending }
-  }
-
-  /** The assembled prompt this assistant would be handed, after this edit. */
-  const projected = (channel: Channel) => {
-    const effective = (part: PartKey, which: 'live' | 'now') => {
-      const text = which === 'now' ? texts[part] : (wording.live[part] || wording.defaults[part])
-      return text.trim().length
-    }
-    const touched: PartKey[] = ['brief', 'rules', channel]
-    return touched.reduce(
-      (n, part) => n - effective(part, 'live') + effective(part, 'now'),
-      compiled[channel].length,
-    )
-  }
-
-  const pick = (key: string) => {
-    if (key === active) return
-    if (dirty && !window.confirm('Leave this assistant? Your unsaved edits here are kept until you reload.')) {
-      return
-    }
-    setProblem('')
-    setSaved('')
-    setActive(key)
-  }
-
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
-      {/* The list. A wrapping row of pills on a phone, a column beside the
-          editor from `lg`. */}
-      <nav aria-label="Assistants" className="flex flex-wrap gap-1.5 lg:flex-col lg:gap-1">
-        {ASSISTANTS.map((a) => {
-          const { own, pending } = state(a)
-          return (
-            <button
-              key={a.key}
-              type="button"
-              onClick={() => pick(a.key)}
-              aria-current={a.key === active ? 'true' : undefined}
-              className={clsx(
-                'flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors lg:w-full lg:py-2',
-                a.key === active
-                  ? 'border-primary bg-primary/5 font-medium text-foreground'
-                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <Icon name={a.icon} className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">{a.label}</span>
-              {pending ? (
-                <Badge tone="warning" className="hidden sm:inline-flex">Unpublished</Badge>
-              ) : own ? (
-                <Badge tone="primary" className="hidden sm:inline-flex">Yours</Badge>
-              ) : null}
-            </button>
-          )
-        })}
-        <p className="mt-2 hidden text-xs leading-relaxed text-muted-foreground lg:block">
-          Saved to the draft; buyers get it when the draft is published. What no wording can
-          change: Liner quotes only prices and cars its tools return, never offers a sold car,
-          never books a clashing time, and marks anything a buyer did not say as a guess --
-          those are enforced in code. Placeholders such as {'{{DEALER_NAME}}'} are filled in.
-        </p>
-      </nav>
-
-      <section className="min-w-0 space-y-4" aria-label={assistant.label}>
-        <div>
-          <h3 className="text-base font-semibold">{assistant.label}</h3>
-          <p className="mt-0.5 text-sm text-muted-foreground">{assistant.where}</p>
-          {!manager && (
-            <p className="mt-1 text-xs text-muted-foreground">Only a manager can change these.</p>
-          )}
+    <div className="min-w-0 max-w-3xl space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label htmlFor="assistant-prompt" className="text-base font-semibold">
+          How Liner talks to your buyers
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          {wording.draft !== wording.live && <Badge tone="warning">Not published yet</Badge>}
+          {wording.draft && <Badge tone="neutral">Edited</Badge>}
         </div>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Liner uses these instructions on your website chat, on phone calls and in email. It
+        adapts them for each by itself.
+      </p>
 
-        {assistant.parts.map((part) => {
-          const fallback = wording.defaults[part].trim()
-          const isDefault = texts[part].trim() === fallback
-          const limit = part === 'brief' || part === 'rules'
-            ? wording.max_chars
-            : wording.part_max[part as OwnPart]
-          // The brief and rules share one allowance, said once under both.
-          const own = isDefault ? 0 : texts[part].trim().length
-          return (
-            <div key={part} className="min-w-0">
-              <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-                <label htmlFor={`part-${part}`} className="text-sm font-medium">
-                  {PART_LABEL[part].label}
-                </label>
-                {isDefault ? (
-                  <span className="text-xs text-muted-foreground">Liner&apos;s default</span>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={!manager}
-                    onClick={() => { setTexts((t) => ({ ...t, [part]: fallback })); setSaved('') }}
-                    className="text-xs text-primary hover:underline disabled:opacity-50"
-                  >
-                    Reset to default
-                  </button>
-                )}
-              </div>
-              {PART_LABEL[part].hint && (
-                <p className="mb-1.5 text-xs text-muted-foreground">{PART_LABEL[part].hint}</p>
-              )}
-              <textarea
-                id={`part-${part}`}
-                value={texts[part]}
-                readOnly={!manager}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setTexts((t) => ({ ...t, [part]: value }))
-                  setSaved('')
-                }}
-                rows={part === 'brief' || part === 'rules' ? 12 : 16}
-                className="w-full resize-y rounded-md border border-input bg-background p-2 font-mono text-xs leading-relaxed outline-none focus:border-ring focus:ring-1 focus:ring-ring read-only:bg-muted/40"
-              />
-              {part !== 'brief' && part !== 'rules' && (
-                <p className={clsx('mt-1 text-xs', own > limit ? 'text-destructive' : 'text-muted-foreground')}>
-                  {own > 0
-                    ? `${own.toLocaleString()} of ${limit.toLocaleString()} characters`
-                    : "Using Liner's default wording"}
-                </p>
-              )}
-            </div>
-          )
-        })}
+      <textarea
+        id="assistant-prompt"
+        value={text}
+        readOnly={!manager}
+        rows={16}
+        onChange={(e) => {
+          setText(e.target.value)
+          setSaved(false)
+        }}
+        className="w-full resize-y rounded-md border border-input bg-background p-3 text-sm leading-relaxed outline-none focus:border-ring focus:ring-1 focus:ring-ring read-only:bg-muted/40"
+      />
 
-        {assistant.key === 'shared' && (() => {
-          const used = (texts.brief.trim() === wording.defaults.brief.trim() ? 0 : texts.brief.trim().length)
-            + (texts.rules.trim() === wording.defaults.rules.trim() ? 0 : texts.rules.trim().length)
-          return (
-            <p className={clsx('text-xs', used > wording.max_chars ? 'text-destructive' : 'text-muted-foreground')}>
-              {used > 0
-                ? `${used.toLocaleString()} of ${wording.max_chars.toLocaleString()} characters of your own, brief and rules together`
-                : "Using Liner's default wording"}
-            </p>
-          )
-        })()}
+      {over > 0 ? (
+        <p className="text-sm text-destructive">
+          This is {over.toLocaleString()} characters too long to save. Try shortening it a
+          little.
+        </p>
+      ) : length >= wording.room * NEAR_LIMIT ? (
+        <p className="text-sm text-muted-foreground">
+          Nearly full: {length.toLocaleString()} of {wording.room.toLocaleString()} characters.
+          Shorter instructions work best.
+        </p>
+      ) : null}
+      {problem && <p className="text-sm text-destructive">{problem}</p>}
 
-        {/* The whole prompt each affected assistant would be handed. */}
-        {assistant.channels.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {assistant.channels.map((channel) => {
-              const n = projected(channel)
-              const over = n > wording.prompt_max
-              return (
-                <span
-                  key={channel}
-                  className={clsx(
-                    'rounded-md border px-2 py-1 text-xs',
-                    over ? 'border-destructive/40 text-destructive' : 'border-border text-muted-foreground',
-                  )}
-                >
-                  {CHANNEL_NAME[channel]}: about {n.toLocaleString()} of{' '}
-                  {wording.prompt_max.toLocaleString()} characters in all
-                </span>
-              )
-            })}
-          </div>
-        )}
-
-        {problem && <p className="text-xs text-destructive">{problem}</p>}
-        {manager && (
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            {saved === assistant.key && !dirty && (
-              <span className="text-xs text-success">
-                Saved to the draft. Publish it at the top of the page to put it live.
-              </span>
-            )}
+      {manager ? (
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {saved && !dirty && (
+            <span className="text-sm text-success">
+              Saved. Press Publish at the top of the page to put it live.
+            </span>
+          )}
+          {!isDefault && (
             <Button
               size="sm"
-              variant="primary"
-              onClick={() => save.mutate()}
-              disabled={!dirty || save.isPending}
+              variant="ghost"
+              onClick={() => {
+                setText(fallback)
+                setSaved(false)
+                setProblem('')
+              }}
             >
-              {save.isPending ? 'Saving...' : 'Save to draft'}
+              Reset to Liner&apos;s default
             </Button>
-          </div>
-        )}
-
-        <details className="rounded-md border border-border">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-            {assistant.key === 'composer'
-              ? 'What the writing assistant is told now'
-              : 'The whole prompt, as Liner is running it now'}
-          </summary>
-          <div className="space-y-3 border-t border-border p-3">
-            {assistant.key === 'composer' ? (
-              <>
-                <p className="text-xs text-muted-foreground">
-                  The published instructions. Each draft then adds who is writing, the buyer,
-                  the car in question and your knowledge answers, and asks for the shape the
-                  channel needs -- a subject line for an email, a sentence or two for a text.
-                </p>
-                <pre className="max-h-[28rem] overflow-auto rounded-lg bg-muted p-3 text-xs leading-relaxed whitespace-pre-wrap">
-                  {compiled.composer}
-                </pre>
-              </>
-            ) : (
-              assistant.channels.map((channel) => (
-                <div key={channel}>
-                  {assistant.channels.length > 1 && (
-                    <p className="mb-1 text-xs font-medium">{CHANNEL_NAME[channel]}</p>
-                  )}
-                  <pre className="max-h-[28rem] overflow-auto rounded-lg bg-muted p-3 text-xs leading-relaxed whitespace-pre-wrap">
-                    {compiled[channel]}
-                  </pre>
-                </div>
-              ))
-            )}
-            <p className="text-xs text-muted-foreground">
-              Read-only: the published version, assembled from the wording here plus your
-              dealership&apos;s facts, its settings and its knowledge base.
-            </p>
-          </div>
-        </details>
-      </section>
+          )}
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => save.mutate()}
+            disabled={!dirty || over > 0 || save.isPending}
+          >
+            {save.isPending ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">Only a manager can change these.</p>
+      )}
     </div>
   )
 }

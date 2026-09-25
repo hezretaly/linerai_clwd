@@ -1052,59 +1052,101 @@ def main() -> int:
           and "outreach?draft=1" in _page_src,
           "the buyer page cannot send one")
 
-    print("\n== the assistant's own wording, edited on the setup page ==")
-    # A manager can rewrite the brief and the rules Liner starts every
-    # conversation from. Four things make that safe, and each is checked:
-    # only a manager, only placeholders `fill` can answer, a ceiling that
-    # keeps the prompt under the gate's 12,000, and the draft/live split --
-    # an edit reaches nobody until it is published.
-    marker = f"SMOKE-BRIEF-{secrets.token_hex(4)}"
+    print("\n== the assistant's one prompt, edited on the setup page ==")
+    # A manager rewrites how Liner talks to their buyers in one box of plain
+    # words. Four things make that safe, and each is checked: only a manager,
+    # only placeholders `fill` can answer, a ceiling that keeps every channel
+    # under the gate's 12,000, and the draft/live split -- an edit reaches
+    # nobody until it is published.
+    from app.agent import prompts as _prompt_mod
+    from app.agent.prompts import build_system_prompt as _assemble
+    from app.api.settings import live_settings as _live_row
+    from app.db import SessionLocal as _PromptSession
+    from app.models import Dealership as _PromptShop
+
+    def _prompts() -> dict:
+        """Each channel's whole prompt as Liner is running it now. Built
+        in-process, because the page is no longer sent it -- on purpose: it
+        is mostly the internal half a manager does not edit."""
+        with _PromptSession() as _pdb:
+            shop = _pdb.query(_PromptShop).first()
+            row = _live_row(_pdb)
+            return {ch: _assemble(_pdb, shop, row, ch) for ch in ("chat", "voice", "email")}
+
+    marker = f"SMOKE-PROMPT-{secrets.token_hex(4)}"
     call("POST", "/api/auth/login", REP_LOGIN)
-    denied = status_of("PUT", "/api/assistant-settings/prompt", {"brief": marker})[0]
+    denied = status_of("PUT", "/api/assistant-settings/prompt", {"prompt": marker})[0]
     call("POST", "/api/auth/login", LOGIN)
     check("a rep cannot rewrite what Liner is told", denied == 403, str(denied))
     code, why = status_of("PUT", "/api/assistant-settings/prompt",
-                          {"brief": "You work at {{DEALER_NAME}}. Mention {{MADE_UP}}."})
+                          {"prompt": "You work at {{DEALER_NAME}}. Mention {{MADE_UP}}."})
     check("a placeholder Liner cannot fill is refused and named",
           code == 400 and "MADE_UP" in why and "DEALER_NAME" not in why, why[:120])
-    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"brief": "x" * 9000})
-    check("and so is a rewrite past the ceiling", code == 400 and "limit" in why, why[:100])
+    code, why = status_of("PUT", "/api/assistant-settings/prompt",
+                          {"prompt": "x" * (_prompt_mod.OWN_PROMPT_MAX + 1)})
+    check("and so is a rewrite past the ceiling, saying the number",
+          code == 400 and f"{_prompt_mod.OWN_PROMPT_MAX:,}" in why, why[:100])
     try:
         saved = call("PUT", "/api/assistant-settings/prompt",
-                     {"brief": f"You are the assistant at {{{{DEALER_NAME}}}}. {marker}.",
-                      "rules": ""})
+                     {"prompt": f"You are the assistant at {{{{DEALER_NAME}}}}. {marker}."})
         state = call("GET", "/api/assistant-settings")
-        check("an edit lands on the draft", marker in saved["draft"]["brief"])
+        check("an edit lands on the draft", marker in saved["draft"], saved["draft"][:80])
         check("and reaches nobody until it is published",
-              marker not in state["compiled_prompt"] and state["has_unpublished_changes"],
+              marker not in _prompts()["chat"] and state["has_unpublished_changes"],
               str(state["has_unpublished_changes"]))
         call("POST", "/api/assistant-settings/publish")
         state = call("GET", "/api/assistant-settings")
-        check("published, it is what Liner is told, placeholders filled",
-              marker in state["compiled_prompt"]
-              and "{{DEALER_NAME}}" not in state["compiled_prompt"]
-              and "You are the assistant at " in state["compiled_prompt"])
-        check("and the rules box left empty still carries the product's rules",
-              "HOW THIS PLACE ACTUALLY WORKS" in state["compiled_prompt"])
+        running = _prompts()
+        check("published, the chat, the call and email are all told it, placeholders filled",
+              all(marker in p and "You are the assistant at " in p and "{{" not in p
+                  for p in running.values()),
+              str({ch: marker in p for ch, p in running.items()}))
+        # The manager's words replace Liner's default whole -- and the rules
+        # and what each channel adds still follow, because those are code,
+        # not boxes a rewrite can empty.
+        check("it replaces Liner's default, and the rules still follow it on every channel",
+              all(state["prompt"]["default"] not in p
+                  and "HOW THIS PLACE ACTUALLY WORKS" in p and "DEALERSHIP FACTS" in p
+                  and state["live"]["greeting"] in p for p in running.values()))
+        check("each channel keeps its own instructions after it",
+              "ON A SCREEN" in running["chat"] and "ON A PHONE CALL" in running["voice"]
+              and "BY EMAIL" in running["email"])
+        # **Not the writing assistant's.** A manager's prompt is written to
+        # Liner talking to a buyer; a rep's own email drafted under it speaks
+        # as an assistant. The behaviour -- a draft run under it -- is driven
+        # in `make agent-check`.
+        check("and the writing assistant is never told it",
+              all(marker not in _prompt_mod.composer_system(ch)
+                  for ch in ("email", "email_reply", "chat", "sms")))
         # A new draft is minted after every publish. One that copied the
-        # fields and not the wording would publish the default over a rewrite
+        # fields and not the prompt would publish the default over a rewrite
         # the next time anybody changed the tone.
         call("PATCH", "/api/assistant-settings", {"tone": state["live"]["tone"]})
         again = call("GET", "/api/assistant-settings")
         check("an unrelated edit afterwards keeps the rewrite in the new draft",
-              marker in again["prompt"]["draft"]["brief"] and not again["has_unpublished_changes"],
-              str(again["prompt"]["draft"])[:80])
+              marker in again["prompt"]["draft"] and not again["has_unpublished_changes"],
+              again["prompt"]["draft"][:80])
     finally:
-        call("PUT", "/api/assistant-settings/prompt", {"brief": "", "rules": ""})
+        call("PUT", "/api/assistant-settings/prompt", {"prompt": ""})
         call("POST", "/api/assistant-settings/publish")
     state = call("GET", "/api/assistant-settings")
-    check("and emptying it hands Liner back its default wording",
-          marker not in state["compiled_prompt"]
-          and state["prompt"]["live"]["brief"] == "" and state["prompt"]["live"]["rules"] == "",
-          str(state["prompt"]["live"]))
-    check("the setup page offers the boxes, not only the compiled text",
-          "/api/assistant-settings/prompt" in
-          pathlib.Path("frontend/src/routes/Assistant.tsx").read_text())
+    check("and emptying it hands Liner back its default",
+          state["prompt"]["live"] == "" and marker not in _prompts()["chat"]
+          and state["prompt"]["default"] in _prompts()["chat"],
+          repr(state["prompt"]["live"][:80]))
+    # Saving ours verbatim stores nothing, so a dealership that pressed Save
+    # on the default keeps following it as it improves.
+    kept = call("PUT", "/api/assistant-settings/prompt", {"prompt": state["prompt"]["default"]})
+    check("and saving Liner's own words verbatim stores nothing",
+          kept["draft"] == "" and not call("GET", "/api/assistant-settings")["has_unpublished_changes"],
+          repr(kept["draft"][:60]))
+    _setup = pathlib.Path("frontend/src/routes/Assistant.tsx").read_text()
+    check("the setup page offers one prompt, in one box",
+          "/api/assistant-settings/prompt" in _setup and 'id="assistant-prompt"' in _setup
+          and _setup.count("<textarea") == 1)
+    check("and none of the boxes it used to have",
+          not any(k in _setup for k in ("ASSISTANTS", "part_max", "compiled",
+                                        "key: 'voice'", "key: 'composer'")))
 
     print("\n== the credit application link is live on Save, not drafted ==")
     # A manager who wanted to set a link was told "saved to the draft, publish
@@ -1175,64 +1217,60 @@ def main() -> int:
           "/api/assistant-settings/credit-application-url" in _setup
           and "credit_application_url: next" not in _setup)
 
-    print("\n== each assistant's own instructions, edited on the setup page ==")
-    # The chat, the phone line, the email replies and the writing assistant
-    # each have instructions on top of the shared brief, and they were
-    # constants -- a manager could rewrite what every conversation starts from
-    # but not how Liner talks on the phone. Same four rules as the brief:
-    # manager only, a ceiling per box, draft until published, and now the one
-    # that costs: no assistant's whole prompt past 12,000.
-    tag = f"SMOKE-PART-{secrets.token_hex(3)}"
-    call("POST", "/api/auth/login", REP_LOGIN)
-    denied = status_of("PUT", "/api/assistant-settings/prompt", {"voice": tag})[0]
-    call("POST", "/api/auth/login", LOGIN)
-    check("a rep cannot rewrite how Liner talks on the phone", denied == 403, str(denied))
-    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"voice": "x" * 1600})
-    check("a call's instructions stay under the 1,500 every turn re-reads",
-          code == 400 and "1,500" in why, why[:100])
-    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"chat": "y" * 2900})
-    check("and nothing takes an assistant's whole prompt past 12,000",
-          code == 400 and "12,000" in why and "chat" in why, why[:120])
-    code, why = status_of("PUT", "/api/assistant-settings/prompt", {"email": "Sign as {{NOBODY}}."})
-    check("a placeholder Liner cannot fill is refused here too",
-          code == 400 and "NOBODY" in why, why[:100])
+    print("\n== the channels' own instructions are the product's, not the dealership's ==")
+    # A call, an inbox and the writing assistant each need telling things the
+    # chat does not, and they had a box each on the setup page -- a manager
+    # who is not technical was being asked to edit tool mechanics to change
+    # how Liner sounds. They are code now. The boxes are refused by name
+    # rather than dropped: a 200 for a change that never happened is worse
+    # than an error.
+    before = call("GET", "/api/assistant-settings")
+    for key in ("brief", "rules", "chat", "voice", "email", "composer"):
+        code, why = status_of("PUT", "/api/assistant-settings/prompt",
+                              {key: "SMOKE-RETIRED-BOX"})
+        check(f"the old {key!r} box is refused by name, not dropped",
+              code == 400 and key in why and "one set of instructions" in why, why[:120])
+    after = call("GET", "/api/assistant-settings")
+    check("and nothing changed for having been sent",
+          after["prompt"]["draft"] == before["prompt"]["draft"]
+          and after["has_unpublished_changes"] == before["has_unpublished_changes"]
+          and not any("SMOKE-RETIRED-BOX" in p for p in _prompts().values()))
+    # **The page is sent the prompt and nothing internal**, by construction:
+    # no assembled prompt, no rules, no channel's instructions, no writing
+    # assistant. Read on the wire, because a field the page does not draw is
+    # still a field anyone signed in can read.
+    from app.agent.prompts import COMPOSER as _WRITER
+
+    check("the setup page is sent the one prompt and nothing assembled",
+          set(after["prompt"]) == {"default", "live", "draft", "max_chars", "prompt_max", "room"}
+          and "compiled" not in after and "compiled_prompt" not in after, str(sorted(after)))
+    _wire = json.dumps(after)
+    check("and no line of the internal half is in what it is sent",
+          not any(mark in _wire for mark in (
+              "HOW THIS PLACE ACTUALLY WORKS", "ON A SCREEN", "ON A PHONE CALL", "BY EMAIL",
+              "DEALERSHIP FACTS", "offer_credit_application", _WRITER.splitlines()[0])))
+    # **Room honesty.** The page has one number for how long the box may be,
+    # and it has to be the truth: exactly that many characters saves, one
+    # more is refused, naming whichever ceiling binds on this store -- the
+    # whole prompt's 12,000 where the knowledge table is long (the chat is
+    # the longest channel), the box's own ceiling where it is not.
+    room, max_chars = after["prompt"]["room"], after["prompt"]["max_chars"]
+    check("Liner's own prompt fits the room it leaves a manager",
+          0 < len(after["prompt"]["default"]) <= room,
+          f"{len(after['prompt']['default'])} of {room}")
     try:
-        mine = call("GET", "/api/assistant-settings")["prompt"]["defaults"]
-        call("PUT", "/api/assistant-settings/prompt",
-             # The call's default is within a few characters of its ceiling,
-             # so this replaces it rather than appending to it.
-             {"voice": f"Words only, two sentences at a time. {tag}-VOICE",
-              "composer": f"{mine['composer']}\n{tag}-WRITER"})
-        state = call("GET", "/api/assistant-settings")
-        check("an edit lands on the draft and reaches no caller until published",
-              f"{tag}-VOICE" in state["prompt"]["draft"]["voice"]
-              and f"{tag}-VOICE" not in state["compiled"]["voice"]
-              and state["has_unpublished_changes"])
-        call("POST", "/api/assistant-settings/publish")
-        state = call("GET", "/api/assistant-settings")
-        check("published, the phone line is told it and the chat is not",
-              f"{tag}-VOICE" in state["compiled"]["voice"]
-              and f"{tag}-VOICE" not in state["compiled"]["chat"]
-              and f"{tag}-VOICE" not in state["compiled"]["email"])
-        check("and the writing assistant runs on its own wording",
-              f"{tag}-WRITER" in state["compiled"]["composer"])
-        # The next draft is minted from live, and it must carry the parts --
-        # or the next unrelated edit publishes the default over them.
-        call("PATCH", "/api/assistant-settings", {"tone": state["live"]["tone"]})
-        again = call("GET", "/api/assistant-settings")
-        check("an unrelated edit afterwards keeps them in the new draft",
-              f"{tag}-VOICE" in again["prompt"]["draft"]["voice"]
-              and not again["has_unpublished_changes"])
+        code, why = status_of("PUT", "/api/assistant-settings/prompt", {"prompt": "y" * room})
+        check("a prompt exactly as long as the room shown saves", code == 200, why[:120])
+        code, why = status_of("PUT", "/api/assistant-settings/prompt",
+                              {"prompt": "y" * (room + 1)})
+        binds = ("12,000" in why and "chat" in why) if room < max_chars else f"{max_chars:,}" in why
+        check("and one character more is refused, naming the ceiling that binds",
+              code == 400 and binds, f"room {room}: {why[:160]}")
     finally:
-        call("PUT", "/api/assistant-settings/prompt",
-             {"chat": "", "voice": "", "email": "", "composer": ""})
+        call("PUT", "/api/assistant-settings/prompt", {"prompt": ""})
         call("POST", "/api/assistant-settings/publish")
-    state = call("GET", "/api/assistant-settings")
-    check("and emptying them hands each assistant back its default",
-          all(state["prompt"]["live"][k] == "" for k in ("chat", "voice", "email", "composer"))
-          and tag not in state["compiled"]["voice"])
-    check("the setup page edits every assistant, not only the brief",
-          all(f"key: '{k}'" in _setup for k in ("shared", "chat", "voice", "email", "composer")))
+    check("the setup page has no box per assistant any more",
+          not any(f"key: '{k}'" in _setup for k in ("shared", "chat", "voice", "email", "composer")))
 
     print("\n== an unclaimed lead can be opened from the overview ==")
     pool = call("GET", "/api/overview")["queues"]["unclaimed_leads"]
@@ -5243,6 +5281,13 @@ def main() -> int:
     saved = call("POST", f"/api/chat/sessions/{card_convo}/details", {"values": filled})
     check("submitting it mints the buyer behind the conversation",
           bool(saved["saved"]["lead_id"]), str(saved["saved"])[:80])
+    # **Once the number is in, a visit** -- the owner's next step, and this
+    # reply is the one place nothing else would say it: it is composed, not a
+    # model turn. A yes is answered by a turn told the number has just come
+    # in, which `make agent-check` drives.
+    check("and its reply offers to check times for a visit",
+          "come in for a look or a test drive" in saved["assistant_message"]["content"],
+          saved["assistant_message"]["content"])
     made = call("GET", f"/api/leads/{saved['saved']['lead_id']}")
     check("with the number on the row, where the matcher reads it",
           "5550134" in re.sub(r"\D", "", made["phone"] or ""), made["phone"])
@@ -7072,14 +7117,16 @@ def main() -> int:
             check(f"and {ch} is given exactly one channel addendum",
                   sum(m in text for m in
                       ("BY EMAIL", "ON A PHONE CALL", "ON A SCREEN")) == 1)
-        # Email is a third channel on **one** prompt, not a prompt of its own.
-        # Two full prompts is how the price rule ends up stricter on one
-        # channel than another, so the brief and the operating rules have to be
-        # in this one exactly as they are in the other two.
-        check("email carries the same brief and rules as chat and voice",
+        # Email is a third channel on the same single prompt, not a prompt of
+        # its own. Two full prompts is how the price rule ends up stricter on
+        # one channel than another, so the dealership's prompt and the
+        # operating rules have to be in this one exactly as in the other two.
+        check("email carries the same prompt and rules as chat and voice",
               all(mark in prompts["email"] for mark in
                   ("WHAT YOU ARE DOING", "HOW THIS PLACE ACTUALLY WORKS",
-                   "EVERY CAR FACT COMES FROM A TOOL RESULT")))
+                   "EVERY CAR FACT COMES FROM A TOOL RESULT"))
+              and _prompt_mod.default_prompt() in prompts["email"]
+              and all(_prompt_mod.default_prompt() in prompts[ch] for ch in ("chat", "voice")))
         check("and the addendum stays short enough to reread every turn",
               len(EMAIL_ADDENDUM) < 1500, f"{len(EMAIL_ADDENDUM)} chars")
         check("it says not to quote their message back at them",

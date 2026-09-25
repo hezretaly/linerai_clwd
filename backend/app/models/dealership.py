@@ -64,19 +64,24 @@ class AssistantSettings(Base):
 
 
 class AssistantPrompt(Base):
-    """A dealership's own wording of the assistant's brief and rules.
+    """A dealership's own prompt: the one text on the Instructions tab.
+
+    **`brief` is the whole of it** -- how Liner talks to their buyers, in the
+    manager's words. Everything else the model is told (the rules, the facts,
+    each channel's instructions, the writing assistant) is product code in
+    `agent/prompts.py` and follows it. `rules` is no longer read: it was the
+    second box when there were two, and it is written empty.
 
     **Per settings version, so it is drafted and published with everything
     else.** An edit lands on the draft's row and reaches a buyer only when a
     manager publishes -- the rule this page is built on, and the one that
     matters most for the text the model is actually told. A table rather than
-    two columns on `assistant_settings` because `create_all` adds a table to a
-    database that already exists and never a column.
+    a column on `assistant_settings` because `create_all` added a table to a
+    database that already existed and never a column.
 
-    Empty means the product's own text (`prompts.BRIEF`, `OPERATING_RULES`),
-    so a dealership that has never touched it follows every improvement to the
-    default, and "Reset to default" is emptying the box rather than pasting a
-    copy that then goes stale.
+    Empty means Liner's own (`prompts.default_prompt`), so a dealership that
+    has never touched it follows every improvement to the default, and Reset
+    is emptying the box rather than pasting a copy that then goes stale.
     """
 
     __tablename__ = "assistant_prompts"
@@ -92,23 +97,16 @@ class AssistantPrompt(Base):
 
 
 class AssistantPart(Base):
-    """A dealership's own wording for one assistant, beside the shared brief.
+    """**No longer read or written.** A dealership's own wording for one
+    channel -- the website chat, the phone line, the email replies or the
+    writing assistant -- from when the Instructions tab had a box for each.
 
-    Liner is four assistants that share a brief and its rules: the website
-    chat, the phone line, the email replies, and the writing assistant a rep
-    presses Auto-generate or Polish on. Each has instructions of its own on top
-    -- the chat's about the cards on screen, the call's about speaking, the
-    email's about an inbox, the writer's about sounding like the person
-    sending it -- and those were constants in the code, so a manager could
-    rewrite the brief every buyer conversation starts from but not how Liner
-    behaves on the phone.
-
-    **A row per part, and the vocabulary is closed** (`prompts.PARTS`): a free
-    key here is a place wording goes to be read by nothing. A table rather than
-    four columns on `assistant_prompts` because `create_all` adds a table to a
-    database that already exists and never a column. Per settings version, so
-    it is drafted and published exactly like the brief; empty means the
-    product's own text.
+    There is one assistant with one prompt now (`AssistantPrompt.brief`), and
+    what each channel adds is product code: a call needing to be told it has
+    no screen is not a matter of a dealership's taste, and a manager who is
+    not technical was being asked to edit tool mechanics to change how Liner
+    sounds. Kept, with its migration, because dropping a table is a revision
+    with no rows to justify it -- none was ever saved on a live server.
     """
 
     __tablename__ = "assistant_parts"

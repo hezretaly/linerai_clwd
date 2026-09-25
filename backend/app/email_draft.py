@@ -138,6 +138,10 @@ def brief(
             "sign-off is appended when it is sent."
         )
     parts.append(_buyer_block(db, lead) if lead is not None else _stranger_block(db, convo))
+    if channel == "email" and lead is not None:
+        # The one being answered is already above, whole.
+        skip = answering.get("id") if answering and answering.get("kind") == "message" else None
+        parts.append(_email_thread_block(db, lead, skip))
     parts.append(_dealership_block(db))
 
     vehicle = _focus_vehicle(db, lead, convo)
@@ -302,6 +306,64 @@ def _answering_block(content: dict, how: str, forward_to: str) -> str:
             "",
             f"It is being forwarded to: {forward_to.strip() or 'people not yet chosen'}. "
             "Write the note to them, not to whoever wrote it.",
+        ]
+    return "\n".join(lines)
+
+
+#: How much of the email history with a buyer an email draft carries: the
+#: newest this many messages, each cut to so many characters. Bounded because
+#: it rides every draft, and the newest are the ones a reply has to follow on
+#: from.
+THREAD_EMAILS = 8
+THREAD_EMAIL_CHARS = 1200
+
+
+def _email_thread_block(db: Session, lead: Lead, skip: str | None = None) -> str:
+    """The emails with this buyer so far, oldest first, in words.
+
+    **The conversation history an email draft saw was the wrong one.** It
+    read one thread's `Message` rows, and a rep's own emails to a lead are
+    `Outreach` rows that are never messages -- so a follow-up was drafted
+    blind to the three emails already exchanged, and could ask a question
+    the buyer answered yesterday. These are those rows, both directions,
+    text only: a buyer's reply without the thread it quoted back
+    (`just_the_reply`), and nothing that never reached them (a failed or
+    bounced send). "" when there are none, so a first email says nothing.
+    """
+    from sqlalchemy import and_, not_
+
+    from app.email_intake import just_the_reply
+    from app.models import Outreach
+
+    query = db.query(Outreach).filter(
+        Outreach.lead_id == lead.id,
+        Outreach.channel == "email",
+        not_(and_(Outreach.direction == "out", Outreach.status.in_(("failed", "bounced")))),
+    )
+    if skip:
+        query = query.filter(Outreach.id != skip)
+    kept = (
+        query.order_by(Outreach.created_at.desc(), Outreach.id.desc())
+        .limit(THREAD_EMAILS)
+        .all()
+    )
+    if not kept:
+        return ""
+    lines = [
+        "--- THE EMAILS SO FAR ---",
+        "The latest emails between the dealership and this buyer, oldest first. "
+        "Follow on from them; do not ask what they have already answered.",
+    ]
+    for row in reversed(kept):
+        when = row.sent_at or row.created_at
+        who = "From them" if row.direction == "in" else "From us"
+        body = (just_the_reply(row.body) if row.direction == "in" else row.body or "").strip()
+        if len(body) > THREAD_EMAIL_CHARS:
+            body = body[:THREAD_EMAIL_CHARS] + " [... cut]"
+        lines += [
+            "",
+            f"{who}, {when:%a %d %b %Y}: {row.subject or '(no subject)'}",
+            body or "(no text)",
         ]
     return "\n".join(lines)
 

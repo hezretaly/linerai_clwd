@@ -52,6 +52,12 @@ anywhere. The file says this too.
 (`components/BuyerTheme.tsx`), which overrides *only* the accent family so they
 keep the iOS blue while every structural token still comes from classic.
 
+**Liner setup has one prompt, on purpose.** The owner asked for one plain box a
+non-technical manager can edit; the rules, each channel's addendum (call,
+chat, email) and the writing assistant are product code and never served to
+the page. Do not put a box per channel back -- see CLAUDE.md, "One prompt, on
+the Instructions tab".
+
 **`warning` and `success` are a deliberate extension.** Classic ships only
 `destructive`. A dealer has to tell confirmed from unconfirmed at a glance on the
 calendar, so these exist on purpose.

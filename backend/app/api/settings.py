@@ -1,7 +1,13 @@
-"""Liner setup: behaviour, handoff rules, knowledge, rails, compiled prompt.
+"""Liner setup: the assistant's one prompt, behaviour, handoff rules,
+knowledge, rails.
 
 Draft vs live is the point. An edit is a draft until it is published, otherwise
 a tweak silently changes buyer-facing behaviour mid-conversation (§18.2).
+
+**One prompt, in plain words, and nothing else of the model's instructions is
+served here.** The rules, the dealership facts, what each channel adds and the
+writing assistant are product code (`agent/prompts.py`); a manager who is not
+technical edits how Liner treats their buyers, never tool mechanics.
 
 **Except the credit application link**, which is a fact about the dealership
 rather than a change to how Liner talks: it has its own endpoint and takes
@@ -19,7 +25,6 @@ from sqlalchemy.orm import Session
 from app.api.deps import current_user, get_dealership, require_manager
 from app.db import get_db, utcnow
 from app.models import (
-    AssistantPart,
     AssistantPrompt,
     AssistantSettings,
     Dealership,
@@ -60,29 +65,17 @@ def get_assistant_settings(
     user: User = Depends(current_user),
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
-    from app.agent.prompts import build_system_prompt, composer_system
-
     live = live_settings(db)
     draft = draft_settings(db)
+    # **No assembled prompt any more.** The page showed each channel's whole
+    # prompt read-only, and that is the rules, the call's and the inbox's
+    # instructions and the writing assistant -- the internal half a manager
+    # does not edit and should not have to read to change how Liner sounds.
     return {
         "live": settings_out(live),
         "draft": settings_out(draft) if draft else None,
         "has_unpublished_changes": unpublished(live, draft, db),
-        "prompt": _prompt_out(db, live, draft),
-        # Read-only. "Here is literally what it was told" is a strong answer to
-        # the control objection, and it costs nothing because we assemble this
-        # string anyway (§18.3). One per assistant now, because each is told
-        # something different on top of the shared brief.
-        "compiled_prompt": build_system_prompt(db, dealership, live),
-        "compiled": {
-            "chat": build_system_prompt(db, dealership, live, "chat"),
-            "voice": build_system_prompt(db, dealership, live, "voice"),
-            "email": build_system_prompt(db, dealership, live, "email"),
-            # The writing assistant's instructions; each draft's facts -- the
-            # buyer, the car, the knowledge table -- are composed after them
-            # per draft (`email_draft.brief`), so there is no one string.
-            "composer": composer_system(db, dealership, live),
-        },
+        "prompt": _prompt_out(db, dealership, live, draft),
     }
 
 
@@ -113,7 +106,7 @@ def unpublished(live, draft, db: Session | None = None) -> bool:
         return False
     if any(getattr(live, f, None) != getattr(draft, f, None) for f in EDITABLE):
         return True
-    # The wording is drafted and published like every field above, so an edit
+    # The prompt is drafted and published like every field above, so an edit
     # to it is an unpublished change -- and the one the banner matters most
     # for, since it is what the model is actually told.
     from app.agent.prompts import own_prompt
@@ -121,37 +114,40 @@ def unpublished(live, draft, db: Session | None = None) -> bool:
     return db is not None and own_prompt(db, live) != own_prompt(db, draft)
 
 
-def _prompt_out(db: Session, live, draft) -> dict:
-    """The assistant's wording, as the setup page's Advanced tab edits it.
+def _prompt_out(db: Session, dealership: Dealership, live, draft) -> dict:
+    """The dealership's one prompt, as the Instructions tab edits it.
 
-    The product's own text is served beside the dealership's, unfilled, so
-    the box can start from it and "Reset to default" can say what it resets
-    to. `""` in `draft`/`live` means that version uses the default.
+    Liner's own is served beside it, unfilled, so the box can start from it
+    and Reset can put it back. `""` in `live`/`draft` means that version uses
+    Liner's. `room` is the most the box can hold on this store right now --
+    the smaller of `max_chars` and what `prompt_max` leaves once every
+    channel's internal half is added -- so the page can say "nearly full"
+    before a save is refused rather than after.
+
+    **Nothing internal is in here**, by construction rather than by a filter:
+    no assembled prompt, no rules, no channel's instructions, no writing
+    assistant. The page cannot show what it was never sent.
     """
-    from app import profile
     from app.agent import prompts
 
+    target = draft or live
     return {
-        "defaults": {
-            "brief": prompts.METHOD if profile.assistant()["sales_method"] else prompts.BRIEF,
-            "rules": prompts.OPERATING_RULES,
-            **{part: prompts.default_part(part) for part in prompts.PARTS},
-        },
+        "default": prompts.default_prompt(),
         "live": prompts.own_prompt(db, live),
-        "draft": prompts.own_prompt(db, draft) if draft else prompts.own_prompt(db, live),
+        "draft": prompts.own_prompt(db, target),
         "max_chars": prompts.OWN_PROMPT_MAX,
-        "part_max": prompts.PART_MAX,
         "prompt_max": prompts.PROMPT_MAX,
+        "room": prompts.prompt_room(db, dealership, target),
     }
 
 
 def _ensure_draft(db: Session) -> AssistantSettings:
     """The draft every edit lands on, made from the live version if missing.
 
-    **The wording comes with it.** A new draft is minted after every publish,
-    and one that copied the fields and not the dealership's own brief would
-    publish the product default over it the next time anybody changed the
-    tone -- a rewrite undone by an unrelated edit, with nothing saying so.
+    **The prompt comes with it.** A new draft is minted after every publish,
+    and one that copied the fields and not the dealership's own prompt would
+    publish Liner's default over it the next time anybody changed the tone --
+    a rewrite undone by an unrelated edit, with nothing saying so.
     """
     draft = draft_settings(db)
     if draft is not None:
@@ -169,17 +165,13 @@ def _ensure_draft(db: Session) -> AssistantSettings:
     db.flush()
     theirs = db.query(AssistantPrompt).filter_by(settings_id=live.id).one_or_none()
     if theirs is not None:
-        db.add(AssistantPrompt(settings_id=draft.id, brief=theirs.brief, rules=theirs.rules,
+        # `rules` is not read any more, so it is not carried either.
+        db.add(AssistantPrompt(settings_id=draft.id, brief=theirs.brief, rules="",
                                updated_by=theirs.updated_by))
         # Sessions here do not autoflush, so without this the caller's lookup
-        # for the draft's wording misses the row just added and inserts a
+        # for the draft's prompt misses the row just added and inserts a
         # second one for the same version.
         db.flush()
-    # Each assistant's own wording travels with it, for the same reason.
-    for part in db.query(AssistantPart).filter_by(settings_id=live.id).all():
-        db.add(AssistantPart(settings_id=draft.id, part=part.part, text=part.text,
-                             updated_by=part.updated_by))
-    db.flush()
     return draft
 
 
@@ -266,23 +258,23 @@ def put_credit_link(
     return {"credit_application_url": url, "live": settings_out(live)}
 
 
-class PromptBody(BaseModel):
-    """Any of the six, and only what is sent changes. `""` restores ours."""
+#: The boxes the Instructions tab used to have: a brief, the rules, one per
+#: channel and the writing assistant's. Declared so each is refused by name --
+#: left off the model, a PUT naming one would be dropped silently and answer
+#: 200 for a change that never happened, which is worse than an error.
+RETIRED = ("brief", "rules", "chat", "voice", "email", "composer")
 
+
+class PromptBody(BaseModel):
+    """The one prompt. `""` puts Liner's own back."""
+
+    prompt: str | None = None
     brief: str | None = None
     rules: str | None = None
     chat: str | None = None
     voice: str | None = None
     email: str | None = None
     composer: str | None = None
-
-
-#: What each part is called in a sentence a manager reads.
-PART_NAMES = {
-    "brief": "the brief", "rules": "the rules", "chat": "the website chat's",
-    "voice": "the phone calls'", "email": "the email replies'",
-    "composer": "the writing assistant's",
-}
 
 
 @router.put("/assistant-settings/prompt")
@@ -292,87 +284,75 @@ def put_prompt(
     user: User = Depends(require_manager),
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
-    """The dealership's own wording for any assistant, onto the draft.
+    """The dealership's own prompt, onto the draft.
 
-    **Six parts, one endpoint.** The brief and the rules every buyer-facing
-    assistant shares, then one set of instructions each for the website chat,
-    the phone line, the email replies and the writing assistant a rep uses.
-    Each replaces the product's own text for that part, and saving the default
-    verbatim -- or nothing -- stores nothing, so an untouched box follows the
-    product's text as it improves rather than freezing a copy of it.
+    **One text.** How Liner talks to buyers, in the manager's words, used on
+    the website chat, on calls and in email replies alike. What each of those
+    adds -- no screen on a call, no card in an inbox -- and the writing
+    assistant a rep uses are the product's, and a PUT naming one of the old
+    boxes is refused by name rather than dropped. Saving Liner's own text
+    verbatim, or nothing, stores nothing, so an untouched dealership follows
+    the default as it improves rather than freezing a copy of it.
 
     **A manager's, like publishing.** This is what every conversation starts
     from, so it is not something any rep changes on the way past; and like
     every other field on the page it lands on the draft and reaches nobody
     until it is published.
 
-    **Three ceilings, each said in numbers.** The brief and rules together
-    stay under `OWN_PROMPT_MAX`, each part under its own `PART_MAX` (a call's
-    is the gate's 1,500, because it is re-read every turn of a call billed by
-    the minute), and then the whole: every assistant's assembled prompt must
-    stay under `PROMPT_MAX`, measured on the draft as it would be published.
-    The first two are about one box; the third is the one that actually costs.
+    **Two ceilings, each said in numbers.** The text itself stays under
+    `OWN_PROMPT_MAX`, and then the whole: every channel's assembled prompt
+    must stay under `PROMPT_MAX`, measured on the draft as it would be
+    published. The second is the one that costs, and on a store with a long
+    knowledge table it is the one a manager meets first -- the page shows it
+    as `room` before they do.
 
-    **What it cannot change is written down on the page too.** A price the
-    tools did not return, a car that is sold, a booking that clashes and a
-    typed field that was a guess are all refused by executors and guards, not
-    by this text -- so a rewrite changes how Liner talks and never what it may
-    claim.
+    **What it cannot change is not in it.** A price the tools did not return,
+    a car that is sold, a booking that clashes and a typed field that was a
+    guess are refused by executors and guards; the rules that keep Liner
+    honest follow the manager's words in code. A rewrite changes how Liner
+    talks, never what it may claim.
     """
     from app.agent import prompts
 
-    given = body.model_dump(exclude_none=True)
-    if not given:
-        raise HTTPException(400, "Nothing to save.")
-    defaults = {"brief": prompts.BRIEF, "rules": prompts.OPERATING_RULES}
-    cleaned: dict[str, str] = {}
-    for key, value in given.items():
-        text = value.strip()
-        default = defaults.get(key) or prompts.default_part(key)
-        # Saving the default verbatim stores nothing.
-        cleaned[key] = "" if text == default.strip() else text
-
-    live = live_settings(db)
-    draft = _ensure_draft(db)
-    current = prompts.own_prompt(db, draft)
-    after = {**current, **cleaned}
-
-    if len(after["brief"]) + len(after["rules"]) > prompts.OWN_PROMPT_MAX:
+    retired = [key for key in RETIRED if getattr(body, key) is not None]
+    if retired:
         raise HTTPException(
             400,
-            f"The brief and rules come to {len(after['brief']) + len(after['rules']):,} "
-            f"characters; the limit is {prompts.OWN_PROMPT_MAX:,}. Every character is "
-            "re-read on every turn of every conversation.",
+            "Liner has one set of instructions now, sent as `prompt`. How it talks on a "
+            "call, writes in an inbox and drafts for your team is part of the product and "
+            f"is not edited here ({', '.join(retired)}).",
         )
-    for part in prompts.PARTS:
-        if len(after[part]) > prompts.PART_MAX[part]:
-            raise HTTPException(
-                400,
-                f"{PART_NAMES[part].capitalize()} instructions come to {len(after[part]):,} "
-                f"characters; the limit is {prompts.PART_MAX[part]:,}.",
-            )
-    unknown = prompts.unknown_placeholders("\n".join(cleaned.values()), dealership, live)
+    if body.prompt is None:
+        raise HTTPException(400, "Nothing to save.")
+    text = body.prompt.strip()
+    if text == prompts.default_prompt():
+        # Saving ours stores nothing.
+        text = ""
+    if len(text) > prompts.OWN_PROMPT_MAX:
+        raise HTTPException(
+            400,
+            f"These instructions are {len(text):,} characters long; the limit is "
+            f"{prompts.OWN_PROMPT_MAX:,}. Liner re-reads every word on every message, so "
+            "shorter works better.",
+        )
+    live = live_settings(db)
+    unknown = prompts.unknown_placeholders(text, dealership, live)
     if unknown:
         raise HTTPException(
             400,
-            "These are not placeholders Liner can fill, so they would reach the model "
-            "in braces: " + ", ".join("{{" + u + "}}" for u in unknown),
+            "Words in double curly brackets are filled in by Liner, and it does not know "
+            + ", ".join("{{" + u + "}}" for u in unknown)
+            + ". Write it out in plain words instead.",
         )
 
-    if "brief" in cleaned or "rules" in cleaned:
-        row = db.query(AssistantPrompt).filter_by(settings_id=draft.id).one_or_none()
-        if row is None:
-            row = AssistantPrompt(settings_id=draft.id)
-            db.add(row)
-        row.brief, row.rules, row.updated_by = after["brief"], after["rules"], user.id
-    for part in prompts.PARTS:
-        if part not in cleaned:
-            continue
-        row = db.query(AssistantPart).filter_by(settings_id=draft.id, part=part).one_or_none()
-        if row is None:
-            row = AssistantPart(settings_id=draft.id, part=part)
-            db.add(row)
-        row.text, row.updated_by = cleaned[part], user.id
+    draft = _ensure_draft(db)
+    row = db.query(AssistantPrompt).filter_by(settings_id=draft.id).one_or_none()
+    if row is None:
+        row = AssistantPrompt(settings_id=draft.id)
+        db.add(row)
+    # `rules` is no longer read; written empty so a row never carries a
+    # second text that looks as though it still matters.
+    row.brief, row.rules, row.updated_by = text, "", user.id
     db.flush()
 
     # The whole prompt, as it would be published. Refused rather than stored,
@@ -383,15 +363,19 @@ def put_prompt(
         if length > prompts.PROMPT_MAX
     }
     if too_long:
+        # Measured before the rollback, which takes a draft minted by this
+        # request with it.
+        room = prompts.prompt_room(db, dealership, draft)
         db.rollback()
         which = ", ".join(f"{c} ({n:,} characters)" for c, n in too_long.items())
         raise HTTPException(
             400,
-            f"That would take the whole prompt past {prompts.PROMPT_MAX:,} characters "
-            f"for: {which}. Every character is re-read on every turn.",
+            f"That is too long for this dealership: with your facts and knowledge "
+            f"answers, the whole prompt would pass {prompts.PROMPT_MAX:,} characters for "
+            f"{which}. Keep it to {room:,} characters or fewer.",
         )
     db.commit()
-    return _prompt_out(db, live, draft)
+    return _prompt_out(db, dealership, live, draft)
 
 
 @router.post("/assistant-settings/publish")
