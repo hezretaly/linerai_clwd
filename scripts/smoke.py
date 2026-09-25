@@ -3587,10 +3587,24 @@ def main() -> int:
     mine = call("POST", "/api/chat/sessions")["conversation_id"]
     say(mine, content="I want to see something with a third row")
     escalation_email = f"reply.test.{run}@example.invalid"
-    book_first_free(mine, name="Reply Tester", email=escalation_email)
-    for appt in call("GET", "/api/appointments")["appointments"]:
-        if appt["conversation_id"] == mine and appt["status"] in ("booked", "confirmed"):
-            booked_here.append(appt["id"])
+    # Booked as the buyer, deliberately, not through book_first_free: a rep
+    # booking on somebody's behalf now assigns that rep to them (the lead
+    # gets an owner), and an owned buyer's next escalation is born claimed
+    # (app/escalations.py's claim_for_owner) -- correct there, but it would
+    # make this test's own escalation never appear as open, for a reason
+    # that has nothing to do with what this section is proving. The buyer
+    # booking themselves, as they actually would from chat, leaves them
+    # unowned, which is what "a rep taking over claims it" below needs to
+    # mean something.
+    mine_slots = [
+        s["starts_at"]
+        for d in call("GET", f"/api/conversations/{mine}/availability")["days"]
+        for s in d["slots"]
+    ]
+    booked_mine = call("POST", f"/api/chat/sessions/{mine}/book", {
+        "starts_at": mine_slots[0], "name": "Reply Tester", "email": escalation_email,
+    })
+    booked_here.append(booked_mine["appointment"]["id"])
 
     say(mine, content="What's the out-the-door price on that?")
     flagged = call("GET", f"/api/conversations/{mine}")
@@ -10423,8 +10437,17 @@ def _stores_section(before: set[str]) -> None:
     head_code, head_detail = status_of(
         "POST", f"/api/chat/sessions/{rl_session}/messages", {"content": "again"}
     )
+    # Not byte-identical: the countdown is real elapsed time truncated to
+    # whole seconds, so the immediate retry -- a genuinely separate request,
+    # a moment later -- can read one second lower than the first refusal
+    # simply because a clock tick fell between the two calls. What the name
+    # of this check actually asks is that retrying never adds delay, i.e.
+    # this number never goes *up*.
+    first_wait = int(re.search(r"in (\d+) seconds", retry_after).group(1))
+    head_wait = int(re.search(r"in (\d+) seconds", head_detail).group(1))
     check("a caller who keeps trying does not push their own unlock further away",
-          head_code == 429 and head_detail == retry_after, head_detail[:90])
+          head_code == 429 and 0 <= first_wait - head_wait <= 1,
+          f"first={first_wait}s head={head_wait}s")
     # An unknown conversation is still a 404. A limit that answered 429 to an
     # id that does not exist would tell a stranger which ids are real.
     missing_code, _ = status_of(
