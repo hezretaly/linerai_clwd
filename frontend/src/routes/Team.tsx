@@ -84,7 +84,7 @@ export function TeamPage() {
               Auto-assign is round-robin over reps who are under their daily cap.
             </p>
           </header>
-          <div className="scroll-thin overflow-x-auto">
+          <div className="scroll-thin overflow-x-auto [contain:layout]">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
