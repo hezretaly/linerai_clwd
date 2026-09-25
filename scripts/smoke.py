@@ -961,15 +961,23 @@ def main() -> int:
           and filled["known"]["name"] == "Sam Okafor",
           str(filled["known"]))
 
-    # `slot` already carries one booking (Sam Okafor's form, above) -- a
-    # second buyer taking it too is exactly what capacity is for. Fill it the
-    # rest of the way to the dealership's own staff count; each of these is a
-    # booking below capacity at an already-taken time, and each must succeed.
-    slotmates = fill_slot(slot, capacity - 1, "avail-slotmate")
+    # `slot` carries at least Sam Okafor's form booking above -- a second
+    # buyer taking it too is exactly what capacity is for. It may carry more
+    # than that: `slot` is the earliest open morning, and an earlier section
+    # in this same run can independently land its own booking there too. So
+    # the remaining room is read off the calendar rather than assumed, and
+    # filled exactly that far -- a fixed `capacity - 1` overshoots into a
+    # genuine 409 the moment a second writer has already used this slot.
+    already_here = sum(
+        1 for a in call("GET", "/api/appointments")["appointments"]
+        if a["starts_at"] == slot and not a["off"]
+    )
+    room = capacity - already_here
+    slotmates = fill_slot(slot, room, "avail-slotmate")
     booked_here.extend(slotmates)
     check("a booking below the dealership's staff count still succeeds at a "
           "time somebody else already holds",
-          len(slotmates) == capacity - 1, str(len(slotmates)))
+          len(slotmates) == room, str(len(slotmates)))
 
     other = call("POST", "/api/chat/sessions")["conversation_id"]
     code, detail = status_of("POST", f"/api/chat/sessions/{other}/book",
