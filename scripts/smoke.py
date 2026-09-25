@@ -2601,10 +2601,26 @@ def main() -> int:
     card = call("GET", f"/api/conversations/{rep_convo}/availability")
     check("a rep is offered the same card the buyer gets", bool(card["days"]),
           f"{sum(len(d['slots']) for d in card['days'])} times")
-    rep_slot = card["days"][0]["slots"][0]["starts_at"]
-    booked_by_rep = call("POST", f"/api/conversations/{rep_convo}/book", {
-        "starts_at": rep_slot, "name": "Rep Booked", "email": "rep.booked@example.invalid",
-    })
+    # A rep who books here now ends up assigned to it (below), so the first
+    # offered time is not guaranteed free -- this signed-in account may
+    # already hold something overlapping it from earlier in this same run.
+    # The dedicated overlap test covers that refusal on purpose; this section
+    # is only proving a rep can book at all, so it tries times in order
+    # rather than assuming the first one is open for this particular person.
+    offered = [s["starts_at"] for d in card["days"] for s in d["slots"]]
+    booked_by_rep = None
+    for candidate in offered:
+        code, body = status_of("POST", f"/api/conversations/{rep_convo}/book", {
+            "starts_at": candidate, "name": "Rep Booked", "email": "rep.booked@example.invalid",
+        })
+        if code == 200:
+            booked_by_rep = json.loads(body)
+            rep_slot = candidate
+            break
+    check("a time this rep is actually free for exists on the card",
+          booked_by_rep is not None, str(offered))
+    if booked_by_rep is None:
+        return report()
     check("the rep booking lands on the thread", booked_by_rep["stage"] == "booked",
           booked_by_rep["stage"])
     made = [a for a in call("GET", "/api/appointments")["appointments"]
