@@ -28,12 +28,13 @@ feature reports itself as unavailable rather than simulating a result.
 | `make migrate` | Every database this deployment serves to the newest migration. The boot does the same; this is for a deploy that wants the schema moved, and any failure seen, before the new code starts. `ARGS=--create` on a new Postgres server first makes the two databases every boot opens (the default store and Liner's own) |
 | `make to-postgres` | **Copy the SQLite databases into Postgres**, one per store, each built by the migrations first. The plan by default, `ARGS=--apply` to copy; refuses a target that already holds rows unless `--replace`. Run with the new server's database settings in the environment |
 | `make stores` | Every dealership this deployment can serve, and which are seeded, **each with the address its mail leaves from and its manager sign-in** — the two facts somebody opens it for, otherwise one in a profile file and one in a database. A file with no tables in it — the stray a pre-fix 500 left behind — reads as **not seeded**, not as a store |
-| `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` prints the file copy commands instead |
+| `make dump-ops` | **Every `ops_` row to JSON, before you drop anything.** Walks `ops.db` *and* every store, because files seeded before the split still carry strays. `ARGS=--files` instead backs up the databases themselves: on SQLite it prints the file copy commands; on Postgres it runs `pg_dump` for each database into `backend/var/backup-<stamp>/`, with the password in `PGPASSWORD`, never on a command line or in the output |
 | `make restore-ops` | Read one back: `FILE=...` `[ARGS=--dry-run]`. Existing rows win; `ops_users` de-duplicates on the address |
 | `make prune-ops` | Drop the pre-split `ops_` tables out of the store files. Reports by default, `ARGS=--apply` removes them, and it refuses any store holding a row `ops.db` does not |
 | `make reset-dealership` | Rebuild the showroom fixture in place, keeping the store's `inbound_emails` receipts — it detaches them rather than deleting them |
 | `make add-owners` | Put `founder@`/`cto@` in `ops_users` on an **existing** database — no reseed, no data loss |
-| `make set-password` | Change one account's password in place: `EMAIL=someone@...` |
+| `make add-user` | Add one of a dealership's staff on a live box, no reseed: `EMAIL=... NAME="..." ROLE=rep` (or `manager`). The password is generated and printed once, on the line with their address. On a box serving several stores, `DEALERSHIP=<store>` names theirs — it refuses a store with no dealership in it |
+| `make set-password` | Change one account's password in place: `EMAIL=someone@...`. It prompts (`ARGS=--stdin` for scripts) and says *Password updated* only after reading the new hash back. A dealership's staff need `DEALERSHIP=<store>` on a box serving several; ours (`founder@`, `cto@`) are found without it |
 | `make smoke` | **The gate.** Full flow over HTTP, plus the live loop against a fake provider |
 | `make ops-ui` | `/ops` in a browser: the notification clears **and stays cleared** |
 | `make cal-ui` | The calendar's Week/List views, and that no waiting time is unreadable |
@@ -207,7 +208,7 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - **Databases are created with `C` collation** (`app/pg.py`), because SQLite
     sorts bytes and an A-Z list, a tie-break and the order of the knowledge in
     the prompt should not change on the move.
-  - **A URL printed for `pg_dump` or `psql` goes through `pg.for_libpq`.**
+  - **A URL handed to `pg_dump` or `psql` goes through `pg.for_libpq`.**
     The application's carries SQLAlchemy's driver (`postgresql+psycopg://`),
     and libpq does not refuse that -- it reads it as `key=value` settings,
     finds none, and connects to the local defaults. The backup lines
@@ -215,6 +216,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     nothing about the URL, and on a server answering on that socket they
     would have dumped some other database under this one's file name. Found
     by running them rather than reading them.
+    - **And without its password, which travels in `PGPASSWORD`.** Those
+      printed lines carried it: into the output of a command the runbook has
+      a session run, into `pg_dump`'s argv, which any user reads in `/proc`
+      while it runs, and into auth.log when run under `sudo`. So `--files`
+      runs the dumps itself, with `for_libpq(url, password=False)` on the
+      command line, and prints only where each one went. `password=False`
+      rebuilds the URL with `URL.create`: `.set(password=None)` is ignored
+      by SQLAlchemy and hands the password straight back, which the gate
+      caught by reading a stand-in `pg_dump`'s argv.
 - **Schema changes are migrations** (`app/migrate.py`, `backend/migrations/`),
   two histories: a store's and Liner's own. The boot migrates every database
   this process serves, `make migrate` does the same on demand, and the seed
@@ -2056,6 +2066,16 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
         backups is `make dump-ops`, which walks `ops.db` *and* every store —
         it has to, because the pre-split files still carry those tables with
         real rows in them, and nothing else will ever find them.
+      - **A row is committed through the session it was read from.** With
+        both sessions open side by side, `db.commit()` flushes only the
+        store's. `make set-password` changed an owner's hash and committed
+        `db`, so the new password was dropped at exit while it printed
+        *Password updated*; `make add-owners` wrote demo requests through
+        the store's session into a table only Liner's own database has; the
+        phone bridge marked a failed call through `db` and read an `ops` that
+        was never in scope. set-password now reads the hash back through a
+        fresh session before it says so, and `make smoke` drives all three
+        on a scratch deployment.
       - **And every seeded store's, which was the next line missing.** Boot
         called `create_all()` on the default store alone, so a table added
         later existed in one dealership's file and no other -- the first
@@ -3775,6 +3795,12 @@ and bulk sending, which needs A2P 10DLC registration.
 - Don't invent a credential or flip `LLM_MODE=live` to make something pass.
 - Don't change a placeholder default to reach a real service.
 - Don't edit `.env` (it is gitignored) or commit any service-account JSON.
+- Don't put a secret on a command line. `sudo` writes every command line it
+  runs to auth.log and the journal, and any user can read a running
+  process's arguments. A value goes in on stdin, into a file, or through the
+  environment of a process started inside a root shell whose script
+  arrives on stdin (docs/NEW-SERVER.md, steps 3 and 4); `make smoke` scans
+  the runbook for it and runs its fill.
 - Don't add a simulated result to fill a gap. Say what's missing instead —
   that's the whole design.
 - Don't remove the `OUTBOUND_ONLY_TO` check. It is what stops a rehearsal

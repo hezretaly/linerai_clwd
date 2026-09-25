@@ -11,6 +11,11 @@ This changes one row and touches nothing else:
 
     make set-password EMAIL=dana.mercer@riversideauto.example
 
+A dealership's staff are in that store's database, so on a box serving several
+stores the store is named: ``DEALERSHIP=alsbou make set-password EMAIL=...``.
+Ours (``founder@``, ``cto@``) are in Liner's own database and are found
+without it.
+
 It prompts rather than taking the password as an argument, so it never lands in
 shell history or the process list where ``ps`` would show it. ``--stdin`` is
 there for scripts:
@@ -99,6 +104,18 @@ def main() -> int:
             if password != getpass.getpass("Again: "):
                 print("Those did not match.", file=sys.stderr)
                 return 1
+        # A trailing \r survives a copy-paste out of a CRLF file and is invisible
+        # in every terminal, producing a password nobody can retype. Taken off
+        # *before* the checks below, so they judge what is stored: stripped
+        # after them, "  abc   " passed the length check and was saved as
+        # "abc", and " liner-dev" got past the production refusal as liner-dev.
+        if password != password.strip():
+            print(
+                "That has spaces at the start or end, which are invisible and "
+                "impossible to retype. Removing them.",
+                file=sys.stderr,
+            )
+            password = password.strip()
 
         if len(password) < MIN_LEN:
             print(f"Too short -- use at least {MIN_LEN} characters.", file=sys.stderr)
@@ -117,18 +134,20 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        # A trailing \r survives a copy-paste out of a CRLF file and is invisible
-        # in every terminal, producing a password nobody can retype.
-        if password != password.strip():
-            print(
-                "That has leading or trailing whitespace, which is invisible and will be "
-                "impossible to retype. Removing it.",
-                file=sys.stderr,
-            )
-            password = password.strip()
 
         user.password_hash = pwd.hash(password)
         owner.commit()
+        # Read back through a fresh session on the same database before saying
+        # so. The line below was printed for an owner whose new hash had been
+        # committed through the other session and dropped at exit; a second
+        # look at the row is what would have shown it.
+        model = OpsUser if owner is ops else User
+        with (ops_session() if owner is ops else SessionLocal(slug)) as fresh:
+            stored = fresh.query(model.password_hash).filter(model.email == user.email).scalar()
+        if not stored or not pwd.verify(password, stored):
+            print("The new password did not reach the database, so nothing was changed.",
+                  file=sys.stderr)
+            return 1
         print(f"Password updated for {user.name} <{user.email}> ({user.role}).")
         print("Existing sessions stay signed in -- the cookie is not tied to the password.")
         return 0

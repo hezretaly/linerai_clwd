@@ -31,7 +31,7 @@ from datetime import datetime
 from sqlalchemy import inspect, text
 
 from app.config import DEV_SEED_PASSWORD, settings
-from app.db import SessionLocal, create_all, create_ops_all, engine, ops_session
+from app.db import SessionLocal, create_all, create_ops_all, ops_session
 from app.models import DemoRequest, OpsUser, User
 from app.seed import OWNERS, build_owner
 
@@ -45,18 +45,27 @@ LEGACY_DEMO_TABLE = "demo_requests"
 DEALERSHIP_ROLES = ("manager", "rep")
 
 
-def migrate_demo_requests(db) -> int:
+def migrate_demo_requests(db, ops) -> int:
     """Copy `demo_requests` into `ops_demo_requests`, skipping what is there.
+
+    **Two sessions, and which does what is the whole function.** The legacy
+    table is read through `db`, the store it was left in; every
+    `DemoRequest` is written, looked up and committed through `ops`, Liner's
+    own database, because that is where `ops_demo_requests` lives. It used
+    the store's session for all of it -- so on a store built by the
+    migrations, which has no `ops_demo_requests`, it died on "no such table",
+    and on a file seeded before the split it copied the rows into that
+    store's own stray copy, which `/ops` never reads, and reported them moved.
 
     Raw SQL because the old table has no model any more, and by id because
     that is what makes it safe to run twice -- these are bookings with real
     people on the other end, and a duplicate would be a second calendar entry
     for a demo that happens once.
     """
-    if LEGACY_DEMO_TABLE not in inspect(engine).get_table_names():
+    if LEGACY_DEMO_TABLE not in inspect(db.get_bind()).get_table_names():
         return 0
 
-    existing = {row.id for row in db.query(DemoRequest.id).all()}
+    existing = {row.id for row in ops.query(DemoRequest.id).all()}
     columns = [
         "id", "kind", "name", "dealership", "email", "phone", "dealership_url",
         "message", "slot_at", "consent_at", "consent_text", "status", "created_at",
@@ -76,10 +85,10 @@ def migrate_demo_requests(db) -> int:
             continue
         for key in stamps:
             values[key] = _as_datetime(values[key])
-        db.add(DemoRequest(**values))
+        ops.add(DemoRequest(**values))
         moved += 1
     if moved:
-        db.commit()
+        ops.commit()
         print(f"  moved          {moved} demo request(s)  {LEGACY_DEMO_TABLE} -> "
               f"{DemoRequest.__tablename__}")
     elif rows:
@@ -117,7 +126,7 @@ def add_owners() -> tuple[int, int]:
     ops = ops_session()
     created = moved = 0
     try:
-        moved += migrate_demo_requests(db)
+        moved += migrate_demo_requests(db, ops)
         # Move first. A legacy row carries a password somebody may be using,
         # and creating a fresh account before rescuing it would mean the new
         # one wins the email uniqueness and the old password stops working

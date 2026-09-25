@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.pool import NullPool
 
@@ -54,7 +54,7 @@ def safe(url: str) -> str:
     return make_url(url).render_as_string(hide_password=True)
 
 
-def for_libpq(url: str) -> str:
+def for_libpq(url: str, *, password: bool = True) -> str:
     """The URL as `pg_dump`, `pg_restore` and `psql` take it.
 
     **`postgresql+psycopg://` is SQLAlchemy's, and libpq does not refuse it --
@@ -67,8 +67,21 @@ def for_libpq(url: str) -> str:
     one. Measured with `pg_dump` against the first; the second is the same
     code path meeting a server that answers. The driver is the only part
     that differs.
+
+    **`password=False` for anything that becomes a command line.** An
+    argument is readable by every user on the box in `/proc/<pid>/cmdline`
+    while the command runs, and `sudo` writes the whole line to auth.log;
+    the password goes in `PGPASSWORD` instead, which only the process's owner
+    can read (`make dump-ops ARGS=--files`). Rebuilt with `URL.create`
+    rather than `.set(password=None)`, because `set` ignores a `None` and
+    hands back the URL with the password still in it -- which is what the
+    first version of this did, caught by the gate reading pg_dump's argv.
     """
-    return make_url(url).set(drivername="postgresql").render_as_string(hide_password=False)
+    u = make_url(url).set(drivername="postgresql")
+    if not password:
+        u = URL.create(u.drivername, username=u.username, host=u.host, port=u.port,
+                       database=u.database, query=u.query)
+    return u.render_as_string(hide_password=False)
 
 
 def _server(url: str) -> Engine:

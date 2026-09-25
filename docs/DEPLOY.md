@@ -1030,7 +1030,9 @@ that store.
 
 ### Backups on Postgres
 
-One `pg_dump` per database. `make dump-ops ARGS=--files` prints the exact
-lines for every database this box names. They carry the database password,
-so run them rather than pasting them anywhere. `backend/var/` is the rest,
-and `pg_restore` reads the dumps back.
+One `pg_dump` per database. `make dump-ops ARGS=--files` runs them for every
+database this box names, into `backend/var/backup-<stamp>/`, and prints only
+where each one went, or FAILED and why. The password reaches `pg_dump` in
+`PGPASSWORD`, never on its command line: any user can read a running
+command's arguments, and `sudo` writes the whole line to auth.log.
+`backend/var/` is the rest, and `pg_restore` reads the dumps back.

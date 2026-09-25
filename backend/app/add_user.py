@@ -96,10 +96,13 @@ def dealership_in(slug: str) -> str:
     password printed as though it had worked. `has_database` first, because
     opening a SQLite store creates its file; then the row, because on a
     database server the tables exist from `make migrate` before any seed.
+    And `SessionLocal(slug)`, the store asked about: `SessionLocal()` is
+    whichever store is active, which answers for the wrong one the moment a
+    caller names another.
     """
     if not has_database(slug):
         return ""
-    with SessionLocal() as db:
+    with SessionLocal(slug) as db:
         try:
             row = db.query(Dealership).first()
         except MISSING_TABLE:
@@ -178,7 +181,11 @@ def add_user(email: str, name: str, role: str) -> int:
 
     print(f"\nAdded {name} <{email}> as a {role} of {dealership} ({store_label(slug)}).")
     print(f"  {ROLES[role]}")
-    print(f"\n  Password:  {password}")
+    # The address is on the password's line on purpose: the runbook sends
+    # this output to a root-only file and shows the session only the lines
+    # without an `@` (docs/NEW-SERVER.md), which is what the seed's login
+    # lines already rely on. A bare "Password:" line went straight through.
+    print(f"\n  Password for {email}:  {password}")
     print("\nThis is the only time it is shown -- only the bcrypt hash is stored.")
     print("They can be given a new one with:  "
           + (f"DEALERSHIP={slug} " if slug else "") + f"make set-password EMAIL={email}")

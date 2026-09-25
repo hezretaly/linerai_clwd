@@ -21,17 +21,21 @@ the file itself, so a table with an unexpected shape still comes out.
 
 WHAT THIS IS NOT. It is a readable, re-importable record of the ops tables,
 not a backup of the whole system. Before dropping anything, copy the database
-files as well -- see `--files`, which prints the exact command including the
-`-wal` and `-shm` sidecars. Copying `liner.db` alone can lose recent writes:
-WAL keeps them beside the file until a checkpoint, which is why a freshly
-seeded 486-car store reports 4 KB.
+files as well -- see `--files`, which on SQLite prints the exact command
+including the `-wal` and `-shm` sidecars. Copying `liner.db` alone can lose
+recent writes: WAL keeps them beside the file until a checkpoint, which is why
+a freshly seeded 486-car store reports 4 KB. On a database server `--files`
+runs `pg_dump` for every database into `backend/var/backup-<timestamp>/`
+itself, with the password kept off the command line (`dump_postgres`).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import pathlib
+import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend"))
@@ -134,20 +138,73 @@ def dump_store(slug: str) -> dict:
     return out
 
 
+#: Where `--files` writes its dumps on a database server: under `backend/`,
+#: which is the one directory the service unit may write (`ReadWritePaths`),
+#: so a backup taken as the service's user lands where that user can put it.
+BACKUPS = pathlib.Path(__file__).resolve().parent.parent / "backend" / "var"
+
+
+def dump_postgres(named: list[tuple[str, str]]) -> int:
+    """Run `pg_dump` for each database, and say only where each one went.
+
+    **It runs them rather than printing them, because the lines carried the
+    password.** They printed `--dbname='postgresql://liner:<password>@...'`:
+    into the output of the command the runbook has a session run, into
+    `pg_dump`'s argv, which any user reads in `/proc` while it runs, and into
+    auth.log when the line was run as `sudo -u liner pg_dump ...`. Now the
+    URL on the command line has no password (`pg.for_libpq(url,
+    password=False)`) and the password travels in `PGPASSWORD`, in the
+    child's environment, which only its owner can read. What is printed is a
+    label and a path, or FAILED with pg_dump's own words -- with the password
+    taken out of them, in case a message ever quotes it.
+    """
+    from urllib.parse import quote
+
+    from sqlalchemy.engine import make_url
+
+    from app import pg
+
+    out = BACKUPS / f"backup-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    # 0700: a dump is every row, password hashes included.
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
+    print(f"\nDumping each database into {out}/\n")
+    failed = 0
+    for label, url in named:
+        target = out / f"{pg.name_of(url)}.dump"
+        secret = make_url(url).password or ""
+        try:
+            # `--no-password`: a refused password fails here and is reported,
+            # rather than pg_dump waiting on a prompt it opens on the terminal.
+            done = subprocess.run(
+                ["pg_dump", "--format=custom", "--no-password",
+                 f"--dbname={pg.for_libpq(url, password=False)}", f"--file={target}"],
+                env={**os.environ, "PGPASSWORD": secret},
+                capture_output=True, text=True,
+            )
+            ok, why = done.returncode == 0, done.stderr.strip()
+        except FileNotFoundError:
+            ok, why = False, "pg_dump is not installed here (the postgresql-client package)"
+        if ok:
+            print(f"  {label:22} -> {target}")
+            continue
+        failed += 1
+        for hidden in {secret, quote(secret, safe="")} - {""}:
+            why = why.replace(hidden, "***")
+        print(f"  {label:22} FAILED: {why[:300] or 'pg_dump exited with no message'}")
+    if failed:
+        print(f"\n  {failed} of {len(named)} did not dump. Nothing was dropped or changed.\n")
+        return 1
+    print("\n  `pg_restore` reads each one back. Copy `backend/var/` as well: received")
+    print("  mail, attachments and recordings are files the rows point at.\n")
+    return 0
+
+
 def main() -> int:
-    if "--files" in sys.argv and pg_urls():
+    named = pg_urls() if "--files" in sys.argv else []
+    if named:
         # On a server there are no files to copy: the backup is `pg_dump`,
         # one per database, in its own format so `pg_restore` can read it.
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        print("\nDump each database before dropping anything:\n")
-        print(f"  mkdir -p backup-{stamp}")
-        for label, url in pg_urls():
-            from app import pg
-
-            print(f"  pg_dump --format=custom --dbname='{pg.for_libpq(url)}' "
-                  f"--file=backup-{stamp}/{pg.name_of(url)}.dump   # {label}")
-        print("\n(Those lines carry the database password; run them, do not paste them anywhere.)\n")
-        return 0
+        return dump_postgres(named)
     if "--files" in sys.argv:
         print("\nCopy the database files themselves before dropping anything.")
         print("All three per store: WAL keeps recent writes in the sidecars, so")

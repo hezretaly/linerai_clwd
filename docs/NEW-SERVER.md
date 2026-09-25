@@ -138,8 +138,12 @@ it runs to `/var/log/auth.log` and the journal, so `sudo sed -i
 "s/x/$(openssl rand ...)/"` puts the secret it just made into both -- which
 is what the first version of this step did, on the first server it ran on.
 The values are made *inside* one root shell whose script arrives on stdin
-(sudo logs `bash -s <files>` and nothing else), and awk writes each one from
-its environment:
+(sudo logs `bash -s <files>` and nothing else). awk takes each value from
+`openssl` over a pipe, never as an argument, and stops if one does not
+arrive: a value that is missing or the wrong length ends the step with an
+error and leaves that file as it was. Without that check a failed `openssl`
+finished "successfully" with empty or repeated secrets, and the `grep` below
+still read 0.
 
 ```bash
 sudo install -m 600 -o liner -g liner /srv/liner/deploy/production.env.example /srv/liner/.env
@@ -147,17 +151,21 @@ sudo install -m 600 -o linerdemo -g linerdemo /srv/liner-demo/deploy/demo.env.ex
 sudo bash -s /srv/liner/.env /srv/liner-demo/.env <<'FILL'
 set -eu; umask 077
 for f in "$@"; do  # a random value per __GENERATE__, one shared __PGPASS__ per file
-  t=$(mktemp)
-  PG=$(openssl rand -hex 24) awk '{
-    gsub(/__PGPASS__/, ENVIRON["PG"])
-    while (index($0, "__GENERATE__")) {
-      c = "openssl rand -hex 24"; c | getline v; close(c); sub(/__GENERATE__/, v) }
-    print }' "$f" > "$t"
+  t=$(mktemp); trap 'rm -f "$t"' EXIT
+  awk 'function r(  c, v) { c = "openssl rand -hex 24"   # a value arrives on a pipe, never an argument
+         if ((c | getline v) <= 0 || length(v) != 48) exit 1
+         close(c); return v }
+       BEGIN { pg = r() }
+       { gsub(/__PGPASS__/, pg); while (index($0, "__GENERATE__")) sub(/__GENERATE__/, r()); print }' "$f" > "$t"
   cat "$t" > "$f"; rm -f "$t"   # cat keeps the file's owner and mode
 done
 FILL
 sudo grep -c '__' /srv/liner/.env /srv/liner-demo/.env    # 0 and 0
 ```
+
+If it ends in an error, stop and show it. The usual cause is `openssl`
+missing, which step 1 installs. Once that is fixed, running it again is
+safe: a file already filled has nothing left to replace.
 
 ## 4. Postgres: a role per instance, and nobody else connects
 
@@ -201,6 +209,25 @@ CHECK
 `CREATEDB` is there because the app makes its own databases, with UTF-8 and
 the `C` collation (docs/DEPLOY.md, *Postgres*). The databases themselves come
 in step 6.
+
+**A box that ran the old steps 3 and 4** (`sudo sed ... $(openssl ...)` and
+`psql -c "CREATE ROLE ... PASSWORD '$P'"`) has those values in
+`/var/log/auth.log`, and the check above names them. Each one named is
+replaced, not hidden. Tell the user, then do it with nothing on a command
+line, in the same shape as steps 3 and 4:
+
+- **The Postgres passwords**: in one root `bash -s` whose script arrives on
+  stdin, make a new value, send `ALTER ROLE ... PASSWORD` to
+  `runuser -u postgres -- psql` on stdin, and rewrite that `.env`'s three
+  `DATABASE_URL` lines with `awk` reading the value from `ENVIRON`.
+- **`SESSION_SECRET`** and every other generated line it names, the same way.
+  A new `SESSION_SECRET` signs everybody out.
+- **Accounts already made from a `*_PASSWORD` line** keep the old password
+  whatever the line now says. `founder@` and `cto@`: the user runs
+  `make set-password` for each, in their own terminal (step 11). The demo's
+  logins, once step 6 has run: its `make demo-db` loop again.
+- Then restart whatever is already running (`sudo systemctl restart liner
+  liner-demo`, once step 7 has made them), and run the check above again.
 
 ## 5. STOP: the user's values
 
@@ -444,9 +471,19 @@ curl -s https://linerai.us/api/health | head -c 120; echo   # in another: the li
 
 Now `linerai.us/login?as=owner` is `/ops` on this box. The owners sign in
 with `founder@linerai.us` and `cto@linerai.us`. Their passwords are
-`FOUNDER_PASSWORD` and `CTO_PASSWORD` in `/srv/liner/.env`: the user reads
-them in their own terminal, or sets their own with
-`sudo -u liner make set-password EMAIL=founder@linerai.us`.
+`FOUNDER_PASSWORD` and `CTO_PASSWORD` in `/srv/liner/.env`, which the user
+reads in their own terminal. Or they set their own, in their own terminal,
+since it asks for the password twice:
+
+```bash
+cd /srv/liner && sudo -u liner make set-password EMAIL=founder@linerai.us
+cd /srv/liner && sudo -u liner make set-password EMAIL=cto@linerai.us
+```
+
+It prints *Password updated* only after reading the new password back from
+the database. From then on the `.env` line is only what a fresh seed would
+use. **On a box whose step 3 ran before this fix, both values are in
+`/var/log/auth.log`; setting new ones is required, not optional.**
 
 ## 12. The whole thing, mail included
 
@@ -485,7 +522,9 @@ Tell the user, in this order:
    for the demo.
 2. **Where the logins are**: `sudo cat /root/liner-logins.txt` for Alsbou's
    and the demo's, and `FOUNDER_PASSWORD` / `CTO_PASSWORD` in
-   `/srv/liner/.env` for `/ops`. Suggest they delete the file once saved.
+   `/srv/liner/.env` for `/ops`, unless they set their own in step 11.
+   Suggest they delete the file once saved. Alsbou's staff change their
+   passwords, and new people are added, as in *Alsbou's staff* below.
 3. **Alsbou's tag**:
    `<script src="https://alsbou.linerai.us/embed.js" data-dealer="alsbou" async></script>`,
    copied from Liner setup → Website chat. A tag already pasted as
@@ -508,8 +547,35 @@ cd /srv/liner-demo && sudo -u linerdemo git pull && sudo -u linerdemo make build
 ```
 
 The boot migrates every database. Back up production before a pull that
-brings a migration: `sudo -u liner make dump-ops ARGS=--files` prints a
-`pg_dump` line per database.
+brings a migration:
+
+```bash
+cd /srv/liner && sudo -u liner make dump-ops ARGS=--files
+```
+
+It runs `pg_dump` for every database into
+`/srv/liner/backend/var/backup-<stamp>/` and prints where each one went, or
+FAILED with the reason. The password reaches `pg_dump` in its environment,
+never on a command line, and is never printed.
+
+**Alsbou's staff.** Every command names the store with `DEALERSHIP=alsbou`,
+because production's unprefixed store is empty on purpose and a command
+without it finds nobody. A new person, whose password is printed once, on a
+line with their address, into the root-only file:
+
+```bash
+cd /srv/liner && sudo -u liner env DEALERSHIP=alsbou make add-user EMAIL=someone@alsboucars.com NAME="Their Name" ROLE=rep \
+  2>&1 | sudo tee -a /root/liner-logins.txt | grep -v '@'
+```
+
+`ROLE=manager` for a manager. The user reads the password with
+`sudo cat /root/liner-logins.txt` in their own terminal and passes it on. A
+new password for somebody already there is set by the user in their own
+terminal, since it asks for it twice:
+
+```bash
+cd /srv/liner && sudo -u liner env DEALERSHIP=alsbou make set-password EMAIL=someone@alsboucars.com
+```
 
 **A new dealership** on production:
 

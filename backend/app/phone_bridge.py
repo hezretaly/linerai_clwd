@@ -46,7 +46,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from app import flags, phone_persona
 from app.config import settings
 from app.db import SessionLocal, ops_session, utcnow
-from app.events import emit
+from app.events import emit_ops
 from app.models import Conversation, Message, PhoneCall
 
 log = logging.getLogger("liner.phone.bridge")
@@ -124,6 +124,10 @@ async def media_socket(websocket: WebSocket, call: str = Query("")) -> None:
 
     db = SessionLocal()
     # `ops_phone_calls` is Liner's own: one number, one log, never per store.
+    # The row is written through `ops`, the session it came from. It was
+    # `db.commit()`, which flushes only the store's session, so a call that
+    # could not be answered was never marked failed; and `ops` was left open
+    # across the whole call below.
     ops = ops_session()
     try:
         row = ops.query(PhoneCall).filter_by(id=call).one_or_none() if call else None
@@ -138,11 +142,14 @@ async def media_socket(websocket: WebSocket, call: str = Query("")) -> None:
             log.error("cannot answer call %s: %s", row.id, exc)
             row.status = "failed"
             row.ended_at = utcnow()
-            db.commit()
+            ops.commit()
             await websocket.close(code=UNCONFIGURED, reason=str(exc)[:110])
             return
+        # The dealership persona puts its new conversation's id on the row.
+        ops.commit()
     finally:
         db.close()
+        ops.close()
 
     await _pump(websocket, call_id=call, persona=persona,
                 instructions=instructions, tools=tools, conversation_id=convo)
@@ -235,12 +242,12 @@ async def _pump(
         pass
     except Exception as exc:  # a refused key, a dropped provider, a bad model
         log.exception("phone bridge failed on call %s", call_id)
-        with _session() as db:
+        with ops_session() as ops:
             row = ops.query(PhoneCall).filter_by(id=call_id).one_or_none()
             if row is not None:
                 row.status = row.status if row.status == "completed" else "failed"
                 row.ended_at = row.ended_at or utcnow()
-                db.commit()
+                ops.commit()
         try:
             await websocket.close(code=UNCONFIGURED, reason=str(exc)[:110])
         except RuntimeError:
@@ -276,9 +283,13 @@ def _session():
     The bridge is long-lived and a call can last ten minutes; holding one
     session open across it would pin a SQLite connection and read stale rows
     for the whole call. Each piece of work takes its own.
+
+    The store's session only. The call row is Liner's own, so whatever
+    touches it opens `ops_session()` beside this -- an ops session opened
+    here was never handed to anybody, and the callers that meant to use it
+    named an `ops` that did not exist in their scope.
     """
     db = SessionLocal()
-    ops = ops_session()
     try:
         yield db
     finally:
@@ -417,13 +428,19 @@ def _execute(state: _Call, name: str, args: dict) -> dict:
             except agent_tools.ToolError as exc:
                 return {"error": str(exc)}
 
-        row = ops.query(PhoneCall).filter_by(id=state.call_id).one_or_none()
-        if row is None:
-            return {"error": "This call is no longer on file."}
-        try:
-            return phone_persona.execute(db, row, name, args)
-        except phone_persona.ToolError as exc:
-            return {"error": str(exc)}
+        with ops_session() as ops:
+            row = ops.query(PhoneCall).filter_by(id=state.call_id).one_or_none()
+            if row is None:
+                return {"error": "This call is no longer on file."}
+            try:
+                result = phone_persona.execute(db, row, name, args)
+            except phone_persona.ToolError as exc:
+                return {"error": str(exc)}
+            # The executors stamp the call row (`end_call`, `book_demo`) and
+            # commit the session they were handed, which is the store's. The
+            # row is Liner's own, so it is written here, where it was read.
+            ops.commit()
+            return result
 
 
 def _remember(state: _Call, role: str, text: str) -> None:
@@ -455,7 +472,7 @@ def _finish(call_id: str) -> None:
     reseed, a second environment -- so a finished call is never left reading
     as in progress for ever.
     """
-    with _session() as db:
+    with ops_session() as ops:
         row = ops.query(PhoneCall).filter_by(id=call_id).one_or_none()
         if row is None:
             return
@@ -466,5 +483,7 @@ def _finish(call_id: str) -> None:
             return
         row.ended_at = utcnow()
         row.status = row.status if row.status == "completed" else "in-progress"
-        db.commit()
-        emit(db, "phone.ended", {"call_id": row.id, "status": row.status})
+        ops.commit()
+        # Announced the way the status callback announces it (`api/phone.py`):
+        # the call is ours, so its event goes through `emit_ops`.
+        emit_ops("phone.ended", {"call_id": row.id, "status": row.status})

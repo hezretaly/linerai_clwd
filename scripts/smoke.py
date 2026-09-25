@@ -3708,6 +3708,111 @@ def main() -> int:
     from app.add_owners import add_owners
     check("adding them to a database that already has them changes nothing",
           add_owners() == (0, 0))
+
+    # **The account commands, run as the real commands on a scratch
+    # deployment.** set-password committed the store's session while an
+    # owner's row sat in the ops session, and printed "Password updated" over
+    # a hash that was dropped at exit; add-owners wrote demo requests through
+    # the store's session into a table only Liner's own database has. Every
+    # database setting is overridden, SQLite on both kinds of run (the bug is
+    # in the sessions, not the engine), so the accounts this run signs in
+    # with are never touched and a `.env` naming Postgres is never used.
+    import sqlite3 as _psq
+    import tempfile as _ptmp
+    from passlib.context import CryptContext as _PCrypt
+
+    _pbc = _PCrypt(schemes=["bcrypt"])
+    with _ptmp.TemporaryDirectory() as _pd:
+        _penv = {**os.environ, "ENV": "development", "DEALERSHIP": "", "DATABASE_URL_TEMPLATE": "",
+                 "DATABASE_URL": f"sqlite:///{_pd}/store.db",
+                 "OPS_DATABASE_URL": f"sqlite:///{_pd}/ops.db", "STORES_DIR": f"{_pd}/stores"}
+
+        def _prun(*args, stdin="", **extra):
+            return _sp.run([sys.executable, "-m", *args], cwd="backend", env={**_penv, **extra},
+                           input=stdin, capture_output=True, text=True, timeout=180)
+
+        def _said(run):
+            return ((run.stderr or run.stdout).strip().splitlines() or [""])[-1][:140]
+
+        def _stored(path, sql, *params):
+            # A command that failed may have left no table to ask; that is
+            # the check failing, not the gate crashing.
+            try:
+                with _psq.connect(path) as conn:
+                    return conn.execute(sql, params).fetchone()
+            except _psq.Error:
+                return None
+
+        _made = _prun("app.add_owners")
+        _new = f"smoke-{secrets.token_hex(6)}"
+        _set = _prun("app.set_password", "founder@linerai.us", "--stdin", stdin=_new + "\n")
+        _hash = _stored(f"{_pd}/ops.db", "SELECT password_hash FROM ops_users WHERE email = ?",
+                        "founder@linerai.us")
+        check("make set-password on one of ours writes Liner's own database, and says so only then",
+              _made.returncode == 0 and _set.returncode == 0 and "Password updated" in _set.stdout
+              and bool(_hash) and _pbc.verify(_new, _hash[0]),
+              _said(_made) if _made.returncode else _said(_set))
+        check("and prints no password", _new not in _set.stdout + _set.stderr)
+        # Stripped after the checks, "  abc   " passed the length check and
+        # was stored as "abc"; " liner-dev" passed the production refusal.
+        _pad = _prun("app.set_password", "founder@linerai.us", "--stdin", stdin="  abc   \n")
+        check("a password padded with spaces is judged by what would be stored",
+              _pad.returncode != 0 and "Too short" in _pad.stderr
+              and _stored(f"{_pd}/ops.db", "SELECT password_hash FROM ops_users WHERE email = ?",
+                          "founder@linerai.us") == _hash, _said(_pad))
+
+        # A booking left in the pre-split `demo_requests` of a store is read
+        # there and written to Liner's own database -- where `/ops` reads it.
+        _cols = ["id", "kind", "name", "dealership", "email", "phone", "dealership_url",
+                 "message", "slot_at", "consent_at", "consent_text", "status", "created_at"]
+        with _psq.connect(f"{_pd}/store.db") as _pc:
+            _pc.execute(f"CREATE TABLE demo_requests ({', '.join(c + ' TEXT' for c in _cols)})")
+            _pc.execute(f"INSERT INTO demo_requests VALUES ({', '.join('?' * len(_cols))})",
+                        ("d-legacy", "demo", "Legacy Booker", "Old Motors", "old@example.com", "",
+                         "", "", "2026-01-05 10:00:00", "2026-01-01 09:00:00", "agreed", "new",
+                         "2026-01-01 09:00:00"))
+        _moved = _prun("app.add_owners")
+        check("make add-owners moves an old demo request into Liner's own database",
+              _moved.returncode == 0
+              and _stored(f"{_pd}/ops.db", "SELECT name FROM ops_demo_requests WHERE id = ?",
+                          "d-legacy") == ("Legacy Booker",)
+              and _stored(f"{_pd}/store.db", "SELECT 1 FROM sqlite_master WHERE name = ?",
+                          "ops_demo_requests") is None,
+              _said(_moved))
+        _again = _prun("app.add_owners")
+        check("and a second run moves nothing twice",
+              _again.returncode == 0 and "already there  1 demo request" in _again.stdout,
+              _said(_again))
+
+        # add-user asks whether the store it names holds a dealership, with
+        # a different store active -- which is how `dealership_in` answered
+        # for the wrong one.
+        _shop = _sp.run(
+            [sys.executable, "-c",
+             "from app.db import SessionLocal, create_all\n"
+             "from app.models import Dealership\n"
+             "from app.add_user import dealership_in\n"
+             "create_all('scratchshop')\n"
+             "with SessionLocal('scratchshop') as db:\n"
+             "    db.add(Dealership(name='Scratch Motors')); db.commit()\n"
+             "print(repr(dealership_in('scratchshop')))\n"],
+            cwd="backend", env=_penv, capture_output=True, text=True, timeout=180)
+        check("add-user asks the store it names whether it has a dealership, not the active one",
+              _shop.returncode == 0 and _shop.stdout.strip().endswith("'Scratch Motors'"),
+              _said(_shop))
+        # The runbook tees this to a root-only file and shows the session
+        # only the lines without an `@`; a bare "Password:" line went through.
+        _add = _prun("app.add_user", "new.person@scratch.example", "--name", "New Person",
+                     "--role", "rep", DEALERSHIP="scratchshop")
+        _uhash = _stored(f"{_pd}/stores/scratchshop.db",
+                         "SELECT password_hash FROM users WHERE email = ?", "new.person@scratch.example")
+        _pw = next((ln.split()[-1] for ln in _add.stdout.splitlines()
+                    if ln.strip().startswith("Password")), "")
+        check("make add-user prints the password once, on a line carrying the address",
+              _add.returncode == 0 and bool(_uhash) and bool(_pw) and _pbc.verify(_pw, _uhash[0])
+              and all("@" in ln for ln in _add.stdout.splitlines() if _pw in ln),
+              f"exit {_add.returncode} {_add.stderr.strip()[-120:]}".strip())
+
     # Our accounts share the users table with the dealership's, so every
     # unfiltered query(User) was a place they could surface inside somebody
     # else's showroom. One predicate covers the roster, the three assignment
@@ -6332,6 +6437,91 @@ def main() -> int:
     check("and the public demo door is open only on the demo",
           de.get("PUBLIC_DEMO") == "true" and pe.get("PUBLIC_DEMO", "false") == "false")
 
+    # **No secret on a command line, in any step of the runbook.** `sudo`
+    # writes every command line it runs to auth.log and the journal, and the
+    # first version of this runbook made every generated value inside a
+    # `$(openssl ...)` on one -- and the Postgres password in a `psql -c`.
+    import shutil as _fshutil
+    import stat as _fstat
+    import tempfile as _ftmp
+
+    runbook = pathlib.Path("docs/NEW-SERVER.md").read_text()
+    _blocks = re.findall(r"^```bash\n(.*?)^```", runbook, re.S | re.M)
+    _on_argv = [
+        line.strip()[:80] for block in _blocks for line in block.splitlines()
+        if re.search(r"\bsudo\b[^|;&\n]*\$\((openssl|head -c|pwgen)", line)
+        or re.search(r"PASSWORD\s+'\$", line)
+        or re.search(r"psql\b[^|\n]*-\w*c\s+\"[^\"]*PASSWORD", line)
+    ]
+    check("no step of the runbook puts a secret on a command line",
+          bool(_blocks) and not _on_argv and "<<'FILL'" in runbook,
+          "; ".join(_on_argv[:2]) or f"{len(_blocks)} bash blocks")
+    # **The fill is run from the runbook's own text**, on copies of the two
+    # templates. Reading it was not enough: the version before this one was
+    # clean on the command line and, with `openssl` missing, finished with
+    # exit 0 and every secret empty -- and its own `grep -c '__'` read 0.
+    _fill = re.search(r"sudo bash -s (\S+) (\S+) <<'FILL'\n(.*?)\nFILL\n", runbook, re.S)
+    check("the runbook's .env fill is there to run", _fill is not None)
+    if _fill:
+        _templates = [prod_env, demo_env]
+        with _ftmp.TemporaryDirectory() as _fd:
+            _fd = pathlib.Path(_fd)
+            _ftmpdir = _fd / "tmp"
+            _ftmpdir.mkdir()
+            _envs = [_fd / "production.env", _fd / "demo.env"]
+            for _f, _text in zip(_envs, _templates):
+                _f.write_text(_text)
+                _f.chmod(0o600)
+
+            def _fill_with(path):
+                # TMPDIR too, so a temp file the fill leaves behind is seen.
+                return subprocess.run(
+                    ["bash", "-s", *map(str, _envs)], input=_fill.group(3) + "\n",
+                    capture_output=True, text=True, timeout=60,
+                    env={**_os.environ, "PATH": path, "TMPDIR": str(_ftmpdir)})
+
+            check("bash, awk and openssl are here to run the runbook's fill with",
+                  all(_fshutil.which(t) for t in ("bash", "awk", "openssl", "mktemp")),
+                  "step 1 of docs/NEW-SERVER.md installs them")
+            _filled = _fill_with(_os.environ.get("PATH", ""))
+            _out = [f.read_text() for f in _envs]
+            # Counted by the template's own lines, because its header comment
+            # names both placeholders and is filled too.
+            _gen, _pgp = [], []
+            for _text, _done in zip(_templates, _out):
+                _pairs = [(a, b) for a, b in zip(_text.splitlines(), _done.splitlines())
+                          if not a.startswith("#")]
+                _gen += [b.split("=", 1)[-1] for a, b in _pairs if "=__GENERATE__" in a]
+                _pgp.append({(re.findall(r"://[^:/@]+:([^@]*)@", b) or [""])[0]
+                             for a, b in _pairs if "__PGPASS__" in a})
+            _values = _gen + [v for s in _pgp for v in s]
+            check("it fills every value, a different one each, and leaves no placeholder",
+                  _filled.returncode == 0 and not any("__" in t for t in _out)
+                  and all(re.fullmatch(r"[0-9a-f]{48}", v) for v in _values)
+                  and len(set(_gen)) == len(_gen) and all(len(s) == 1 for s in _pgp)
+                  and not set(_gen) & (_pgp[0] | _pgp[1]) and _pgp[0] != _pgp[1],
+                  (_filled.stderr.strip().splitlines() or [""])[-1][:120]
+                  or f"{len(_gen)} generated, one database password per file")
+            check("keeps each file owner-only, prints no value, and leaves no copy behind",
+                  all(_fstat.S_IMODE(f.stat().st_mode) == 0o600 for f in _envs)
+                  and not any(v in _filled.stdout + _filled.stderr for v in _values)
+                  and not any(_ftmpdir.iterdir()))
+            # And with no `openssl` at all it has to stop and change nothing.
+            _bare = _fd / "bin"
+            _bare.mkdir()
+            for _tool in ("bash", "sh", "awk", "mktemp", "cat", "rm"):
+                if _fshutil.which(_tool):
+                    (_bare / _tool).symlink_to(_fshutil.which(_tool))
+            for _f, _text in zip(_envs, _templates):
+                _f.write_text(_text)
+            _before = [f.read_bytes() for f in _envs]
+            _broke = _fill_with(str(_bare))
+            check("and with no openssl it stops, and changes nothing",
+                  _broke.returncode != 0 and [f.read_bytes() for f in _envs] == _before
+                  and not any(_ftmpdir.iterdir()),
+                  f"exit {_broke.returncode}: "
+                  + (_broke.stderr.strip().splitlines() or [""])[-1][:100])
+
     print("\n== a real dealer platform, parsed from its own markup ==")
     # The first adapter written against a real site rather than the JSON-LD
     # fixture. Dealer Car Search puts the whole vehicle on each search-result
@@ -7892,6 +8082,87 @@ def main() -> int:
     check("while the browser call still negotiates its own",
           "format" not in _web["input"])
 
+    print("\n== the media bridge writes the call row where it lives ==")
+    # The call row is Liner's own (`ops_phone_calls`) and the bridge wrote it
+    # through the store's session, so a call nobody could answer was never
+    # marked failed; three more paths read an `ops` that existed only as a
+    # local in `_session()` -- a NameError on every call that ended. Nothing
+    # here has a Twilio account, so the bridge's own functions are driven on
+    # a scratch deployment, with a stand-in socket.
+    import builtins as _bbuiltins
+    import symtable as _bsym
+
+    _btable = _bsym.symtable(pathlib.Path("backend/app/phone_bridge.py").read_text(),
+                             "phone_bridge.py", "exec")
+    _bknown = {s.get_name() for s in _btable.get_symbols() if s.is_assigned() or s.is_imported()}
+    _bknown |= set(dir(_bbuiltins))
+
+    def _unbound(table):
+        missing = [f"{table.get_name()}:{s.get_name()}" for s in table.get_symbols()
+                   if s.is_referenced() and s.is_global() and s.get_name() not in _bknown]
+        return missing + [m for child in table.get_children() for m in _unbound(child)]
+
+    _bmissing = [m for t in _btable.get_children() for m in _unbound(t)]
+    check("every name the phone bridge reads is one it defines or imports",
+          not _bmissing, ", ".join(_bmissing[:4]))
+    import tempfile as _ctmp
+
+    with _ctmp.TemporaryDirectory() as _cd:
+        _cenv = {**os.environ, "ENV": "development", "DEALERSHIP": "", "DATABASE_URL_TEMPLATE": "",
+                 "DATABASE_URL": f"sqlite:///{_cd}/store.db",
+                 "OPS_DATABASE_URL": f"sqlite:///{_cd}/ops.db", "STORES_DIR": f"{_cd}/stores",
+                 "OPENAI_API_KEY": "", "VOICE_PROVIDER_KEY": ""}
+        _call_prog = (
+            "import asyncio, json\n"
+            "from app import flags, phone_bridge as b\n"
+            "from app.db import create_all, create_ops_all, ops_session\n"
+            "from app.models import PhoneCall\n"
+            "create_all(); create_ops_all()\n"
+            "with ops_session() as ops:\n"
+            "    rows = [PhoneCall(direction='in', persona=flags.PHONE_LINER, status='in-progress')\n"
+            "            for _ in range(4)]\n"
+            "    ops.add_all(rows); ops.commit(); ids = [r.id for r in rows]\n"
+            "class Sock:\n"
+            "    closed = None\n"
+            "    async def accept(self): pass\n"
+            "    async def close(self, code=1000, reason=''): self.closed = code\n"
+            # Never a connection to the provider, whatever this box's key.
+            "async def no_pump(*a, **k): pass\n"
+            "b._pump = no_pump\n"
+            "sock = Sock()\n"
+            "asyncio.run(b.media_socket(sock, call=ids[0]))\n"  # no key: nobody can answer
+            "b._finish(ids[1])\n"
+            "said = b._execute(b._Call(ids[2], flags.PHONE_LINER, ''), 'end_call', {'summary': 'x'})\n"
+            # What the dealership persona's brief does to the row, with no
+            # model and no store to build a prompt from.
+            "def brief(db, row, persona):\n"
+            "    row.conversation_id = 'c-smoke'\n"
+            "    return '', [], 'c-smoke'\n"
+            "b._brief_for = brief\n"
+            "asyncio.run(b.media_socket(Sock(), call=ids[3]))\n"
+            "with ops_session() as ops:\n"
+            "    got = {r.id: [r.status, r.ended_at is not None, r.conversation_id]\n"
+            "           for r in ops.query(PhoneCall).all()}\n"
+            "print(json.dumps({'closed': sock.closed, 'said': said, 'rows': [got[i] for i in ids]}))\n"
+        )
+        _calls = subprocess.run([sys.executable, "-c", _call_prog], cwd="backend", env=_cenv,
+                                capture_output=True, text=True, timeout=180)
+        try:
+            _cr = json.loads(_calls.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            _cr = {"rows": [[None] * 3] * 4}
+        _cwhy = (_calls.stderr.strip().splitlines() or [""])[-1][:120] if _calls.returncode else ""
+        check("a call nobody can answer is marked failed in Liner's own database",
+              _cr["rows"][0][:2] == ["failed", True] and _cr.get("closed") == 1011,
+              _cwhy or str(_cr["rows"][0]))
+        check("a call whose socket goes is stamped as ended there too",
+              _cr["rows"][1][1] is True, _cwhy or str(_cr["rows"][1]))
+        check("one of Liner's own tools on a call writes the call row it stamps",
+              _cr["rows"][2][1] is True and "error" not in (_cr.get("said") or {"error": 1}),
+              _cwhy or str(_cr.get("said")))
+        check("and the conversation a call opens is kept on its row",
+              _cr["rows"][3][2] == "c-smoke", _cwhy or str(_cr["rows"][3]))
+
     print("\n== texting a buyer, and reading what they text back ==")
     from contextlib import contextmanager as _ctxmgr
 
@@ -8750,19 +9021,93 @@ def _stores_section(before: set[str]) -> None:
     ]
     check("every database this deployment serves is at the newest revision",
           not _behind, f"behind: {_behind}")
-    # **A backup line has to name the database in a form libpq reads.** The
-    # application's URL carries SQLAlchemy's driver (`+psycopg`), and libpq
-    # does not refuse that -- it misreads it as settings, finds none, and
-    # connects to the local defaults: a socket error that says nothing about
-    # the URL, or a dump of some other database under this one's file name.
-    # Every line `make dump-ops ARGS=--files` prints goes through `for_libpq`.
+    # **A backup has to name the database in a form libpq reads, and never
+    # with its password.** The application's URL carries SQLAlchemy's driver
+    # (`+psycopg`), and libpq does not refuse that -- it misreads it as
+    # settings, finds none, and connects to the local defaults: a socket
+    # error that says nothing about the URL, or a dump of some other database
+    # under this one's file name. And `make dump-ops ARGS=--files` printed
+    # each line with the password in it, for somebody to run under `sudo`
+    # and so into auth.log. It runs `pg_dump` itself now, the URL passed
+    # without the password and the password in `PGPASSWORD`.
+    import ast as _bast
+    import os as _bos
+    import tempfile as _btmp
+
     from app import pg as _bpg
 
     _app_url = "postgresql+psycopg://liner:s3cret@db.internal:5432/liner_alsbou"
-    check("a backup line names the database the way pg_dump reads it",
-          _bpg.for_libpq(_app_url) == "postgresql://liner:s3cret@db.internal:5432/liner_alsbou"
-          and "pg.for_libpq(url)" in pathlib.Path("scripts/dump_ops.py").read_text(),
-          _bpg.safe(_bpg.for_libpq(_app_url)))
+    _dump_src = pathlib.Path("scripts/dump_ops.py").read_text()
+    # Every call in the code, read by the parser rather than a pattern, so a
+    # docstring quoting the call cannot stand in for one.
+    _libpq_calls = [
+        n for n in _bast.walk(_bast.parse(_dump_src))
+        if isinstance(n, _bast.Call)
+        and getattr(n.func, "attr", getattr(n.func, "id", "")) == "for_libpq"
+    ]
+    check("a backup names the database the way pg_dump reads it, with no password in it",
+          _bpg.for_libpq(_app_url, password=False) == "postgresql://liner@db.internal:5432/liner_alsbou"
+          and _bpg.for_libpq(_app_url) == "postgresql://liner:s3cret@db.internal:5432/liner_alsbou"
+          and bool(_libpq_calls)
+          and all(any(k.arg == "password" and getattr(k.value, "value", None) is False
+                      for k in c.keywords) for c in _libpq_calls)
+          and "PGPASSWORD" in _dump_src,
+          f"{len(_libpq_calls)} call(s) in dump_ops.py; {_bpg.for_libpq(_app_url, password=False)}")
+    # Driven for real against a stand-in `pg_dump` that records what it was
+    # handed -- no server needed, so this runs on SQLite as well. On request
+    # it fails quoting the password, which its message must never carry.
+    with _btmp.TemporaryDirectory() as _dd:
+        _pgsecret = f"pg-{secrets.token_hex(8)}"
+        _bin = pathlib.Path(_dd, "bin")
+        _bin.mkdir()
+        (_bin / "pg_dump").write_text(
+            "#!/bin/sh\n"
+            'printf "%s\\n" "$@" > "$DUMP_ARGV"\n'
+            'printf "%s" "$PGPASSWORD" > "$DUMP_ENV"\n'
+            'for a in "$@"; do case "$a" in --file=*) : > "${a#--file=}";; esac; done\n'
+            'if [ -n "$DUMP_FAIL" ]; then echo "pg_dump: error: password $PGPASSWORD refused" >&2; exit 1; fi\n'
+        )
+        (_bin / "pg_dump").chmod(0o755)
+        _dump_env = {**_bos.environ,
+                     "PATH": f"{_bin}{_bos.pathsep}{_bos.environ.get('PATH', '')}",
+                     "DUMP_ARGV": f"{_dd}/argv", "DUMP_ENV": f"{_dd}/env",
+                     "DEALERSHIP": "", "DATABASE_URL_TEMPLATE": "",
+                     "DATABASE_URL": f"sqlite:///{_dd}/store.db",
+                     "OPS_DATABASE_URL": f"sqlite:///{_dd}/ops.db", "STORES_DIR": f"{_dd}/stores"}
+        _dump_prog = (
+            "import pathlib, sys\n"
+            "sys.argv = ['dump_ops.py', '--files']\n"
+            "sys.path.insert(0, 'scripts')\n"
+            "import dump_ops\n"
+            "dump_ops.pg_urls = lambda: [('(ops)', "
+            f"'postgresql+psycopg://liner:{_pgsecret}@127.0.0.1:5432/liner_ops')]\n"
+            f"dump_ops.BACKUPS = pathlib.Path({_dd!r})\n"
+            "raise SystemExit(dump_ops.main())\n"
+        )
+        _dumped = subprocess.run([sys.executable, "-c", _dump_prog], env=_dump_env,
+                                 capture_output=True, text=True, timeout=120)
+        _dargv = pathlib.Path(_dd, "argv")
+        _dargv = _dargv.read_text() if _dargv.exists() else ""
+        _denv = pathlib.Path(_dd, "env")
+        _denv = _denv.read_text() if _denv.exists() else ""
+        _dumps = list(pathlib.Path(_dd).glob("backup-*/liner_ops.dump"))
+        check("make dump-ops ARGS=--files runs pg_dump itself, the password in its environment",
+              _dumped.returncode == 0 and _denv == _pgsecret and len(_dumps) == 1
+              and f"-> {_dumps[0]}" in _dumped.stdout,
+              next((ln.strip() for ln in (_dumped.stdout + _dumped.stderr).splitlines()
+                    if "->" in ln or "FAILED" in ln or "Error" in ln),
+                   "no dump named")[:120].replace(_pgsecret, "***"))
+        check("and never on its command line or in what it prints",
+              bool(_dargv) and _pgsecret not in _dargv
+              and _pgsecret not in _dumped.stdout + _dumped.stderr)
+        _dfail = subprocess.run([sys.executable, "-c", _dump_prog],
+                                env={**_dump_env, "DUMP_FAIL": "1"},
+                                capture_output=True, text=True, timeout=120)
+        check("a dump that fails says so, with the password taken out of the reason",
+              _dfail.returncode != 0 and "FAILED" in _dfail.stdout and "refused" in _dfail.stdout
+              and _pgsecret not in _dfail.stdout + _dfail.stderr,
+              next((ln.strip() for ln in _dfail.stdout.splitlines() if "FAILED" in ln),
+                   _dfail.stdout.strip()[-120:])[:120].replace(_pgsecret, "***"))
 
     print("\n== the chat on a dealer's own website ==")
     # The loader on their page asks for its settings on every load, says
