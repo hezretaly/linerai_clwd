@@ -1692,6 +1692,28 @@ def main() -> int:
           lead_now["appointment_set"] == (lead_now["stage"] == "appointment"),
           f"appointment_set={lead_now['appointment_set']} stage={lead_now['stage']}")
 
+    # Measured right after the cancel and before anything else here books
+    # another appointment -- the stale-booking probe below adds one of its
+    # own, which would silently cancel out the drop this check exists to see.
+    appts_after = next(
+        k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
+    )["value"]
+    leads_appt_after = sum(
+        1 for l in call("GET", "/api/leads")["leads"] if l.get("appointment_set")
+    )
+    live_rows_after = sum(1 for a in call("GET", "/api/appointments")["appointments"] if not a["off"])
+    # This would have failed against the old KPI query (no status filter at
+    # all): appts_after would equal appts_before rather than dropping.
+    check("cancelling a booking made in the window drops the KPI, the "
+          "appointment_set count and the off==false count by exactly one, "
+          "together",
+          appts_after == appts_before - 1
+          and leads_appt_after == leads_appt_before - 1
+          and live_rows_after == live_rows_before - 1,
+          f"kpi {appts_before}->{appts_after}, "
+          f"appointment_set {leads_appt_before}->{leads_appt_after}, "
+          f"off==false {live_rows_before}->{live_rows_after}")
+
     # Declined only while it stays declined: every thread closed, and one
     # closed as a client decline (threads.lead_declined). The buyer page's
     # header used to answer a *wider* rule (any thread declined, whether or
@@ -1745,25 +1767,6 @@ def main() -> int:
     check("and it surfaces in its own 'visit passed, not marked' queue "
           "instead of vanishing",
           stale["id"] in unmarked_ids, f"badge={badge_stale}")
-
-    appts_after = next(
-        k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
-    )["value"]
-    leads_appt_after = sum(
-        1 for l in call("GET", "/api/leads")["leads"] if l.get("appointment_set")
-    )
-    live_rows_after = sum(1 for a in call("GET", "/api/appointments")["appointments"] if not a["off"])
-    # This would have failed against the old KPI query (no status filter at
-    # all): appts_after would equal appts_before rather than dropping.
-    check("cancelling a booking made in the window drops the KPI, the "
-          "appointment_set count and the off==false count by exactly one, "
-          "together",
-          appts_after == appts_before - 1
-          and leads_appt_after == leads_appt_before - 1
-          and live_rows_after == live_rows_before - 1,
-          f"kpi {appts_before}->{appts_after}, "
-          f"appointment_set {leads_appt_before}->{leads_appt_after}, "
-          f"off==false {live_rows_before}->{live_rows_after}")
 
     # A rep who leaves, still holding buyers. They drop off the roster and
     # their leads stay pointing at them -- not unclaimed, so no queue asks

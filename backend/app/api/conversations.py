@@ -39,7 +39,12 @@ def list_conversations(
     # opening the chat widget and closing it should not reach the dealer. The
     # rule lives in `app/threads.py` because the sidebar badge has to agree
     # with this list, and for a while it did not.
-    query = threads.conversations(db)
+    #
+    # `listed`, not `started`: an anonymous caller escalated mid-call, before
+    # any of their audio was transcribed, still needs a rep to find them, and
+    # this list is where a rep looks. Excluding such a row hid it from the
+    # very page "Needs a person" points a rep at.
+    query = db.query(Conversation).filter(threads.listed(db))
     if status:
         query = query.filter(Conversation.status == status)
     if channel:
