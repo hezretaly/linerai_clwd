@@ -1181,9 +1181,187 @@ def main() -> int:
             db.delete(convo)
         db.commit()
 
+        phone_bridge_section()
+
         return report()
     finally:
         db.close()
+
+
+def phone_bridge_section() -> None:
+    """The bridge's own functions against real sessions, with no Twilio socket.
+
+    The bridge has never carried a real call, so these are the only times its
+    database work runs. Every assertion reads the call row back through a
+    **fresh** ops session: the row is in `ops.db`, and a change committed on a
+    store session looks right on the object that was changed while nothing
+    reaches the file -- only a second session can tell the two apart.
+    """
+    print("\n== the phone bridge writes Liner's own call log ==")
+    import asyncio
+    import json
+    import logging
+    import uuid
+
+    import websockets
+
+    from app import flags, phone_bridge
+    from app.config import settings as cfg
+    from app.db import ops_session
+    from app.models import DemoRequest, Event, PhoneCall
+
+    stamp = uuid.uuid4().hex[:8]
+    calls: list[str] = []
+    demos: list[str] = []
+    convos: list[str] = []
+
+    def new_call(persona: str) -> str:
+        with ops_session() as ops:
+            row = PhoneCall(direction="in", call_sid=f"CAagentcheck{stamp}{len(calls)}",
+                            from_number="+15025550142", to_number="+15025550100",
+                            persona=persona, status="in-progress")
+            ops.add(row)
+            ops.commit()
+            calls.append(row.id)
+            return row.id
+
+    def read(call_id: str) -> PhoneCall:
+        with ops_session() as ops:
+            return ops.query(PhoneCall).filter_by(id=call_id).one()
+
+    def attempt(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs), ""
+        except Exception as exc:  # the NameError this section exists for
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def ended_events(call_id: str) -> int:
+        with SessionLocal() as db:
+            return sum(
+                1 for e in db.query(Event).filter_by(type="phone.ended").all()
+                if json.loads(e.payload_json).get("call_id") == call_id
+            )
+
+    class Twilio:
+        """The media socket's far end: only how it was closed matters here."""
+
+        def __init__(self) -> None:
+            self.closed: tuple[int, str] | None = None
+
+        async def accept(self) -> None:
+            pass
+
+        async def close(self, code: int = 1000, reason: str = "") -> None:
+            self.closed = (code, reason)
+
+    quiet = logging.getLogger("liner.phone.bridge")
+    was_level = quiet.level
+    was_keys = (cfg.openai_api_key, cfg.voice_provider_key)
+    was_connect, was_pump = websockets.connect, phone_bridge._pump
+    try:
+        # Liner's own persona: every tool it has runs through `_execute`.
+        liner = new_call(flags.PHONE_LINER)
+        state = phone_bridge._Call(call_id=liner, persona=flags.PHONE_LINER, conversation_id="")
+        offered, err = attempt(phone_bridge._execute, state, "check_demo_slots", {})
+        check("a tool on Liner's own line runs", bool(offered and offered.get("slots")),
+              err or str(offered)[:80])
+
+        slot = ((offered or {}).get("slots") or [None])[0]
+        booked, err = attempt(phone_bridge._execute, state, "book_demo", {
+            "name": "Agent Check", "dealership": "Agent Check Motors",
+            "email": "agent-check@example.com", "starts_at": slot, "consent": True,
+            "notes": "Written by agent_loop_check and removed after it.",
+        })
+        if booked and booked.get("request_id"):
+            demos.append(booked["request_id"])
+        check("and a demo it books is linked from the call row, in ops.db",
+              bool(booked and booked.get("booked"))
+              and read(liner).demo_request_id == booked["request_id"],
+              err or str(booked)[:80])
+
+        # The backstop stamp, for a call whose status callback never came.
+        _, err = attempt(phone_bridge._finish, liner)
+        check("a call the socket dropped is stamped as ended",
+              not err and read(liner).ended_at is not None, err)
+        check("and announced once, on the dealership's event stream",
+              ended_events(liner) == 1, str(ended_events(liner)))
+
+        hung = new_call(flags.PHONE_LINER)
+        state = phone_bridge._Call(call_id=hung, persona=flags.PHONE_LINER, conversation_id="")
+        closed, err = attempt(phone_bridge._execute, state, "end_call",
+                              {"summary": "Asked about the demo, then hung up."})
+        check("end_call puts the phone down and the row says so",
+              bool(closed and closed.get("closed")) and read(hung).ended_at is not None,
+              err or str(closed)[:80])
+        attempt(phone_bridge._finish, hung)
+        check("so the backstop leaves it alone rather than announcing it twice",
+              ended_events(hung) == 0, str(ended_events(hung)))
+
+        # The provider refusing the connection: a bad key, a dropped network.
+        # Nothing here can reach it, so the refusal is handed over directly.
+        def refuse(*args, **kwargs):
+            raise ConnectionRefusedError("agent_loop_check refused the provider")
+
+        websockets.connect = refuse
+        quiet.setLevel(logging.CRITICAL)  # the traceback is the expected path
+        failed = new_call(flags.PHONE_LINER)
+        twilio = Twilio()
+        _, err = attempt(asyncio.run, phone_bridge._pump(
+            twilio, call_id=failed, persona=flags.PHONE_LINER,
+            instructions="x", tools=[], conversation_id=""))
+        row = read(failed)
+        check("a call the provider refused is recorded as failed",
+              not err and row.status == "failed" and row.ended_at is not None,
+              err or f"{row.status} {row.ended_at}")
+        check("and Twilio is told why the line closed",
+              bool(twilio.closed and twilio.closed[0] == phone_bridge.UNCONFIGURED),
+              str(twilio.closed))
+
+        # No key at all: the socket closes before anything is bridged.
+        cfg.openai_api_key, cfg.voice_provider_key = "", ""
+        unkeyed = new_call(flags.PHONE_LINER)
+        twilio = Twilio()
+        _, err = attempt(asyncio.run, phone_bridge.media_socket(twilio, call=unkeyed))
+        row = read(unkeyed)
+        check("a call nobody can answer is recorded as failed",
+              not err and row.status == "failed" and row.ended_at is not None,
+              err or f"{row.status} {row.ended_at}")
+        check("and closed naming the missing key",
+              bool(twilio.closed and "OPENAI_API_KEY" in twilio.closed[1]),
+              str(twilio.closed))
+
+        # The dealership's persona mints a thread in the store and links it
+        # from the call row in ops.db. The pump is stood in for: past this
+        # point the call is audio, which needs the provider.
+        heard: dict = {}
+
+        async def pump(websocket, **kwargs):
+            heard.update(kwargs)
+
+        phone_bridge._pump = pump
+        cfg.openai_api_key = "sk-agent-check-never-sent"
+        dealer = new_call(flags.PHONE_DEALERSHIP)
+        twilio = Twilio()
+        _, err = attempt(asyncio.run, phone_bridge.media_socket(twilio, call=dealer))
+        if heard.get("conversation_id"):
+            convos.append(heard["conversation_id"])
+        check("the dealership's call is linked to the thread it writes",
+              not err and bool(heard.get("conversation_id"))
+              and read(dealer).conversation_id == heard["conversation_id"],
+              err or f"{read(dealer).conversation_id!r} vs {heard.get('conversation_id')!r}")
+    finally:
+        websockets.connect, phone_bridge._pump = was_connect, was_pump
+        cfg.openai_api_key, cfg.voice_provider_key = was_keys
+        quiet.setLevel(was_level)
+        # Given back, like the recordings above: a demo left booked holds a
+        # time the marketing page would otherwise offer.
+        with ops_session() as ops:
+            ops.query(PhoneCall).filter(PhoneCall.id.in_(calls)).delete()
+            ops.query(DemoRequest).filter(DemoRequest.id.in_(demos)).delete()
+            ops.commit()
+        with SessionLocal() as db:
+            db.query(Conversation).filter(Conversation.id.in_(convos)).delete()
+            db.commit()
 
 
 def get_provider_for(name: str):

@@ -122,10 +122,7 @@ async def media_socket(websocket: WebSocket, call: str = Query("")) -> None:
     """
     await websocket.accept()
 
-    db = SessionLocal()
-    # `ops_phone_calls` is Liner's own: one number, one log, never per store.
-    ops = ops_session()
-    try:
+    with _session() as (db, ops):
         row = ops.query(PhoneCall).filter_by(id=call).one_or_none() if call else None
         if row is None:
             log.warning("media socket opened for unknown call %r", call)
@@ -133,16 +130,19 @@ async def media_socket(websocket: WebSocket, call: str = Query("")) -> None:
             return
         persona = row.persona or flags.PHONE_LINER
         try:
-            instructions, tools, convo = _brief_for(db, row, persona)
+            instructions, tools, convo = _brief_for(db, persona)
         except NotConfiguredHere as exc:
             log.error("cannot answer call %s: %s", row.id, exc)
             row.status = "failed"
             row.ended_at = utcnow()
-            db.commit()
+            ops.commit()
             await websocket.close(code=UNCONFIGURED, reason=str(exc)[:110])
             return
-    finally:
-        db.close()
+        if convo:
+            # The thread is in the store and the call row is in ops.db, so
+            # the link between them is written here, on the row's own session.
+            row.conversation_id = convo
+            ops.commit()
 
     await _pump(websocket, call_id=call, persona=persona,
                 instructions=instructions, tools=tools, conversation_id=convo)
@@ -152,7 +152,7 @@ class NotConfiguredHere(Exception):
     """Something the call needs is absent. Closes the socket with a reason."""
 
 
-def _brief_for(db, row: PhoneCall, persona: str) -> tuple[str, list[dict], str]:
+def _brief_for(db, persona: str) -> tuple[str, list[dict], str]:
     """Who answers, what they may do, and the thread it is written into.
 
     The two personas differ in every one of those three, which is the whole
@@ -180,8 +180,6 @@ def _brief_for(db, row: PhoneCall, persona: str) -> tuple[str, list[dict], str]:
         db.add(convo)
         db.commit()
         db.refresh(convo)
-        row.conversation_id = convo.id
-        db.commit()
         return (
             build_system_prompt(db, dealership, live_settings(db), channel="voice"),
             agent_tools.TOOL_DEFS,
@@ -235,12 +233,12 @@ async def _pump(
         pass
     except Exception as exc:  # a refused key, a dropped provider, a bad model
         log.exception("phone bridge failed on call %s", call_id)
-        with _session() as db:
+        with _session() as (_, ops):
             row = ops.query(PhoneCall).filter_by(id=call_id).one_or_none()
             if row is not None:
                 row.status = row.status if row.status == "completed" else "failed"
                 row.ended_at = row.ended_at or utcnow()
-                db.commit()
+                ops.commit()
         try:
             await websocket.close(code=UNCONFIGURED, reason=str(exc)[:110])
         except RuntimeError:
@@ -271,18 +269,25 @@ class _Call:
 
 @contextmanager
 def _session():
-    """A short database session, closed whatever happens.
+    """Short sessions on both databases, closed whatever happens.
 
     The bridge is long-lived and a call can last ten minutes; holding one
     session open across it would pin a SQLite connection and read stale rows
     for the whole call. Each piece of work takes its own.
+
+    **Two, because the call touches both sides of the line.** The call row is
+    `ops_phone_calls`, in Liner's own database, so a change to it is committed
+    on `ops` -- committed on `db` it looks right on the object and never
+    reaches the file. The thread, its messages and the event stream are the
+    store's, and stay on `db`.
     """
     db = SessionLocal()
     ops = ops_session()
     try:
-        yield db
+        yield db, ops
     finally:
         db.close()
+        ops.close()
 
 
 async def _from_caller(websocket: WebSocket, model, state: _Call) -> None:
@@ -405,7 +410,7 @@ async def _run_tool(model, state: _Call, event: dict[str, Any]) -> None:
 
 def _execute(state: _Call, name: str, args: dict) -> dict:
     """Blocking DB work, off the event loop."""
-    with _session() as db:
+    with _session() as (db, ops):
         if state.persona == flags.PHONE_DEALERSHIP:
             from app.agent import tools as agent_tools
 
@@ -421,7 +426,9 @@ def _execute(state: _Call, name: str, args: dict) -> dict:
         if row is None:
             return {"error": "This call is no longer on file."}
         try:
-            return phone_persona.execute(db, row, name, args)
+            # `ops`, not `db`: the executors commit what they write on the
+            # call row -- the demo it booked, the moment it ended.
+            return phone_persona.execute(ops, row, name, args)
         except phone_persona.ToolError as exc:
             return {"error": str(exc)}
 
@@ -438,7 +445,7 @@ def _remember(state: _Call, role: str, text: str) -> None:
     text = (text or "").strip()
     if not text or not state.conversation_id:
         return
-    with _session() as db:
+    with _session() as (db, _):
         db.add(Message(
             conversation_id=state.conversation_id,
             role="assistant" if role == "assistant" else "buyer",
@@ -455,7 +462,7 @@ def _finish(call_id: str) -> None:
     reseed, a second environment -- so a finished call is never left reading
     as in progress for ever.
     """
-    with _session() as db:
+    with _session() as (db, ops):
         row = ops.query(PhoneCall).filter_by(id=call_id).one_or_none()
         if row is None:
             return
@@ -466,5 +473,5 @@ def _finish(call_id: str) -> None:
             return
         row.ended_at = utcnow()
         row.status = row.status if row.status == "completed" else "in-progress"
-        db.commit()
+        ops.commit()
         emit(db, "phone.ended", {"call_id": row.id, "status": row.status})

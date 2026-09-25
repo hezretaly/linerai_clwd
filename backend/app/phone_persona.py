@@ -269,7 +269,11 @@ EXECUTORS = {
 
 def execute(db: Session, call: PhoneCall, name: str, args: dict) -> dict:
     """Run one of ours. Unknown names are refused rather than ignored: a model
-    calling a tool that silently returns nothing waits for ever."""
+    calling a tool that silently returns nothing waits for ever.
+
+    `db` is the session `call` was loaded from -- Liner's own, since
+    `ops_phone_calls` is ours -- because the executors commit what they write
+    on the call row."""
     runner = EXECUTORS.get(name)
     if runner is None:
         raise ToolError(
