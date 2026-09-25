@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app import clock
+from app import appointment_scope, clock
+from app.add_user import PASSWORD_BYTES, InvalidEmail, OpsEmailConflict, create_user, pwd
 from app.api.deps import (
     DEALERSHIP_ROLES,
     current_user,
@@ -75,10 +77,55 @@ def list_team(
     return {"members": [rep_load(db, u, dealership) for u in rows]}
 
 
+class NewMember(BaseModel):
+    name: str
+    email: str
+
+
+@router.post("/team")
+def add_member(
+    body: NewMember,
+    db: Session = Depends(get_db),
+    manager: User = Depends(require_manager),
+    dealership: Dealership = Depends(get_dealership),
+) -> dict:
+    """A manager adds a rep. Always role "rep" -- a dealership has exactly one
+    manager, and there is no path here to a second.
+
+    Reuses `add_user.create_user`, the same validation, ops_users check,
+    password generation and row creation the CLI runs. Unlike the CLI, an
+    address already on the team is refused with a 409 rather than a silent
+    no-op: a manager pressing Add expects either a new account or an error,
+    never the same result for both.
+    """
+    try:
+        result = create_user(db, body.email, body.name, "rep")
+    except InvalidEmail:
+        raise HTTPException(400, "That does not look like an email address.")
+    except OpsEmailConflict:
+        raise HTTPException(409, "That address is one of Liner's own accounts.")
+    if not result.created:
+        raise HTTPException(409, "That address is already on the team.")
+    return {"member": rep_load(db, result.user, dealership), "password": result.password}
+
+
 class MemberPatch(BaseModel):
     daily_cap: int | None = None
     notify_channel: str | None = None
     active: bool | None = None
+
+
+def _member(db: Session, user_id: str) -> User:
+    """A current dealership rep or manager, by id -- 404 for anyone else.
+
+    404 rather than 403 for an owner too: from a dealership's side "that
+    account exists but is not yours" is itself something they should not
+    learn.
+    """
+    member = db.query(User).filter_by(id=user_id).one_or_none()
+    if member is None or member.role not in DEALERSHIP_ROLES:
+        raise HTTPException(404, "Member not found")
+    return member
 
 
 @router.patch("/team/{user_id}")
@@ -89,12 +136,7 @@ def patch_member(
     manager: User = Depends(require_manager),
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
-    member = db.query(User).filter_by(id=user_id).one_or_none()
-    if member is None or member.role not in DEALERSHIP_ROLES:
-        # 404 for an owner too, not 403: from a dealership's side "that
-        # account exists but is not yours" is itself something they should
-        # not learn.
-        raise HTTPException(404, "Member not found")
+    member = _member(db, user_id)
     if body.notify_channel is not None and body.notify_channel not in {"email", "dashboard"}:
         raise HTTPException(400, "notify_channel must be 'email' or 'dashboard'")
     leaving = body.active is False and member.active
@@ -105,6 +147,53 @@ def patch_member(
     if leaving:
         emit(db, "team.deactivated", {"user_id": member.id, **handed_back})
     return {**rep_load(db, member, dealership), **handed_back}
+
+
+def _returning(
+    db: Session, member: User, dealership: Dealership
+) -> tuple[list[Lead], list[Appointment], list[Escalation]]:
+    """What leaving hands back: every lead the member owns, every standing
+    appointment of theirs still ahead, and every escalation they claimed on a
+    thread that is still open. One definition, read by `_hand_back` (which
+    mutates what this returns) and `remove_preview` (which only counts it) --
+    so the blast radius a manager is shown before removing someone can never
+    drift from what removing them actually does.
+
+    Only appointments still ahead: rewriting the history of who hosted a
+    visit last March would make the record wrong to make a queue tidy.
+    `starts_at` is dealership wall-clock; comparing it against `utcnow()`
+    mis-keeps or mis-releases visits in the 5-6 hour band where the two
+    clocks disagree.
+
+    Only escalations on a thread that is still open: on a closed one, claimed
+    is history -- they took it, the conversation ended, and reopening years
+    of that on a departure would bury the live queue under work that is
+    genuinely done. This is the difference between leaving and being merely
+    unassigned -- when a rep is handed a different buyer they are still here
+    to finish what they claimed, which is why `assign_lead` deliberately
+    leaves these alone.
+    """
+    leads = db.query(Lead).filter(Lead.assigned_user_id == member.id).all()
+    visits = (
+        db.query(Appointment)
+        .filter(
+            Appointment.assigned_user_id == member.id,
+            Appointment.status.in_(appointment_scope.STANDING_STATUSES),
+            Appointment.starts_at >= clock.wall_now(dealership),
+        )
+        .all()
+    )
+    live_threads = {
+        c.id for c in db.query(Conversation.id, Conversation.status)
+        .filter(Conversation.status != "closed").all()
+    }
+    escalations = [
+        e for e in db.query(Escalation)
+        .filter(Escalation.claimed_by_user_id == member.id, Escalation.claimed_at.isnot(None))
+        .all()
+        if e.conversation_id in live_threads
+    ]
+    return leads, visits, escalations
 
 
 def _hand_back(db: Session, member: User, dealership: Dealership) -> dict:
@@ -123,56 +212,82 @@ def _hand_back(db: Session, member: User, dealership: Dealership) -> dict:
     the unassigned queue where somebody picks it up -- quietly deleting it from
     the calendar because a rep left would be a far worse answer.
     """
-    leads = db.query(Lead).filter(Lead.assigned_user_id == member.id).all()
+    leads, visits, escalations = _returning(db, member, dealership)
     for lead in leads:
         lead.assigned_user_id = None
-    # Only what is still ahead. Rewriting the history of who hosted a visit
-    # last March would make the record wrong to make a queue tidy.
-    visits = (
-        db.query(Appointment)
-        .filter(
-            Appointment.assigned_user_id == member.id,
-            Appointment.status.in_(["booked", "confirmed"]),
-            # `starts_at` is dealership wall-clock; comparing it against
-            # `utcnow()` mis-keeps or mis-releases visits in the 5-6 hour
-            # band where the two clocks disagree.
-            Appointment.starts_at >= clock.wall_now(dealership),
-        )
-        .all()
-    )
     for visit in visits:
         visit.assigned_user_id = None
-
-    # And anything they picked up and did not finish. Claiming takes an
-    # escalation out of Needs a person permanently -- there is no resolved
-    # state -- so one claimed by somebody who has since left is a buyer nobody
-    # is calling back and no queue is asking about.
-    #
-    # Only on a thread that is still open. On a closed one, claimed is history:
-    # they took it, the conversation ended, and reopening years of that on a
-    # departure would bury the live queue under work that is genuinely done.
-    # This is the difference between leaving and being unassigned -- when a rep
-    # is merely handed a different buyer they are still here to finish what
-    # they claimed, which is why `assign_lead` deliberately leaves these alone.
-    live_threads = {
-        c.id for c in db.query(Conversation.id, Conversation.status)
-        .filter(Conversation.status != "closed").all()
-    }
-    reopened = [
-        e for e in db.query(Escalation)
-        .filter(Escalation.claimed_by_user_id == member.id, Escalation.claimed_at.isnot(None))
-        .all()
-        if e.conversation_id in live_threads
-    ]
-    for escalation in reopened:
+    for escalation in escalations:
         escalation.claimed_by_user_id = None
         escalation.claimed_at = None
-
     return {
         "leads_returned": len(leads),
         "appointments_returned": len(visits),
-        "escalations_reopened": len(reopened),
+        "escalations_reopened": len(escalations),
     }
+
+
+@router.get("/team/{user_id}/remove-preview")
+def remove_preview(
+    user_id: str,
+    db: Session = Depends(get_db),
+    manager: User = Depends(require_manager),
+    dealership: Dealership = Depends(get_dealership),
+) -> dict:
+    """What `PATCH /team/{id}` with `active: false` would hand back, read-only.
+
+    Reads `_returning` -- the exact same rows `_hand_back` would mutate --
+    and only counts them. Backs a confirmation dialog: a manager needs to see
+    the blast radius before committing to removing someone, which is exactly
+    the reason `_hand_back` itself exists (see its docstring).
+    """
+    member = _member(db, user_id)
+    leads, visits, escalations = _returning(db, member, dealership)
+    return {
+        "leads_returned": len(leads),
+        "appointments_returned": len(visits),
+        "escalations_reopened": len(escalations),
+    }
+
+
+@router.post("/team/{user_id}/reset-password")
+def reset_password(
+    user_id: str,
+    db: Session = Depends(get_db),
+    manager: User = Depends(require_manager),
+) -> dict:
+    member = _member(db, user_id)
+    password = secrets.token_urlsafe(PASSWORD_BYTES)
+    member.password_hash = pwd.hash(password)
+    db.commit()
+    return {"password": password}
+
+
+class OutPatch(BaseModel):
+    out: bool
+
+
+@router.patch("/team/{user_id}/out")
+def set_out(
+    user_id: str,
+    body: OutPatch,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
+) -> dict:
+    """A rep sets their own out status; a manager sets anyone's.
+
+    Same split `assign_lead` enforces for who may hand a buyer to whom: who
+    works which lead, and who is on the floor right now, are both how a
+    floor is run rather than something a rep decides for a colleague.
+    """
+    member = _member(db, user_id)
+    if user.role != "manager" and user.id != member.id:
+        raise HTTPException(403, "You can only set your own status.")
+    member.out = body.out
+    db.commit()
+    emit(db, "team.out_changed", {"user_id": member.id, "out": member.out})
+    return rep_load(db, member, dealership)
 
 
 @router.get("/dealership")

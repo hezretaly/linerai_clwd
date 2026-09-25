@@ -17,7 +17,7 @@ from app import (
     threads,
     timeline,
 )
-from app.api.deps import current_user, find_staff, get_dealership
+from app.api.deps import assignable_query, current_user, find_staff, get_dealership
 from app.integrations import twilio_account
 from app.integrations.registry import get_email_sender
 from app.integrations.sms import twilio_sms
@@ -281,6 +281,7 @@ def assign_lead(
     body: AssignBody,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     """Give a buyer an owner -- and, with them, everything of theirs that was
     waiting for one.
@@ -321,6 +322,18 @@ def assign_lead(
             "You can take this one over yourself.",
         )
 
+    # Being handed a buyer is new work, and out means not available for new
+    # work -- the same rule POST /appointments/{id}/assign already enforces.
+    # Taking one over yourself is not gated on it: that is a deliberate,
+    # in-the-moment choice by the person it happens to, not new work landing
+    # on them from someone else.
+    if (
+        chosen is not None
+        and chosen.id != user.id
+        and assignable_query(db).filter(User.id == chosen.id).first() is None
+    ):
+        raise HTTPException(409, f"{chosen.name} is marked out and cannot take new work.")
+
     lead.assigned_user_id = chosen.id if chosen else None
 
     claimed = 0
@@ -344,14 +357,24 @@ def assign_lead(
     # un-happen it -- reopening resolved work because an owner changed is how a
     # queue starts lying in the other direction.
 
+    # The calendar half of the same act, mirroring the escalation-claiming
+    # loop just above: giving somebody a buyer claims everything of theirs
+    # that was waiting, appointments included.
+    appointments_assigned = (
+        appointment_scope.assign_open_appointments(db, dealership, lead.id, chosen.id)
+        if chosen is not None else 0
+    )
+
     db.commit()
     emit(db, "lead.assigned", {
         "lead_id": lead.id,
         "user_id": chosen.id if chosen else None,
         "user_name": chosen.name if chosen else "",
         "escalations_claimed": claimed,
+        "appointments_assigned": appointments_assigned,
     })
-    return {**lead_out(lead, db), "escalations_claimed": claimed}
+    return {**lead_out(lead, db), "escalations_claimed": claimed,
+            "appointments_assigned": appointments_assigned}
 
 
 @router.get("/{lead_id}/timeline")

@@ -69,6 +69,9 @@ EVENT_TYPES = {
     # Somebody left, and their buyers went back to the queue rather than with
     # them. Three panels change, so it is worth a socket event.
     "team.deactivated",
+    # A rep's out status changed -- the roster and the assign pickers care,
+    # nothing else does (contrast `team.deactivated`, which hands work back).
+    "team.out_changed",
     "vehicle.status_changed",
     "call.started",
     "call.ended",

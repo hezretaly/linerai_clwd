@@ -744,7 +744,9 @@ function AppointmentDrawer({ id, onClose }: { id: string | null; onClose: () => 
     },
   })
 
-  const reps = team?.members.filter((m) => m.role === 'rep') ?? []
+  // Out reps are excluded rather than shown disabled: a control that can only
+  // fail here is worse than not offering it (AssignTo.tsx makes the same call).
+  const reps = team?.members.filter((m) => m.role === 'rep' && !m.out) ?? []
   const writing = reach !== null && reach.for === id ? reach : null
 
   return (

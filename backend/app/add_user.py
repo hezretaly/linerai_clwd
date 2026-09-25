@@ -27,6 +27,11 @@ afterwards with `make set-password EMAIL=...`.
 address that is already there and it reports the account and stops. Somebody
 may have changed their own password, and silently re-hashing it here would lock
 them out with nothing saying why.
+
+**`create_user` is the part `POST /team` shares.** Everything about turning an
+address, a name and a role into a `users` row -- the CLI wraps it with a store
+to add to and messages to print; the endpoint wraps it with a 409 in place of
+the CLI's silent no-op.
 """
 
 from __future__ import annotations
@@ -35,8 +40,10 @@ import argparse
 import re
 import secrets
 import sys
+from dataclasses import dataclass
 
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 
 from app.db import MISSING_TABLE, SessionLocal, active_store, create_all, has_database, ops_session
 from app.models import Dealership, OpsUser, User
@@ -68,6 +75,92 @@ PASSWORD_BYTES = 12
 #: `make add-user EMAIL=` would otherwise create an account with no address
 #: that nobody can ever sign in to and that the team page then lists.
 LOOKS_LIKE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class InvalidEmail(ValueError):
+    """`email` does not look like an email address."""
+
+    def __init__(self, email: str):
+        self.email = email
+        super().__init__(f"{email!r} does not look like an email address.")
+
+
+class InvalidRole(ValueError):
+    """`role` is not one this system knows (see `ROLES`)."""
+
+    def __init__(self, role: str):
+        self.role = role
+        super().__init__(f"Unknown role {role!r}.")
+
+
+class OpsEmailConflict(Exception):
+    """`email` is already one of Liner's own, in `ops_users`."""
+
+    def __init__(self, email: str):
+        self.email = email
+        super().__init__(f"{email} is one of Liner's own accounts, in ops_users.")
+
+
+@dataclass
+class CreateUserResult:
+    user: User
+    #: Plaintext, only set when this call actually created the row.
+    password: str | None
+    created: bool
+    #: True when `name` was blank and derived from the address's local part.
+    name_defaulted: bool
+
+
+def create_user(db: Session, email: str, name: str, role: str) -> CreateUserResult:
+    """Validate, check for a clash with our own accounts, and create the row.
+
+    The core `add_user` (the CLI) and `POST /team` share. Raises
+    `InvalidEmail` or `InvalidRole` for bad input and `OpsEmailConflict` when
+    `email` is already one of Liner's own -- three refusals either caller can
+    act on. An address that already belongs to a *dealership* account is not
+    raised as an error here: it comes back with `created=False` and no
+    password, because the two callers disagree about what that means -- the
+    CLI's answer is a no-op, `POST /team`'s is a 409, and that distinction is
+    the caller's to make, not this function's.
+    """
+    email = (email or "").strip().lower()
+    name = (name or "").strip()
+    role = (role or "rep").strip().lower()
+
+    if not LOOKS_LIKE_EMAIL.match(email):
+        raise InvalidEmail(email)
+    if role not in ROLES:
+        raise InvalidRole(role)
+
+    name_defaulted = not name
+    if name_defaulted:
+        # Derived rather than refused: the local part is almost always their
+        # name, and an account whose name is blank renders as an empty avatar
+        # on every row they touch.
+        name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+
+    # Both tables, because the email is what somebody types at the login
+    # form and it has to identify exactly one account. An address that is
+    # already one of ours would otherwise create a second row that the
+    # dealership's login finds first.
+    with ops_session() as ops:
+        clash = ops.query(OpsUser).filter(OpsUser.email == email).one_or_none()
+    if clash is not None:
+        raise OpsEmailConflict(email)
+
+    existing = db.query(User).filter(User.email == email).one_or_none()
+    if existing is not None:
+        return CreateUserResult(existing, None, False, name_defaulted)
+
+    password = secrets.token_urlsafe(PASSWORD_BYTES)
+    user = User(
+        name=name, email=email, role=role,
+        password_hash=_hash(password),
+        avatar_initials=initials(name), active=True,
+    )
+    db.add(user)
+    db.commit()
+    return CreateUserResult(user, password, True, name_defaulted)
 
 
 def initials(name: str) -> str:
@@ -111,27 +204,6 @@ def dealership_in(slug: str) -> str:
 
 
 def add_user(email: str, name: str, role: str) -> int:
-    email = (email or "").strip().lower()
-    name = (name or "").strip()
-    role = (role or "rep").strip().lower()
-
-    if not LOOKS_LIKE_EMAIL.match(email):
-        print(f"{email!r} does not look like an email address.", file=sys.stderr)
-        print('Usage: make add-user EMAIL=someone@example.com NAME="Their Name" ROLE=rep',
-              file=sys.stderr)
-        return 1
-    if role not in ROLES:
-        print(f"Unknown role {role!r}. One of:", file=sys.stderr)
-        for known, what in ROLES.items():
-            print(f"  {known:8} {what}", file=sys.stderr)
-        return 1
-    if not name:
-        # Derived rather than refused: the local part is almost always their
-        # name, and an account whose name is blank renders as an empty avatar
-        # on every row they touch.
-        name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
-        print(f"No NAME given, using {name!r} from the address.")
-
     slug = active_store()
     dealership = dealership_in(slug)
     if not dealership:
@@ -144,51 +216,50 @@ def add_user(email: str, name: str, role: str) -> int:
     create_all()
     db = SessionLocal()
     try:
-        # Both tables, because the email is what somebody types at the login
-        # form and it has to identify exactly one account. An address that is
-        # already one of ours would otherwise create a second row that the
-        # dealership's login finds first.
-        # Checked in Liner's own database: an address that is one of ours
-        # must not also become a dealership account, and `ops_users` is no
-        # longer in this file at all.
-        with ops_session() as ops:
-            clash = ops.query(OpsUser).filter(OpsUser.email == email).one_or_none()
-        if clash is not None:
-            print(f"{email} is one of Liner's own accounts, in ops_users.", file=sys.stderr)
+        try:
+            result = create_user(db, email, name, role)
+        except InvalidEmail as e:
+            print(f"{e.email!r} does not look like an email address.", file=sys.stderr)
+            print('Usage: make add-user EMAIL=someone@example.com NAME="Their Name" ROLE=rep',
+                  file=sys.stderr)
+            return 1
+        except InvalidRole as e:
+            print(f"Unknown role {e.role!r}. One of:", file=sys.stderr)
+            for known, what in ROLES.items():
+                print(f"  {known:8} {what}", file=sys.stderr)
+            return 1
+        except OpsEmailConflict as e:
+            print(str(e), file=sys.stderr)
             print("Dealership staff and our staff are separate on purpose. Use a different "
                   "address, or `make set-password` to change that one.", file=sys.stderr)
             return 1
 
-        existing = db.query(User).filter(User.email == email).one_or_none()
-        if existing is not None:
+        if result.name_defaulted:
+            print(f"No NAME given, using {result.user.name!r} from the address.")
+
+        if not result.created:
+            existing = result.user
             print(f"{existing.name} <{existing.email}> is already on the team "
                   f"({existing.role}{'' if existing.active else ', deactivated'}).")
             print("Nothing changed -- their password is not touched, in case they have "
                   "changed it themselves.")
-            print(f"To change it:  DEALERSHIP={slug} make set-password EMAIL={email}"
-                  if slug else f"To change it:  make set-password EMAIL={email}")
+            print(f"To change it:  DEALERSHIP={slug} make set-password EMAIL={existing.email}"
+                  if slug else f"To change it:  make set-password EMAIL={existing.email}")
             return 0
-
-        password = secrets.token_urlsafe(PASSWORD_BYTES)
-        db.add(User(
-            name=name, email=email, role=role,
-            password_hash=_hash(password),
-            avatar_initials=initials(name), active=True,
-        ))
-        db.commit()
     finally:
         db.close()
 
-    print(f"\nAdded {name} <{email}> as a {role} of {dealership} ({store_label(slug)}).")
-    print(f"  {ROLES[role]}")
+    print(f"\nAdded {result.user.name} <{result.user.email}> as a {result.user.role} of "
+          f"{dealership} ({store_label(slug)}).")
+    print(f"  {ROLES[result.user.role]}")
     # The address is on the password's line on purpose: the runbook sends
     # this output to a root-only file and shows the session only the lines
     # without an `@` (docs/NEW-SERVER.md), which is what the seed's login
     # lines already rely on. A bare "Password:" line went straight through.
-    print(f"\n  Password for {email}:  {password}")
+    print(f"\n  Password for {result.user.email}:  {result.password}")
     print("\nThis is the only time it is shown -- only the bcrypt hash is stored.")
     print("They can be given a new one with:  "
-          + (f"DEALERSHIP={slug} " if slug else "") + f"make set-password EMAIL={email}")
+          + (f"DEALERSHIP={slug} " if slug else "") + f"make set-password EMAIL={result.user.email}")
     return 0
 
 

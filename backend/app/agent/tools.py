@@ -18,14 +18,17 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.db import utcnow
+from app import appointment_scope, clock
 from app.agent import details
 from app.agent.phrasing import cased
+from app.api.deps import assignable_query
 from app.escalations import claim_for_owner
 from app.events import emit
 from app import conversation_once, matching
@@ -786,13 +789,22 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
     days_ahead = int(args.get("days_ahead") or 7)
     period = args.get("preferred_period") or "any"
 
-    now = utcnow()
-    taken = {
+    # `starts_at` is dealership wall-clock (see appointment_scope's module
+    # docstring), so "now" has to be read off the same clock -- `utcnow()`
+    # disagreed with it by the dealership's UTC offset for several hours a
+    # day, which either offered a past slot or hid a real one.
+    dealership = db.query(Dealership).first()
+    now = clock.wall_now(dealership)
+    capacity = appointment_scope.capacity(db, dealership)
+    # A slot holds as many appointments as the dealership has staff, not one
+    # -- so a running count per time, checked against capacity, replaces the
+    # old set of "any time with a booking".
+    counts = Counter(
         a.starts_at.replace(second=0, microsecond=0)
         for a in db.query(Appointment)
-        .filter(Appointment.starts_at >= now, Appointment.status.in_(["booked", "confirmed"]))
+        .filter(Appointment.starts_at >= now, Appointment.status.in_(appointment_scope.STANDING_STATUSES))
         .all()
-    }
+    )
 
     windows = {"morning": (8, 12), "afternoon": (12, 17), "evening": (17, 20), "any": (8, 20)}
     lo, hi = windows.get(period, windows["any"])
@@ -813,7 +825,7 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
         cursor = day.replace(hour=start_h)
         per_day = 0
         while cursor.hour < end_h and per_day < 3:
-            if cursor > now and cursor.replace(second=0, microsecond=0) not in taken:
+            if cursor > now and counts[cursor.replace(second=0, microsecond=0)] < capacity:
                 slots.append(cursor.isoformat())
                 per_day += 1
             cursor += timedelta(hours=3)
@@ -985,6 +997,7 @@ def book_appointment(
         starts_at = starts_at.replace(tzinfo=None)
 
     hours = _dealership_hours(db)
+    dealership = db.query(Dealership).first()
     window = hours.get(DAY_NAMES[starts_at.weekday()])
     if not window:
         raise ToolError(f"We are closed on {DAY_NAMES[starts_at.weekday()].title()}.")
@@ -993,24 +1006,36 @@ def book_appointment(
             f"That is outside our hours ({window['open']} to {window['close']})."
         )
 
+    from app.api.settings import live_settings
+
+    duration = live_settings(db).booking_slot_length
+
     # Nothing here checked the slot was still free. check_availability filters
-    # taken slots, but that answer ages: a buyer looking at a picked time on a
+    # a full slot, but that answer ages: a buyer looking at a picked time on a
     # booking card can sit on it for minutes, and the model can offer a time it
-    # read several turns ago. Two buyers then get the same 10 AM and one of
-    # them turns up to nobody. The executor is the guarantee, so it checks.
-    clash = (
-        db.query(Appointment)
-        .filter(
-            Appointment.starts_at == starts_at,
-            Appointment.status.in_(["booked", "confirmed"]),
-        )
-        .first()
-    )
-    if clash is not None:
+    # read several turns ago. The executor is the guarantee, so it checks --
+    # against capacity now, since a slot holds as many appointments as the
+    # dealership has staff rather than exactly one.
+    if appointment_scope.slot_taken(db, starts_at) >= appointment_scope.capacity(db, dealership):
         raise ToolError(
             f"{when_label(starts_at)} was taken while you were deciding. "
             "Call check_availability again and offer what is still open."
         )
+
+    # Who this is for, read the same way `booked_by` already is: a plain
+    # string in `args` the model's tool schema never exposes, so only a
+    # caller bypassing `tools.execute` -- a rep booking through their own
+    # endpoint -- can set it. Resolved and checked before the lead or the
+    # appointment row exists, so a conflict never leaves either half-made.
+    assigned_user_id = args.get("assigned_user_id")
+    if assigned_user_id and assignable_query(db).filter_by(id=assigned_user_id).one_or_none() is None:
+        # A stale or deactivated rep id is not worth failing the whole
+        # booking over -- the appointment still gets made, unassigned.
+        assigned_user_id = None
+    if assigned_user_id:
+        conflict = appointment_scope.rep_conflict(db, assigned_user_id, starts_at, duration)
+        if conflict is not None:
+            raise ToolError(f"You already have an appointment at {when_label(starts_at)}.")
 
     lead = attach_lead(db, convo, name=name, email=email, phone=phone)
 
@@ -1020,22 +1045,25 @@ def book_appointment(
     elif convo.focus_vehicle_id:
         vehicle = db.query(Vehicle).filter_by(id=convo.focus_vehicle_id).one_or_none()
 
-    from app.api.settings import live_settings
-
     appointment = Appointment(
         lead_id=lead.id,
         vehicle_id=vehicle.id if vehicle else None,
         starts_at=starts_at,
-        duration_min=live_settings(db).booking_slot_length,
+        duration_min=duration,
         status="booked",
         # Who made it. A rep booking on the phone is not Liner booking, and
         # the overview counts them the same but the calendar should not.
         booked_by=str(args.get("booked_by") or "liner"),
+        assigned_user_id=assigned_user_id,
         conversation_id=convo.id,
         tool_call_id=tool_call_id,
     )
     db.add(appointment)
     convo.stage = "booked"
+    # Same convention as outreach's assign endpoint: fills a blank, never
+    # moves a buyer off whoever already has them.
+    if assigned_user_id and not lead.assigned_user_id:
+        lead.assigned_user_id = assigned_user_id
     db.commit()
     db.refresh(appointment)
 

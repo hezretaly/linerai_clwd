@@ -18,7 +18,7 @@ import { api, ApiError } from '../lib/api'
 import { relative, waited } from '../lib/format'
 import { zonedDateStr } from '../lib/clock'
 import type { Appointment, Escalation, Lead, Overview } from '../lib/types'
-import { Card, Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
+import { Card, Empty, NotBacked, Spinner } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
 import { AssignTo } from '../components/dashboard/AssignTo'
 import { PageIntro } from '../components/dashboard/AppShell'
@@ -281,18 +281,6 @@ export function OverviewPage() {
         accent
         title="Overview"
         subtitle={`${data.dealership.name} -- ${data.dealership.address}`}
-        actions={
-          <>
-            <Unavailable
-              label="Today"
-              why="The KPI cards are the last 24 hours; Needs a person is open right now; the two charts and the Everything-today panel run from local midnight at the showroom. Nothing rolls conversations up by calendar day, so there is no single range to select for the whole page."
-            />
-            <Unavailable
-              label="Export"
-              why="No export endpoint exists. The same data is available from /api/overview."
-            />
-          </>
-        }
       />
 
       {/* ---- KPIs: five cards, the five the endpoint computes -------------- */}

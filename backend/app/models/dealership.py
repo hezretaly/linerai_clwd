@@ -35,6 +35,10 @@ class User(Base):
     daily_cap: Mapped[int] = mapped_column(Integer, default=8)
     notify_channel: Mapped[str] = mapped_column(String(20), default="email")  # email | dashboard
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Temporarily off the floor -- lunch, a day off -- never what they already
+    # own. That is `active` (deactivate, hand everything back); `out` changes
+    # nothing about who owns what, only whether they take new work.
+    out: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = created()
 
 

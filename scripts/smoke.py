@@ -456,6 +456,42 @@ def release_slots() -> int:
     return released
 
 
+def staff_capacity() -> int:
+    """How many appointments one slot can hold on this dealership --
+    `/api/team` already answers `staff_query`, so this is that count minus
+    anybody marked out, the same as `appointment_scope.capacity` computes
+    server-side."""
+    return len([m for m in call("GET", "/api/team")["members"] if not m["out"]])
+
+
+def fill_slot(starts_at: str, count: int, tag: str) -> list[str]:
+    """Book *count* appointments into one exact time. One conversation, not
+    one per booking: `/api/voice/tools` takes an explicit `tool_call_id`
+    (the same relay a real call's tools use), which is what lets many
+    bookings land without minting a fresh chat session per booking and
+    running into the chat ceiling that exists for a wholly different reason
+    (`app/ratelimit.py`, keyed on new sessions per store)."""
+    convo = call("POST", "/api/chat/sessions")["conversation_id"]
+    # A block of ten digits per call, so two fills never mint the same
+    # number -- `app/matching.py` would otherwise fold their fillers onto
+    # one lead by phone, same as the SMS stampede this codebase already
+    # learned from (CLAUDE.md: a fixture value shaped like hex where digits
+    # belong).
+    block = secrets.randbelow(900) * 10
+    ids = []
+    for n in range(count):
+        got = call("POST", "/api/voice/tools", {
+            "conversation_id": convo, "name": "book_appointment",
+            "input": {
+                "starts_at": starts_at, "name": f"{tag} {n}",
+                "phone": f"319-555-{block + n:04d}",
+            },
+            "tool_call_id": f"{tag}-{n}-{secrets.token_hex(3)}",
+        })
+        ids.append(got["result"]["appointment_id"])
+    return ids
+
+
 def _store_files() -> set[str]:
     """The slugs that have a database on disk right now."""
     import pathlib as _pl
@@ -745,9 +781,11 @@ def main() -> int:
     # rails rather than by calling book_appointment directly -- so every run,
     # passing or failing, quietly ate one of the fixture week's twenty slots
     # and the failure surfaced runs later as "0 times on the card" here.
+    rail_booked_slot = None
     for appt in call("GET", "/api/appointments")["appointments"]:
         if appt.get("conversation_id") == convo and appt["status"] in ("booked", "confirmed"):
             booked_here.append(appt["id"])
+            rail_booked_slot = appt["starts_at"]
 
     print("\n== the booking card offers only times the calendar really has ==")
     card_convo = call("POST", "/api/chat/sessions")
@@ -765,13 +803,39 @@ def main() -> int:
     check("grouped into days with times under them",
           all(d.get("slots") for d in card["days"]),
           " / ".join(f"{d['short']}:{len(d['slots'])}" for d in card["days"][:4]))
-    open_slots = {s["starts_at"] for d in card["days"] for s in d["slots"]}
-    taken = {
-        a["starts_at"] for a in call("GET", "/api/appointments")["appointments"]
-        if a["status"] in ("booked", "confirmed")
+
+    # A slot holds as many appointments as the dealership has staff, not
+    # just one -- so "booked" alone must no longer drop a time from the
+    # card, only "full" does. `slot` and `full_slot` are reused below (the
+    # form-booking and second-buyer sections), so they are pinned here
+    # rather than re-derived.
+    offered_now = [s["starts_at"] for d in card["days"] for s in d["slots"]]
+    check("enough distinct times to tell a genuinely full slot from an ordinary one",
+          len(set(offered_now)) >= 3, str(len(set(offered_now))))
+    check("a slot with a single booking -- well under the dealership's staff "
+          "count -- still shows up",
+          rail_booked_slot is None or rail_booked_slot in offered_now,
+          rail_booked_slot)
+    slot = offered_now[0]
+    full_slot = offered_now[-1]
+
+    capacity = staff_capacity()
+    check("the fixture has more than one staff member, or slot capacity is untestable",
+          capacity > 1, str(capacity))
+    fillers = fill_slot(full_slot, capacity, "avail-full")
+    booked_here.extend(fillers)
+    check(f"all {capacity} of the dealership's own staff can share one slot",
+          len(fillers) == capacity, str(len(fillers)))
+
+    refilled = {
+        s["starts_at"]
+        for d in call("GET", f"/api/conversations/{cid}/availability")["days"]
+        for s in d["slots"]
     }
-    check("no already-booked time is offered", not (open_slots & taken),
-          f"{len(open_slots)} offered")
+    check("no already-booked time is offered -- only one that is genuinely full",
+          full_slot not in refilled, full_slot)
+    check("while a slot that never filled up stays offered",
+          slot in refilled, slot)
     # **The card knows who it is talking to.** A buyer who gave their name and
     # number two turns ago and is then asked for both again reads that as not
     # having been listened to, so the card carries what is already on the lead
@@ -814,15 +878,14 @@ def main() -> int:
         s["starts_at"] for d in (again.get("booking") or {"days": []})["days"]
         for s in d["slots"]
     }
-    still_taken = {
-        a["starts_at"] for a in call("GET", "/api/appointments")["appointments"]
-        if a["status"] in ("booked", "confirmed")
-    }
-    check("so a time booked since is not offered a second time",
-          not (replayed & still_taken), f"{len(replayed)} offered")
+    # Same capacity rule as above: a genuinely full slot from the section
+    # just run must not come back a second time on a fresh lookup either.
+    check("a genuinely full slot is not offered a second time",
+          full_slot not in replayed, full_slot)
 
     print("\n== the form books through the executor, refusals and all ==")
-    slot = card["days"][0]["slots"][0]["starts_at"]
+    # `slot` was pinned above, before it was filled to capacity -- it has no
+    # booking of its own yet.
     code, _ = status_of("POST", f"/api/chat/sessions/{cid}/book",
                         {"starts_at": slot, "name": "", "phone": "555-0161"})
     check("a form with no name is refused", code == 409, str(code))
@@ -898,12 +961,25 @@ def main() -> int:
           and filled["known"]["name"] == "Sam Okafor",
           str(filled["known"]))
 
+    # `slot` already carries one booking (Sam Okafor's form, above) -- a
+    # second buyer taking it too is exactly what capacity is for. Fill it the
+    # rest of the way to the dealership's own staff count; each of these is a
+    # booking below capacity at an already-taken time, and each must succeed.
+    slotmates = fill_slot(slot, capacity - 1, "avail-slotmate")
+    booked_here.extend(slotmates)
+    check("a booking below the dealership's staff count still succeeds at a "
+          "time somebody else already holds",
+          len(slotmates) == capacity - 1, str(len(slotmates)))
+
     other = call("POST", "/api/chat/sessions")["conversation_id"]
     code, detail = status_of("POST", f"/api/chat/sessions/{other}/book",
                              {"starts_at": slot, "name": "Dana Two",
                               "email": "dana.two@example.invalid"})
-    # Without this the second buyer books the same slot and turns up to nobody.
-    check("a second buyer cannot take the same slot", code == 409, detail[:80])
+    # Without this the next buyer books the same slot and turns up to nobody
+    # to help them -- but only once every one of the dealership's staff is
+    # already booked into it.
+    check("a slot refuses once it is genuinely full, not after the first booking",
+          code == 409, detail[:80])
 
     print("\n== credit applications are real sends, or nothing ==")
     over0 = call("GET", "/api/overview")
@@ -1607,10 +1683,19 @@ def main() -> int:
               for day in call("GET", f"/api/conversations/{switch_convo}/availability")["days"]
               for s in day["slots"]
           ])
-    check("a time somebody else holds is refused",
+    # A slot holds as many appointments as the dealership has staff, so
+    # rescheduling into a time with room left must succeed -- only a
+    # genuinely full one is refused. `open_slots[2]` is a third, otherwise
+    # untouched time; fill it to capacity with other buyers first.
+    reschedule_capacity = staff_capacity()
+    check("a third distinct time to fill up, separate from the one just moved to",
+          len(open_slots) >= 3, str(len(open_slots)))
+    full_target = open_slots[2]
+    reschedule_fillers = fill_slot(full_target, reschedule_capacity, "reschedule-full")
+    booked_here.extend(reschedule_fillers)
+    check("a time every one of the dealership's staff already holds is refused",
           status_of("POST", f"/api/appointments/{made['id']}/reschedule",
-                    {"starts_at": open_slots[1]})[0] in {200, 409},
-          "same time is a no-op, a taken one is a 409")
+                    {"starts_at": full_target})[0] == 409)
 
     # The card's idempotency key is deterministic on the slot, so a buyer who
     # booked a time, cancelled, and asked for it again matched the *cancelled*
@@ -2520,15 +2605,67 @@ def main() -> int:
           len(made) == 1 and made[0]["booked_by"] == "rep",
           made[0]["booked_by"] if made else "none")
     booked_here.append(made[0]["id"])
+    # The signed-in user is who a rep booking lands on -- the same fact
+    # outreach's assign endpoint already writes by hand, extended to the
+    # moment of booking itself.
+    signed_in = call("GET", "/api/auth/me")["user"]["id"]
+    check("the signed-in user lands on the appointment they booked on a buyer's behalf",
+          made[0]["assigned_user_id"] == signed_in, made[0]["assigned_user_id"])
     # Same executor as the buyer's card, so the same rules bind a rep.
-    code, detail = status_of("POST", f"/api/conversations/{fresh}/book", {
-        "starts_at": rep_slot, "name": "Someone Else", "email": "else@example.invalid",
-    })
-    check("a rep cannot double-book a slot either", code == 409, detail[:60])
     code, _ = status_of("POST", f"/api/conversations/{rep_convo}/book", {
         "starts_at": card["days"][1]["slots"][0]["starts_at"], "name": "X", "email": "not-email",
     })
     check("nor skip the email rule", code == 409, str(code))
+
+    print("\n== a slot holds several appointments, but one rep cannot be in two ==")
+    # Capacity is the whole dealership's staff, but a single rep is still one
+    # person. Assign a rep to one time, then try to put the same rep into a
+    # second time that overlaps it without being identical, then a different
+    # rep into that same second time.
+    reps = [m for m in call("GET", "/api/team")["members"] if m["role"] == "rep"]
+    check("at least two reps on the roster to test one against another",
+          len(reps) >= 2, str(len(reps)))
+    rep_a, rep_b = reps[0]["id"], reps[1]["id"]
+
+    overlap_a = call("POST", "/api/chat/sessions")["conversation_id"]
+    overlap_b = call("POST", "/api/chat/sessions")["conversation_id"]
+    overlap_start = next(
+        s["starts_at"]
+        for d in call("GET", f"/api/conversations/{overlap_a}/availability")["days"]
+        for s in d["slots"]
+    )
+    appt_a = call("POST", f"/api/chat/sessions/{overlap_a}/book", {
+        "starts_at": overlap_start, "name": "Overlap A",
+        "email": f"overlap.a.{secrets.token_hex(3)}@example.invalid",
+    })["appointment"]
+    booked_here.append(appt_a["id"])
+
+    # Well inside the first leg's duration, so the two genuinely overlap
+    # without being the identical time -- the case capacity alone would let
+    # through, since the slot is nowhere near full.
+    half = appt_a["duration_min"] // 2 or 1
+    overlap_second_start = (
+        datetime.fromisoformat(overlap_start) + timedelta(minutes=half)
+    ).isoformat()
+    appt_b = call("POST", f"/api/chat/sessions/{overlap_b}/book", {
+        "starts_at": overlap_second_start, "name": "Overlap B",
+        "email": f"overlap.b.{secrets.token_hex(3)}@example.invalid",
+    })["appointment"]
+    booked_here.append(appt_b["id"])
+    check("two overlapping times both take a booking -- capacity, not the "
+          "clock, is what limits a slot",
+          appt_a["starts_at"] != appt_b["starts_at"])
+
+    assigned_a = call("POST", f"/api/appointments/{appt_a['id']}/assign", {"user_id": rep_a})
+    check("a rep is assigned to the first leg",
+          (assigned_a.get("assigned_to") or {}).get("id") == rep_a)
+    conflict_code, conflict_detail = status_of(
+        "POST", f"/api/appointments/{appt_b['id']}/assign", {"user_id": rep_a})
+    check("the same rep cannot be assigned into the overlapping second leg",
+          conflict_code == 409, conflict_detail[:80])
+    assigned_b = call("POST", f"/api/appointments/{appt_b['id']}/assign", {"user_id": rep_b})
+    check("a different rep can take the overlapping time",
+          (assigned_b.get("assigned_to") or {}).get("id") == rep_b)
 
     print("\n== the summary panel summarises, rather than quoting the last line ==")
     # `summary` is whatever Liner said last. The rail used to print it under a

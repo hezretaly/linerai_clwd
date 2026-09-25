@@ -25,12 +25,48 @@ export interface User {
   daily_cap: number
   notify_channel: 'email' | 'dashboard'
   active: boolean
+  /* Temporarily off the floor (lunch, a day off) -- never touches what they
+     already own, which is what `active` (deactivate) is for. Not eligible
+     for new work while true, but still on the roster. */
+  out: boolean
 }
 
 export interface TeamMember extends User {
   todays_appointments: number
   at_capacity: boolean
   next_free_at: string
+}
+
+/** POST /team body. Always makes a `rep` -- there is no path to a second
+ *  manager. */
+export interface NewRepBody {
+  name: string
+  email: string
+}
+
+/** POST /team response. `password` is plaintext, shown this once. */
+export interface NewRepResponse {
+  member: TeamMember
+  password: string
+}
+
+/** GET /team/{id}/remove-preview -- the blast radius PATCH .../active=false
+ *  would hand back, computed read-only. Same names `_hand_back` returns. */
+export interface RemovePreview {
+  leads_returned: number
+  appointments_returned: number
+  escalations_reopened: number
+}
+
+/** POST /team/{id}/reset-password response. `password` is plaintext, shown
+ *  this once. */
+export interface ResetPasswordResponse {
+  password: string
+}
+
+/** PATCH /team/{id}/out body. */
+export interface SetOutBody {
+  out: boolean
 }
 
 export interface Hours { open: string; close: string }

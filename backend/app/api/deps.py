@@ -219,6 +219,16 @@ def staff_query(db: Session):
     return db.query(User).filter(User.active.is_(True), User.role.in_(DEALERSHIP_ROLES))
 
 
+def assignable_query(db: Session):
+    """Staff who may take new work: `staff_query` and not `out`.
+
+    Separate from `staff_query` because an out rep is still staff -- they stay
+    on the roster and keep the buyers and appointments they already have.
+    `out` only takes them out of consideration for something new.
+    """
+    return staff_query(db).filter(User.out.is_(False))
+
+
 def find_staff(db: Session, user_id: str) -> User | None:
     """The person a lead or an appointment may be handed to, or None.
 

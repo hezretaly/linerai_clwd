@@ -20,12 +20,13 @@ dealership's own wall clock (`app.clock.wall_now`), never `db.utcnow()`.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
 from app import clock
-from app.models import Appointment, Dealership
+from app.api.deps import assignable_query
+from app.models import Appointment, Dealership, User
 
 #: A visit that is booked, but the dealer has not yet confirmed it.
 UNCONFIRMED_STATUSES = ("booked",)
@@ -100,3 +101,85 @@ def appointment_set(db: Session, dealership: Dealership, ids: list[str] | None =
             continue
         out[a.lead_id] = True
     return out
+
+
+def capacity(db: Session, dealership: Dealership) -> int:
+    """How many appointments one slot can hold: one per person who could
+    actually run a visit. A showroom with three staff can show three buyers
+    around at ten o'clock; a fourth booked into the same hour has nobody left
+    to greet them. `dealership` is unused here but kept in the signature to
+    match every other function in this module, all of which answer a
+    question about one dealership's calendar."""
+    return assignable_query(db).count()
+
+
+def slot_taken(db: Session, starts_at: datetime, exclude_id: str | None = None) -> int:
+    """How many standing appointments already sit at this exact time -- what
+    a clash check compares against `capacity()` now that a slot is not one
+    appointment but as many as the dealership has staff. `exclude_id` is for
+    a reschedule, which must not count the appointment being moved against
+    itself."""
+    query = db.query(Appointment).filter(
+        Appointment.starts_at == starts_at,
+        Appointment.status.in_(STANDING_STATUSES),
+    )
+    if exclude_id is not None:
+        query = query.filter(Appointment.id != exclude_id)
+    return query.count()
+
+
+def rep_conflict(
+    db: Session,
+    user_id: str,
+    starts_at: datetime,
+    duration_min: int,
+    exclude_id: str | None = None,
+) -> Appointment | None:
+    """The rep's own standing appointment that truly overlaps *starts_at*, or
+    None -- a slot can hold several buyers, but not the same person twice.
+
+    Same idiom as `unmarked`: duration varies per row, so it cannot be added
+    inside the SQL filter. The loose bound here is "starts before the new
+    appointment ends"; the exact check -- an existing row's own end must fall
+    after the new appointment's start -- runs in Python below.
+    """
+    end = starts_at + timedelta(minutes=duration_min)
+    query = db.query(Appointment).filter(
+        Appointment.assigned_user_id == user_id,
+        Appointment.status.in_(STANDING_STATUSES),
+        Appointment.starts_at < end,
+    )
+    if exclude_id is not None:
+        query = query.filter(Appointment.id != exclude_id)
+    for row in query.order_by(Appointment.starts_at.asc()).all():
+        if row.starts_at + timedelta(minutes=row.duration_min) > starts_at:
+            return row
+    return None
+
+
+def assign_open_appointments(db: Session, dealership: Dealership, lead_id: str, user_id: str) -> int:
+    """Give a newly-owned buyer's open appointments to the person who now owns
+    them -- the calendar's half of what `assign_lead` already does for
+    escalations when somebody is assigned. Skips silently on a conflict or on
+    an out/deactivated rep rather than raising: it stays unassigned for a
+    person to notice on the calendar, since the caller's own assignment must
+    not fail over a rep's unrelated appointment, or their break, somewhere
+    else. Never raises.
+
+    The eligibility check matters here as much as it does in
+    `book_appointment` and the manual/auto branches of `POST
+    /appointments/{id}/assign` -- without it, taking a buyer over from
+    someone marked out could still leave that person hosting a visit
+    `PATCH /appointments/{id}/assign` would itself have refused to give them.
+    """
+    if assignable_query(db).filter(User.id == user_id).first() is None:
+        return 0
+    assigned = 0
+    for appt in upcoming(db, dealership):
+        if appt.lead_id != lead_id or appt.assigned_user_id:
+            continue
+        if rep_conflict(db, user_id, appt.starts_at, appt.duration_min, exclude_id=appt.id):
+            continue
+        appt.assigned_user_id = user_id
+        assigned += 1
+    return assigned

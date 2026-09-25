@@ -6,14 +6,14 @@ from sqlalchemy.orm import Session
 
 from datetime import datetime
 
-from app import email_outbound, email_reply, threads, timeline
+from app import appointment_scope, email_outbound, email_reply, threads, timeline
 from app.recap import conversation_recap
 from app.agent import tools
 from app.agent.tools import when_label
-from app.api.deps import current_user
+from app.api.deps import current_user, get_dealership
 from app.db import get_db, utcnow
 from app.events import emit
-from app.models import Conversation, Escalation, Lead, Message, User, Vehicle
+from app.models import Conversation, Dealership, Escalation, Lead, Message, User, Vehicle
 from app.schemas.serialize import (
     booking_card, conversation_out, message_out, stamp, vehicle_out,
 )
@@ -128,6 +128,7 @@ def takeover(
     conversation_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     """A rep enters the thread. agent_paused is what actually stops Liner --
     it is deliberately separate from status (§18.2)."""
@@ -152,6 +153,9 @@ def takeover(
     lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
     if lead is not None and not lead.assigned_user_id:
         lead.assigned_user_id = user.id
+        # And their open appointments with it -- the calendar half of the
+        # same act, mirroring assign_lead's escalation-claiming loop.
+        appointment_scope.assign_open_appointments(db, dealership, lead.id, user.id)
 
     db.commit()
     emit(db, "handoff.triggered", {
@@ -257,6 +261,11 @@ def book_for_buyer(
             {
                 "starts_at": body.starts_at, "name": body.name,
                 "email": body.email, "phone": body.phone, "booked_by": "rep",
+                # Same reasoning as booked_by, right above: the executor is
+                # called directly rather than through tools.execute, so this
+                # key can never reach the model. A rep booking through this
+                # endpoint is always the rep making the request.
+                "assigned_user_id": user.id,
             },
             # Keyed on the conversation, not the rep: two reps booking the
             # same slot for two different buyers must clash, and a repeat

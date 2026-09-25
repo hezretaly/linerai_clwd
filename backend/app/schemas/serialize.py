@@ -96,6 +96,7 @@ def user_out(u) -> dict | None:
         "daily_cap": getattr(u, "daily_cap", 0),
         "notify_channel": getattr(u, "notify_channel", ""),
         "active": u.active,
+        "out": getattr(u, "out", False),
     }
 
 

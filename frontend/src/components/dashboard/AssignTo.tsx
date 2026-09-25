@@ -153,7 +153,11 @@ export function AssignTo({
     )
   }
 
-  const reps = team?.members ?? []
+  // Out for the day is not eligible for new work (lib/types.ts's `out`) --
+  // same reasoning as leaving reps entirely off the calendar drawer's list.
+  const allMembers = team?.members ?? []
+  const reps = allMembers.filter((m) => !m.out)
+  const outCount = allMembers.length - reps.length
   const mine = assignedTo?.id && me?.user.id === assignedTo.id
 
   return (
@@ -247,6 +251,11 @@ export function AssignTo({
               )}
             </button>
           ))}
+          {outCount > 0 && (
+            <div className="px-3 pb-1.5 pt-0.5 text-[11px] leading-tight text-muted-foreground">
+              {outCount} out today, not shown
+            </div>
+          )}
           </>
           )}
 

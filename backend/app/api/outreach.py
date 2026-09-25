@@ -15,11 +15,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.appointments import assert_transition, get_appointment
-from app.api.deps import current_user, find_staff, get_dealership
+from app.api.deps import assignable_query, current_user, find_staff, get_dealership
 from app.api.team import rep_load
 from app.config import settings
 from app.db import get_db, utcnow
-from app import clock, email_outbound
+from app import appointment_scope, clock, email_outbound
 from app.events import emit
 from app.models import (
     Appointment,
@@ -128,17 +128,18 @@ def reschedule(
     if when < clock.wall_now(dealership):
         raise HTTPException(400, "That time has already passed.")
 
-    clash = (
-        db.query(Appointment)
-        .filter(
-            Appointment.id != appointment.id,
-            Appointment.starts_at == when,
-            Appointment.status.in_(["booked", "confirmed"]),
-        )
-        .first()
-    )
-    if clash is not None:
+    # Capacity-aware, like `book_appointment`'s own clash check: a slot holds
+    # as many appointments as the dealership has staff, not one, so only a
+    # genuinely full slot refuses the move. `exclude_id` is what stops the
+    # appointment being moved from counting against itself.
+    if appointment_scope.slot_taken(
+        db, when, exclude_id=appointment.id
+    ) >= appointment_scope.capacity(db, dealership):
         raise HTTPException(409, "Something else is booked at that time.")
+    if appointment.assigned_user_id and appointment_scope.rep_conflict(
+        db, appointment.assigned_user_id, when, appointment.duration_min, exclude_id=appointment.id
+    ):
+        raise HTTPException(409, "The assigned rep already has an appointment at that time.")
 
     was = appointment.starts_at
     appointment.starts_at = when
@@ -205,20 +206,37 @@ def assign(
     if body.auto:
         # Round-robin over reps who are under their daily cap -- the rule the
         # dashboard advertises. Showing a rule beats showing a chore.
-        reps = db.query(User).filter_by(role="rep", active=True).order_by(User.name.asc()).all()
+        # `assignable_query` adds the `out` exclusion on top of the existing
+        # reps-only, active-only filter; managers stay out of auto-assign,
+        # which is an intentional behaviour of its own.
+        reps = assignable_query(db).filter_by(role="rep").order_by(User.name.asc()).all()
         loads = [(rep, rep_load(db, rep, dealership)) for rep in reps]
-        available = [(rep, load) for rep, load in loads if not load["at_capacity"]]
+        available = [
+            (rep, load) for rep, load in loads
+            if not load["at_capacity"]
+            and appointment_scope.rep_conflict(
+                db, rep.id, appointment.starts_at, appointment.duration_min,
+                exclude_id=appointment.id,
+            ) is None
+        ]
         if not available:
             raise HTTPException(
                 409,
-                "Every rep is at their daily cap. Raise a cap on the team page or assign "
-                "manually.",
+                "Every rep is at their daily cap or already has something booked then. "
+                "Raise a cap on the team page or assign manually.",
             )
         chosen = min(available, key=lambda pair: pair[1]["todays_appointments"])[0]
     elif body.user_id:
         chosen = find_staff(db, body.user_id)
         if chosen is None:
             raise HTTPException(404, "User not found")
+        if assignable_query(db).filter_by(id=chosen.id).one_or_none() is None:
+            raise HTTPException(409, f"{chosen.name} is marked out and cannot take new work.")
+        if appointment_scope.rep_conflict(
+            db, chosen.id, appointment.starts_at, appointment.duration_min,
+            exclude_id=appointment.id,
+        ) is not None:
+            raise HTTPException(409, f"{chosen.name} already has an appointment at that time.")
     else:
         raise HTTPException(400, "Pass a user_id or auto=true")
 
