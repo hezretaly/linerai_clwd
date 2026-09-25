@@ -4267,6 +4267,19 @@ def main() -> int:
           f"missing from SPA_PREFIXES: {missing}")
     stale = [p for p in SPA_PREFIXES if p not in top]
     check("and nothing is listed that the SPA no longer routes", not stale, str(stale))
+    # The browser's half of the same list. `store.ts` decides a store prefix
+    # by exclusion -- a first segment that is not one of the app's own roots
+    # -- so a route missing from `OURS` is read as a dealership: `/newpage`
+    # would become the basename, every request would go to a store called
+    # "newpage", and the page would answer 404 for a store nobody has. Its
+    # comment said `make smoke` kept the two in step, and nothing did.
+    _ours_src = pathlib.Path("frontend/src/lib/store.ts").read_text()
+    _ours_set = re.search(r"const OURS = new Set\(\[(.*?)\]\)", _ours_src, re.S)
+    _ours = set(re.findall(r"'([^']*)'", _ours_set.group(1))) if _ours_set else set()
+    _roots = sorted({r.strip("/").split("/")[0] for r in routes})
+    check("and every top-level SPA route is one the browser will not read as a store",
+          _ours_set is not None and all(r in _ours for r in _roots),
+          f"missing from OURS in store.ts: {[r for r in _roots if r not in _ours]}")
 
     # The list is only half of it: assert the built bundle really answers. This
     # section is the one place the *production* path is exercised, so it runs
@@ -8246,6 +8259,35 @@ def _stores_section(before: set[str]) -> None:
                 check("the website chat on a group's subdomain names that subdomain as its home",
                       _home.get("frame_origin") == f"https://{_slug}.linerai.test",
                       str(_home.get("frame_origin")))
+                # **The page has to be told its store when the host chose it.**
+                # The browser read its store off the path alone; on
+                # `alsbou.linerai.us/app` /api/auth/me said Alsbou, the page
+                # said nobody, and RequireAuth reloaded /app for ever (911 /me in
+                # fifteen minutes on the real host) while the front page drew
+                # the default design. What the document names must be what /me
+                # reports -- and only there, so everywhere else is the build.
+                from app.static import DIST as _HDIST, STORE_META as _HMETA
+                _me = _client.get("/api/auth/me").json()
+                check("/api/auth/me on a group's subdomain says that store, home /app",
+                      _me.get("store") == _slug and _me.get("home") == "/app", str(_me)[:120])
+                if (_HDIST / "index.html").is_file():
+                    _raw = (_HDIST / "index.html").read_bytes()
+                    _tag = f'<meta name="{_HMETA}" content="{_slug}"'
+                    _doc, _front = _client.get("/app"), _client.get("/")
+                    check("and the page served there names the same store, dashboard and front page",
+                          _doc.status_code == 200 and _tag in _doc.text and _tag in _front.text
+                          and 'id="root"' in _front.text, f"{_doc.status_code} {_doc.text[:200]}")
+                    check("and keeps its frame rule",
+                          _doc.headers.get("content-security-policy") == "frame-ancestors 'self'",
+                          _doc.headers.get("content-security-policy", "no header"))
+                    _shared = _HostClient(_host_app, base_url="https://linerai.test")
+                    check("while the shared host serves the build byte for byte, prefixed or not",
+                          _shared.get("/app").content == _raw
+                          and _shared.get(f"/{_slug}/app").content == _raw)
+                    _settings.store_domain = ""          # the demo: stores by path only
+                    check("and with no STORE_DOMAIN a subdomain's document is untouched",
+                          _client.get("/app").content == _raw)
+                    _settings.store_domain = "linerai.test"
             finally:
                 _settings.store_domain = _was_domain
                 _token = _cur_store_h.set(_slug)
@@ -8255,6 +8297,25 @@ def _stores_section(before: set[str]) -> None:
                         _hdb.commit()
                 finally:
                     _cur_store_h.reset(_token)
+
+    # And the browser's half, read out of the source: every browser gate
+    # drives Vite on :5173, where there is no tag and no STORE_DOMAIN, so the
+    # subdomain's page cannot be driven here. Which dealership (`STORE`) may
+    # come from the host; the prefix put back on a path may not, or every
+    # request on the subdomain names its store twice. And the dashboard leaves
+    # only for a `home` that is not its own address -- comparing store names
+    # is what looped.
+    _store_ts = pathlib.Path("frontend/src/lib/store.ts").read_text()
+    from app.static import STORE_META as _META
+    check("the browser reads the store tag the server writes",
+          f'meta[name="{_META}"]' in _store_ts, _META)
+    _with = _store_ts.split("export function withStore", 1)[-1].split("\n}\n", 1)[0]
+    _base = next((l for l in _store_ts.splitlines() if l.startswith("export const BASENAME")), "")
+    check("and only the store the path named is ever put back on a path",
+          bool(_with and _base) and not re.search(r"\bSTORE\b", _with + _base), _base)
+    _auth = pathlib.Path("frontend/src/routes/RequireAuth.tsx").read_text()
+    check("and the dashboard leaves only for a home that is not its own address",
+          "data.home !== withStore('/app')" in _auth and "data.store !== STORE" not in _auth)
 
     # **Nothing this run did may create a store database.** Two places walk
     # every profile to look something up -- `locate_store` on an unprefixed

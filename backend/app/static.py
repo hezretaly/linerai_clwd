@@ -15,16 +15,22 @@ This mounts only when a build exists, so `make dev` is untouched.
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app import profile
-from app.db import current_store
+from app.db import current_host, current_store
 
 DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+#: The `<meta name>` a document served on a dealership's own subdomain names
+#: that store in. Read by `frontend/src/lib/store.ts`; `make smoke` checks
+#: both spell it this way.
+STORE_META = "liner-store"
 
 # The buyer surfaces, which are the only ones a dealership has any reason to
 # put in an iframe on its own website. Everything else -- the dashboard, our
@@ -53,13 +59,38 @@ def _frame_ancestors(path: str) -> str:
     return "frame-ancestors " + " ".join(allowed)
 
 
-def _framed(response: FileResponse, path: str) -> FileResponse:
+def _framed(response: Response, path: str) -> Response:
     """Set it on a document. Only `frame-ancestors`, deliberately: a full CSP
     over this SPA is a real piece of work (hashes or a nonce for every inline
     style Vite emits) and shipping a broad one now -- `default-src *` with a
     frame rule bolted on -- would read like a policy while being none."""
     response.headers["Content-Security-Policy"] = _frame_ancestors(path)
     return response
+
+
+def _document(index: Path, path: str) -> Response:
+    """The SPA's document -- naming its store when the *host* chose it.
+
+    The page read its store off the path, and on `alsbou.linerai.us/app`
+    there is none to read: it thought it was nobody's while `/api/auth/me`
+    said Alsbou, and RequireAuth reloaded /app for ever (911 `/me` in fifteen
+    minutes on the real host); the store's front page drew the default design.
+    Only the server knows which hosts are stores, so the document says.
+
+    Only there: `current_host` is set by `StorePrefix._on_host` and nowhere
+    else, so the shared host, a path-named store and the demo (no
+    STORE_DOMAIN) get the built file untouched, byte for byte. A `<meta>`
+    rather than an inline script: data, not code, so a future `script-src`
+    has nothing to hash. Read per request like the file it replaces, so a
+    `make build` under a running process is picked up; no ETag, because these
+    bytes are not the file's.
+    """
+    host = current_host.get()
+    if not host:
+        return _framed(FileResponse(index), path)
+    tag = f'<meta name="{STORE_META}" content="{html.escape(host, quote=True)}" />'
+    body = index.read_bytes().replace(b"</head>", tag.encode() + b"</head>", 1)
+    return _framed(Response(body, media_type="text/html"), path)
 
 # Paths the SPA owns. Anything else that is not a real file is a 404, rather
 # than index.html -- a mistyped API path should say so, not return a page.
@@ -96,7 +127,7 @@ def mount_frontend(app: FastAPI) -> bool:
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
     @app.get("/", include_in_schema=False)
-    def root() -> FileResponse:
+    def root() -> Response:
         # **A store's root is the store's page, and only the bare root is
         # ours.** `StorePrefix` strips `/alsbou` to `/` before this runs, and
         # this handler served `landing.html` for `/` unconditionally -- so
@@ -109,11 +140,11 @@ def mount_frontend(app: FastAPI) -> bool:
         # `make smoke` asserts; the prefixed one is the SPA, whose `/` route
         # is the dealership's front page.
         if current_store.get():
-            return _framed(FileResponse(index), "/")
+            return _document(index, "/")
         return _framed(FileResponse(landing), "/")
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    def spa(full_path: str) -> FileResponse:
+    def spa(full_path: str) -> Response:
         if full_path.split("/")[0] in RESERVED:
             raise HTTPException(404, "Not found")
 
@@ -135,7 +166,7 @@ def mount_frontend(app: FastAPI) -> bool:
             raise HTTPException(404, "No such dealership")
 
         if any(("/" + full_path).startswith(prefix) for prefix in SPA_PREFIXES):
-            return _framed(FileResponse(index), "/" + full_path)
+            return _document(index, "/" + full_path)
         raise HTTPException(404, "Not found")
 
     return True

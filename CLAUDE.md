@@ -2705,6 +2705,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     there and an owner cannot sign in, because the door they would be sent
     to does not exist on that host. `make smoke` drives each one through the
     middleware with a recording app.
+    - **The page is told its store when the host chose it.** The browser
+      read its store off the path alone, so on `alsbou.linerai.us/app` it was
+      nobody's while `/api/auth/me` said Alsbou: RequireAuth reloaded `/app`
+      for ever (911 `/me` in fifteen minutes on the real host) and the front
+      page drew the default design over Alsbou's own cars. Which hosts are
+      stores is `STORE_DOMAIN` and the profile directory, and `demo.linerai.us`
+      is shaped exactly like a store's host while naming none, so the browser
+      cannot work it out. `static.py` writes `<meta name="liner-store">` into
+      the document on a store's host and nowhere else -- the shared host, a
+      path-named store and the demo get the build byte for byte. A `<meta>`
+      rather than an inline script, because it is data and a future
+      `script-src` would have nothing to hash. In `store.ts`, `STORE` (which
+      dealership) is the path's store or else the host's, and the prefix
+      `withStore` and `BASENAME` put back comes from the path only. RequireAuth
+      compares the server's `home` with this page's own `/app`, never store
+      names, so it cannot loop even without the tag, and `/alsbou/app` on
+      Alsbou's own host is one load to `/app`. `make smoke` serves the
+      document through the app on both hosts and reads both files for the
+      rule; `make live-check` fetches the real one through nginx and
+      Cloudflare.
   - **On the server the Host header is the store, so nginx names no
     group.** `deploy/linerai.nginx.conf` has one wildcard server block for
     every dealership, and a group is a profile, a DNS record and a Worker

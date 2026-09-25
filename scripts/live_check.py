@@ -16,7 +16,9 @@ FAIL says which layer to look at. Nothing here prints a secret -- a key is
 What it does, in order:
 
 - **config** -- the settings this box runs on, and the running server's own
-  view of them (a `.env` edited without a restart reads differently here).
+  view of them (a `.env` edited without a restart reads differently here);
+  with `STORE_DOMAIN`, that the dashboard's page on the store's subdomain
+  names the store.
 - **chat** -- one real turn in the store's website chat, over HTTP through the
   public address, then the conversation is removed.
 - **voice** -- mints a browser call session the way `/call` does (the key and
@@ -311,6 +313,31 @@ def check_config(r: Report, store: str, base: str, demo: bool) -> dict:
         except Exception:  # noqa: BLE001
             print("         127.0.0.1:8000 does not answer either: the service is down -- "
                   "journalctl -u liner -n 50")
+
+    # **The page on a group's own subdomain has to be told whose it is.**
+    # Reading its store off the path alone, the dashboard there reloaded /app
+    # for ever and the front page drew the default design; the server now
+    # writes the store into the document (`_document` in app/static.py).
+    # `make smoke` proves the code; only this request goes through Cloudflare
+    # and nginx with the Host that picks the store, to the build this box is
+    # actually serving.
+    if settings.store_domain.strip():
+        from app.static import STORE_META
+        from app.stores import public_origin
+
+        page_name = "the dashboard on its own subdomain is told its store"
+        if urlsplit(base).hostname != urlsplit(public_origin(store)).hostname:
+            r.skip(page_name, f"{base} is not {store}'s own subdomain")
+        else:
+            tag = f'<meta name="{STORE_META}" content="{store}"'
+            try:
+                page = httpx.get(f"{base}/app", timeout=15)
+                r.check(page.status_code == 200 and tag in page.text, page_name,
+                        f"{base}/app names {store}",
+                        f"{page.status_code}, no {tag}> in it: a build from before the "
+                        "fix (make build and restart), or the Host is not reaching the app")
+            except Exception as exc:  # noqa: BLE001
+                r.fail(page_name, f"{base}/app: {type(exc).__name__}: {str(exc)[:160]}")
     return {"mail_from": mail_from, "mail_domain": mail_domain, "embed": embed,
             "sender": sender, "live": live}
 

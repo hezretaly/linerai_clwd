@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../lib/api'
-import { STORE, leaveTo } from '../lib/store'
+import { leaveTo, withStore } from '../lib/store'
 import type { User } from '../lib/types'
 
 /** "Who am I", plus which store this session belongs to and where its
@@ -63,12 +63,20 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (isError || !data) {
     return <Navigate to="/login" replace />
   }
-  // Signed in, but looking at a different dealership's URL. Every panel here
+  // Signed in, but this is not that account's dashboard: another dealership's
+  // URL, or this one's under an address the server would not write
+  // (`/alsbou/app` on alsbou.linerai.us). On another store's, every panel
   // would 403 -- `current_user` refuses a session whose store is not the
   // request's -- so the page would render broken rather than say whose it is.
   // `home` comes from the server because the cookie is httpOnly: the page has
   // no way to read which store it was minted against.
-  if (data.home && data.home !== '/ops' && data.store !== STORE) {
+  //
+  // Compared against `home` itself, the server's one answer to where this
+  // dashboard lives, rather than re-derived from store names. On a group's
+  // subdomain the store is in the host and not the path, and comparing
+  // stores there reloaded /app for ever. After `leaveTo(home)` this page's
+  // own dashboard *is* `home`, so it cannot loop.
+  if (data.home && data.home !== '/ops' && data.home !== withStore('/app')) {
     leaveTo(data.home)
     return null
   }
