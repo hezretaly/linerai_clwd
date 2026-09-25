@@ -1712,10 +1712,11 @@ def main() -> int:
     # the Calendar's own list would, and the old badge query
     # (status == 'booked', no time bound) never did -- such a row stayed in
     # both forever, with a wait time that only grew.
-    other_slot = call("GET", f"/api/conversations/{named}/availability")["days"][0]["slots"][1]
-    stale = call("POST", f"/api/chat/sessions/{named}/book", {
+    stale_convo = call("POST", "/api/chat/sessions", {})["conversation_id"]
+    other_slot = call("GET", f"/api/conversations/{stale_convo}/availability")["days"][0]["slots"][1]
+    stale = call("POST", f"/api/chat/sessions/{stale_convo}/book", {
         "starts_at": other_slot["starts_at"], "name": "Stale Booking",
-        "email": f"stale.{named[:8]}@example.invalid", "phone": "319-555-0188",
+        "email": f"stale.{stale_convo[:8]}@example.invalid", "phone": "319-555-0188",
     })["appointment"]
     booked_here.append(stale["id"])
     from datetime import timedelta as _NapDelta

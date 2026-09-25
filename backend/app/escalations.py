@@ -21,10 +21,9 @@ there.
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import threads
 from app.db import utcnow
 from app.models import Conversation, Escalation, Lead
 
@@ -41,18 +40,23 @@ def waiting_on_person(db: Session) -> dict[str, list[Escalation]]:
     keys rather than counting escalation rows (which double- or triple-counts
     a buyer with several open threads) or re-deriving their own list.
 
-    A lead-linked thread counts even when it has not started -- an escalated
-    thread with a known buyer is never invisible. An anonymous thread only
-    counts once it has started (`threads.started`): with no buyer message and
-    no lead, there is no row anywhere a rep could open to work it, so an
-    unclaimed escalation on one would be a phantom entry on every screen that
-    reads this.
+    Never gated on `threads.started` -- that rule hides an abandoned,
+    never-typed-in widget session from the *list*, and an unclaimed
+    escalation is never that: `escalate_to_human` runs only mid-turn, so a
+    row here always means something real happened. It has to stay true for a
+    call whose buyer audio was never transcribed, too (`VOICE_TRANSCRIBE=false`,
+    or a caller who never triggered the transcriber) -- `threads.started`
+    requires a `role="buyer"` message and such a call has none, but a real
+    person is on the line asking for a person, which is the one case this
+    queue exists for. It was filtered by `started` once, on the reasoning
+    that an anonymous, untranscribed thread has "no row a rep could open" --
+    that is not so: `/api/conversations/{id}` answers regardless, only the
+    *list* hides it. Caught by the gate, which seeds exactly this call.
     """
     rows = (
         db.query(Escalation, Conversation)
         .join(Conversation, Conversation.id == Escalation.conversation_id)
         .filter(Escalation.claimed_at.is_(None))
-        .filter(or_(Conversation.lead_id.isnot(None), threads.started(db)))
         .order_by(Escalation.created_at.asc())
         .all()
     )

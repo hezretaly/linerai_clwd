@@ -75,14 +75,18 @@ def lead_summaries(
 
     # Newest first: `mine[0]` below is the thread a row opens, and on
     # Postgres an unordered read hands back whichever the heap has first.
-    # Filtered to conversations that have *started* -- the buyer has actually
-    # said something -- so a chat widget opened and abandoned, or an
-    # untranscribed call, does not set `open=true`, supply a `last_touch_at`,
-    # or count toward `conversation_count`/`channels` for a lead that has no
-    # real activity on that thread. This is `app/threads.py`'s one rule,
-    # applied here the same way `/api/conversations` already applies it.
+    #
+    # Not filtered by `threads.started` -- that rule hides an abandoned,
+    # never-typed-in widget session, and nothing here can be one: every row
+    # already has this lead's own `lead_id`, and a lead is only minted by a
+    # real booking or a submitted contact card. Filtering by `started` too
+    # excluded a lead's own booked-and-declined call the moment its buyer
+    # audio went untranscribed (`VOICE_TRANSCRIBE=false`), so their own page
+    # said `declined: true` for the thread that put them here while the list
+    # row -- reading `conversation_count`/`channels`/`declined` off this
+    # query -- said the opposite. Caught by the gate.
     convos = (
-        db.query(Conversation).filter(Conversation.lead_id.in_(ids), threads.started(db))
+        db.query(Conversation).filter(Conversation.lead_id.in_(ids))
         .order_by(Conversation.started_at.desc(), Conversation.id.asc()).all()
     )
     appts = db.query(Appointment).filter(Appointment.lead_id.in_(ids)).all()
