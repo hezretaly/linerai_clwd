@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import appointment_scope, clock, escalations, ownership, threads
+from app import appointment_scope, clock, escalations, outreach_status, ownership, threads
 from app.api.deps import current_user, get_dealership
 from app.api.inventory import quoted_buyer_counts
 from app.api.redirect import opens_between
@@ -63,12 +63,18 @@ def overview(
 
     chats = convos_on("chat")
 
-    # Real rows, and only the ones that actually went. A queued or failed send
-    # is not an email the buyer received, and counting it would make the card
-    # read best when delivery is broken.
+    # Real rows, and only the ones that actually went. `outreach_status.SENT_EMAIL`
+    # is the one definition the Mail page's own Sent tab uses too -- without
+    # the channel/direction check this counted a logged phone call
+    # (channel='phone_logged', always status='sent'), an outbound text and a
+    # buyer's own inbound reply (also stored status='sent') as "emails sent".
+    # Windowed on `SENT_AT` (sent_at, or created_at when it never got that
+    # far), which is also the date the mailbox's Sent tab uses -- a plain
+    # `created_at` window could put a re-placed delivery in today's count
+    # while the mailbox still dates it by when it actually went out.
     emails_sent = (
         db.query(Outreach)
-        .filter(Outreach.created_at >= since, Outreach.status == "sent")
+        .filter(outreach_status.SENT_EMAIL, outreach_status.SENT_AT >= since)
         .count()
     )
     credit_url = (live_settings(db).credit_application_url or "").strip()

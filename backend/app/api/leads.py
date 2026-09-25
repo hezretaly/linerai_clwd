@@ -90,15 +90,19 @@ def lead_summaries(
         .order_by(Conversation.started_at.desc(), Conversation.id.asc()).all()
     )
     appts = db.query(Appointment).filter(Appointment.lead_id.in_(ids)).all()
-    # Email is contact. `channels` and `last_touch_at` counted conversations
-    # only, so a buyer you had exchanged four emails with showed no channel at
-    # all and a `last_touch_at` from whenever they last chatted -- which put
-    # them at the bottom of a list ordered by activity, on the day they wrote.
-    # The buyer page's own channel strip already counted mail; the list did
-    # not, and two answers to "when did we last hear from them" is exactly the
-    # disagreement this file exists to prevent.
-    mail = db.query(Outreach).filter(
-        Outreach.lead_id.in_(ids), Outreach.channel == "email"
+    # Contact is email, text or a logged call -- not "email" hardcoded.
+    # `channels` and `last_touch_at` used to count conversations plus email
+    # `Outreach` rows only, so a buyer who had been texted, or had a call
+    # logged against them, showed no channel for it at all and a
+    # `last_touch_at` from whenever they last chatted -- both of which put
+    # them at the bottom of a list ordered by activity on the day they were
+    # actually texted. `timeline.contact_clause()` is the same predicate the
+    # buyer page's own channel strip now reads (`timeline.outreach_is_contact`),
+    # so the list and the strip cannot disagree about what counts as a touch,
+    # and a queued or failed send no longer moves `last_touch_at` the way any
+    # `channel == "email"` row used to, whatever its status (item 21).
+    contact = db.query(Outreach).filter(
+        Outreach.lead_id.in_(ids), timeline.contact_clause()
     ).all()
     convo_ids = [c.id for c in convos]
     last_message = threads.last_activity(db, convo_ids)
@@ -178,10 +182,10 @@ def lead_summaries(
         # The last thing that actually happened, not when the thread opened. The
         # conversations list is ordered by this, and a chat someone started this
         # morning and abandoned should not outrank one being typed in now.
-        my_mail = [o for o in mail if o.lead_id == lead.id]
+        my_contact = [o for o in contact if o.lead_id == lead.id]
         touches = [last_message.get(c.id) or c.started_at for c in mine]
         touches += [a.created_at for a in my_appts]
-        touches += [o.sent_at or o.created_at for o in my_mail]
+        touches += [timeline.contact_at(o) for o in my_contact]
 
         still_open = [c for c in mine if c.status != "closed"]
         out[lead.id] = {
@@ -201,10 +205,12 @@ def lead_summaries(
             # of it is still running.
             "conversation_count": len(mine),
             # Counted, never declared -- the same rule the buyer page's channel
-            # strip follows. A lead who has only ever been emailed reads
-            # "Email" rather than nothing at all.
+            # strip follows. A lead who has only ever been emailed, texted or
+            # had a call logged reads that channel rather than nothing at all
+            # -- not just "Email" hardcoded, which is what silently dropped a
+            # texting-only buyer's channel off the list (item 21).
             "channels": sorted(
-                {c.channel for c in mine} | ({"email"} if my_mail else set())
+                {c.channel for c in mine} | {o.channel for o in my_contact}
             ),
             "open": bool(still_open),
             # Live iff at least one of *this* thread's own last message (or
@@ -574,7 +580,11 @@ def reach(
     sender that delivers nothing.
     """
     lead = _get(db, lead_id)
-    address = (lead.email or "").strip()
+    # `lead.has_email` (crm.py) is the one test now -- not a bare `lead.email`
+    # truthy check -- so this agrees with `campaigns.py`'s audiences and the
+    # composer's recipient picker about whether a whitespace-only or empty
+    # address counts (item 38).
+    address = (lead.email or "").strip() if lead.has_email else ""
     number = (lead.phone or "").strip()
     sender = get_email_sender()
 

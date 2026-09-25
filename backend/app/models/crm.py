@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base, utcnow
@@ -42,10 +43,33 @@ class Lead(Base):
     email_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = created()
 
+    @hybrid_property
+    def has_email(self) -> bool:
+        """An address worth trying: not null, not empty, and not just
+        whitespace. Four call sites each answered "does this buyer have an
+        email we can use" with a different test -- `campaigns.py`'s three
+        audience queries never filtered on email at all, the composer's
+        recipient picker checked `!= ""`, `/reach` stripped first, and this
+        property used to read `not self.email` -- so a facebook-sourced lead
+        with `email=""` and a phone number counted in a campaign's audience
+        (a card that says "ready to run" over channel='email') but could
+        never actually be emailed from the composer or the buyer page, and a
+        whitespace-only address passed the composer's check while `/reach`
+        correctly refused it. One expression, read the same way in Python
+        (per row) and in SQL (a query's `.filter(Lead.has_email)`), closes
+        both gaps (item 38).
+        """
+        return bool((self.email or "").strip())
+
+    @has_email.expression
+    def has_email(cls):  # noqa: N805 -- SQLAlchemy hybrid classmethod convention
+        return (cls.email.is_not(None)) & (func.trim(cls.email) != "")
+
     @property
     def contact_risk(self) -> bool:
-        """No email on file means the product cannot reach them (§18.5)."""
-        return not self.email
+        """No usable email on file means the product cannot reach them
+        (§18.5)."""
+        return not self.has_email
 
 
 class EmailReplyDue(Base):

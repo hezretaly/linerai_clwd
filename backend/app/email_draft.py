@@ -327,18 +327,28 @@ def _email_thread_block(db: Session, lead: Lead, skip: str | None = None) -> str
     blind to the three emails already exchanged, and could ask a question
     the buyer answered yesterday. These are those rows, both directions,
     text only: a buyer's reply without the thread it quoted back
-    (`just_the_reply`), and nothing that never reached them (a failed or
-    bounced send). "" when there are none, so a first email says nothing.
-    """
-    from sqlalchemy import and_, not_
+    (`just_the_reply`), and nothing that never reached them. "" when there
+    are none, so a first email says nothing.
 
+    **"Never reached them" is `outreach_status.not_sent_clause`, not just
+    failed/bounced.** A row still `queued` -- committed before the provider
+    answered, per `email_outbound.send` -- used to pass this filter and so
+    counted as delivered mail in "the emails so far" for as long as it sat
+    queued, which on a crash was forever: the drafter told the model the
+    buyer had received something that, days later, still had not gone. A
+    genuinely in-flight send (queued for under `STUCK_AFTER`) still counts as
+    delivered here, on the same reasoning `email_threads.py` applies -- it is
+    very likely about to succeed, and excluding it too eagerly would make a
+    draft blind to a reply sent one second ago (item 49).
+    """
+    from app import outreach_status
     from app.email_intake import just_the_reply
     from app.models import Outreach
 
     query = db.query(Outreach).filter(
         Outreach.lead_id == lead.id,
         Outreach.channel == "email",
-        not_(and_(Outreach.direction == "out", Outreach.status.in_(("failed", "bounced")))),
+        ~outreach_status.not_sent_clause(),
     )
     if skip:
         query = query.filter(Outreach.id != skip)

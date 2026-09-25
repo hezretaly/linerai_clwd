@@ -46,8 +46,16 @@ const KPI_ICONS: Record<string, IconName> = {
 /** Where each figure came from, so the card is a way in rather than a number
  *  to go and look up somewhere else. */
 const KPI_LINKS: Record<string, string> = {
-  chat: '/app/conversations',
-  email: '/app/conversations',
+  // `?channel=chat`, not a bare link: the card counts a buyer only when
+  // `chat` is in their `channels`, and the list's own "Came from" filter now
+  // reads membership the same way (`lib/conversationFilters`) -- so this is
+  // the one link that actually lands on the KPI's own set (item 26).
+  chat: '/app/conversations?channel=chat',
+  // The Mail page, not the conversations list -- "Emails sent" counts
+  // `Outreach` rows (`outreach_status.SENT_EMAIL`), which is exactly what
+  // the Mail page's own Sent tab counts. The conversations list has no
+  // "Sent" concept at all to reconcile the number against (item 2).
+  email: '/app/campaigns',
   appointments_set: '/app/calendar',
   // Both channels: an escalation on a call does not appear on the chat page.
   needs_a_person: '/app/conversations?filter=flagged',

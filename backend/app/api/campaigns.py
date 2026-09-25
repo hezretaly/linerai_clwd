@@ -29,17 +29,18 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app import appointment_scope, timeline
 from app.api.deps import current_user
 from app.db import get_db, utcnow
 from app.models import (
     Appointment,
     Conversation,
     Lead,
-    Message,
     User,
     Vehicle,
     VehicleMention,
 )
+from app.schemas.serialize import stamp
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -48,45 +49,94 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 #: conversation is still happening, this is about whether a person has moved on.
 COLD_DAYS = 14
 
+#: How many buyers a card shows by name.
+EXAMPLES = 5
 
-def _price_drops(db: Session) -> tuple[int, list[dict]]:
-    """Buyers quoted a car that now costs less, and by how much.
 
-    Real, and computable today because `vehicle_mentions.quoted_price` records
-    what the buyer was actually told at the time. No price-history table is
-    needed: the quote *is* the history, one row per time Liner named the car.
+def _audience(rows: list[dict]) -> tuple[int, list[dict], int]:
+    """`rows`: one dict per (buyer, reason), each carrying `lead_id`, already
+    in the order the card should prefer them. Returns `(buyers, examples,
+    more)`: one example line per *buyer* -- their first/best reason, in the
+    order they first appear -- and `more`, the buyers not shown.
+
+    **The one place "how many buyers" is decided**, so a caller cannot repeat
+    a lead across its own first-five rows and then report it as extra
+    audience. Before this: `_price_drops` keyed its rows on `(lead_id,
+    vehicle_id)` and reported `len(seen)` as the audience, so one buyer
+    quoted two dropped cars read "2 buyers right now" (item 41); `_still_here`
+    took its first five *(lead, vehicle)* pairs as examples but its audience
+    from `len({distinct lead ids})`, so a repeated buyer among those five
+    made `audience - len(examples)` (the frontend's arithmetic) undercount
+    "and N more" by one per repeat, and a two-car buyer could show as "2
+    buyers right now" the same way (item 43).
     """
-    rows = (
+    first: dict[str, dict] = {}
+    for r in rows:
+        first.setdefault(r["lead_id"], r)
+    examples = list(first.values())[:EXAMPLES]
+    return len(first), examples, len(first) - len(examples)
+
+
+def _price_drop_rows(db: Session) -> list[dict]:
+    """One row per (lead, vehicle): that pair's *newest* mention carrying a
+    quoted price, whichever price that was -- picked *before* comparing to
+    today's price.
+
+    Before this, the price-drop filter (`Vehicle.price < quoted_price`) ran
+    in SQL ahead of picking the newest quote, so a buyer re-quoted at the
+    car's current (already-dropped) price still matched on an *older*, higher
+    quote and was reported as still owed a price-drop email at a price they
+    had already been told (item 41). `agent/tools.py`'s `_record_mentions`
+    writes a fresh `quoted_price` every time Liner names a car, so a re-quote
+    after a drop is the ordinary case, not an edge one.
+
+    Keyed on `VehicleMention.vehicle_id`, never on the display label: two
+    different cars can share one ("2022 Tesla Model S" is not unique on a
+    real lot), and keying on the string silently merged their audiences and
+    picked whichever one the query happened to see first.
+    """
+    from sqlalchemy import func as sa_func
+
+    ranked = (
         db.query(
-            Lead.id, Lead.name, Lead.email,
-            Vehicle.id, Vehicle.year, Vehicle.make, Vehicle.model,
-            VehicleMention.quoted_price, Vehicle.price,
+            Conversation.lead_id.label("lead_id"),
+            VehicleMention.vehicle_id.label("vehicle_id"),
+            VehicleMention.quoted_price.label("quoted_price"),
+            sa_func.row_number().over(
+                partition_by=(Conversation.lead_id, VehicleMention.vehicle_id),
+                order_by=(VehicleMention.created_at.desc(), VehicleMention.id.asc()),
+            ).label("rn"),
         )
         .join(Conversation, Conversation.id == VehicleMention.conversation_id)
-        .join(Lead, Lead.id == Conversation.lead_id)
-        .join(Vehicle, Vehicle.id == VehicleMention.vehicle_id)
         .filter(
+            Conversation.lead_id.is_not(None),
+            VehicleMention.quoted_price.is_not(None),
+        )
+        .subquery()
+    )
+    rows = (
+        db.query(
+            ranked.c.lead_id, Lead.name, Lead.email,
+            Vehicle.year, Vehicle.make, Vehicle.model,
+            ranked.c.quoted_price, Vehicle.price,
+        )
+        .join(Vehicle, Vehicle.id == ranked.c.vehicle_id)
+        .join(Lead, Lead.id == ranked.c.lead_id)
+        .filter(
+            ranked.c.rn == 1,
             Vehicle.status == "available",
             Vehicle.price.is_not(None),
-            VehicleMention.quoted_price.is_not(None),
-            Vehicle.price < VehicleMention.quoted_price,
+            # `Lead.has_email`: the audience for an `channel="email"` card
+            # marked "ready to run" must be buyers this system can actually
+            # email -- a facebook-sourced lead with no address never reaches
+            # the composer or the buyer page's email box (item 38).
+            Lead.has_email,
+            Vehicle.price < ranked.c.quoted_price,
         )
-        # Newest quote first, so "was" is the last price they were told --
-        # the one they will remember -- and the same one on every read.
-        .order_by(VehicleMention.created_at.desc(), VehicleMention.id.asc())
         .all()
     )
-    # One buyer per car, not one per time it was mentioned: a buyer told about
-    # the same Silverado four times is one person to write to. Keyed on
-    # Vehicle.id, not the title string -- two different cars can share one
-    # ("2022 Tesla Model S" is not unique on this lot), and keying on the
-    # string treated them as the same car, silently merging their audiences.
-    seen: dict[tuple[str, str], dict] = {}
-    for lead_id, name, email, vehicle_id, year, make, model, quoted, now in rows:
-        key = (lead_id, vehicle_id)
-        if key in seen:
-            continue
-        seen[key] = {
+    out = [
+        {
             "lead_id": lead_id,
             "name": name or email or "Unnamed buyer",
             "vehicle": f"{year} {make} {model}",
@@ -94,65 +144,93 @@ def _price_drops(db: Session) -> tuple[int, list[dict]]:
             "now": now,
             "saving": quoted - now,
         }
-    examples = sorted(seen.values(), key=lambda r: -r["saving"])[:5]
-    return len(seen), examples
+        for lead_id, name, email, year, make, model, quoted, now in rows
+    ]
+    # Largest saving first within a buyer's own rows, so `_audience`'s
+    # first-seen-per-lead pick keeps their best example.
+    out.sort(key=lambda r: -r["saving"])
+    return out
 
 
-def _gone_cold(db: Session) -> tuple[int, list[dict]]:
-    """Buyers who talked, never booked, and have not been heard from since."""
+def _price_drops(db: Session) -> tuple[int, list[dict], int]:
+    """Buyers quoted a car that now costs less, and by how much."""
+    return _audience(_price_drop_rows(db))
+
+
+def _gone_cold(db: Session) -> tuple[int, list[dict], int]:
+    """Buyers who talked, have no standing booking, and have not been heard
+    from since. "Heard from" -- `timeline.last_heard_query` -- is the buyer's
+    own words: a message they typed, an email or text they sent, never
+    Liner's own reply, which is always the newest row in an answered thread
+    and used to make "last heard" read as "we last spoke", one clock-hour
+    or one calendar day later than the truth (item 40).
+    """
     cutoff = utcnow() - timedelta(days=COLD_DAYS)
     booked = db.query(Appointment.lead_id).filter(
-        Appointment.status.in_(["booked", "confirmed"])
+        Appointment.status.in_(appointment_scope.STANDING_STATUSES)
     )
-    last = (
-        db.query(Conversation.lead_id, func.max(Message.created_at).label("at"))
-        .join(Message, Message.conversation_id == Conversation.id)
-        .filter(Conversation.lead_id.is_not(None))
-        .group_by(Conversation.lead_id)
-        .subquery()
-    )
+    last = timeline.last_heard_query(db).subquery()
     rows = (
         db.query(Lead.id, Lead.name, Lead.email, last.c.at)
         .join(last, last.c.lead_id == Lead.id)
-        .filter(last.c.at < cutoff, ~Lead.id.in_(booked))
+        .filter(last.c.at < cutoff, ~Lead.id.in_(booked), Lead.has_email)
         .order_by(last.c.at.desc())
         .all()
     )
-    examples = [
-        {"lead_id": i, "name": n or e or "Unnamed buyer", "last_seen": str(at)[:10]}
-        for i, n, e, at in rows[:5]
+    out = [
+        {
+            "lead_id": lead_id, "name": name or email or "Unnamed buyer",
+            # The real instant, not `str(at)[:10]` (a naive-UTC date that is
+            # already tomorrow's from the evening on, at a dealership west of
+            # Greenwich). The frontend renders it in the dealership's own
+            # zone, the same as everything else timestamped here.
+            "last_heard_at": stamp(at),
+        }
+        for lead_id, name, email, at in rows
     ]
-    return len(rows), examples
+    return _audience(out)
 
 
-def _still_here(db: Session) -> tuple[int, list[dict]]:
-    """Buyers whose car is still on the lot and who never came in to see it."""
+def _still_here(db: Session) -> tuple[int, list[dict], int]:
+    """Buyers whose car is still on the lot and who never came in to see it.
+
+    A visit that "happened" is read the same way the calendar and the Overview
+    read one -- `appointment_scope.STANDING_STATUSES` (booked/confirmed) is
+    the only "still on the books" test, and a `completed`/`cancelled`/
+    `no_show` row is not one (item 39; `completed` is a status only the demo
+    seed ever wrote and the app itself never produces).
+    """
     booked = db.query(Appointment.lead_id).filter(
-        Appointment.status.in_(["booked", "confirmed"])
+        Appointment.status.in_(appointment_scope.STANDING_STATUSES)
     )
+    # Grouped, not `.distinct()`: the old `.distinct()` over every selected
+    # column had no `ORDER BY` at all, so which (lead, vehicle) pair came back
+    # first depended on the storage engine's own row order (SQLite: rowid
+    # insertion order; Postgres: whichever plan the query happened to pick,
+    # unstable across reads) -- so re-adding an old two-car conversation to
+    # the audience (a sold car re-listed, a cancelled appointment) put its
+    # *oldest* mention first every time, not its most recent. Grouping on
+    # each table's own primary key lets Postgres treat every other selected
+    # column of that table as functionally determined, so this is portable.
     rows = (
         db.query(
             Lead.id, Lead.name, Lead.email,
             Vehicle.id, Vehicle.year, Vehicle.make, Vehicle.model,
+            func.max(VehicleMention.created_at).label("mentioned_at"),
         )
         .join(Conversation, Conversation.lead_id == Lead.id)
         .join(VehicleMention, VehicleMention.conversation_id == Conversation.id)
         .join(Vehicle, Vehicle.id == VehicleMention.vehicle_id)
-        .filter(Vehicle.status == "available", ~Lead.id.in_(booked))
-        .distinct()
+        .filter(Vehicle.status == "available", ~Lead.id.in_(booked), Lead.has_email)
+        .group_by(Lead.id, Vehicle.id)
+        .order_by(func.max(VehicleMention.created_at).desc(), Lead.id.asc())
         .all()
     )
-    examples = [
-        {"lead_id": i, "name": n or e or "Unnamed buyer",
-         "vehicle": f"{y} {mk} {md}"}
-        for i, n, e, _vid, y, mk, md in rows[:5]
+    out = [
+        {"lead_id": i, "name": n or e or "Unnamed buyer", "vehicle": f"{y} {mk} {md}"}
+        for i, n, e, _vid, y, mk, md, _mentioned_at in rows
     ]
-    # The audience is buyers, so the count stays distinct on the lead --
-    # Vehicle.id only had to be in the query above, so two different cars
-    # sharing one title ("2022 Tesla Model S" is not unique on this lot)
-    # are not folded into one row by `.distinct()` before the row is dropped
-    # by `rows[:5]` for the examples.
-    return len({r[0] for r in rows}), examples
+    return _audience(out)
 
 
 @router.get("")
@@ -166,9 +244,9 @@ def list_campaigns(
     is now cheaper" -- and the answer changes whenever the lot does, so a
     cached one would be wrong by the time somebody read it.
     """
-    drops, drop_examples = _price_drops(db)
-    cold, cold_examples = _gone_cold(db)
-    waiting, waiting_examples = _still_here(db)
+    drops, drop_examples, drops_more = _price_drops(db)
+    cold, cold_examples, cold_more = _gone_cold(db)
+    waiting, waiting_examples, waiting_more = _still_here(db)
 
     return {
         # Named once here so the page cannot disagree with the API about what
@@ -184,6 +262,11 @@ def list_campaigns(
                 "channel": "email",
                 "audience": drops,
                 "examples": drop_examples,
+                # Buyers not among the examples -- computed here, once, so
+                # the frontend never re-derives it as `audience -
+                # examples.length` (which is buyers minus buyers only when
+                # neither side has repeated a lead; see `_audience`, item 43).
+                "more": drops_more,
                 "ready": True,
                 "blocked_by": "",
             },
@@ -197,6 +280,7 @@ def list_campaigns(
                 "channel": "email",
                 "audience": waiting,
                 "examples": waiting_examples,
+                "more": waiting_more,
                 "ready": True,
                 "blocked_by": "",
             },
@@ -210,6 +294,7 @@ def list_campaigns(
                 "channel": "email",
                 "audience": cold,
                 "examples": cold_examples,
+                "more": cold_more,
                 "ready": True,
                 "blocked_by": "",
             },
@@ -227,6 +312,7 @@ def list_campaigns(
                 # invites exactly the untargeted blast the others avoid.
                 "audience": None,
                 "examples": [],
+                "more": None,
                 "ready": True,
                 "blocked_by": "",
             },
@@ -237,6 +323,7 @@ def list_campaigns(
                 "channel": "instagram",
                 "audience": None,
                 "examples": [],
+                "more": None,
                 "ready": False,
                 # Named, not "coming soon". The whole cost of an unbuilt
                 # integration is the hour spent working out what it needs.
@@ -253,6 +340,7 @@ def list_campaigns(
                 "channel": "facebook",
                 "audience": None,
                 "examples": [],
+                "more": None,
                 "ready": False,
                 "blocked_by": (
                     "No Facebook integration: same Meta app and webhook as "
@@ -266,6 +354,7 @@ def list_campaigns(
                 "channel": "sms",
                 "audience": None,
                 "examples": [],
+                "more": None,
                 # **Still blocked, and for a narrower reason than before.**
                 # One-to-one texting is real now -- a rep sends from the buyer's
                 # page and replies land on their timeline. What a *campaign*

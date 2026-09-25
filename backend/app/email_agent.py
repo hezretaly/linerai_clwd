@@ -37,7 +37,7 @@ from datetime import timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import flags
+from app import flags, outreach_status
 from app.config import settings
 from app.db import utcnow
 from app.models import Lead, Outreach
@@ -157,12 +157,17 @@ def may_reply(
         )
 
     now = utcnow()
+    # `outreach_status.WENT_OUT` -- not merely `direction == "out"` -- so a
+    # queued or failed send does not start the cooldown clock or count as
+    # "a person already answered". Before this, a rep's send that the
+    # provider refused still froze Liner out for the cooldown window over a
+    # reply the buyer never received (item 36).
     sent = (
         db.query(Outreach)
         .filter(
             Outreach.lead_id == lead.id,
             Outreach.channel == "email",
-            Outreach.direction == "out",
+            outreach_status.WENT_OUT,
         )
         .order_by(Outreach.created_at.desc())
         .first()

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app import email_agent, email_envelopes, email_outbound
+from app import email_agent, email_envelopes, email_outbound, outreach_status
 from app.config import settings
 from datetime import timedelta
 
@@ -33,7 +33,7 @@ from app.db import utcnow
 from app.email_intake import just_the_reply
 from app.events import emit
 from app.models import (
-    Conversation, EmailReplyDue, InboundEmail, Lead, Message, Outreach,
+    Conversation, EmailReplyDue, InboundEmail, Lead, Message, Outreach, User,
 )
 
 #: How much of one message reaches the model. Long enough for anything a person
@@ -176,16 +176,18 @@ def answer(
         # coming back up through a background task is indistinguishable from a
         # buyer who never wrote.
         return {"sent": False, "reason": "no_model", "detail": str(exc)}
-    db.add(Message(
-        conversation_id=convo.id, role="liner", content=reply,
-        tool_calls_json=_dump(calls),
-    ))
-    db.commit()
 
     # Checked again, immediately before the wire. `may_reply` ran before a
     # model round trip that takes seconds, and a rep who pressed Take over or
     # threw the kill switch during it must not be overtaken by a message that
     # was already in flight.
+    #
+    # **No Message is written on this path.** Nothing is sent, so there is
+    # nothing to mirror -- writing the model's draft into the thread anyway
+    # (the earlier version did, before this check) left a Liner reply on the
+    # buyer's page that they never received, and `channel_counts`' old
+    # per-conversation unit turned that phantom message into an extra "Email"
+    # contact on top of the emails actually sent (items 20, 32, 33).
     again = email_agent.may_reply(
         db, lead, automated=automated, has_provider=provider is not None
     )
@@ -227,6 +229,8 @@ def answer(
             headers={"Auto-Submitted": "auto-replied"},
         )
     except email_outbound.OutboundError as exc:
+        # Same rule as above: no address to answer means nothing left the
+        # building, so nothing is written into the thread claiming it did.
         return {"sent": False, "reason": "no_address", "detail": str(exc)}
 
     sent = email_outbound.send(
@@ -238,6 +242,21 @@ def answer(
         conversation_id=convo.id,
         event={"by_liner": True},
     )
+    # Mirrored the way `remember_inbound` mirrors the buyer's own half: the
+    # `Message` carries `outreach_id`, so `app/timeline.py`'s compose() folds
+    # it into the `Outreach` card it copies -- one entry per email, with the
+    # row's real delivery status on it -- rather than a separate "message"
+    # entry sitting beside an identical-looking outreach card. Written even
+    # when the send was blocked or the provider refused it: `sent.record`
+    # exists either way (the row is committed before the provider is asked),
+    # and a rep needs to see that Liner *tried* to answer and what happened,
+    # not nothing at all.
+    db.add(Message(
+        conversation_id=convo.id, role="liner", content=reply,
+        tool_calls_json=_dump([*calls, {"name": "outreach", "outreach_id": sent.record.id}]),
+    ))
+    db.commit()
+
     if sent.blocked:
         return {"sent": False, "reason": "blocked", "detail": sent.blocked,
                 "outreach_id": sent.record.id}
@@ -275,6 +294,72 @@ def answer_to(db: Session, claim: InboundEmail, lead: Lead) -> list:
     if sender:
         return sender[:1]
     return email_envelopes.without_ours([Recipient("", lead.email)] if lead.email else [])
+
+
+def send_rep_reply(db: Session, convo: Conversation, text: str, user: User) -> Message:
+    """A rep's reply on an email thread, sent as a real email -- never a bare
+    `Message` that only looks like one.
+
+    `api/conversations.py`'s generic `rep_reply` writes a plain `role='rep'`
+    `Message` and emits `conversation.message`, which is read live by the
+    chat widget's open tab -- there is no such reader for an email thread, so
+    that write reached the buyer's own page and nowhere else. A rep replying
+    to an email buyer that way read as answered on the buyer page and moved
+    `/api/conversations`' last-activity sort, while the Mail page kept them
+    `waiting: true` forever, because `email_threads.tally()` -- the one place
+    "waiting" is decided -- only ever clears on a real outbound `Outreach`
+    row, and this path never wrote one (items 33, 44).
+
+    Build and send a real email under the lead's latest inbound message, and
+    only on success mirror it into the thread the way `remember_inbound`
+    mirrors the buyer's own half -- `app/timeline.py`'s `compose()` then
+    folds it into the one card for that send, the same as any other reply. A
+    refusal raises `email_outbound.OutboundError` rather than writing an
+    apparently-sent `Message`; the caller turns that into the 4xx/5xx the
+    composer reads.
+    """
+    lead = db.query(Lead).filter_by(id=convo.lead_id).one_or_none() if convo.lead_id else None
+    if lead is None or not (lead.email or "").strip():
+        raise email_outbound.OutboundError(
+            "No email address on file for this buyer -- there is nothing to "
+            "reply to by email.", status=409,
+        )
+
+    latest_inbound = (
+        db.query(Outreach)
+        .filter(
+            Outreach.lead_id == lead.id, Outreach.channel == "email",
+            Outreach.direction == "in",
+        )
+        .order_by(Outreach.created_at.desc())
+        .first()
+    )
+    thread = email_outbound.thread_under_outreach(db, latest_inbound)
+    subject = (latest_inbound.subject if latest_inbound else "") or "Your enquiry"
+    message = email_outbound.build(
+        db, to=lead.email,
+        subject=subject if subject.lower().startswith("re:") else f"Re: {subject}",
+        body=text, thread=thread, sign=True, signer=user,
+    )
+    sent = email_outbound.send(
+        db, message, kind="reply", lead_id=lead.id, sent_by_user_id=user.id,
+        conversation_id=convo.id,
+    )
+    if sent.blocked:
+        raise email_outbound.OutboundError(sent.blocked, status=409)
+    if not sent.ok:
+        raise email_outbound.OutboundError(
+            sent.detail or "The email could not be sent.", status=502,
+        )
+
+    reply_row = Message(
+        conversation_id=convo.id, role="rep", content=text,
+        tool_calls_json=_dump([{"name": "outreach", "outreach_id": sent.record.id}]),
+    )
+    db.add(reply_row)
+    db.commit()
+    db.refresh(reply_row)
+    return reply_row
 
 
 def _hand_over(db: Session, lead: Lead, why: str) -> None:
@@ -388,14 +473,18 @@ def send_due(db: Session, row: EmailReplyDue, *, provider=None) -> dict:
         db.commit()
         return {"sent": False, "reason": "gone"}
 
-    # Anything outbound since they wrote means the answer has been given --
-    # by a rep, or by an earlier queued reply. One clock, whoever wrote.
+    # Anything that actually went out since they wrote means the answer has
+    # been given -- by a rep, or by an earlier queued reply. One clock,
+    # whoever wrote. `outreach_status.WENT_OUT` (added here): a queued or
+    # failed send never reached the buyer, so it must not be read as "already
+    # answered" -- that let a failed attempt silently cancel a reply that was
+    # actually still owed (item 36).
     answered = (
         db.query(Outreach)
         .filter(
             Outreach.lead_id == lead.id,
             Outreach.channel == "email",
-            Outreach.direction == "out",
+            outreach_status.WENT_OUT,
             Outreach.created_at >= row.created_at,
         )
         .first()

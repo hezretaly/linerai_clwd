@@ -36,6 +36,21 @@ export interface DealerEvent {
  * line at all and so refreshed nothing. `make smoke` now reads this map against
  * `EVENT_TYPES`, because a type left off it fails silently: the event arrives
  * and nothing on screen moves. */
+/**
+ * Every query key `/app/email` (`EmailSetup.tsx`) reads from, in one place.
+ *
+ * `INVALIDATES['outreach.sent']` and `EmailSetup.tsx`'s own `refresh()` each
+ * kept a separate hand-written list, and both left out `email-threads` --
+ * only `INVALIDATES['email.received']` had it, and the Composer's `onSent`
+ * patched the gap for the *sending* tab alone with its own extra
+ * invalidate. So a Liner auto-reply, or a colleague's send in a second tab,
+ * moved the Sent count and the "Checked just now" line (both read from
+ * `email-messages` alone) while the People tabs (`email-threads`) sat
+ * frozen -- "Waiting on us" kept counting an already-answered buyer under a
+ * freshness line that said the page was current (item 37).
+ */
+export const MAIL_PAGE_KEYS = ['email-messages', 'email-receipts', 'email-threads', 'timeline']
+
 const INVALIDATES: Record<string, string[]> = {
   'conversation.started': ['overview', 'conversations'],
   'conversation.message': ['conversations', 'timeline', 'overview'],
@@ -52,20 +67,14 @@ const INVALIDATES: Record<string, string[]> = {
   'appointment.assigned': ['overview', 'appointments', 'team', 'timeline'],
   'handoff.triggered': ['overview', 'conversations', 'timeline'],
   'team.deactivated': ['team', 'overview', 'leads', 'conversations', 'appointments'],
-  'outreach.sent': ['appointments', 'leads', 'conversations', 'email-messages', 'timeline'],
+  'outreach.sent': ['appointments', 'leads', 'conversations', ...MAIL_PAGE_KEYS],
   'outreach.opened': ['overview', 'leads', 'timeline'],
   // Mail arriving is the one thing on this dashboard nobody triggered, so it
-  // is the one thing that must not wait for a click. `email-receipts` is here
-  // as well as `email-messages` because a reply nobody could place has no
-  // outreach row -- it exists only as a receipt, and it is exactly the
-  // delivery a manager needs to notice. The ops keys as well: a delivery
-  // nobody could place is listed in *our* inbox, and the Unmatched box and
-  // the unread count sat stale until somebody clicked, on the one dashboard
-  // where mail arriving is the whole point of having it open.
-  'email.received': [
-    'email-messages', 'email-receipts', 'email-threads', 'timeline', 'leads', 'conversations',
-    'ops-mail', 'ops-summary',
-  ],
+  // is the one thing that must not wait for a click. The ops keys as well: a
+  // delivery nobody could place is listed in *our* inbox, and the Unmatched
+  // box and the unread count sat stale until somebody clicked, on the one
+  // dashboard where mail arriving is the whole point of having it open.
+  'email.received': [...MAIL_PAGE_KEYS, 'leads', 'conversations', 'ops-mail', 'ops-summary'],
   'email.agent': ['email-agent'],
   'vehicle.status_changed': ['inventory', 'overview'],
   // Ours, not a dealership's: somebody asking Liner for a demo. Every ops

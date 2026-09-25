@@ -5,6 +5,8 @@ import clsx from 'clsx'
 
 import { api } from '../lib/api'
 import { money } from '../lib/format'
+import { zonedDateStr } from '../lib/clock'
+import { useDealership } from '../lib/dealership'
 import { Badge, Card, Spinner } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
@@ -37,7 +39,11 @@ interface Campaign {
   why: string
   channel: string
   audience: number | null
-  examples: { lead_id: string; name: string; vehicle?: string; was?: number; now?: number; saving?: number; last_seen?: string }[]
+  examples: { lead_id: string; name: string; vehicle?: string; was?: number; now?: number; saving?: number; last_heard_at?: string }[]
+  // Buyers not among `examples`, computed server-side -- never re-derived as
+  // `audience - examples.length`, which undercounts the moment a repeated
+  // lead sits among the first few rows the backend sends (item 43).
+  more: number | null
   ready: boolean
   blocked_by: string
 }
@@ -129,6 +135,7 @@ export function CampaignsPage() {
 }
 
 function CampaignCard({ campaign: c }: { campaign: Campaign }) {
+  const dealership = useDealership()
   return (
     <Card className="min-w-0 p-5">
       <div className="flex flex-wrap items-start gap-2">
@@ -168,8 +175,12 @@ function CampaignCard({ campaign: c }: { campaign: Campaign }) {
           </p>
           {c.examples.length > 0 && (
             <ul className="mt-2 space-y-0.5">
+              {/* One line per buyer: `lead_id` alone is the key, because
+                  `_audience` (backend) already guarantees each example is a
+                  distinct buyer -- it no longer needs `vehicle`/`last_heard_at`
+                  to disambiguate two rows for the same person (item 43). */}
               {c.examples.map((e) => (
-                <li key={`${e.lead_id}-${e.vehicle ?? e.last_seen}`} className="min-w-0 truncate text-xs">
+                <li key={e.lead_id} className="min-w-0 truncate text-xs">
                   <Link
                     to={`/app/leads/${e.lead_id}`}
                     className="font-medium text-primary hover:underline"
@@ -182,14 +193,20 @@ function CampaignCard({ campaign: c }: { campaign: Campaign }) {
                       {' '}· {money(e.was ?? 0)} → {money(e.now ?? 0)}
                     </span>
                   )}
-                  {e.last_seen && (
-                    <span className="text-muted-foreground"> · last heard {e.last_seen}</span>
+                  {e.last_heard_at && (
+                    <span className="text-muted-foreground">
+                      {' '}· last heard {zonedDateStr(new Date(e.last_heard_at), dealership?.timezone)}
+                    </span>
                   )}
                 </li>
               ))}
-              {c.audience > c.examples.length && (
+              {/* The server's own `more`, not `audience - examples.length`:
+                  that arithmetic mixed buyers and (buyer, car) pairs before
+                  `_audience` existed, and undercounted "N more" whenever a
+                  repeated lead sat among the first few rows (item 43). */}
+              {!!c.more && (
                 <li className="text-xs text-muted-foreground">
-                  and {c.audience - c.examples.length} more
+                  and {c.more} more
                 </li>
               )}
             </ul>

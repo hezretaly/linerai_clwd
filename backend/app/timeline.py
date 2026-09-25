@@ -32,9 +32,10 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
-from app import email_envelopes
+from app import email_envelopes, outreach_status
 from app.models import (
     Appointment,
     CallRecording,
@@ -53,6 +54,98 @@ from app.schemas.serialize import iso, loads, outreach_out, stamp, user_out, veh
 # A call opens before anything said on it, so it sorts first within a second.
 KIND_ORDER = {"call": 0, "message": 1, "outreach": 2, "appointment": 3,
               "escalation": 4}
+
+# ---------------------------------------------------------------------------
+# What counts as "we were in contact with this buyer" -- the one definition
+# `channel_counts` uses for the strip's `All`, `leads.py`'s channel list and
+# `last_touch_at`, and the Overview's channel KPIs each used to answer
+# separately (item 21).
+#
+# `Outreach.channel` also holds 'phone_logged' for a rep-written-up call, and
+# both a text and an email can be inbound or outbound -- so "is this row a
+# contact" needs the same three facts the Mail page already reads for email:
+# is it a channel a person could have actually used, and did an outbound one
+# actually go (an inbound row is contact by definition; it arrived).
+# ---------------------------------------------------------------------------
+
+CONTACT_CHANNELS = ("email", "sms", "phone_logged")
+
+
+def outreach_is_contact(channel: str, direction: str, status: str) -> bool:
+    """True for an Outreach row that is real contact with a buyer: on a
+    channel that counts, and -- if it went outbound -- one that actually
+    reached them. A queued or failed outbound send never landed; a logged
+    call and an inbound message always count, because both are real by
+    construction (a rep only logs a call that happened; an inbound row
+    arrived)."""
+    return channel in CONTACT_CHANNELS and (
+        direction == "in" or outreach_status.went_out(direction, status)
+    )
+
+
+#: The SQL twin of `outreach_is_contact`, for a query-side filter.
+def contact_clause():
+    from app.models import Outreach
+
+    return and_(
+        Outreach.channel.in_(CONTACT_CHANNELS),
+        or_(Outreach.direction == "in", outreach_status.WENT_OUT),
+    )
+
+
+def contact_at(o) -> datetime:
+    """When a contact row happened, for sorting/last-touch purposes -- the
+    same `sent_at or created_at` rule the Mail page dates a row by."""
+    return outreach_status.sent_at(o)
+
+
+def last_heard_query(db: Session):
+    """A grouped `(lead_id, at)` query: the last time we actually heard from
+    each buyer -- something *they* wrote, never our own reply.
+
+    `campaigns.py`'s "gone cold" card used to take the newest `Message` of
+    *any* role in a buyer's threads, and Liner's own reply is always the
+    newest row in an answered thread -- so "last heard from them" was really
+    "we last spoke", one step later than the truth, and dated in the naive
+    UTC `str(at)[:10]`, which is already tomorrow's date in the evening at a
+    dealership west of Greenwich (item 40).
+
+    Two sources, unioned: a buyer's own chat/voice/email message
+    (`Message.role == "buyer"`), and an inbound email or text
+    (`Outreach.direction == "in"`) -- covering a channel (SMS) that writes no
+    `Message` at all. `outreach_status.SENT_AT` dates the second the same way
+    the Mail page dates any other outreach row.
+    """
+    from app.models import Conversation, Outreach
+
+    buyer_messages = (
+        db.query(
+            Conversation.lead_id.label("lead_id"),
+            Message.created_at.label("at"),
+        )
+        .join(Message, Message.conversation_id == Conversation.id)
+        .filter(Conversation.lead_id.is_not(None), Message.role == "buyer")
+    )
+    inbound_outreach = db.query(
+        Outreach.lead_id.label("lead_id"),
+        outreach_status.SENT_AT.label("at"),
+    ).filter(Outreach.lead_id.is_not(None), Outreach.direction == "in")
+    combined = buyer_messages.union_all(inbound_outreach).subquery()
+    return (
+        db.query(combined.c.lead_id, func.max(combined.c.at).label("at"))
+        .group_by(combined.c.lead_id)
+    )
+
+
+def last_heard_at(db: Session, lead_ids: list[str]) -> dict[str, datetime]:
+    """Per-lead wrapper over `last_heard_query`, for a caller holding a
+    handful of ids rather than building a campaign audience from scratch."""
+    if not lead_ids:
+        return {}
+    q = last_heard_query(db).subquery()
+    return dict(
+        db.query(q.c.lead_id, q.c.at).filter(q.c.lead_id.in_(lead_ids)).all()
+    )
 
 
 def _mirrored_outreach_id(message: Message) -> str | None:
@@ -278,6 +371,24 @@ def channel_counts(entries: list[dict]) -> dict[str, int]:
     somebody made contact, which is what the label already implies. The rows
     the tab then shows are the detail inside those contacts, and there are
     naturally more of them.
+
+    **Email never adds a second, per-conversation unit.** The per-conversation
+    branch below exists for chat and voice, where a contact *is* a
+    conversation -- but every real email is already counted once as its own
+    `outreach` entry, so applying that branch to email double-counted: an
+    email conversation holding even one message `compose()` could not fold
+    into its `outreach` card (Liner's own auto-reply, before it was mirrored
+    below) added a phantom extra contact on top of the emails actually sent.
+    `email_threads.py` -- the one place email exchanges are counted for the
+    Mail page -- counts one unit per `Outreach` row and nothing else; this
+    matches it (items 20, 32).
+
+    **An outreach entry only counts when it was real contact.** A queued or
+    failed outbound send, or a logged call/text on a channel it does not
+    belong to, is not something the buyer actually received --
+    `outreach_is_contact` is the same predicate `leads.py`'s channel list and
+    `overview.py`'s "Emails sent" KPI now read, so a failed send does not add
+    a tab here that the Overview would refuse to count as a send (item 21).
     """
     counts: dict[str, int] = {}
     threads: dict[str, set[str | None]] = {}
@@ -287,10 +398,21 @@ def channel_counts(entries: list[dict]) -> dict[str, int]:
             # Appointments and escalations happened regardless of where they
             # were arranged, so they belong to no channel and no tab.
             continue
-        # Each email is its own contact -- there is no thread to fold them
-        # into, and two emails on one day are two times we wrote to somebody.
+        # Each real send/receipt is its own contact -- there is no thread to
+        # fold them into, and two emails on one day are two times we wrote to
+        # somebody. A row that never actually reached them is not one.
         if entry.get("kind") == "outreach":
+            if not outreach_is_contact(
+                channel, entry.get("direction") or "", entry.get("status") or ""
+            ):
+                continue
             counts[channel] = counts.get(channel, 0) + 1
+            continue
+        if channel == "email":
+            # Every email is already counted above, as its outreach row --
+            # a message entry on the email channel is a mirror (already
+            # folded into that row by compose()) or, on old data, an
+            # unmirrored stray. Either way it is not a second contact.
             continue
         thread = entry.get("conversation_id")
         seen = threads.setdefault(channel, set())

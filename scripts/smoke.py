@@ -5442,6 +5442,129 @@ def main() -> int:
     check("nothing on the page claims to send",
           "send" not in plans["note"].lower() or "not" in plans["note"].lower()
           or "yet" in plans["note"].lower(), plans["note"][:80])
+    check("every counted card also reports how many are not shown",
+          all(isinstance(by_key[k]["more"], int) for k in ("price_drop", "still_available", "gone_cold")),
+          str({k: by_key[k]["more"] for k in ("price_drop", "still_available", "gone_cold")}))
+
+    # **One definition of "a buyer we can email", read the same by every
+    # channel="email" audience, the composer and /reach (item 38); one clock
+    # for "last heard from them", the buyer's own words rather than Liner's
+    # later reply (item 40); one buyer per audience, never per (buyer, car)
+    # pair (items 41, 43).** Constructed directly against the database,
+    # because these are states the product does not offer a form for.
+    print("\n== campaign audiences: real emails, one buyer, the buyer's own clock (items 38, 40, 41, 43) ==")
+    from app.db import SessionLocal as _CampSession
+    from app.models import (
+        Conversation as _CampConvo,
+        Lead as _CampLead,
+        Message as _CampMsg,
+        VehicleMention as _CampMention,
+    )
+
+    vehicles = call("GET", "/api/inventory?status=available")["vehicles"]
+    v1, v2 = vehicles[0], vehicles[1]
+
+    _cs = _CampSession()
+    try:
+        # A facebook-sourced buyer with a phone and no email. They belong in
+        # `still_available`'s *trigger* (they were quoted an available car)
+        # but must never be counted toward a channel="email" card's "ready to
+        # run" audience -- nothing here can actually email them.
+        fb_lead = _CampLead(
+            name=f"FB NoEmail {stamp}", email="", phone=f"+15550{stamp[:5]}",
+            source="facebook",
+        )
+        _cs.add(fb_lead)
+        _cs.flush()
+        fb_lead_id = fb_lead.id
+        fb_convo = _CampConvo(lead_id=fb_lead.id, channel="chat", stage="vehicle_focus")
+        _cs.add(fb_convo)
+        _cs.flush()
+        _cs.add(_CampMention(
+            conversation_id=fb_convo.id, vehicle_id=v1["id"],
+            quoted_price=v1["price"], created_at=utcnow_local() - timedelta(days=1),
+        ))
+
+        # A buyer whose last word is cold (>14 days), answered by Liner
+        # shortly after -- also cold, but *newer*. "Last heard" must be dated
+        # by the buyer's own message, never by the reply that followed it.
+        cold_email = f"cold.{stamp}@example.invalid"
+        cold_lead = _CampLead(name=f"Cold Buyer {stamp}", email=cold_email, phone="", source="chat")
+        _cs.add(cold_lead)
+        _cs.flush()
+        cold_lead_id = cold_lead.id
+        cold_convo = _CampConvo(lead_id=cold_lead.id, channel="chat", stage="vehicle_focus")
+        _cs.add(cold_convo)
+        _cs.flush()
+        buyer_at = utcnow_local() - timedelta(days=20)
+        reply_at = buyer_at + timedelta(minutes=5)
+        _cs.add(_CampMsg(conversation_id=cold_convo.id, role="buyer",
+                          content="Is it still there?", created_at=buyer_at))
+        _cs.add(_CampMsg(conversation_id=cold_convo.id, role="assistant",
+                          content="Yes, want to come see it?", created_at=reply_at))
+
+        # One buyer, two mentions: a re-quote at *today's* price on one car
+        # (not a drop -- the last price they were told is what it costs now)
+        # and a real drop on a second car. Must count as one buyer with one
+        # example, not "2 buyers right now" for a single person, and not a
+        # drop on the stale, higher, older quote.
+        drop_email = f"drop.{stamp}@example.invalid"
+        drop_lead = _CampLead(name=f"Drop Buyer {stamp}", email=drop_email, phone="", source="chat")
+        _cs.add(drop_lead)
+        _cs.flush()
+        drop_lead_id = drop_lead.id
+        drop_convo = _CampConvo(lead_id=drop_lead.id, channel="chat", stage="vehicle_focus")
+        _cs.add(drop_convo)
+        _cs.flush()
+        _cs.add(_CampMention(
+            conversation_id=drop_convo.id, vehicle_id=v1["id"],
+            quoted_price=(v1["price"] or 0) + 3000, created_at=utcnow_local() - timedelta(days=3),
+        ))
+        _cs.add(_CampMention(
+            conversation_id=drop_convo.id, vehicle_id=v1["id"],
+            # Newest quote on this car is at today's price -- no drop since.
+            quoted_price=v1["price"], created_at=utcnow_local() - timedelta(hours=1),
+        ))
+        _cs.add(_CampMention(
+            conversation_id=drop_convo.id, vehicle_id=v2["id"],
+            # A real drop, on a different car.
+            quoted_price=(v2["price"] or 0) + 2000, created_at=utcnow_local() - timedelta(hours=2),
+        ))
+        _cs.commit()
+    finally:
+        _cs.close()
+
+    after_plans = call("GET", "/api/campaigns")
+    by_key2 = {c["key"]: c for c in after_plans["campaigns"]}
+
+    still = by_key2["still_available"]
+    check("a buyer with no usable email is never in an email campaign's audience",
+          not any(e["lead_id"] == fb_lead_id for e in still["examples"]))
+    recipients = call("GET", "/api/email/recipients")["recipients"]
+    check("and the composer's own picker agrees they have no address to pick",
+          not any(r["lead_id"] == fb_lead_id for r in recipients))
+    fb_reach = call("GET", f"/api/leads/{fb_lead_id}/reach")
+    check("and /reach gives the identical answer for the same buyer",
+          not fb_reach["email"]["available"], str(fb_reach["email"]))
+
+    cold = by_key2["gone_cold"]
+    cold_row = next((e for e in cold["examples"] if e["lead_id"] == cold_lead_id), None)
+    check("gone_cold lists a buyer whose own last word was more than 14 days ago",
+          cold_row is not None, str([e["lead_id"] for e in cold["examples"]])[:200])
+    if cold_row is not None:
+        heard = datetime.fromisoformat(cold_row["last_heard_at"].rstrip("Z"))
+        check("and dates them by their own message, not Liner's later reply",
+              abs((heard - buyer_at).total_seconds()) < 120
+              and abs((heard - reply_at).total_seconds()) > 120,
+              f"last_heard_at={cold_row['last_heard_at']} buyer_at={buyer_at} reply_at={reply_at}")
+
+    drop2 = by_key2["price_drop"]
+    drop_rows = [e for e in drop2["examples"] if e["lead_id"] == drop_lead_id]
+    check("one buyer, quoted a real drop on one car and a stale re-quote on another, counts once",
+          len(drop_rows) == 1, str(drop_rows))
+    if drop_rows:
+        check("and the example shown is the car that actually dropped, at today's saving",
+              abs(drop_rows[0]["saving"] - 2000) < 1, str(drop_rows[0]))
 
     print("\n== the details card: asking in boxes rather than in prose ==")
     # **The one ask a chip could never make on its own.** A chip's text is sent
@@ -8022,7 +8145,7 @@ def main() -> int:
     # decides two things read in different places: which tab a row is in, and
     # whether the badge says the buyer is waiting. Two copies is how a header
     # says 3 over a row that reads as 2.
-    from app.email_threads import EXCHANGE_THRESHOLD, graduated, tally
+    from app.email_threads import tally
 
     at = datetime(2026, 1, 1)
     def walk(*directions):
@@ -8040,17 +8163,8 @@ def main() -> int:
           walk("out", "out").exchanges == 0 and not walk("out").waiting)
     check("but one they answered and we answered back is",
           walk("out", "in", "out").exchanges == 1)
-    check("three round trips graduates it", graduated(walk(*(["in", "out"] * 3))))
-    check("two does not", not graduated(walk(*(["in", "out"] * 2))))
-    check("and writing again afterwards leaves it graduated and waiting",
-          graduated(walk(*(["in", "out"] * 3), "in"))
-          and walk(*(["in", "out"] * 3), "in").waiting)
-    check("the threshold is one constant, so the badge and the tab move together",
-          EXCHANGE_THRESHOLD == 3, str(EXCHANGE_THRESHOLD))
 
     listed = call("GET", "/api/email/threads?box=all")
-    check("the endpoint serves the same threshold it counted with",
-          listed["threshold"] == EXCHANGE_THRESHOLD)
     by_key = {row["key"]: row for row in listed["threads"]}
     check("a buyer who wrote in is one row, however many messages they sent",
           len([r for r in listed["threads"] if r.get("address") == who]) == 1,
@@ -8064,6 +8178,181 @@ def main() -> int:
           str(listed["counts"]))
     check("and Everyone is the whole set, not a tab beside the others",
           listed["counts"]["all"] == len(listed["threads"]))
+
+    # **"In /app/conversations" is the same predicate the conversations list
+    # itself uses, not a three-exchange threshold (items 27, 34).** Put the
+    # old rule back mentally: `graduated = exchanges >= 3` would read False
+    # here (0 exchanges, one unanswered inbound) while /api/conversations
+    # already lists this buyer from their first accepted delivery
+    # (`e8c5185`) -- so this assertion catches exactly that gap.
+    first_addr = f"firsttime.{stamp}@example.invalid"
+    first_msg_id = f"<first-{stamp}@mail>"
+    inbound({
+        "messageId": first_msg_id, "from": first_addr,
+        "to": "sales@example.invalid", "subject": "Quick question",
+        "text": "Do you still have anything under $20k?",
+    })
+    first_placed = settled(first_msg_id)
+    first_lead_id = first_placed["lead_id"]
+    first_row = next(
+        r for r in call("GET", "/api/email/threads?box=all")["threads"]
+        if r.get("lead_id") == first_lead_id
+    )
+    check("a buyer is 'in conversations' from their first email, not after three exchanges",
+          first_row["in_conversations"] and first_row["exchanges"] == 0,
+          f"in_conversations={first_row['in_conversations']} exchanges={first_row['exchanges']}")
+    listed_convos = call("GET", "/api/conversations")["conversations"]
+    check("and that agrees with what /api/conversations actually lists them under",
+          any(c["lead"] and c["lead"]["id"] == first_lead_id for c in listed_convos))
+    check("the 'graduated' (in-conversations) tab shows them immediately",
+          any(r["lead_id"] == first_lead_id
+              for r in call("GET", "/api/email/threads?box=graduated")["threads"]))
+    check("and the 'open' tab does not, since they are not merely 'open'",
+          not any(r["lead_id"] == first_lead_id
+                  for r in call("GET", "/api/email/threads?box=open")["threads"]))
+    check("the response no longer carries a threshold nobody reads by",
+          "threshold" not in listed)
+
+    # **A send that never reached the buyer is not an answer (item 36).** Put
+    # the bug back mentally: the old `threads()` fed every `direction=='out'`
+    # row into `tally()` regardless of status, so a failed send cleared
+    # `waiting` and counted as an exchange for a buyer nobody actually wrote
+    # back to.
+    print("\n== a failed or in-flight send does not count as an answer (items 36, 49) ==")
+    stuck_addr = f"stuck.{stamp}@example.invalid"
+    stuck_msg_id = f"<stuck-{stamp}@mail>"
+    inbound({
+        "messageId": stuck_msg_id, "from": stuck_addr,
+        "to": "sales@example.invalid", "subject": "Is it still there",
+        "text": "Is the Civic still available?",
+    })
+    stuck_placed = settled(stuck_msg_id)
+    stuck_lead_id = stuck_placed["lead_id"]
+    before_row = next(
+        r for r in call("GET", "/api/email/threads?box=all")["threads"]
+        if r.get("lead_id") == stuck_lead_id
+    )
+    check("before any reply, this buyer is waiting", before_row["waiting"], str(before_row))
+
+    from app.db import SessionLocal as _DirectSession
+    from app.models import Outreach as _DirectOutreach
+
+    def _write_outreach(**fields):
+        session = _DirectSession()
+        try:
+            row = _DirectOutreach(**fields)
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return row.id
+        finally:
+            session.close()
+
+    _write_outreach(
+        lead_id=stuck_lead_id, channel="email", direction="out", kind="reply",
+        to_address=stuck_addr, subject="Re: Is it still there",
+        body="Yes it is.", provider="outbox", status="failed",
+        error="550 5.1.1 mailbox unavailable",
+    )
+    after_failed = next(
+        r for r in call("GET", "/api/email/threads?box=all")["threads"]
+        if r.get("lead_id") == stuck_lead_id
+    )
+    check("a failed send does not count as an answer -- the buyer is still waiting",
+          after_failed["waiting"] and after_failed["exchanges"] == 0,
+          f"waiting={after_failed['waiting']} exchanges={after_failed['exchanges']}")
+    check("and the mailbox's own delivery field calls it not_sent, not sent",
+          any(m["lead_id"] == stuck_lead_id and m["delivery"] == "not_sent"
+              for m in call("GET", "/api/email/messages?box=failed")["messages"]))
+
+    # A row still `queued` -- the provider has not answered yet, or never will
+    # if the process died mid-send -- is neither Sent nor a failure until
+    # `STUCK_AFTER` (5 minutes) has passed. Put the bug back mentally: the old
+    # `_in_box` read 'failed' as `status != 'sent'`, so a send committed one
+    # second ago showed up in the red 'Not sent' tab immediately.
+    flight_addr = f"flight.{stamp}@example.invalid"
+    _write_outreach(
+        lead_id=stuck_lead_id, channel="email", direction="out", kind="followup",
+        to_address=flight_addr, subject="Following up",
+        body="Checking in.", provider="outbox", status="queued",
+    )
+    all_messages = call("GET", "/api/email/messages?box=all")["messages"]
+    inflight = next(m for m in all_messages if m["address"] == flight_addr)
+    check("a freshly queued send reads 'sending', not sent or failed",
+          inflight["delivery"] == "sending", inflight["delivery"])
+    check("so it sits in neither the Sent nor the Not sent tab",
+          not any(m["address"] == flight_addr
+                  for m in call("GET", "/api/email/messages?box=sent")["messages"])
+          and not any(m["address"] == flight_addr
+                      for m in call("GET", "/api/email/messages?box=failed")["messages"]))
+
+    # **"Emails sent" counts one thing: an outbound email the provider
+    # accepted -- never a logged call, a text, or the buyer's own inbound
+    # reply, all of which are stored with `status='sent'` too (items 2, 21,
+    # 30).** Put the bug back mentally: the old KPI filter was
+    # `created_at >= since, status == 'sent'` with no channel or direction
+    # check, so the log-call below would have moved it.
+    print("\n== 'Emails sent' is one real definition, shared with the Mail page's own Sent tab (items 2, 21, 30) ==")
+    kpi_before = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "email")["value"]
+
+    some_appt = call("GET", "/api/appointments")["appointments"][0]
+    call("POST", f"/api/appointments/{some_appt['id']}/log-call", {"note": f"smoke {stamp}"})
+    kpi_after_call = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "email")["value"]
+    check("a logged phone call does not count as an email sent",
+          kpi_after_call == kpi_before, f"{kpi_before} -> {kpi_after_call}")
+
+    kpi_recipients = call("GET", "/api/email/recipients")["recipients"]
+    kpi_target = kpi_recipients[0]
+    sent_probe = call("POST", "/api/email/compose", {
+        "to": kpi_target["email"], "subject": f"Smoke probe {stamp}",
+        "body": "Just checking in.", "lead_id": kpi_target["lead_id"],
+    })
+    check("the probe send actually went", sent_probe["status"] == "sent", str(sent_probe)[:150])
+    kpi_after_send = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "email")["value"]
+    check("and one real outbound email moves the KPI by exactly one",
+          kpi_after_send == kpi_after_call + 1, f"{kpi_after_call} -> {kpi_after_send}")
+
+    mailbox_sent = call("GET", "/api/email/messages?box=sent")
+    check("and the Mail page's own Sent tab actually contains that same send",
+          any(m["id"] == sent_probe["id"] for m in mailbox_sent["messages"]),
+          f"probe id {sent_probe['id']} not among {[m['id'] for m in mailbox_sent['messages']][:5]}")
+
+    print("\n== a buyer's channel list and 'last touch' count every real contact, not just email (item 21) ==")
+    # `stuck_lead_id` (above) has no sms/phone_logged channel yet.
+    channel_before = next(
+        l for l in call("GET", "/api/leads?limit=500")["leads"] if l["id"] == stuck_lead_id
+    )
+    check("before, this buyer's channel list does not include sms",
+          "sms" not in channel_before["channels"], str(channel_before["channels"]))
+
+    _write_outreach(
+        lead_id=stuck_lead_id, channel="sms", direction="in", kind="followup",
+        to_address="", provider="twilio", status="received",
+        body=f"Text from buyer {stamp}",
+    )
+    channel_after = next(
+        l for l in call("GET", "/api/leads?limit=500")["leads"] if l["id"] == stuck_lead_id
+    )
+    check("an inbound text adds 'sms' to the channel list, not just 'email'",
+          "sms" in channel_after["channels"], str(channel_after["channels"]))
+    check("and moves last_touch_at, the way an emailed buyer already did",
+          channel_after["last_touch_at"] > channel_before["last_touch_at"],
+          f"{channel_before['last_touch_at']} -> {channel_after['last_touch_at']}")
+
+    # A failed outbound text never reached them -- it must not move
+    # `last_touch_at` the way any `channel == 'email'` row used to, whatever
+    # its status.
+    _write_outreach(
+        lead_id=stuck_lead_id, channel="sms", direction="out", kind="followup",
+        to_address="+15550100199", provider="twilio", status="failed",
+        error="21610: unsubscribed", body=f"Are you still interested? {stamp}",
+    )
+    channel_after_fail = next(
+        l for l in call("GET", "/api/leads?limit=500")["leads"] if l["id"] == stuck_lead_id
+    )
+    check("a failed outbound text does not move last_touch_at",
+          channel_after_fail["last_touch_at"] == channel_after["last_touch_at"],
+          f"{channel_after['last_touch_at']} -> {channel_after_fail['last_touch_at']}")
 
     # A newsletter is not waiting for an answer. Since a person writing to a
     # published address becomes a buyer, everything left unplaced is a robot --
@@ -8092,6 +8381,64 @@ def main() -> int:
     boxed = call("GET", "/api/email/messages?box=unmatched")["messages"]
     check("nor in its mailbox, which was listing every unplaced delivery",
           not any(m["subject"] == f"For Liner {stamp}" for m in boxed))
+
+    print("\n== a rep's reply on an email thread is a real send, not a chat-shaped row (items 33, 44) ==")
+    # Put the bug back mentally: the generic `rep_reply` wrote a plain
+    # `role='rep'` Message and emitted `conversation.message`, which nothing
+    # on an email thread ever delivers -- so the buyer page showed the reply
+    # sent while the Mail page (reading only `Outreach` rows) kept the buyer
+    # `waiting: true` forever, and nothing was actually emailed.
+    rep_addr = f"repreply.{stamp}@example.invalid"
+    rep_msg_id = f"<repreply-{stamp}@mail>"
+    inbound({
+        "messageId": rep_msg_id, "from": rep_addr,
+        "to": "sales@example.invalid", "subject": "Trade-in value",
+        "text": "What would you give me for my trade-in?",
+    })
+    rep_placed = settled(rep_msg_id)
+    rep_lead_id = rep_placed["lead_id"]
+    rep_timeline = call("GET", f"/api/leads/{rep_lead_id}/timeline")
+    rep_convo_id = rep_timeline["reply_to"]
+    check("the intake minted a reply-able email thread for this buyer",
+          rep_convo_id is not None, str(rep_timeline["reply_to"]))
+
+    call("POST", f"/api/conversations/{rep_convo_id}/takeover")
+    reply_text = f"We can take a look at trade-in value when you come in. {stamp}"
+    rep_reply_out = call("POST", f"/api/conversations/{rep_convo_id}/messages", {"content": reply_text})
+    check("the reply reads back with the rep's own words",
+          rep_reply_out.get("content") == reply_text, str(rep_reply_out)[:150])
+
+    rep_row = next(
+        r for r in call("GET", "/api/email/threads?box=all")["threads"]
+        if r.get("lead_id") == rep_lead_id
+    )
+    check("answering through the buyer page's Text box clears 'waiting on us'",
+          not rep_row["waiting"] and rep_row["exchanges"] == 1,
+          f"waiting={rep_row['waiting']} exchanges={rep_row['exchanges']}")
+    rep_sent_mail = call("GET", "/api/email/messages?box=sent")["messages"]
+    check("because a real email actually went, not just a thread message",
+          any(m["lead_id"] == rep_lead_id and m["address"] == rep_addr for m in rep_sent_mail),
+          f"no sent row for {rep_addr}")
+
+    print("\n== the Mail page's own 'Queued' count is the true total, not a 20-row preview (item 48) ==")
+    agent_state = call("GET", "/api/email/agent")
+    check("agent_state reports a true waiting_count alongside the preview list",
+          agent_state["waiting_count"] >= len(agent_state["waiting"]),
+          f"waiting_count={agent_state['waiting_count']} preview={len(agent_state['waiting'])}")
+
+    print("\n== a tab's own number never disagrees with what it shows under a search (item 45) ==")
+    # Put the bug back mentally: the old counts were built with `_in_box`
+    # alone and the search was applied only to the list, so `counts[box]`
+    # stayed the unsearched total while `matching`/the rows shown narrowed.
+    needle = f"smoke probe {stamp}".lower()
+    for search_box in ("all", "sent"):
+        searched = call("GET", f"/api/email/messages?box={search_box}&q={urllib.parse.quote(needle)}")
+        check(f"box={search_box}: the tab's count equals what the search actually matched",
+              searched["counts"][search_box] == searched["matching"],
+              f"counts[{search_box}]={searched['counts'][search_box]} matching={searched['matching']}")
+    no_match = call("GET", f"/api/email/messages?box=all&q={urllib.parse.quote('zzz-no-match-' + stamp)}")
+    check("and a search matching nothing reads zero, not the unsearched total",
+          no_match["counts"]["all"] == 0 and no_match["matching"] == 0, str(no_match["counts"]))
 
     print("\n== a timestamp on the wire says which kind it is ==")
     # ECMAScript parses a bare date-time as *browser-local*. `utcnow()` is naive

@@ -1455,14 +1455,25 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   messages with one buyer are one relationship. Same split as
   `/app/conversations`, for the same reason.
   - **The exchange counter lives in `app/email_threads.py` and nowhere else.**
-    It decides two things read in different places — which tab a row is in, and
-    whether the badge says the buyer is waiting — and two copies of "what
-    counts as a back and forth" is how a header says 3 over a row that reads
-    as 2. An exchange is **an inbound we answered**: a buyer who writes three
-    times and gets one reply has had one, and the two they are still owed are
-    what `waiting` is for rather than something to inflate the count with.
-    `EXCHANGE_THRESHOLD` is one constant, so moving it moves the badge and the
-    tab together.
+    It decides what a rep sees in two different places — the badge that says a
+    buyer is waiting, and the depth shown beside their name — and two copies
+    of "what counts as a back and forth" is how a header says 3 over a row
+    that reads as 2. An exchange is **an inbound we answered**: a buyer who
+    writes three times and gets one reply has had one, and the two they are
+    still owed are what `waiting` is for rather than something to inflate the
+    count with. Only a real, went-out reply answers anybody — a queued or
+    failed send is left out of the walk entirely, or a failed attempt used to
+    read as an answer and quietly clear `waiting` for a buyer nobody actually
+    wrote back to.
+  - **"In /app/conversations" is not a three-exchange threshold.** It used to
+    be — `graduated = exchanges >= EXCHANGE_THRESHOLD` — but the conversations
+    list itself has admitted an email buyer from their first accepted delivery
+    since `e8c5185`, with no threshold at all, so this page kept calling a
+    buyer "not yet a conversation" for however long it took them to answer
+    three times over, while `/app/conversations` and its sidebar badge already
+    listed and counted them. `in_conversations` now reads the one predicate
+    that list actually uses (`threads.started_leads`), so this page can never
+    disagree with it about who is on it.
   - **A stranger row is never waiting.** Since a person writing to a published
     address becomes a buyer, what is left unplaced is a newsletter, an
     out-of-office and a `no-reply@` mailbox — and flagging nine rows nobody
@@ -1477,7 +1488,14 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   place has no outreach row and no buyer page, so listing one table would
   leave a stranger writing to `sales@` visible only on a diagnostics strip.
   `_in_box` defines each tab once, for the counts and the filter both — two
-  copies is how a tab says 12 and shows 9.
+  copies is how a tab says 12 and shows 9. Each row also carries `delivery`
+  (`app/outreach_status.py`: `'received' | 'sent' | 'sending' | 'not_sent'`),
+  the one word every reader of an `Outreach` row's raw `status` should use
+  instead of its own guess — `status` alone is overloaded (an inbound reply
+  is stored `status='sent'` too, and a row is committed `'queued'` before the
+  provider is even asked), so five different places each drew their own line
+  between "sent", "still trying" and "failed", and a send in flight read as a
+  red "Not sent" for as long as the provider call took.
 - **There is no Drafts tab, because nothing stores a draft.** One is composed
   from the lead's state when the composer opens and lives in the browser until
   the rep presses send. A tab that is always empty claims a feature that does

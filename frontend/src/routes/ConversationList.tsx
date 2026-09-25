@@ -19,6 +19,7 @@ import type { Conversation, Lead, TeamMember, User } from '../lib/types'
 import { Button, Card, Empty, Spinner } from '../components/ui'
 import { Icon } from '../components/Icon'
 import { PageIntro } from '../components/dashboard/AppShell'
+import { CHANNEL_LABEL } from '../components/dashboard/Timeline'
 
 /* Everyone Liner has heard from, in one list a manager can slice.
  *
@@ -34,12 +35,6 @@ import { PageIntro } from '../components/dashboard/AppShell'
  * most live chats have none, and a buyer asking a question at 9pm is exactly
  * who a rep needs to see.
  */
-
-const CHANNEL_LABEL: Record<string, string> = {
-  chat: 'Website chat',
-  voice: 'Voice call',
-  email: 'Email',
-}
 
 /**
  * What to call somebody who has not said who they are.
@@ -173,7 +168,12 @@ export function ConversationListPage() {
       ? (requested as ConversationFilter)
       : 'all',
   )
-  const [origin, setOrigin] = useState('')
+  // Seeded from the URL so a link with `?channel=` (the Overview's Chats and
+  // Calls KPIs, below) actually lands pre-filtered -- before this, no card's
+  // link could pre-select a channel here at all, because this state read
+  // nothing off the URL. `channel`, not `filter`: this page's own filter
+  // chips already own that key.
+  const [origin, setOrigin] = useState(params.get('channel') ?? '')
   const [assignee, setAssignee] = useState('')
 
   // Linkable, and the back button means something -- the same rule the Chat
@@ -229,11 +229,18 @@ export function ConversationListPage() {
 
   if (isLoading) return <Spinner />
 
-  const origins = [...new Set(rows.map((r) => r.origin))].sort()
+  // Channel *keys*, not the joined display string. Comparing `r.origin`
+  // (e.g. "Website chat · Email · Voice call") against one option's exact
+  // label meant a buyer who used chat plus anything else could never match
+  // "Website chat", so a card's KPI and this filter counted two different
+  // sets for the same word (item 26). Membership in `channels` is what "came
+  // in by channel X" actually means, and it is the same field
+  // `lead_summaries`/`RowView` already compute.
+  const origins = [...new Set(rows.flatMap((r) => r.channels))].sort()
 
   const visible = rows
     .filter((r) => rowMatches(r.row, filter, meId))
-    .filter((r) => (origin ? r.origin === origin : true))
+    .filter((r) => (origin ? r.channels.includes(origin) : true))
     .filter((r) =>
       assignee === ''
         ? true
@@ -311,9 +318,9 @@ export function ConversationListPage() {
               className="h-9 min-w-0 max-w-[9rem] rounded-md border border-input bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring"
             >
               <option value="">Everywhere</option>
-              {origins.map((o) => (
-                <option key={o} value={o}>
-                  {o}
+              {origins.map((key) => (
+                <option key={key} value={key}>
+                  {CHANNEL_LABEL[key] ?? key}
                 </option>
               ))}
             </select>

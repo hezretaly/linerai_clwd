@@ -402,7 +402,14 @@ class Sent:
 
     @property
     def ok(self) -> bool:
-        return self.record.status == "sent"
+        # Same test `outreach_status.went_out` gives every other reader --
+        # `self.record` is always a fresh outbound row here, so this is
+        # `status == "sent"` in practice, but reading it through the one
+        # shared function keeps this from drifting the day this class stops
+        # being outbound-only.
+        from app import outreach_status
+
+        return outreach_status.went_out(self.record.direction, self.record.status)
 
     @property
     def detail(self) -> str:

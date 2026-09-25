@@ -1036,8 +1036,35 @@ def build(db, count: int) -> dict[str, int]:
             offset = 0
             for role, content in lines:
                 stamp += timedelta(seconds=rng.randint(20, 90))
+                tool_calls = "[]"
+                # Written the way production writes an email exchange -- a
+                # real `Outreach` row per line, the buyer's mirrored the way
+                # `email_reply.remember_inbound` mirrors one and Liner's own
+                # reply mirrored the way `email_reply.answer` now mirrors its
+                # own send -- rather than a bare chat-shaped `Message` with no
+                # `Outreach` behind it. That bare shape is what left these
+                # buyers on `/app/conversations` (their Conversation is real)
+                # while absent from the Mail page's People tab and message
+                # list (both read `Outreach` only), which is the seed-only
+                # cause behind items 20, 32 and 33's measured mismatches.
+                if channel == "email" and lead.email:
+                    outreach_row = Outreach(
+                        lead_id=lead.id, channel="email",
+                        direction="in" if role == "buyer" else "out",
+                        kind="reply",
+                        to_address=lead.email,
+                        subject=f"{car.year} {car.make} {car.model}"[:255],
+                        body=content,
+                        provider="inbound" if role == "buyer" else "outbox",
+                        status="sent", sent_at=stamp, created_at=stamp,
+                    )
+                    db.add(outreach_row)
+                    db.flush()
+                    made["outreach"] += 1
+                    tool_calls = json.dumps([{"name": "outreach", "outreach_id": outreach_row.id}])
                 db.add(Message(
                     conversation_id=convo.id, role=role, content=content, created_at=stamp,
+                    tool_calls_json=tool_calls,
                 ))
                 made["messages"] += 1
                 # A call's two halves are joined on a clock stamped in the
@@ -1141,7 +1168,18 @@ def build(db, count: int) -> dict[str, int]:
                     hours, now - timedelta(days=rng.randint(3, 50)), 0,
                     rng.choice([10, 11, 14, 15]),
                 )
-                status = rng.choice(["completed", "cancelled", "no_show", "confirmed"])
+                # A visit that happened is represented the way the product
+                # represents one: a past 'confirmed' row, never 'completed' --
+                # nothing in this app ever writes that status
+                # (`TRANSITIONS`/`STANDING_STATUSES` do not carry it), so a
+                # demo row that did was a state the product itself cannot
+                # produce. The frontend's `isOff` only knows cancelled/no_show
+                # as "did not happen"; a 'completed' row read as a live visit
+                # there while campaigns.py's booked-lead_ids check (which
+                # tests membership in STANDING_STATUSES, not 'completed') read
+                # it as "never came in" -- one fact, two answers, for a status
+                # only this seed ever wrote (item 39).
+                status = rng.choice(["confirmed", "cancelled", "no_show"])
             appointment = Appointment(
                 lead_id=lead.id,
                 # The car they were actually shown, and the rep who actually
@@ -1201,7 +1239,8 @@ def build(db, count: int) -> dict[str, int]:
             # Some of them wrote back. Inbound and outbound in one table is
             # what makes the mailbox a union rather than two lists.
             if n % 4 == 1:
-                db.add(Outreach(
+                reply_body = _buyer_email(rng, lead, car, need)
+                inbound = Outreach(
                     lead_id=lead.id, channel="email", direction="in", kind="reply",
                     to_address=lead.email, subject=f"Re: {subject}",
                     # **Written the way people actually write email**, which is
@@ -1211,11 +1250,42 @@ def build(db, count: int) -> dict[str, int]:
                     # three things in a paragraph and signs off with a name, a
                     # title and a number -- which is exactly what a rep needs
                     # to be able to read in full and could not.
-                    body=_buyer_email(rng, lead, car, need),
+                    body=reply_body,
                     provider="inbound", status="sent",
                     sent_at=sent + timedelta(hours=3), created_at=sent + timedelta(hours=3),
-                ))
+                )
+                db.add(inbound)
+                db.flush()
                 made["outreach"] += 1
+                # Mirrored the way `api/inbound_email.py` always mirrors an
+                # accepted delivery -- reusing this lead's email conversation
+                # if the channel loop above already opened one for them,
+                # minting one otherwise -- rather than left as a bare
+                # Outreach row with no Conversation behind it. That bare
+                # shape is what put these buyers in the Mail page's people
+                # list with nothing for them on /app/conversations (the other
+                # half of item 33's measured mismatch: 7 buyers the mailbox
+                # knew that the conversations list never did).
+                email_convo = (
+                    db.query(Conversation)
+                    .filter_by(lead_id=lead.id, channel="email")
+                    .order_by(Conversation.started_at.asc())
+                    .first()
+                )
+                if email_convo is None:
+                    email_convo = Conversation(
+                        lead_id=lead.id, channel="email", stage="opening",
+                        status="active", started_at=sent,
+                    )
+                    db.add(email_convo)
+                    db.flush()
+                    made["conversations"] += 1
+                db.add(Message(
+                    conversation_id=email_convo.id, role="buyer", content=reply_body,
+                    tool_calls_json=json.dumps([{"name": "outreach", "outreach_id": inbound.id}]),
+                    created_at=inbound.created_at,
+                ))
+                made["messages"] += 1
 
         # Mail nobody could place -- a stranger writing to sales@. It has no
         # lead and no buyer page, and it is the reason /app/email is a union.

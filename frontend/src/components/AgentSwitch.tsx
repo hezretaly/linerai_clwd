@@ -36,6 +36,11 @@ export interface AgentState {
   cooldown_minutes: number
   hourly_ceiling: number
   declined: { id: string; from_address: string; subject: string; detail: string; at: string }[]
+  // The true total, computed server-side before `waiting` below is sliced to
+  // a 20-row preview -- `waiting.length` used to be the only number this
+  // card had, so "Queued (N)" silently read `min(true_count, 20)` once more
+  // than 20 replies were genuinely queued (item 48).
+  waiting_count: number
   waiting: { id: string; lead_id: string | null; due_at: string; created_at: string }[]
   recent: { id: string; lead_id: string | null; state: string; detail: string; at: string }[]
   flags: { key: string; value: string; reason: string; updated_at: string }[]
@@ -139,10 +144,10 @@ function Switch({
         first. At most {state.hourly_ceiling} an hour, after which this switches itself off.
       </p>
 
-      {state.waiting.length > 0 && (
+      {state.waiting_count > 0 && (
         <div className="mt-3 rounded-md border border-border bg-muted/40 p-2.5">
           <p className="text-[11px] font-medium text-muted-foreground">
-            Queued ({state.waiting.length})
+            Queued ({state.waiting_count})
           </p>
           <ul className="mt-1 space-y-0.5">
             {state.waiting.slice(0, 5).map((r) => (
@@ -158,6 +163,13 @@ function Switch({
               </li>
             ))}
           </ul>
+          {/* The list above is a preview, not the total -- say so once more
+              than 5 are actually queued, so it cannot be read as "5 queued". */}
+          {state.waiting_count > 5 && (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              showing 5 of {state.waiting_count}
+            </p>
+          )}
         </div>
       )}
 

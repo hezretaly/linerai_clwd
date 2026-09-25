@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import { api, ApiError } from '../lib/api'
 import { dateTime, relative } from '../lib/format'
 import { withStore } from '../lib/store'
+import { MAIL_PAGE_KEYS } from '../lib/ws'
 import type { IntegrationsPayload } from '../lib/types'
 import {
   aboveQuote,
@@ -162,7 +163,13 @@ interface Thread {
   inbound: number
   outbound: number
   waiting: boolean
-  graduated: boolean
+  // Whether this buyer is actually on /app/conversations -- read server-side
+  // from the same predicate that list uses (`threads.started_leads`), not a
+  // three-exchange threshold. Renamed from `graduated`: that name and the
+  // old rule disagreed with /app/conversations from a buyer's very first
+  // email, since e8c5185 mints a conversation (and lists them there) on the
+  // first accepted delivery, well before three round trips (items 27, 34).
+  in_conversations: boolean
   at: string | null
 }
 
@@ -357,12 +364,13 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
     refetchOnWindowFocus: true,
   })
 
-  const { data: threads } = useQuery({
+  const {
+    data: threads, dataUpdatedAt: threadsUpdatedAt, isFetching: threadsFetching,
+  } = useQuery({
     queryKey: ['email-threads', people],
     queryFn: () => api.get<{
       threads: Thread[]
       counts: Record<ThreadBox, number>
-      threshold: number
     }>(`/api/email/threads?box=${people}`),
     refetchInterval: POLL_MS,
     refetchOnWindowFocus: true,
@@ -385,10 +393,13 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
 
   useEffect(() => setShown(PAGE), [box, query])
 
+  // `MAIL_PAGE_KEYS` (lib/ws.ts) -- not a second hand-written list. This one
+  // left out `email-threads` entirely, so the "Check now" button, a test
+  // send and a replayed inbound each refreshed the message list and the
+  // "Checked Xm ago" line while the People tabs ('Waiting on us' among them)
+  // stayed exactly as stale as before pressing it (item 37).
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ['email-receipts'] })
-    void queryClient.invalidateQueries({ queryKey: ['email-messages'] })
-    void queryClient.invalidateQueries({ queryKey: ['timeline'] })
+    for (const key of MAIL_PAGE_KEYS) void queryClient.invalidateQueries({ queryKey: [key] })
   }
 
   const sendTest = useMutation({
@@ -437,9 +448,9 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
           conversations list makes, for the same reason.
 
           An exchange is an inbound we answered, counted in
-          `app/email_threads.py` and nowhere else. At three it has graduated:
-          that buyer is in /app/conversations too, and this is where you see
-          why. */}
+          `app/email_threads.py` and nowhere else. The Conversations tab
+          reads whether a buyer is actually on /app/conversations -- the same
+          predicate that list itself uses -- not an exchange count. */}
       <Card className="mb-6 min-w-0">
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
           <div className="flex flex-wrap gap-1.5">
@@ -461,9 +472,6 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
               </button>
             ))}
           </div>
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-            a conversation at {threads?.threshold ?? 3} exchanges
-          </span>
         </div>
 
         {!threads?.threads.length ? (
@@ -479,7 +487,7 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
           <ul className="divide-y divide-border">
             {threads.threads.map((row) => (
               <li key={row.key}>
-                <ThreadRow row={row} threshold={threads.threshold} />
+                <ThreadRow row={row} />
               </li>
             ))}
           </ul>
@@ -532,7 +540,13 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
             is for whoever does not want to trust it. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
           <span>
-            {isFetching ? 'Checking...' : `Checked ${sinceChecked(dataUpdatedAt)}`} · live on
+            {/* The older of the two queries this page actually renders from
+                -- the message list and the People tabs -- so "Checked just
+                now" cannot be true while "Waiting on us" is still counting a
+                buyer this page has not re-asked about yet (item 37). */}
+            {isFetching || threadsFetching
+              ? 'Checking...'
+              : `Checked ${sinceChecked(Math.min(dataUpdatedAt, threadsUpdatedAt))}`} · live on
             new mail, and again every 5 minutes
           </span>
           <button
@@ -885,12 +899,11 @@ curl -X POST ${data.endpoint} \\
         draft={composing}
         onChange={setComposing}
         onClose={() => setComposing(null)}
-        onSent={() => {
-          refresh()
-          // The people list moves too: an answer is what turns "waiting on
-          // us" into an exchange.
-          void queryClient.invalidateQueries({ queryKey: ['email-threads'] })
-        }}
+        // `refresh()` already covers `email-threads` (via `MAIL_PAGE_KEYS`),
+        // so the people list -- where an answer turns "waiting on us" into
+        // an exchange -- moves for every path that calls it, not only the
+        // tab that sent (item 37).
+        onSent={refresh}
         scope={integrations?.outbound_scope ?? ''}
         recipients={integrations?.outbound_recipients}
         // The outbox delivers nothing, and `blocked_reason` deliberately does
@@ -1565,7 +1578,7 @@ function StatusCard({
 
 /** One correspondent. A buyer opens their page; a stranger has none to open,
  *  which is the whole reason they are listed here rather than nowhere. */
-function ThreadRow({ row, threshold }: { row: Thread; threshold: number }) {
+function ThreadRow({ row }: { row: Thread }) {
   const body = (
     <div className="flex min-w-0 items-start gap-3 px-4 py-3 text-left">
       <span
@@ -1573,12 +1586,18 @@ function ThreadRow({ row, threshold }: { row: Thread; threshold: number }) {
           'mt-0.5 inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium',
           row.waiting
             ? 'border-primary/30 bg-primary/10 text-primary'
-            : row.graduated
-              ? 'border-border text-muted-foreground'
-              : 'border-border text-muted-foreground',
+            : 'border-border text-muted-foreground',
         )}
       >
-        {row.waiting ? 'waiting on us' : row.graduated ? 'conversation' : 'open'}
+        {/* 'in Conversations' reads `in_conversations` -- is this buyer
+            actually listed on /app/conversations -- never an exchange
+            count. 'no buyer' for a stranger: there is no lead, so there is
+            nothing to be in conversations as (items 27, 34). */}
+        {row.waiting
+          ? 'waiting on us'
+          : row.kind === 'stranger'
+            ? 'no buyer'
+            : row.in_conversations ? 'in conversations' : 'open'}
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">
@@ -1588,9 +1607,8 @@ function ThreadRow({ row, threshold }: { row: Thread; threshold: number }) {
           {row.last_subject || '(no subject)'}
         </div>
         <div className="mt-0.5 truncate text-xs text-muted-foreground">
-          {/* Counted, never declared. `exchanges` decides the badge above and
-              the tab this row is in, so it is the number that is shown. */}
-          {row.exchanges} of {threshold} exchanges · {row.inbound} in, {row.outbound} out
+          {/* Counted, never declared -- depth only, not a gate. */}
+          {row.exchanges} exchange{row.exchanges === 1 ? '' : 's'} · {row.inbound} in, {row.outbound} out
           {row.kind === 'stranger' && ' · no buyer on file'}
         </div>
       </div>

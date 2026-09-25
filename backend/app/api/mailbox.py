@@ -17,14 +17,14 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import email_envelopes, email_outbound, matching, outreach_send
+from app import email_envelopes, email_outbound, matching, outreach_send, outreach_status
 from app.api.deps import current_user
 from app.api.inbound_email import signature_for
 from app.config import settings
 from app.db import get_db, utcnow
 from app import email_agent, flags, profile
 from app.email_intake import is_ours
-from app.email_threads import EXCHANGE_THRESHOLD
+from app import email_threads
 from app.email_threads import threads as email_threads_for
 from app.events import emit
 from app.schemas.serialize import iso, stamp
@@ -124,6 +124,7 @@ def messages(
         )
     }
 
+    now = utcnow()
     out = []
     for r in rows:
         lead = leads.get(r.lead_id or "")
@@ -135,6 +136,14 @@ def messages(
             "subject": r.subject,
             "body": r.body,
             "status": r.status,
+            # One word for what actually happened -- 'sent'/'sending'/
+            # 'not_sent' (an inbound row is always 'received'), from
+            # `app/outreach_status.py`. `_in_box` reads this rather than the
+            # raw status, so a send still in flight is neither Sent nor red
+            # 'Not sent' while the provider call is in progress, and a row
+            # stuck at 'queued' past `STUCK_AFTER` (a crash mid-send) does not
+            # sit in Sent forever.
+            "delivery": outreach_status.delivery(r.direction, r.status, r.created_at, now=now),
             "error": r.error,
             "provider": r.provider,
             "delivered_externally": r.provider not in {"", "outbox", "console"},
@@ -152,15 +161,13 @@ def messages(
     # already lists it. Without this a stranger writing to our support desk was
     # readable by every rep at every dealership: the same realm leak
     # `_lead_from` is given a rule for, arriving through the list instead.
-    for r in (
-        db.query(InboundEmail)
-        .filter(InboundEmail.outcome == "unresolved")
-        .order_by(InboundEmail.created_at.desc())
-        .limit(CEILING)
-        .all()
-    ):
-        if is_ours(r.to_address):
-            continue
+    # `email_threads.unplaced` -- the one query for "mail nobody could place"
+    # -- rather than a second copy of it here. The two used to disagree in
+    # two ways: this one repeated the `is_ours` filter inline instead of
+    # sharing it, and (separately, see `email_threads.threads()`) the
+    # People tab's own copy silently capped itself at 200 rows before
+    # counting, which this one never did (item 47).
+    for r in email_threads.unplaced(db, limit=CEILING):
         out.append({
             "id": r.id,
             "kind": "unmatched",
@@ -169,6 +176,7 @@ def messages(
             "subject": r.subject,
             "body": r.body,
             "status": "unmatched",
+            "delivery": "received",
             "error": "",
             "provider": "inbound",
             "delivered_externally": True,
@@ -179,17 +187,17 @@ def messages(
 
     out.sort(key=lambda m: m["at"] or "", reverse=True)
 
+    # `_in_view` is `_in_box` *and* the search -- both the tab totals and the
+    # list are built from it, so `counts[box]` always equals `matching` for
+    # whatever `q` is. Before this, `counts` read `_in_box` alone and the list
+    # applied the search on top, so a search narrowed the rows shown under a
+    # tab while the tab itself kept advertising the unsearched total: "Sent
+    # 24" over three rows, "All 44" over "Nothing matches that search."
     counts = {
-        key: sum(1 for m in out if _in_box(m, key))
+        key: sum(1 for m in out if _in_view(m, key, q))
         for key in ("all", "received", "sent", "failed", "unmatched")
     }
-    shown = [m for m in out if _in_box(m, box)]
-    if q:
-        needle = q.lower()
-        shown = [
-            m for m in shown
-            if needle in f"{m['address']} {m['subject']} {m['body']} {m['lead_name']}".lower()
-        ]
+    shown = [m for m in out if _in_view(m, box, q)]
 
     # A page, and the honest size of what it came from. Returning a slice while
     # the tab counted every row is how a box said 230 and listed 200 -- the
@@ -240,14 +248,27 @@ def _in_box(m: dict, box: str) -> bool:
     if box == "received":
         return m["direction"] == "in" and m["kind"] == "message"
     if box == "sent":
-        return m["direction"] == "out" and m["status"] == "sent"
+        return m["delivery"] == "sent"
     # Refusals live here: an allow-list block is a send that did not happen,
-    # and it is the one a manager has to notice.
+    # and it is the one a manager has to notice. A send still in flight
+    # (`delivery == "sending"`) is neither Sent nor Failed -- it turns into
+    # one or the other once the provider answers, or after `STUCK_AFTER` if
+    # it never does.
     if box == "failed":
-        return m["direction"] == "out" and m["status"] != "sent"
+        return m["direction"] == "out" and m["delivery"] == "not_sent"
     if box == "unmatched":
         return m["kind"] == "unmatched"
     return True
+
+
+def _matches(m: dict, q: str) -> bool:
+    return not q or q.lower() in f"{m['address']} {m['subject']} {m['body']} {m['lead_name']}".lower()
+
+
+def _in_view(m: dict, box: str, q: str) -> bool:
+    """Tab membership under the current search -- the counts and the list
+    both, so a tab's own number never disagrees with what it shows under it."""
+    return _in_box(m, box) and _matches(m, q)
 
 
 class FlagBody(BaseModel):
@@ -308,6 +329,16 @@ def agent_state(
         # can be off. Reported separately because it is fixed in a different
         # place from either switch.
         "live_model": settings.llm_mode == "live",
+        # The true total -- computed before the preview below is sliced to 20,
+        # so `AgentSwitch.tsx`'s "Queued (N)" card is never `min(true_count, 20)`
+        # wearing the true count's own label. Before this the card's only
+        # source was `len(waiting)`, the 20-row preview itself, so more than 20
+        # replies genuinely queued (a realistic hour: the default cooldown is
+        # 60 minutes and the hourly ceiling is 30) silently capped the number
+        # a rep saw at 20 (item 48).
+        "waiting_count": (
+            db.query(EmailReplyDue).filter(EmailReplyDue.state == "waiting").count()
+        ),
         # What is queued and when it fires. Every reply waits, so "nothing has
         # happened yet" is the normal state for a few minutes -- and without
         # this the wait is indistinguishable from the agent being off.
@@ -363,7 +394,7 @@ def set_agent(
 
 
 @router.get("/email/threads")
-def email_threads(
+def email_threads_view(
     box: str = "open",
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
@@ -376,35 +407,23 @@ def email_threads(
     are one relationship, not four things to read.
 
     `box` slices the same rows the counts are computed from, so a tab cannot
-    say 12 and show 9. **Open** is the default because it is the working list:
-    everything that has not yet become a conversation, which is what this view
-    is for. `graduated` is the rest -- those buyers are in
-    `/app/conversations` too, and this is where you see why.
+    say 12 and show 9. **Open** is the default because it is the working list.
+    `graduated` is the rest -- buyers who are also on `/app/conversations`,
+    read from the same predicate that list uses (`threads.started_leads`),
+    not a separate exchange threshold: this page used to say "Conversations 0"
+    over 24 buyers who were on `/app/conversations` from their first email,
+    because the threshold governed presentation here and nothing governed
+    membership there. See `app.email_threads`'s module docstring.
     """
-    rows = email_threads_for(db)
-    counts = {key: sum(1 for r in rows if _in_thread_box(r, key))
-              for key in ("all", "open", "graduated", "waiting", "strangers")}
+    rows = email_threads_for(db)  # uncapped -- see email_threads.threads()
+    tab_counts = email_threads.counts(rows)
     return {
         "threads": [
             {**r, "at": stamp(r["at"]), "last_body": (r["last_body"] or "")[:280]}
-            for r in rows if _in_thread_box(r, box)
-        ],
-        "counts": counts,
-        "threshold": EXCHANGE_THRESHOLD,
+            for r in rows if email_threads.in_box(r, box)
+        ][:200],
+        "counts": tab_counts,
     }
-
-
-def _in_thread_box(row: dict, box: str) -> bool:
-    """One definition of each tab, for the counts and the filter both."""
-    if box == "open":
-        return not row["graduated"]
-    if box == "graduated":
-        return row["graduated"]
-    if box == "waiting":
-        return row["waiting"]
-    if box == "strangers":
-        return row["kind"] == "stranger"
-    return True
 
 
 @router.get("/email/replyable")
@@ -574,7 +593,14 @@ def recipients(
     against them rather than stranded, which is the difference between a reply
     that comes home and one that lands unresolved.
     """
-    rows = db.query(Lead).filter(Lead.email.is_not(None), Lead.email != "")
+    # `Lead.has_email` -- not `email.is_not(None), email != ""` -- so this
+    # picker agrees with `/reach` (which strips before checking) and with
+    # `campaigns.py`'s audiences (which, before item 38, did not check email
+    # at all): a whitespace-only address used to pass this filter and fail
+    # `/reach`, and a facebook-sourced lead with `email=""` never reached
+    # this picker while still counting toward a campaign card's "ready to
+    # run" audience.
+    rows = db.query(Lead).filter(Lead.has_email)
     if q:
         needle = f"%{q.lower()}%"
         rows = rows.filter(

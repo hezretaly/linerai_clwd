@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app import outreach_status
 from app.agent.phrasing import cased
 from app.models import (
     Appointment,
@@ -408,6 +409,16 @@ def _outreach_fields(o: Outreach) -> dict:
         # 'sent' means the provider accepted it. Nothing more -- there is no
         # delivery callback anywhere in this system (§0).
         "status": o.status,
+        # One word for what actually happened -- 'received' | 'sent' |
+        # 'sending' | 'not_sent', from `app/outreach_status.py`. Every reader
+        # of `status` alone had its own idea of what counts as a failure: the
+        # Calendar coloured only failed/bounced, the buyer-page reader only
+        # failed, and a row still `queued` (in flight, or orphaned by a
+        # crash) read as delivered to both -- while the mailbox's own tab
+        # called the same row a red "Not sent" the instant it was queued.
+        # `delivery` is the one word every one of those screens should read
+        # instead (item 49).
+        "delivery": outreach_status.delivery_of(o),
         "delivered_externally": o.provider not in {"", "outbox", "console"},
         "error": o.error,
         "sent_at": stamp(o.sent_at),

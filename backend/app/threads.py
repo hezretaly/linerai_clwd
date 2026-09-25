@@ -77,6 +77,24 @@ def listed(db: Session):
     return or_(started(db), Conversation.id.in_(select(escalated)))
 
 
+def started_leads(db: Session, channel: str | None = None) -> set[str]:
+    """The lead ids of every buyer who is `started(db)` on this channel (or on
+    any channel, with none given) -- i.e. every buyer `/api/conversations`
+    would actually list.
+
+    Built for `app/email_threads.py`'s People tab: "is this buyer in
+    /app/conversations too" has exactly one honest answer, the same predicate
+    `/api/conversations` (via `listed`) and the sidebar badge already use, not
+    a second rule (a three-exchange threshold) invented before email even
+    minted a conversation on the first message. See `app.email_threads`'s
+    module docstring.
+    """
+    q = db.query(Conversation.lead_id).filter(listed(db), Conversation.lead_id.isnot(None))
+    if channel:
+        q = q.filter(Conversation.channel == channel)
+    return {lid for (lid,) in q.distinct()}
+
+
 def conversations(db: Session, *cols):
     """The base query for "conversation rows that are conversations" --
     started(db) already applied. Every count of conversations should start

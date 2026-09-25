@@ -4,7 +4,7 @@ import clsx from 'clsx'
 
 import { api, ApiError } from '../lib/api'
 import { dateTime, isOpenOn, money, openWindow, time } from '../lib/format'
-import { useNow, zonedParts } from '../lib/clock'
+import { useNow, zonedDateStr, zonedParts } from '../lib/clock'
 import { isOff, isPast } from '../lib/appointments'
 import type { Appointment, Outreach, Overview, TeamMember } from '../lib/types'
 import {
@@ -79,6 +79,20 @@ function startOfWeek(date: Date): Date {
   return copy
 }
 
+/** `YYYY-MM-DD` from a Date's own local components -- never `.toDateString()`
+ *  compared across two Dates built different ways, which is how the week
+ *  grid's "today" highlight and its appointment matching used to compare a
+ *  wall-clock string parsed as browser-local (`starts_at`, correct at face
+ *  value) against a Date anchored to the *browser's* current date rather
+ *  than the dealership's (item 31). Same shape as `starts_at`'s own leading
+ *  ten characters, so the two compare directly as strings. */
+function dateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 /** Remembered, because whichever of the two you work from is a habit, not a
  *  per-visit decision. */
 const VIEW_KEY = 'liner.calendar.view'
@@ -119,11 +133,24 @@ export function CalendarPage() {
   const dealership = overview?.dealership
   const [openHour, closeHour] = openWindow(dealership)
 
+  // "Today" at the dealership, not the viewer's own browser date -- from
+  // about 7pm to midnight local the two differ for anyone not sitting in the
+  // dealership's own zone, which is exactly the "manager checking in from
+  // another state" case (item 31). `dealershipToday` is a *local* midnight
+  // Date carrying the dealership's y/m/d, so the browser's own `setDate`
+  // arithmetic below still lays the week out correctly; only which date it
+  // starts from moves.
+  const todayKey = zonedDateStr(now, dealership?.timezone)
+  const dealershipToday = useMemo(() => {
+    const [y, m, d] = todayKey.split('-').map(Number)
+    return new Date(y, m - 1, d)
+  }, [todayKey])
+
   const weekStart = useMemo(() => {
-    const base = startOfWeek(new Date())
+    const base = startOfWeek(dealershipToday)
     base.setDate(base.getDate() + weekOffset * 7)
     return base
-  }, [weekOffset])
+  }, [dealershipToday, weekOffset])
 
   const days = useMemo(
     () =>
@@ -138,7 +165,7 @@ export function CalendarPage() {
   if (isLoading || !data) return <Spinner />
 
   const here = zonedParts(now, dealership?.timezone)
-  const showNowLine = days.some((d) => d.toDateString() === now.toDateString())
+  const showNowLine = days.some((d) => dateKey(d) === todayKey)
   const nowTop = (here.hour + here.minute / 60 - openHour) * HOUR_PX
 
   return (
@@ -180,6 +207,7 @@ export function CalendarPage() {
             appointments={data.appointments}
             onOpen={setOpenId}
             unconfirmed={overview?.badges.appointments}
+            todayKey={todayKey}
           />
         </div>
       )}
@@ -193,6 +221,7 @@ export function CalendarPage() {
           days={days}
           appointments={data.appointments}
           dealership={dealership}
+          todayKey={todayKey}
           onOpen={setOpenId}
         />
       </div>
@@ -217,7 +246,7 @@ export function CalendarPage() {
                   <p
                     className={clsx(
                       'text-sm font-medium',
-                      day.toDateString() === now.toDateString() && 'text-primary',
+                      dateKey(day) === todayKey && 'text-primary',
                     )}
                   >
                     {day.getDate()}
@@ -243,9 +272,7 @@ export function CalendarPage() {
 
             {days.map((day) => {
               const dayAppointments = packLanes(
-                data.appointments.filter(
-                  (a) => new Date(a.starts_at).toDateString() === day.toDateString(),
-                ),
+                data.appointments.filter((a) => a.starts_at.slice(0, 10) === dateKey(day)),
               )
               const open = isOpenOn(dealership, day)
               return (
@@ -357,6 +384,7 @@ function BookedList({
   appointments,
   onOpen,
   unconfirmed,
+  todayKey,
 }: {
   appointments: Appointment[]
   onOpen: (id: string) => void
@@ -366,6 +394,8 @@ function BookedList({
    *  shows: "11 still to come · 4 not confirmed" gives the badge's number a
    *  home on the page it links to. */
   unconfirmed?: number
+  /** The dealership's own zoned `YYYY-MM-DD` for "today" (item 31). */
+  todayKey: string
 }) {
   const [showPast, setShowPast] = useState(false)
   const [showCancelled, setShowCancelled] = useState(false)
@@ -399,16 +429,18 @@ function BookedList({
   }
 
   // Grouped by day, because a bare list of forty rows makes somebody read
-  // every date to find where tomorrow starts.
+  // every date to find where tomorrow starts. Keyed on the wall-clock date
+  // string itself (`starts_at`'s own leading ten characters) -- parsing it
+  // with `new Date()` only for *display* (below) is fine, since a date-time
+  // with no zone suffix is read at face value either way; the key just needs
+  // to match `todayKey`'s own `YYYY-MM-DD` shape (item 31).
   const days: { key: string; date: Date; rows: Appointment[] }[] = []
   for (const appointment of shown) {
     const date = new Date(appointment.starts_at)
-    const key = date.toDateString()
+    const key = appointment.starts_at.slice(0, 10)
     if (days.at(-1)?.key !== key) days.push({ key, date, rows: [] })
     days.at(-1)!.rows.push(appointment)
   }
-
-  const today = new Date().toDateString()
 
   return (
     <div className="space-y-4">
@@ -454,12 +486,12 @@ function BookedList({
           <Card key={key} className="overflow-hidden">
             <div className="flex items-baseline justify-between border-b border-border bg-muted/40 px-4 py-2">
               <span
-                className={clsx('text-sm font-medium', key === today && 'text-primary')}
+                className={clsx('text-sm font-medium', key === todayKey && 'text-primary')}
               >
                 {date.toLocaleDateString('en-US', {
                   weekday: 'long', month: 'short', day: 'numeric',
                 })}
-                {key === today && ' -- today'}
+                {key === todayKey && ' -- today'}
               </span>
               <span className="tnum text-xs text-muted-foreground">{rows.length}</span>
             </div>
@@ -524,20 +556,23 @@ function Agenda({
   days,
   appointments,
   dealership,
+  todayKey,
   onOpen,
 }: {
   days: Date[]
   appointments: Appointment[]
   dealership: Overview['dealership'] | undefined
+  /** The dealership's own zoned `YYYY-MM-DD` for "today" -- not the
+   *  viewer's browser date, which drifts from it near a day boundary for
+   *  anyone outside the dealership's own timezone (item 31). */
+  todayKey: string
   onOpen: (id: string) => void
 }) {
-  const today = new Date().toDateString()
-
   return (
     <div className="space-y-3">
       {days.map((day) => {
         const mine = appointments
-          .filter((a) => new Date(a.starts_at).toDateString() === day.toDateString())
+          .filter((a) => a.starts_at.slice(0, 10) === dateKey(day))
           .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
         const open = isOpenOn(dealership, day)
         // A closed day with nothing booked is not worth a row of its own.
@@ -557,13 +592,13 @@ function Agenda({
               <span
                 className={clsx(
                   'text-sm font-medium',
-                  day.toDateString() === today && 'text-primary',
+                  dateKey(day) === todayKey && 'text-primary',
                 )}
               >
                 {day.toLocaleDateString('en-US', {
                   weekday: 'long', month: 'short', day: 'numeric',
                 })}
-                {day.toDateString() === today && ' -- today'}
+                {dateKey(day) === todayKey && ' -- today'}
               </span>
               <span className="text-xs text-muted-foreground">
                 {!open

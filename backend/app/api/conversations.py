@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from datetime import datetime
 
-from app import threads, timeline
+from app import email_outbound, email_reply, threads, timeline
 from app.recap import conversation_recap
 from app.agent import tools
 from app.agent.tools import when_label
@@ -289,7 +289,20 @@ def rep_reply(
 ) -> dict:
     """A rep replies into the buyer's thread. The buyer sees it as coming from
     the dealership, which is why the composer shows the "You are replying as
-    Riverside Auto" bar."""
+    Riverside Auto" bar.
+
+    **On an email thread this is a real send, not a chat-shaped row.** The
+    generic path below writes a plain `role='rep'` `Message` and relies on
+    `conversation.message` reaching a live reader -- true for chat, whose
+    widget holds an open stream, and not true for email, which nobody is
+    watching live. The Mail page's "waiting on us" is decided from `Outreach`
+    rows alone (`email_threads.tally`), so a plain `Message` here never
+    cleared it: a rep "answered" an email buyer, the buyer page showed the
+    reply, `/api/conversations` moved the thread to active -- and the buyer
+    received nothing, while the Mail page kept them waiting forever (items
+    33, 44). `email_reply.send_rep_reply` sends the email for real and
+    mirrors it into the thread only once it actually went.
+    """
     convo = _get(db, conversation_id)
     if not convo.agent_paused:
         raise HTTPException(
@@ -297,7 +310,19 @@ def rep_reply(
             "Liner still owns this conversation. Take it over before replying, so you and "
             "the assistant do not answer the buyer at the same time.",
         )
-    message = Message(conversation_id=convo.id, role="rep", content=body.content.strip())
+    content = body.content.strip()
+
+    if convo.channel == "email":
+        try:
+            message = email_reply.send_rep_reply(db, convo, content, user)
+        except email_outbound.OutboundError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        emit(db, "conversation.message", {
+            "conversation_id": convo.id, "message_id": message.id, "role": "rep",
+        })
+        return message_out(message)
+
+    message = Message(conversation_id=convo.id, role="rep", content=content)
     db.add(message)
     db.commit()
     db.refresh(message)
