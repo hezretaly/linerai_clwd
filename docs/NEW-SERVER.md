@@ -492,6 +492,40 @@ the database. From then on the `.env` line is only what a fresh seed would
 use. **On a box whose step 3 ran before this fix, both values are in
 `/var/log/auth.log`; setting new ones is required, not optional.**
 
+### Liner's own mail and demo bookings from the old server
+
+Nothing else comes across, but these do: the demo bookings and support
+requests people made, the mail we sent from `/ops`, and the mail people sent
+to `support@` / `founder@` / `cto@`. Everything generated is left behind: the
+demo seed's bookings, the gates' test mail, refused deliveries and fictional
+numbers. A generated row is recognised by its reserved address (`.invalid`,
+`.example`), never by a guess. Do it **after** the cut-over, so nothing
+arrives at the old box once the export is taken.
+
+**STOP**: on the **old** server, the user runs this. It uses the standard
+library only, so the old checkout's code does not matter, and it changes
+nothing there:
+
+```bash
+cd /tmp && curl -fsSLO https://raw.githubusercontent.com/hezretaly/linerai_clwd/claude/liner-ai-implementation-8xehez/scripts/export_ops.py
+sudo -u liner python3 export_ops.py /srv/liner     # prints kept / left per table
+```
+
+The user then copies `/tmp/ops-export-<stamp>.tar.gz` to this server (`scp`),
+for example to `/tmp`. Then here:
+
+```bash
+sudo chown liner /tmp/ops-export-*.tar.gz
+cd /srv/liner && sudo -u liner make import-ops FILE=/tmp/ops-export-<stamp>.tar.gz              # the plan
+cd /srv/liner && sudo -u liner make import-ops FILE=/tmp/ops-export-<stamp>.tar.gz ARGS=--apply # the copy
+```
+
+- Rows already here win, so it is safe to run again.
+- Mail we sent is re-attached to its author by address, which is why
+  `make add-owners` in step 6 comes first.
+- Show the user the plan's counts before `--apply`. Afterwards, `/ops`
+  should list the bookings and the mail.
+
 ## 12. The whole thing, mail included
 
 **STOP**: ask the user which inbox to send the test mail to. It must be
