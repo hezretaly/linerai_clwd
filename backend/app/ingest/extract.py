@@ -37,6 +37,11 @@ class Listing:
     features: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    #: What the source says about whether it is for sale, already in our
+    #: words (`csv_import.status_of`). A listing page that still shows a sold
+    #: car is not a car to offer, so `build_diff` treats anything else as not
+    #: seen.
+    status: str = "available"
 
     @property
     def usable(self) -> bool:
@@ -201,6 +206,11 @@ class ListAdapter:
 
     name = "base-list"
 
+    #: Fetch this platform with a headless browser (`ingest/browser.py`):
+    #: some answer anything that is not one with 429. Read by
+    #: `pipeline.open_client`, so the crawl itself is the same either way.
+    browser = False
+
     def for_dealer(self, dealer_id: str) -> "ListAdapter":
         """This adapter, narrowed to one lot. The default ignores it.
 
@@ -221,8 +231,28 @@ class ListAdapter:
         """The next page, or None when there is no next page."""
         return None
 
+    def detail_url(self, listing: Listing) -> str | None:
+        """The car's own page, for a platform whose list leaves something out."""
+        return None
+
+    def parse_detail(self, html: str, url: str, listing: Listing) -> dict | None:
+        """Named facts off the car's own page -- `{"price", "features"}` -- or
+        None. Only what the list could not say, and never a field passed
+        through whole: a car's page can carry what the dealer paid for it."""
+        raise NotImplementedError
+
+    @property
+    def reads_details(self) -> bool:
+        return type(self).parse_detail is not ListAdapter.parse_detail
+
 
 LIST_ADAPTERS: list[ListAdapter] = []
+
+
+def list_adapter_named(name: str) -> ListAdapter | None:
+    """The registered adapter a profile names (`inventory.adapter`), or None."""
+    wanted = (name or "").strip().lower()
+    return next((a for a in LIST_ADAPTERS if a.name == wanted), None) if wanted else None
 
 
 def extract_list(html: str, url: str = "") -> tuple[list[Listing], str]:

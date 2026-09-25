@@ -268,6 +268,13 @@ built and left empty.
 ```bash
 cd /srv/liner
 sudo -u liner make install
+# The headless Chromium an inventory refresh needs: alsboucars.com answers
+# anything but a browser with 429. Outside every home directory, because the
+# unit's ProtectHome hides those from the service; both instances read it.
+# PYTHONDONTWRITEBYTECODE keeps root from leaving files in liner's venv.
+sudo env PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers PYTHONDONTWRITEBYTECODE=1 \
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+  /srv/liner/backend/.venv/bin/python -m playwright install --with-deps chromium
 sudo -u liner make build
 sudo -u liner make migrate ARGS=--create
 # Seeds liner_alsbou. The seed prints the logins it made, once, each on a line
@@ -537,13 +544,27 @@ Tell the user, in this order:
    back: point `linerai.us` and `www` at it again. Its data was not copied, as
    agreed.
 
-## Later
+## Later: running it day to day
+
+Every command below is run on the server as the instance's own user. Those
+that print a password are run by the user in their own terminal.
 
 **Updating either instance:**
 
 ```bash
 cd /srv/liner && sudo -u liner git pull && sudo -u liner make build && sudo systemctl restart liner
 cd /srv/liner-demo && sudo -u linerdemo git pull && sudo -u linerdemo make build && sudo systemctl restart liner-demo
+```
+
+A restart takes a few seconds (the units cap the wait for open chat streams).
+A pull that moves the Playwright version needs its browser again: rerun the
+Chromium line from step 6. A `.env` made before `PLAYWRIGHT_BROWSERS_PATH`
+was in the templates needs the line, once:
+
+```bash
+for f in /srv/liner/.env /srv/liner-demo/.env; do
+  sudo grep -q '^PLAYWRIGHT_BROWSERS_PATH=' "$f" || echo 'PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers' | sudo tee -a "$f" >/dev/null
+done
 ```
 
 The boot migrates every database. Back up production before a pull that
@@ -576,6 +597,33 @@ terminal, since it asks for it twice:
 ```bash
 cd /srv/liner && sudo -u liner env DEALERSHIP=alsbou make set-password EMAIL=someone@alsboucars.com
 ```
+
+**Liner's own two accounts** (`founder@`, `cto@`, the `/ops` sign-in). No
+store to name -- they are Liner's, not a dealership's:
+
+```bash
+cd /srv/liner && sudo -u liner make set-password EMAIL=founder@linerai.us
+```
+
+**Refreshing Alsbou's inventory.** From the dashboard: **Inventory ->
+Import -> Refresh from alsboucars.com**. It reads their inventory page, then
+shows every new car, change and car going off sale; nothing changes until
+**Apply these changes**. The price including fees is read from a car's own
+page only where it is needed (a new car, or a changed advertised price), so a
+refresh takes seconds. **Advanced -> Also read each car's own page** brings in
+every car's options list, one page per car, a few minutes. From the command
+line, the same crawl narrated step by step:
+
+```bash
+cd /srv/liner && sudo -u liner env DEALERSHIP=alsbou make ingest                            # the review; applies nothing
+cd /srv/liner && sudo -u liner env DEALERSHIP=alsbou make ingest ARGS=--publish             # apply it
+cd /srv/liner && sudo -u liner env DEALERSHIP=alsbou make ingest ARGS="--details --publish" # every car's page too
+```
+
+Both refuse to take more than a fifth of the lot off sale, or to publish a
+crawl that failed part-way, until a person says the cars really sold
+(`--allow-removals`, or the button the page offers). Their robots.txt is read
+first and obeyed.
 
 **A new dealership** on production:
 

@@ -283,12 +283,23 @@ site:
 # state, not a gap: it sorts last rather than first, and the buyer gets an
 # enquiry link on the card instead of a number in a sentence.
 inventory:
+  # What `make reset-db` seeds, offline. A refresh from their site replaces
+  # it through the review screen (Inventory -> Import), or `make ingest`.
   fixture_csv: "alsbou/inventory.csv"
-  # For when a crawl becomes possible from a machine that can reach them. It
-  # is NOT Dealer Car Search -- their pages are served by gma.to / GMACRM, so
-  # the existing adapter does not apply and a capture is needed first. Until
-  # then the CSV above is the lot.
+  # Their site is GMA (GMACRM, cdn.gma.to): the whole lot is in the listing
+  # page's own data, 88 of 88 cars on one page, read by
+  # `app/ingest/sites/gma.py`. Named here rather than sniffed because the
+  # platform answers anything but a browser with 429, so even the first
+  # request has to be the headless Chromium's.
   source_url: "https://www.alsboucars.com/inventory"
+  adapter: gma
+  # Their platform's filter refuses a browser that names itself as an
+  # importer (429, robots.txt included), while their robots.txt allows us on
+  # /inventory and on every car's page. Alsbou asked for their own inventory
+  # to be read, so it is read as a plain Chromium -- still obeying robots.txt
+  # under our own agent name, one page per refresh plus the car pages a price
+  # change needs. Remove this line and the crawl names itself again.
+  identify: false
   # Single store in this feed, so nothing to narrow. Riverside is a separate
   # site and deliberately not merged in.
   dealer_id: ""

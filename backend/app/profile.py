@@ -352,12 +352,24 @@ def inventory() -> dict:
     # cannot reach it -- and it goes through the same CSV importer a dealer
     # would upload to, so nothing here is a private path.
     fixture = str(raw.get("fixture_csv") or "").strip()
+    # Which platform reader to use, named rather than sniffed when the site
+    # has to be fetched a particular way: GMA answers anything but a browser
+    # with 429, so the first request is already the browser's.
+    adapter = str(raw.get("adapter") or "").strip().lower()
+    # Whether the crawl names itself in its user agent. It does, by default
+    # and on purpose. A dealership whose platform refuses a browser that says
+    # it is an importer -- while its robots.txt allows us -- can have its own
+    # inventory read as a plain browser, and says so here, in its profile,
+    # where somebody deciding it can see why.
+    identify = raw.get("identify", True) is not False
     if url:
-        return {"source_url": url, "dealer_id": dealer_id,
-                "fixture_csv": fixture, "origin": "profile"}
+        return {"source_url": url, "dealer_id": dealer_id, "adapter": adapter,
+                "identify": identify, "fixture_csv": fixture, "origin": "profile"}
     return {
         "source_url": settings.scraper_base_url.strip(),
         "dealer_id": settings.scraper_dealer_id.strip(),
+        "adapter": adapter,
+        "identify": identify,
         "fixture_csv": fixture,
         "origin": "env" if settings.scraper_base_url.strip() else "none",
     }

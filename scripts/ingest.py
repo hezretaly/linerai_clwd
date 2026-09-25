@@ -42,8 +42,8 @@ import httpx  # noqa: E402
 from app import profile  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
-from app.ingest import snapshot  # noqa: E402
-from app.ingest.extract import Listing  # noqa: E402
+from app.ingest import browser, snapshot  # noqa: E402
+from app.ingest.extract import Listing, list_adapter_named  # noqa: E402
 from app.ingest.pipeline import (  # noqa: E402
     robots_verdict,
     build_diff,
@@ -51,7 +51,10 @@ from app.ingest.pipeline import (  # noqa: E402
     discover,
     fetch_and_extract,
     list_adapter_for,
+    open_client,
     publish,
+    read_details,
+    removal_risk,
 )
 from app.models import Dealership, IngestRun, Vehicle  # noqa: E402
 
@@ -202,6 +205,10 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
     parser.add_argument("--allow-removals", action="store_true",
                         help="publish even when the crawl would take a large share of the "
                              "lot off sale. Required after a truncated crawl.")
+    parser.add_argument("--details", action="store_true",
+                        help="also read every car's own page, for its options list")
+    parser.add_argument("--refresh-details", action="store_true",
+                        help="read car pages again even where a read is kept from before")
     parser.add_argument("--save-html", action="store_true",
                         help=f"keep every fetched page under {OUT}/ for reading")
     parser.add_argument("--limit-print", type=int, default=8,
@@ -230,6 +237,10 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
     print(f"  source       {url or '(none)'}"
           f"  [{'--url' if args.url else source['origin']}]")
     print(f"  keeping lot  {dealer_id or '(every lot on the page)'}")
+    named = list_adapter_named(source.get("adapter", ""))
+    if source.get("adapter"):
+        print(f"  site reader  {source['adapter']}"
+              + ("" if named else "  -- NOT one this version has"))
     print(f"  on the lot   {before} vehicle(s) already in the database")
 
     # The same mismatch the boot log shouts about, checked here because this
@@ -265,12 +276,28 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
 
     # ---------------------------------------------------------------- 2 ----
     rule("2. Asking the site whether we may")
-    headers = {"User-Agent": settings.scraper_user_agent}
-    print(f"  as           {settings.scraper_user_agent}")
+    if source.get("adapter") and named is None:
+        return fail(f"The profile names the site reader {source['adapter']!r}, which this "
+                    "version does not have.", "Check `inventory.adapter` in the profile.")
+    identify = source.get("identify", True)
+    if named is not None and named.browser:
+        print("  fetching as  a headless Chromium -- JavaScript off, the page itself only")
+        print(f"  identifies   {'as ' + settings.scraper_user_agent if identify else 'as a plain browser (the profile says identify: false)'}")
+        missing = browser.problem()
+        if missing:
+            return fail("This site needs a browser, and none can run here.", missing)
+    else:
+        print(f"  as           {settings.scraper_user_agent}")
     print(f"  rate limit   {settings.scraper_rate_limit}/sec "
           f"({1.0 / max(settings.scraper_rate_limit, 0.1):.1f}s between requests)")
 
-    with httpx.Client(headers=headers, follow_redirects=True, timeout=25) as client:
+    db_for_details = None
+    try:
+        opened = open_client(named, identify=identify)
+        client = opened.__enter__()
+    except browser.BrowserUnavailable as exc:
+        return fail("The browser would not start.", str(exc))
+    try:
         allowed, why = robots_verdict(client, root, parsed.path or "/")
         print(f"  robots.txt   {why}")
         if not allowed:
@@ -373,7 +400,10 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
 
         # ------------------------------------------------------------ 4 ----
         rule("4. Which reader understands this page")
-        adapter = list_adapter_for(first.text, url)
+        adapter = named or list_adapter_for(first.text, url)
+        if named is not None and not named.matches(first.text, url):
+            return fail(f"The profile names the {named.name} site reader, and this is not one "
+                        "of its pages.", "Check `inventory.source_url` and `inventory.adapter`.")
         if adapter is not None:
             print(f"  list adapter {adapter.name}  (one page carries many vehicles)")
             if dealer_id:
@@ -392,6 +422,7 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
         # ------------------------------------------------------------ 5 ----
         rule("5. Crawling")
         began = time.monotonic()
+        db_for_details = SessionLocal()
         if adapter is not None:
             listings, errors, method = crawl_list(client, adapter, url, first.text)
         else:
@@ -407,7 +438,24 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
                 )
             listings, errors = fetch_and_extract(client, urls)
             method = "jsonld"
+        if adapter is not None and adapter.reads_details:
+            rule("5b. Each car's own page")
+            stats: dict = {}
+            print("  reading      " + ("every car's page (--details)" if args.details else
+                                       "only the cars whose price including fees is unknown"))
+            listings, detail_errors = read_details(
+                client, adapter, listings, db_for_details, everything=args.details,
+                refresh=args.refresh_details, stats=stats)
+            errors += detail_errors
+            if args.details:
+                method = f"{adapter.name}+details"
+            print(f"  read         {stats['read']} page(s), {stats['cached']} kept from before, "
+                  f"{stats['failed']} failed")
         took = time.monotonic() - began
+    finally:
+        opened.__exit__(None, None, None)
+        if db_for_details is not None:
+            db_for_details.close()
 
     print(f"  method       {method}")
     print(f"  kept         {len(listings)} vehicle(s) in {took:.1f}s")
@@ -456,6 +504,9 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
               f"{dict(lots)}")
         print("       Set `inventory.dealer_id` unless this dealership really is all of them.")
 
+    if adapter is not None and adapter.reads_details and not args.details:
+        print("  price        read only where it is new or changed -- every other car keeps "
+              "the price it has")
     print("\n  first few:")
     for car in listings[: args.limit_print]:
         price = f"${car.price:,}" if car.price else "no price"
@@ -502,21 +553,18 @@ def main() -> int:  # noqa: C901 -- a narration, deliberately linear
         # showroom empties, the assistant stops offering anything, and it
         # looks exactly like the site changed. The diff cannot tell a sold-out
         # week from a crawl that died on page two, so it has to ask.
-        on_sale = db.query(Vehicle).filter(
-            Vehicle.status == "available", Vehicle.source == "scrape"
-        ).count()
-        share = len(diff["removed"]) / on_sale if on_sale else 0.0
-        truncated = bool(args.pages) or bool(errors)
-        risky = diff["removed"] and (share > 0.2 or truncated)
+        # One rule for this command and the dashboard's Publish button:
+        # `pipeline.removal_risk`.
+        risk = removal_risk(db, diff, errors, cut_short=bool(args.pages))
+        risky = bool(risk)
         if risky:
-            print(f"\n  \033[33mHOLD ON\033[0m this would take {len(diff['removed'])} of "
-                  f"{on_sale} cars off sale ({share:.0%}).")
+            print(f"\n  \033[33mHOLD ON\033[0m this would take {risk['removed']} of "
+                  f"{risk['on_sale']} cars off sale ({risk['share']:.0%}).")
             if args.pages:
                 print(f"  The crawl was cut to {args.pages} page(s), so it never saw the rest "
                       "of the lot.")
-            if errors:
-                print(f"  {len(errors)} page(s) or row(s) failed, so the crawl may be "
-                      "incomplete.")
+            for reason in risk["why"]:
+                print(f"  {reason[0].upper()}{reason[1:]}.")
             print("  A car this crawl did not see looks identical to a car that sold.")
             print("  Run it again without --pages, and with the failures fixed, before "
                   "publishing.")

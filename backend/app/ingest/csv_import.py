@@ -121,6 +121,64 @@ def stored_value(vehicle, key: str):
     return getattr(vehicle, key, None)
 
 
+#: What a source states that this schema has no column for, kept in
+#: `raw_json`. One tuple for the CSV importer and every crawl, so the two
+#: cannot build differently-shaped rows -- the first crawl after a CSV seed
+#: would otherwise report every car changed.
+RAW_KEYS = (
+    "location", "dealer_phone", "doc_fee", "stock_number", "advertised_price",
+    "fuel_type", "drivetrain", "transmission", "exterior_color", "interior_color",
+    "engine", "vehicle_history_url",
+)
+
+
+def status_of(text: str) -> str:
+    """A source's word for a car's state, in ours. Anything not clearly for
+    sale is not offered to a buyer; nothing said means available."""
+    word = (text or "").strip().lower()
+    return STATUS_MAP.get(word, "available" if not word else "removed")
+
+
+def unstated(value) -> bool:
+    """The source did not say. An empty list or mapping counts: a listing page
+    that prints no options has not said the car has none, and diffing it as a
+    statement wiped a hundred-line options list pasted by hand."""
+    return value in (None, "", [], {})
+
+
+def merged_raw(before: dict, stated: dict) -> dict:
+    """What the row keeps under `raw_json` after a source speaks.
+
+    A key the source does not state is kept, never dropped. `raw_json` holds
+    more than any one source says: the seed's `detail_doc` (a car's written
+    history, the only one on the lot), and `location` and `dealer_phone`,
+    which a listing page never prints. Replaced whole, every re-import deleted
+    them -- the car's history write-up included.
+    """
+    return {**(before or {}), **(stated or {})}
+
+
+def changes_for(vehicle, payload: dict, manual: set[str]) -> dict:
+    """What re-importing `payload` would change on `vehicle`, key by key.
+
+    One definition for the CSV import and every crawl, for the reason
+    `stored_value` exists: two versions of "unchanged" is how one path starts
+    crying wolf. A field the source left unstated is not a change, a field a
+    rep edited is not the source's to change, and `raw` is merged, not
+    replaced -- so `to` is exactly what publishing writes.
+    """
+    changes = {}
+    for key, value in payload.items():
+        if key == "vin" or unstated(value) or key in manual:
+            continue
+        before = stored_value(vehicle, key)
+        if key == "raw":
+            value = merged_raw(before, value)
+        if before != value:
+            changes[key] = {"from": before, "to": value}
+    return changes
+
+
 def plausible_features(features: list[str], body_style: str) -> tuple[list[str], list[str]]:
     """Returns (kept, dropped) for one vehicle."""
     body = (body_style or "").strip().lower()
@@ -164,8 +222,7 @@ def import_csv(db: Session, raw: str) -> IngestRun:
             errors.append({"row": index, "error": f"VIN {vin!r} is not a usable VIN"})
             continue
 
-        raw_status = pick(row, "status").lower()
-        status = STATUS_MAP.get(raw_status, "available" if not raw_status else "removed")
+        status = status_of(pick(row, "status"))
         if status != "available" and vin not in existing:
             # A car that is sold or still in transit is not something to offer.
             # Counted rather than errored: it is a correct row, just not one a
@@ -196,16 +253,7 @@ def import_csv(db: Session, raw: str) -> IngestRun:
             # Kept in `raw_json` rather than a column, because `create_all`
             # adds a table to an existing database and never a column. It is
             # also exactly what that field is for: what the source said.
-            "raw": {
-                key: pick(row, key)
-                for key in (
-                    "location", "dealer_phone", "doc_fee", "stock_number",
-                    "advertised_price", "fuel_type", "drivetrain", "transmission",
-                    "exterior_color", "interior_color", "engine",
-                    "vehicle_history_url",
-                )
-                if pick(row, key)
-            },
+            "raw": {key: pick(row, key) for key in RAW_KEYS if pick(row, key)},
         }
         features, dropped = plausible_features(
             # One option per line is how a dealer's site prints them, and a CSV
@@ -224,12 +272,7 @@ def import_csv(db: Session, raw: str) -> IngestRun:
         if vin in existing:
             current = existing[vin]
             manual = set(json.loads(current.manual_fields_json or "[]"))
-            changes = {
-                key: {"from": stored_value(current, key), "to": value}
-                for key, value in payload.items()
-                if key != "vin" and value not in (None, "") and key not in manual
-                and stored_value(current, key) != value
-            }
+            changes = changes_for(current, payload, manual)
             if changes:
                 updated.append({"vin": vin, "changes": changes,
                                 "protected": sorted(manual & set(payload))})

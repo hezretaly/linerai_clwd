@@ -45,7 +45,7 @@ feature reports itself as unavailable rather than simulating a result.
 | `make live-check` | **The deployment's gate, run on the server against the real vendors**: settings (never a value), Resend's domains, a live chat turn, a voice mint and a Realtime exchange, the intake, real mail out and back through Cloudflare for both domains, the widget. `INBOX=you@...` adds one mail each way; `ARGS=--plan` touches nothing; `ARGS=--demo` for the demo instance. Cleans up after itself |
 | `make shots` | Screenshot every route at desktop **and 390px** to `.artifacts/`; fails on horizontal overflow |
 | `make e2e` | Book through two browser windows, assert the dashboard reacts |
-| `make ingest` | **Crawl the dealership's own site, every step narrated.** `ARGS=--publish` applies it |
+| `make ingest` | **Crawl the dealership's own site, every step narrated.** `ARGS=--publish` applies it, `ARGS=--details` also reads every car's own page (options). On a box serving several stores, `DEALERSHIP=<store>` names it (`sudo -u liner env DEALERSHIP=alsbou make ingest`) |
 | `make mail-check` | **Why a message to one of our addresses did not arrive**: `TO=sales@alsbou.linerai.us`. Which store that mailbox routes to, whether it is seeded, whether this checkout's Worker would keep it, and every receipt for it across every store. *No receipt at all* is the answer that matters — it means Cloudflare or the Worker, not this app |
 | `make fixture-site` | Serve the scraper's fixture dealer site on :8100 |
 | `make placeholders` | Regenerate `docs/PLACEHOLDERS.md` |
@@ -84,6 +84,11 @@ tests itself against the real vendors.
 most common way this gets confusing.
 
 ## Verifying a change
+
+**Seed every store before the gate:** `make reset-all && make reset-db`. The
+mailbox checks read every seeded store's profile, and the fixture manager
+the run signs in as must live in the default store -- after `reset-all`
+alone it lives only in `riverside`, and every dashboard call is a 403.
 
 `make smoke` is the gate and it must stay green. It drives a real booking
 through rail chips, asserts the appointment row exists, confirms it, assigns
@@ -3293,6 +3298,48 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   - `run.method` records which rung read the pages. It was hardcoded
     `"jsonld"` — true while that was the only rung, and a lie the moment it
     was not, on the record somebody reads to find out why a field is missing.
+- **A platform that refuses anything but a browser is fetched by one, and
+  only for the page itself.** GMA (`sites/gma.py`, Alsbou) answers httpx with
+  429 whatever it is sent, so the profile names the reader
+  (`inventory.adapter: gma`) and `pipeline.open_client` hands the crawl a
+  headless Chromium (`ingest/browser.py`) with the same `.get()` shape --
+  JavaScript off, every request but the document aborted. The whole lot is
+  in the page's own React payload, so one request reads 88 cars, and none of
+  their scripts, nor any third party's, runs on the box, where Chromium has
+  no sandbox under the unit.
+  - **It names itself unless the profile says otherwise.** Their filter
+    refuses a browser whose user agent says it is an importer, robots.txt
+    included, while that robots.txt allows us everywhere we read. Alsbou's
+    profile says `identify: false` with the reason beside it; robots.txt is
+    still checked under our own agent name.
+  - **The list states the price before fees; the car's own page states the
+    total.** Never computed (the gap differs per car), so a list read leaves
+    `price` unstated and `read_details` opens a car's page only where the
+    total is unknown -- a car new to the lot, or advertised at a new price.
+    A refresh reads a handful of pages, not 88. A page that cannot be read
+    leaves a new car out of the run and a changed price unapplied, both
+    recorded; neither becomes a guess. A car their page prices at 0 is call
+    for price, never $0. `--details` (Advanced on the page) reads every car
+    for its options, which only ever fill an empty list: the Q7's page names
+    23 where the list pasted from their listing has a hundred.
+  - **Their car page carries what they paid for it** (`totCost`, `totRecon`,
+    a valuation). `parse_detail` copies three named facts and nothing else,
+    and the per-car cache (`snapshot.write_detail`) keeps only `DETAIL_KEYS`
+    whatever it is handed. The fixture keeps those keys with fake values so
+    the gate proves they never pass.
+  - **A re-import merges `raw`; it never replaces it.** `build_diff` left
+    `features` and `raw` out of every crawled car, and the CSV diff replaced
+    `raw` whole -- which deleted the Q7's written history and the `location`
+    no listing page prints. `csv_import.changes_for` is the one definition
+    for both, `unstated` counts an empty list as not said, and `RAW_KEYS` is
+    the one tuple both build rows from.
+  - **Every crawl runs after the response, and Publish asks what `make
+    ingest` asks.** With a browser even a list read takes seconds, and a
+    details read minutes -- past Cloudflare's hundred seconds. The page polls
+    the run. `pipeline.removal_risk` is the rule for both the CLI and the
+    button: more than a fifth of the lot off sale, or a list that failed
+    part-way, needs a person to say the cars sold. One car's page failing is
+    not a list cut short.
 - **A crawl keeps its own record, per dealership.**
   `backend/var/inventory/<dealership>/` holds `snapshot.json` and
   `photos/<VIN>.jpg`. The database answers "what is on the lot"; this answers
@@ -3770,7 +3817,7 @@ Run `make placeholders` or open `/api/integrations`. As of now:
 | SMS | **Written and never executed, and no assistant touches it.** A rep texts a buyer from their page; replies arrive at `/api/phone/sms`, resolve by number and land on that buyer's timeline. Same account, credentials and signature check as the phone line. No Twilio account here, so the send has never run — but the inbound path is signed with a secret we own, so `make smoke` drives all of it: a forged signature, the dedupe, the timeline landing, `OUTBOUND_ONLY_TO`, STOP and START, and a stranger's text being claimed onto a buyer later. Bulk sending stays blocked pending A2P 10DLC. |
 | Voice | **Built on OpenAI Realtime; off until `VOICE_PROVIDER=openai`.** `/call` is real WebRTC: the browser mints an ephemeral secret from us and talks audio straight to OpenAI. The mint call has never run here — no key, and `api.openai.com` is refused by the egress proxy — but the session body, the tool conversion and the voice-only prompt are asserted by `make agent-check`, and the relay, transcript and after-the-fact guard by `make smoke`. Still no fake provider. |
 | Post-call transcription | **Written and never executed** — same missing key, same blocked host. The buyer's own track is recorded, the marks are stored, and the merge, cross-talk filter and transcript rewrite all run in `make agent-check` against a transcription handed over rather than fetched. Only the request to `/v1/audio/transcriptions` is unproven. |
-| Inventory source | **The local database, and that is the real answer.** Rows arrive by seed, by CSV import or by hand, and `search_inventory` reads them. The scraper works against the fixture site but has no adapter for any real dealer site — no two are laid out alike, so that needs real URLs. An optional second source nobody has chosen is not a missing dependency, and it is not in the banner. |
+| Inventory source | **The local database, refreshed from the dealer's own site where a reader exists.** Rows arrive by seed, by CSV import, by hand, or by a crawl reviewed on the Import page. Two platforms have readers written against real captures: Dealer Car Search (Craig and Landreth) and GMA (Alsbou, fetched by a headless Chromium because it refuses anything else). Any other site needs a capture and a reader first -- no two are laid out alike. |
 | Lead import | **Real, end to end.** ADF/XML is parsed with `defusedxml`, matched against inventory and existing leads, reviewed, then committed. Nothing is fetched: no lead inbox is polled and no feed is subscribed to — you upload the document. |
 | Email agent | **Written and off.** Liner can answer a buyer's email — same loop, same eight tools, same guards, plus `EMAIL_ADDENDUM`. Every brake in `app/email_agent.py` is exercised by `make smoke` against a fake provider, and the whole turn with it. `EMAIL_AGENT=true` plus the dashboard toggle turns it on; both default off. The vendor HTTP call has never run here. |
 | Reminders | **Manual.** There is no scheduler in this system, so a follow-up or reminder is a server-built draft a rep reviews and sends. Not a drip campaign; the page says so. |

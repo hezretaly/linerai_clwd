@@ -16,7 +16,11 @@ nothing.
 
 from app.ingest.extract import LIST_ADAPTERS
 from app.ingest.sites.dealercarsearch import DealerCarSearch
+from app.ingest.sites.gma import Gma
 
+# Dealer Car Search first: its matcher is the narrower of the two, and the
+# order is part of what `make smoke` pins.
 LIST_ADAPTERS.append(DealerCarSearch())
+LIST_ADAPTERS.append(Gma())
 
-__all__ = ["DealerCarSearch"]
+__all__ = ["DealerCarSearch", "Gma"]

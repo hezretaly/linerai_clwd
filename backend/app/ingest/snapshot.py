@@ -68,10 +68,15 @@ def slug(name: str) -> str:
 def _dir(dealership_name: str = "") -> Path:
     """Where this dealership's files would be, without creating anything.
 
-    Named from the profile when there is one, because that is what the
-    operator chose and typed; the dealership row's name is the fallback.
+    Named from the store being served -- the path prefix or the group's own
+    subdomain, else `DEALERSHIP=` -- and the dealership row's name after
+    that. It read `DEALERSHIP=` alone, which production leaves empty because
+    its stores are served by subdomain: a crawl from Alsbou's dashboard wrote
+    to `alsbou-motors/` while `/api/photos` looked in `dealership/`.
     """
-    name = settings.dealership.strip() or slug(dealership_name)
+    from app.db import active_store
+
+    name = active_store() or slug(dealership_name)
     return settings.inventory_dir / slug(name)
 
 
@@ -205,3 +210,36 @@ def fetch_photos(
         if owned:
             client.close()
     return {"saved": saved, "already_had": skipped, "failed": failed, "dir": str(photos)}
+
+
+#: The only keys a per-car cache entry may hold. Enforced where it is written,
+#: because a car's own page on some platforms also carries what the dealer
+#: paid for it, and a cache is the easiest place for such a field to be kept by
+#: accident -- and from a file it is one careless read away from a row.
+DETAIL_KEYS = ("vin", "url", "fetched_at", "advertised_price", "price", "features")
+
+
+def detail_path(vin: str, dealership_name: str = "") -> Path:
+    """Where one car's page read is kept. A lookup: creates nothing."""
+    return _dir(dealership_name) / "details" / f"{(vin or '').upper()}.json"
+
+
+def read_detail(vin: str, dealership_name: str = "") -> dict | None:
+    path = detail_path(vin, dealership_name)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return {k: data[k] for k in DETAIL_KEYS if k in data} if isinstance(data, dict) else None
+
+
+def write_detail(vin: str, data: dict, dealership_name: str = "") -> Path:
+    """Keep one car's page read, whitelisted, written whole or not at all."""
+    path = detail_path(vin, dealership_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".json.tmp")
+    temp.write_text(json.dumps({k: data[k] for k in DETAIL_KEYS if k in data}, indent=1))
+    temp.replace(path)
+    return path

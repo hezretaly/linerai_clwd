@@ -353,6 +353,12 @@ class Settings(BaseSettings):
     #: a demo, where their CDN 404ing a sold car mid-presentation is a failure
     #: on the screen somebody is watching.
     scraper_save_photos: bool = False
+    #: Where the headless Chromium lives, for platforms that answer anything
+    #: but a browser with 429 (`ingest/browser.py`). Read from `.env` so the
+    #: CLI sees it as well as the service. Under the unit's ProtectHome a
+    #: browser in somebody's home directory is invisible, which is why the
+    #: runbook installs one to /opt/pw-browsers.
+    playwright_browsers_path: str = ""
 
     # --- Core --------------------------------------------------------------
     database_url: str = f"sqlite:///{BACKEND_DIR / 'liner.db'}"

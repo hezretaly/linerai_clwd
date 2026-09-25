@@ -6666,6 +6666,180 @@ def main() -> int:
     check("and the diagnosis says what a TCP failure rules out",
           "CAPTCHA" in ingest_src and "responses" in ingest_src)
 
+    print("\n== a platform that refuses anything but a browser, read from its own page ==")
+    # GMA (alsboucars.com) answers httpx with 429 and carries its whole lot in
+    # the page's own React payload. Written against a real capture, trimmed
+    # into two fixtures; every check here is offline.
+    import json as _gjson
+    import tempfile as _gtmp
+    from types import SimpleNamespace as _GNS
+    import yaml as _gyaml
+    from app.ingest import browser as _gbrowser, pipeline as _gpipe, snapshot as _gsnap
+    from app.ingest.csv_import import (RAW_KEYS as _GRAW, changes_for as _gchanges,
+                                       merged_raw as _gmerge, unstated as _gunstated)
+    from app.ingest.extract import Listing as _GListing, list_adapter_named as _gnamed
+    from app.ingest.sites.gma import CARD_PHOTO as _GPHOTO, COMING_SOON as _GSOON, Gma as _Gma
+    from app.config import settings as _gset
+    from app.db import SessionLocal as _GSession
+
+    _gdb = _GSession()
+    db_for_checks = lambda: _gdb  # noqa: E731 -- read-only here; closed below
+
+    _gurl = "https://www.alsboucars.com/inventory"
+    _ginv = pathlib.Path("backend/app/ingest/fixtures/gma_inventory.html").read_text()
+    _gvdp = pathlib.Path("backend/app/ingest/fixtures/gma_vdp.html").read_text()
+    _gpicked = list_adapter_for(_ginv, _gurl)
+    check("a GMA listing page is recognised, and neither reader claims the other's page",
+          _gpicked is not None and _gpicked.name == "gma"
+          and list_adapter_for(dcs_html, "https://example.invalid/x").name == "dealercarsearch"
+          and not _Gma().matches(dcs_html), _gpicked.name if _gpicked else "nothing matched")
+    _gcars = _Gma().parse_list(_ginv, _gurl)
+    check("the lot is read whole, though its array straddles the page's chunks",
+          _ginv.count("<script>self.__next_f.push") >= 2 and len(_gcars) == 6
+          and all(valid_vin(c.vin) and not c.errors for c in _gcars), str(len(_gcars)))
+    _gjeep = next(c for c in _gcars if c.vin == "1J4BA3H14AL197429")
+    check("a car's fields are the ones their page states",
+          (_gjeep.year, _gjeep.make, _gjeep.model, _gjeep.trim, _gjeep.mileage, _gjeep.body_style)
+          == (2010, "JEEP", "WRANGLER UNLIMITED", "SPORT", 150390, "suv")
+          and _gjeep.listing_url.startswith("https://www.alsboucars.com/inventory/used-cars-")
+          and _gjeep.photo_url.startswith(_GPHOTO + "/"),
+          str((_gjeep.year, _gjeep.make, _gjeep.model, _gjeep.trim, _gjeep.mileage, _gjeep.body_style)))
+    # The list states the advertised price, before the dealer's fees. The
+    # total a buyer pays is on the car's own page, and is never computed.
+    check("a list read never states a price: the advertised one is kept as advertised",
+          all(c.price is None for c in _gcars) and _gjeep.raw.get("advertised_price") == "9999",
+          str([c.price for c in _gcars]))
+    _grover = next(c for c in _gcars if c.vin == "SALGS2SV2KA545667")
+    check("a car advertised at 0.00 is call for price, not free",
+          "advertised_price" not in _grover.raw, str(_grover.raw.get("advertised_price")))
+    check("its rows are shaped like the CSV importer's, key for key",
+          all(set(c.raw) <= set(_GRAW) and all(isinstance(v, str) for v in c.raw.values())
+              for c in _gcars), str(sorted({k for c in _gcars for k in c.raw} - set(_GRAW))))
+    _gcsv = {r["vin"]: r for r in csv.DictReader(open("backend/fixtures/alsbou/inventory.csv",
+                                                       encoding="utf-8-sig"))}
+    _gsame = [c for c in _gcars if c.vin in _gcsv]
+    check("and a car seeded from their CSV reads back the same, so the first refresh is quiet",
+          len(_gsame) >= 5 and all(
+              (c.make, c.model, c.raw.get("stock_number"), c.raw.get("fuel_type"),
+               c.raw.get("drivetrain"), c.raw.get("exterior_color"), c.raw.get("interior_color"))
+              == (_gcsv[c.vin]["make"], _gcsv[c.vin]["model"], _gcsv[c.vin]["stock_number"],
+                  _gcsv[c.vin]["fuel_type"], _gcsv[c.vin]["drivetrain"],
+                  _gcsv[c.vin]["exterior_color"], _gcsv[c.vin]["interior_color"])
+              for c in _gsame), str(len(_gsame)))
+    _gsoon = _Gma().parse_list(_ginv.replace(_gjeep.photo_url[len(_GPHOTO):].split("/data")[0] + "/data",
+                                             f"/data/placeholder/{_GSOON}", 1), _gurl)
+    check("the platform's 'photo coming soon' image is no photo",
+          any(c.photo_url == "" for c in _gsoon), str([c.photo_url[-20:] for c in _gsoon][:2]))
+    _gsold = _Gma().parse_list(_ginv.replace('\\"status\\":\\"available\\"', '\\"status\\":\\"Sold\\"', 1), _gurl)
+    _gsold_vins = {c.vin for c in _gsold if c.status != "available"}
+    _gsold_new = {x["vin"] for x in _gpipe.build_diff(db_for_checks(), _gsold)["created"]}
+    check("a car their page calls sold is not a car to offer",
+          len(_gsold_vins) == 1 and not (_gsold_vins & _gsold_new) and len(_gsold_new) == 5,
+          str([c.status for c in _gsold]))
+    _gshort = _Gma().parse_list(_ginv.replace('\\"total\\":6', '\\"total\\":9', 1), _gurl)
+    check("a page stating more cars than it carries reads as cut short, never as sold",
+          any("states 9 cars but carries 6" in "; ".join(c.errors) for c in _gshort))
+
+    _gq7 = _GListing(vin="WA1VABF71JD050557", body_style="suv")
+    _gdet = _Gma().parse_detail(_gvdp, "u", _gq7) or {}
+    check("a car's own page gives the price including fees, as a whole number, and its options",
+          _gdet.get("price") == 18608 and len(_gdet.get("features") or []) == 23, str(_gdet.get("price")))
+    _gdump = _gjson.dumps(_gdet)
+    check("and never its description, or the dealer's costs",
+          "FIXTURE DESCRIPTION" not in _gdump and "19,999" not in _gdump
+          and not any(x in _gdump for x in ("11111", "2222.22", "33333", "totCost", "totRecon", "kbbInfo")),
+          _gdump[:120])
+    check("a page describing some other car gives nothing",
+          _Gma().parse_detail(_gvdp, "u", _GListing(vin="1J4BA3H14AL197429")) is None)
+    check("a car page priced 0 is call for price, not $0",
+          (_Gma().parse_detail(_gvdp.replace('\\"price\\":\\"18608.25\\"', '\\"price\\":\\"0.00\\"', 1),
+                               "u", _gq7) or {}).get("price") is None)
+
+    # The page reads, with a fake client: only where a price is unknown, kept
+    # whitelisted, and a failure is never a guessed price.
+    _gwas_inv = _gset.inventory_dir
+    with _gtmp.TemporaryDirectory() as _gdir:
+        _gset.inventory_dir = pathlib.Path(_gdir)
+        try:
+            _gok = _GNS(get=lambda url, timeout=0: _GNS(status_code=200 if "used-cars" in url else 404,
+                                                       text=_gvdp if "used-cars" in url else ""))
+            _gnew = _Gma().parse_list(_ginv, _gurl)
+            _gq = next(c for c in _gnew if c.vin == "WA1VABF71JD050557")
+            _gq.vin = "ZZ" + _gq.vin[2:]  # not on the smoke lot: new, so its price is needed
+            _gvdp_new = _gvdp.replace("WA1VABF71JD050557", _gq.vin)
+            _gok2 = _GNS(get=lambda url, timeout=0: _GNS(status_code=200 if "used-cars" in url else 404,
+                                                        text=_gvdp_new if "used-cars" in url else ""))
+            _gkept, _gerr = _gpipe.read_details(_gok2, _Gma(), [_gq], db_for_checks())
+            _gcache = pathlib.Path(_gdir).rglob(f"{_gq.vin}.json")
+            _gcached = next(_gcache, None)
+            _gtext = _gcached.read_text() if _gcached else ""
+            check("a car new to the lot has its own page read for the price including fees",
+                  len(_gkept) == 1 and _gkept[0].price == 18608 and not _gerr, str(_gerr)[:120])
+            check("and the read is kept with named fields only -- no cost ever reaches the cache",
+                  bool(_gtext) and set(_gjson.loads(_gtext)) <= set(_gsnap.DETAIL_KEYS)
+                  and not any(x in _gtext for x in ("11111", "2222.22", "33333", "totCost", "kbb")),
+                  _gtext[:100])
+            _gbad = _GNS(get=lambda url, timeout=0: _GNS(status_code=500, text=""))
+            _gq2 = _Gma().parse_list(_ginv, _gurl)[1]
+            _gq2.vin = "ZY" + _gq2.vin[2:]
+            _gkept2, _gerr2 = _gpipe.read_details(_gbad, _Gma(), [_gq2], db_for_checks(), refresh=True)
+            check("a new car whose price cannot be read is left out, never priced by a guess",
+                  _gkept2 == [] and _gerr2 and _gerr2[0].get("stage") == "detail", str(_gerr2)[:120])
+        finally:
+            _gset.inventory_dir = _gwas_inv
+
+    _gveh = _GNS(features_json=_gjson.dumps(["Heated seats"]),
+                 raw_json=_gjson.dumps({"detail_doc": "history", "location": "Santa Ana",
+                                        "fuel_type": "GAS"}),
+                 price=100, make="X")
+    _gch = _gchanges(_gveh, {"vin": "V", "features": [], "raw": {"fuel_type": "ELECTRIC"},
+                             "price": None, "make": "X"}, set())
+    check("a re-import keeps what it did not state: the written history, the lot, the options",
+          set(_gch) == {"raw"} and _gch["raw"]["to"].get("detail_doc") == "history"
+          and _gch["raw"]["to"].get("location") == "Santa Ana"
+          and _gch["raw"]["to"].get("fuel_type") == "ELECTRIC"
+          and _gunstated([]) and _gmerge({"a": 1}, {}) == {"a": 1}, str(_gch)[:160])
+    _gcreated = _gpipe.build_diff(db_for_checks(), [_GListing(vin="ZX" + _gjeep.vin[2:], make="JEEP",
+                                                               features=["A"], raw={"stock_number": "1"})])["created"]
+    check("a crawled car is created with its options and details, not without them",
+          _gcreated and _gcreated[0].get("features") == ["A"]
+          and _gcreated[0].get("raw") == {"stock_number": "1"}, str(_gcreated)[:120])
+
+    _galsbou = (_gyaml.safe_load(pathlib.Path("backend/config/dealerships/alsbou.yaml").read_text())
+                or {}).get("inventory") or {}
+    check("Alsbou's profile names the GMA reader, and it is one this version has",
+          _galsbou.get("adapter") == "gma" and _gnamed("gma") is not None and _gnamed("gma").browser)
+    _gbsrc = pathlib.Path("backend/app/ingest/browser.py").read_text()
+    check("the browser is imported only when a crawl needs one, so the app boots without it",
+          not re.search(r"^(from|import) playwright", _gbsrc, re.M))
+    _gwas_path = _gset.playwright_browsers_path
+    with _gtmp.TemporaryDirectory() as _gempty:
+        _gset.playwright_browsers_path = _gempty
+        try:
+            check("and a box without one says how to install it, before anybody presses the button",
+                  "playwright install" in _gbrowser.problem(), _gbrowser.problem()[:100])
+        finally:
+            _gset.playwright_browsers_path = _gwas_path
+    _genv = lambda t: dict(l.split("=", 1) for l in t.splitlines() if l and not l.startswith("#") and "=" in l)  # noqa: E731
+    check("both instances look for the browser where the unit can read it",
+          all(_genv(pathlib.Path(f).read_text()).get("PLAYWRIGHT_BROWSERS_PATH", "").startswith("/opt/")
+              for f in ("deploy/production.env.example", "deploy/demo.env.example")))
+    _gimport = pathlib.Path("frontend/src/routes/Import.tsx").read_text()
+    _gapi = pathlib.Path("backend/app/api/ingest.py").read_text()
+    _gcli = pathlib.Path("scripts/ingest.py").read_text()
+    check("the Import page offers each car's page, and asks before emptying the lot",
+          "details: true" in _gimport and "'removals'" in _gimport and "allow_removals" in _gimport)
+    check("and its Publish refuses the same crawl `make ingest` refuses, by one rule",
+          "removal_risk(" in _gapi and "removal_risk(" in _gcli and "share > 0.2" not in _gcli)
+    check("a crawl runs after the response, so a slow site cannot time the page out",
+          "background.add_task(_crawl_later" in _gapi and "in_progress(" in _gapi)
+    _grisk = _gpipe.removal_risk(db_for_checks(), {"removed": [{"vin": str(i)} for i in range(500)]}, [])
+    _gcalm = _gpipe.removal_risk(db_for_checks(), {"removed": [{"vin": "x"}]},
+                                 [{"stage": "detail", "error": "one car's page"}])
+    check("half a lot going off sale needs a person; one car's page failing does not",
+          _grisk is not None and _gcalm is None, f"{_grisk} / {_gcalm}")
+    _gdb.close()
+
     print("\n== somebody writing in becomes somebody ==")
     # A person writing to sales@ used the door the dealership publishes. Left
     # as a receipt they are visible only on a diagnostics tab, so the one
