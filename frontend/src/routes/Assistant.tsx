@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
 import { withStore } from '../lib/store'
-import type { AssistantSettings, HandoffRule, KnowledgeEntry, Rail } from '../lib/types'
+import type { AssistantSettings, HandoffRule, Rail } from '../lib/types'
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
 import { AgentSwitch } from '../components/AgentSwitch'
 import { WebsiteChatCard } from '../components/WebsiteChat'
@@ -110,7 +110,6 @@ export function AssistantPage() {
                 { id: 'instructions', label: 'Instructions' },
                 { id: 'behaviour', label: 'Behaviour' },
                 { id: 'handoff', label: 'Handoff rules' },
-                { id: 'knowledge', label: 'Knowledge' },
                 { id: 'rails', label: 'Rails' },
               ]}
             />
@@ -120,7 +119,6 @@ export function AssistantPage() {
             {tab === 'instructions' && <Instructions wording={data.prompt} />}
             {tab === 'behaviour' && <Behaviour data={data} />}
             {tab === 'handoff' && <HandoffRules />}
-            {tab === 'knowledge' && <Knowledge />}
             {tab === 'rails' && <Rails />}
           </div>
         </Card>
@@ -370,34 +368,6 @@ function HandoffRules() {
         </li>
       ))}
     </ul>
-  )
-}
-
-function Knowledge() {
-  const { data } = useQuery({
-    queryKey: ['knowledge'],
-    queryFn: () => api.get<{ entries: KnowledgeEntry[] }>('/api/knowledge'),
-  })
-  if (!data) return <Spinner />
-
-  return (
-    <>
-      <p className="mb-3 text-sm text-muted-foreground">
-        What the listings don't cover. These are injected into the assistant's instructions, so
-        it answers from your policy instead of guessing.
-      </p>
-      <ul className="space-y-3">
-        {data.entries.map((entry) => (
-          <li key={entry.id} className="rounded-lg border border-border p-4">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-medium">{entry.topic}</p>
-              <span className="text-xs text-muted-foreground">Used {entry.use_count}x</span>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">{entry.answer}</p>
-          </li>
-        ))}
-      </ul>
-    </>
   )
 }
 
