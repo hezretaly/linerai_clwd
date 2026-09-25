@@ -25,7 +25,14 @@ WorkingDirectory=/srv/liner/backend
 EnvironmentFile=/srv/liner/.env
 ExecStart=/srv/liner/backend/.venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 --port 8000 \
-    --proxy-headers --forwarded-allow-ips 127.0.0.1
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 \
+    --timeout-graceful-shutdown 10
+# **A restart must not wait for connections that never close.** The dealer
+# socket and every open chat's live stream stay open until the browser goes
+# away, so a graceful stop waited systemd's full 90 s and was then killed --
+# 90 s of downtime on every deploy, measured on linerai.us's new box. Ten
+# seconds finishes any request in flight; the browsers reconnect by themselves.
+TimeoutStopSec=20
 Restart=on-failure
 RestartSec=2
 

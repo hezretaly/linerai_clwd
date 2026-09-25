@@ -6309,6 +6309,11 @@ def main() -> int:
         check(f"{unit} starts after Postgres, as {user}, on {port}",
               re.search(r"^After=.*postgresql\.service", text_, re.M) is not None
               and f"User={user}" in text_ and f"--port {port}" in text_)
+        # A graceful stop waited for the dealer socket and every open chat
+        # stream, none of which ever closes: 90 s of downtime per deploy.
+        check(f"and {unit} stops within seconds rather than waiting on open streams",
+              re.search(r"--timeout-graceful-shutdown \d+", text_) is not None
+              and re.search(r"^TimeoutStopSec=\d+$", text_, re.M) is not None)
     prod_env = pathlib.Path("deploy/production.env.example").read_text()
     demo_env = pathlib.Path("deploy/demo.env.example").read_text()
     envs = lambda t: dict(  # noqa: E731
