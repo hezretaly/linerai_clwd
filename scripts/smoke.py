@@ -470,8 +470,22 @@ def fill_slot(starts_at: str, count: int, tag: str) -> list[str]:
     (the same relay a real call's tools use), which is what lets many
     bookings land without minting a fresh chat session per booking and
     running into the chat ceiling that exists for a wholly different reason
-    (`app/ratelimit.py`, keyed on new sessions per store)."""
+    (`app/ratelimit.py`, keyed on new sessions per store).
+
+    One buyer message first, though, not straight to the tool: a lead's own
+    conversations are deliberately never gated on `threads.started` (its
+    comment: "a lead is only minted by a real booking... none of them can be
+    the abandoned, never-typed-in session this rule exists to hide"), but
+    the sidebar badge's `threads.listed` still is, save for an unclaimed
+    escalation -- it has no equivalent exception for "booked, but nothing
+    ever got transcribed", which a call's audio can genuinely leave unstarted
+    (`VOICE_TRANSCRIBE=false`). A filler with no buyer message at all is that
+    gap, several times over, and inflates a lead's own `live` (every one of
+    its conversations, by design) past what the badge (`listed`) counts --
+    a real, if narrow, mismatch this file has no business introducing just to
+    fill a slot faster."""
     convo = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(convo, content="I'd like to come in")
     # A block of ten digits per call, so two fills never mint the same
     # number -- `app/matching.py` would otherwise fold their fillers onto
     # one lead by phone, same as the SMS stampede this codebase already
