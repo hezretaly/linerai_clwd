@@ -7828,11 +7828,14 @@ def main() -> int:
             # where a rep needs a refusal a stub reply cannot be mistaken
             # for (see the `have_model` docstring). This card's reader is a
             # dealership manager, not a rep comparing a draft against a
-            # stub, so `/api/email/agent` (`agent_state` in api/mailbox.py)
-            # rewords it -- checked through that endpoint, like the
-            # off_in_env case above, rather than by calling `enabled()`
-            # in-process and expecting it to carry the card's wording.
-            card = call("GET", "/api/email/agent")
+            # stub, so `agent_state` (api/mailbox.py, behind
+            # `/api/email/agent`) rewords it -- called directly, the same
+            # plain function `enabled()` was called as above, because the
+            # setting mutated in this process (`cfg_settings.email_agent`)
+            # is invisible to the separate `make dev` server `call()` talks
+            # to over HTTP.
+            from app.api.mailbox import agent_state as _agent_state
+            card = _agent_state(db=_db, user=None)
             check("with no model there is no reply, in words a dealer can "
                   "act on -- never an env var they cannot set",
                   not card["on"] and card["reason"] == "no_model"
