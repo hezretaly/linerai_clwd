@@ -140,6 +140,12 @@ class HandoffRule(Base):
     threshold_unit: Mapped[str] = mapped_column(String(30), default="")
     route_target: Mapped[str] = mapped_column(String(60), default="any_available")
     notify: Mapped[str] = mapped_column(String(40), default="email_dashboard")
+    #: Unused. "Fired N times" is derived from escalation rows now
+    #: (`app.escalations.fired_counts`) rather than this hand-incremented
+    #: column, which only one writer ever moved while several others added
+    #: escalation rows it never saw. Kept rather than dropped: there is no
+    #: migration in this change, and a column `create_all` already built is
+    #: not worth one on its own.
     fired_count: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 

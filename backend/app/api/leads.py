@@ -6,23 +6,29 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import (
+    appointment_scope,
+    clock,
     email_agent,
+    escalations,
     matching,
     outreach_send,
+    ownership,
     sms as sms_module,
+    threads,
     timeline,
 )
+from app.api.deps import current_user, find_staff, get_dealership
 from app.integrations import twilio_account
 from app.integrations.registry import get_email_sender
 from app.integrations.sms import twilio_sms
 from app.recap import lead_recap
-from app.api.deps import current_user, find_staff
 from app.db import get_db, utcnow
 from app.events import emit
 from app.models import (
     Appointment,
     CapturedField,
     Conversation,
+    Dealership,
     Escalation,
     Lead,
     LeadAddress,
@@ -53,16 +59,30 @@ STAGE_RANK = {
 }
 
 
-def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
-    """Per-lead stage, vehicle of interest and last activity, in three queries."""
+def lead_summaries(
+    db: Session, leads: list[Lead], dealership: Dealership | None = None
+) -> dict[str, dict]:
+    """Per-lead stage, vehicle of interest and last activity, in a handful of
+    queries.
+
+    `dealership` is optional only so a caller mid-migration cannot crash --
+    every real call site passes it, because `live` and `appointment_set` need
+    the dealership's own wall clock (`appointment_scope`, `app.clock`).
+    """
     ids = [lead.id for lead in leads]
     if not ids:
         return {}
 
     # Newest first: `mine[0]` below is the thread a row opens, and on
     # Postgres an unordered read hands back whichever the heap has first.
+    # Filtered to conversations that have *started* -- the buyer has actually
+    # said something -- so a chat widget opened and abandoned, or an
+    # untranscribed call, does not set `open=true`, supply a `last_touch_at`,
+    # or count toward `conversation_count`/`channels` for a lead that has no
+    # real activity on that thread. This is `app/threads.py`'s one rule,
+    # applied here the same way `/api/conversations` already applies it.
     convos = (
-        db.query(Conversation).filter(Conversation.lead_id.in_(ids))
+        db.query(Conversation).filter(Conversation.lead_id.in_(ids), threads.started(db))
         .order_by(Conversation.started_at.desc(), Conversation.id.asc()).all()
     )
     appts = db.query(Appointment).filter(Appointment.lead_id.in_(ids)).all()
@@ -77,16 +97,15 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
         Outreach.lead_id.in_(ids), Outreach.channel == "email"
     ).all()
     convo_ids = [c.id for c in convos]
-    last_message = dict(
-        db.query(Message.conversation_id, func.max(Message.created_at))
-        .filter(Message.conversation_id.in_(convo_ids))
-        .group_by(Message.conversation_id)
-        .all()
-    ) if convo_ids else {}
-    open_escalations = {
-        row.conversation_id
-        for row in db.query(Escalation).filter(Escalation.claimed_at.is_(None)).all()
-    }
+    last_message = threads.last_activity(db, convo_ids)
+    # Who still needs a person found for them -- the one definition
+    # (`app/escalations.py`), so `flagged` here agrees with the Overview KPI
+    # and the Conversations page's "Needs a person" card and chip, rather
+    # than a locally-built claimed_at-is-null set that counted an anonymous,
+    # unstarted, escalated thread the list can never show.
+    waiting = escalations.waiting_on_person(db)
+    now = utcnow()
+    wall_now = clock.wall_now(dealership) if dealership else now
 
     vehicle_ids = {c.focus_vehicle_id for c in convos if c.focus_vehicle_id}
     vehicle_ids |= {a.vehicle_id for a in appts if a.vehicle_id}
@@ -120,10 +139,16 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
     for lead in leads:
         mine = [c for c in convos if c.lead_id == lead.id]
         my_appts = [a for a in appts if a.lead_id == lead.id]
-        live = [a for a in my_appts if a.status in {"booked", "confirmed"}]
+        # An appointment is "set" only while it is still ahead of the
+        # dealership's own wall clock and has not been cancelled or marked a
+        # no-show (`app/appointment_scope.py`) -- not merely `status in
+        # (booked, confirmed)` with no time bound, which kept a visit from
+        # last month "set" forever, and not `conversations.stage == 'booked'`,
+        # which a cancel or an escalation never walked back.
+        upcoming = [a for a in my_appts if appointment_scope.is_upcoming(a, wall_now)]
 
         best = max((STAGE_RANK.get(c.stage, 0) for c in mine), default=0)
-        if live:
+        if upcoming:
             stage = "appointment"
         elif best >= 3:
             stage = "qualified"
@@ -157,10 +182,14 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
         still_open = [c for c in mine if c.status != "closed"]
         out[lead.id] = {
             "stage": stage,
-            "flagged": any(c.id in open_escalations for c in mine),
+            # The one definition of "needs a person" -- see `waiting` above.
+            "flagged": lead.id in waiting,
             "vehicle_of_interest": vehicle_out(vehicle) if vehicle else None,
-            "appointment_count": len(live),
-            "unconfirmed_count": len([a for a in live if a.status == "booked"]),
+            "appointment_set": bool(upcoming),
+            "appointment_count": len(upcoming),
+            "unconfirmed_count": len(
+                [a for a in upcoming if a.status in appointment_scope.UNCONFIRMED_STATUSES]
+            ),
             "last_touch_at": stamp(max(touches)) if touches else stamp(lead.created_at),
             "conversation_id": mine[0].id if mine else None,
             # What the conversations list needs to draw a lead row without a
@@ -174,11 +203,17 @@ def lead_summaries(db: Session, leads: list[Lead]) -> dict[str, dict]:
                 {c.channel for c in mine} | ({"email"} if my_mail else set())
             ),
             "open": bool(still_open),
+            # Live iff at least one of *this* thread's own last message (or
+            # start) is under threads.LIVE_AFTER old -- never derived from a
+            # different thread's timestamp the way `open` (any thread) and
+            # `last_touch_at` (max over everything, mail and appointments
+            # included) used to be combined into one "Live" verdict.
+            "live": any(
+                threads.is_live(c, last_message.get(c.id), now) for c in mine
+            ),
             # Declined only while it stays declined. A buyer who said no in
             # March and is chatting again today is not a closed lead.
-            "declined": (
-                not still_open and any(c.outcome == "declined" for c in mine)
-            ),
+            "declined": threads.lead_declined(mine),
         }
     return out
 
@@ -189,6 +224,7 @@ def list_leads(
     risk: bool | None = Query(None, description="Only leads with no way to reach them"),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     query = db.query(Lead)
     if source:
@@ -201,8 +237,8 @@ def list_leads(
 
     # The table needs a stage, a vehicle and a last-touch per row. Computing
     # those from a detail call per lead would be N+1; they are gathered here in
-    # three queries and folded onto each row.
-    summaries = lead_summaries(db, rows)
+    # a handful of queries and folded onto each row.
+    summaries = lead_summaries(db, rows, dealership)
     leads = []
     for lead in rows:
         out = lead_out(lead, db)
@@ -216,10 +252,11 @@ def get_lead(
     lead_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     lead = _get(db, lead_id)
     out = lead_out(lead, db, detail=True)
-    out.update(lead_summaries(db, [lead]).get(lead.id, {}))
+    out.update(lead_summaries(db, [lead], dealership).get(lead.id, {}))
     return out
 
 
@@ -332,6 +369,12 @@ def get_timeline(
         "entries": entries,
         "channels": timeline.channel_counts(entries),
         "conversations": [conversation_out(c, db) for c in convos],
+        # The same lead-level fact the list row's `declined` badge reads
+        # (`threads.lead_declined`), so the buyer page's header and the list
+        # can never say opposite things about the same buyer -- the header
+        # used to re-derive `conversations.some(outcome === 'declined')` on
+        # the client, which is a different (and looser) rule.
+        "declined": threads.lead_declined(convos),
         # Lead-level, not the newest thread's: an appointment booked in a
         # chat last night does not belong to the call made this morning.
         "recap": lead_recap(db, lead),
@@ -469,6 +512,7 @@ def get_duplicates(
     lead_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     """Other leads that look like the same person, and why.
 
@@ -481,7 +525,7 @@ def get_duplicates(
     """
     lead = _get(db, lead_id)
     found = matching.candidates_for(db, lead.email, lead.phone, exclude_id=lead.id)
-    summaries = lead_summaries(db, [other for other, _ in found])
+    summaries = lead_summaries(db, [other for other, _ in found], dealership)
     out = []
     for other, why in found:
         row = lead_out(other, db)

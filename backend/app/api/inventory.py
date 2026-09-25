@@ -21,6 +21,11 @@ from app.models import (
 )
 from app.schemas.serialize import stamp, vehicle_out
 
+#: A buyer, for "how many buyers were quoted this car" -- a named lead where
+#: there is one, else the conversation itself, so an anonymous thread is its
+#: own buyer rather than vanishing from the count.
+_BUYER_KEY = func.coalesce(Conversation.lead_id, Conversation.id)
+
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 
 # `status` is deliberately absent: it has its own endpoint, because taking a
@@ -36,13 +41,28 @@ EDITABLE = {
 }
 
 
-def _mention_counts(db: Session) -> dict[str, int]:
-    rows = (
-        db.query(VehicleMention.vehicle_id, func.count(VehicleMention.id))
+def quoted_buyer_counts(db: Session, vehicle_ids: list[str] | None = None) -> dict[str, int]:
+    """Distinct buyers quoted each vehicle -- the one definition of "N buyers
+    were quoted this car", read by the inventory list, the vehicle detail
+    drawer ("Quoted to N buyers"), and the Overview's stale-vehicle banner.
+
+    A `vehicle_mentions` row is an *event*: "Liner named this car once", not
+    a buyer. `search_inventory` and `get_vehicle` each write one per call, so
+    a single chat that searches and then opens a car already produces two or
+    more rows for one buyer, and the same buyer returning on a second channel
+    (their own conversation per channel) multiplies it further. Counting rows
+    is the bug this fixes: it inflated "offered to N buyers" everywhere that
+    read `count(VehicleMention.id)`, including for a single person quoted the
+    same car three times over voice, chat and email.
+    """
+    q = (
+        db.query(VehicleMention.vehicle_id, func.count(func.distinct(_BUYER_KEY)))
+        .join(Conversation, Conversation.id == VehicleMention.conversation_id)
         .group_by(VehicleMention.vehicle_id)
-        .all()
     )
-    return dict(rows)
+    if vehicle_ids is not None:
+        q = q.filter(VehicleMention.vehicle_id.in_(vehicle_ids))
+    return dict(q.all())
 
 
 @router.get("")
@@ -63,7 +83,7 @@ def list_inventory(
             | func.lower(Vehicle.vin).like(like)
             | func.lower(Vehicle.keywords).like(like)
         )
-    counts = _mention_counts(db)
+    counts = quoted_buyer_counts(db)
     rows = query.order_by(Vehicle.year.desc(), Vehicle.make.asc()).all()
     return {"vehicles": [vehicle_out(v, mentions=counts.get(v.id, 0)) for v in rows]}
 
@@ -77,7 +97,7 @@ def get_vehicle(
     vehicle = db.query(Vehicle).filter_by(id=vehicle_id).one_or_none()
     if vehicle is None:
         raise HTTPException(404, "Vehicle not found")
-    counts = _mention_counts(db)
+    counts = quoted_buyer_counts(db)
     out = vehicle_out(vehicle, mentions=counts.get(vehicle.id, 0))
 
     # Blast radius: who was quoted this car, so a sold listing can be chased
@@ -90,16 +110,23 @@ def get_vehicle(
         .order_by(VehicleMention.created_at.desc())
         .all()
     )
-    out["mentions"] = [
-        {
+    # Collapsed to one row per buyer (lead, or the conversation itself for an
+    # anonymous thread), newest mention first -- so this list's length always
+    # equals `quoted_buyer_counts`, rather than counting the same buyer once
+    # per channel or per time the agent named the car in one chat.
+    by_buyer: dict[str, dict] = {}
+    for mention, convo, lead in mentions:
+        key = lead.id if lead else convo.id
+        row = by_buyer.setdefault(key, {
             "conversation_id": convo.id,
             "lead_id": lead.id if lead else None,
             "lead_name": (lead.name if lead else None) or "Unnamed buyer",
             "quoted_price": mention.quoted_price,
             "created_at": stamp(mention.created_at),
-        }
-        for mention, convo, lead in mentions
-    ]
+            "quote_count": 0,
+        })
+        row["quote_count"] += 1
+    out["mentions"] = list(by_buyer.values())
     out["appointments"] = _visits(db, vehicle)
     return out
 
@@ -218,5 +245,5 @@ def update_vehicle(
     vehicle.source = "manual" if vehicle.source == "seed" else vehicle.source
     vehicle.last_seen_at = utcnow()
     db.commit()
-    counts = _mention_counts(db)
+    counts = quoted_buyer_counts(db)
     return vehicle_out(vehicle, mentions=counts.get(vehicle.id, 0))

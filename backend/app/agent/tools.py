@@ -1537,8 +1537,10 @@ def escalate_to_human(
     # conversation. Only a rep pressing Take over stops Liner
     # (api/conversations.py), because only then is a person actually there.
     convo.stage = "escalated"
-    if rule is not None:
-        rule.fired_count += 1
+    # No counter to bump: "fired N times" is now the count of escalation rows
+    # carrying this rule's id (`app.escalations.fired_counts`), computed from
+    # the row just added above rather than tracked in a second place that can
+    # drift from it.
     db.commit()
     db.refresh(escalation)
 

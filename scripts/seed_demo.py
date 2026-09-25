@@ -43,6 +43,8 @@ from datetime import timedelta
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "backend"))
 
+from sqlalchemy.orm import Session  # noqa: E402
+
 from app.db import SessionLocal, utcnow  # noqa: E402
 from app.models import (  # noqa: E402
     Appointment,
@@ -54,6 +56,7 @@ from app.models import (  # noqa: E402
     EmailAttachment,
     EmailEnvelope,
     Escalation,
+    HandoffRule,
     InboundEmail,
     Lead,
     Message,
@@ -210,6 +213,23 @@ ESCALATES = {
     "How much would you give me for my trade?": "Wants a trade valuation",
     "Do you offer financing in house?": "Financing question -- needs a person",
 }
+
+# Which handoff rule each demo escalation's reason actually matches, so
+# "Fired N times" on the Liner setup page has real rows behind it for the
+# demo data too. Trade valuation has no rule among HANDOFF_RULES and stays
+# unrouted -- the same "(no rule)" bucket a live, unmatched rule_key produces.
+ESCALATE_RULE_KEYS = {
+    "Is that the out-the-door price?": "out_the_door_price",
+    "How much would you give me for my trade?": None,
+    "Do you offer financing in house?": "financing_trouble",
+}
+
+
+def _rule_id(db: Session, key: str | None) -> str | None:
+    if not key:
+        return None
+    rule = db.query(HandoffRule).filter_by(key=key).one_or_none()
+    return rule.id if rule else None
 
 
 def demo_email(name: str, n: int) -> str:
@@ -562,6 +582,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     # which is the disagreement `app/escalations.py` exists to prevent.
     db.add(Escalation(
         conversation_id=asked_price.id,
+        handoff_rule_id=_rule_id(db, "out_the_door_price"),
         reason="Buyer asked whether the price is negotiable.",
         claimed_by_user_id=None, claimed_at=None,
         created_at=now - timedelta(days=2, hours=5),
@@ -643,6 +664,7 @@ def _showcase(db, rng, now, vehicles, reps) -> dict[str, int]:
     # a manager cannot tell a failed assignment from a lying badge.
     db.add(Escalation(
         conversation_id=convo.id,
+        handoff_rule_id=_rule_id(db, "out_the_door_price"),
         reason="Buyer asked for an out-the-door price.",
         claimed_by_user_id=staff(3),
         claimed_at=(now - timedelta(minutes=3)) if reps else None,
@@ -1042,7 +1064,8 @@ def build(db, count: int) -> dict[str, int]:
             made["vehicle_mentions"] += 1
 
             if flagged:
-                reason = ESCALATES[next(q for q in asked if q in ESCALATES)]
+                asked_q = next(q for q in asked if q in ESCALATES)
+                reason = ESCALATES[asked_q]
                 # Claimed exactly where somebody owns the buyer -- the same
                 # rule `app/escalations.py` enforces at runtime, because a
                 # fixture that breaks the invariant is a bug report about the
@@ -1052,6 +1075,7 @@ def build(db, count: int) -> dict[str, int]:
                 claimed = owner is not None
                 db.add(Escalation(
                     conversation_id=convo.id,
+                    handoff_rule_id=_rule_id(db, ESCALATE_RULE_KEYS.get(asked_q)),
                     reason=reason,
                     claimed_by_user_id=owner if claimed else None,
                     claimed_at=started + timedelta(minutes=20) if claimed else None,

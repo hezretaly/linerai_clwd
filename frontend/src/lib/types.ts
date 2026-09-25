@@ -107,6 +107,10 @@ export interface Lead {
   source: 'chat' | 'phone' | 'website' | 'adf'
   assigned_user_id: string | null
   assigned_to?: User | null
+  /* The one definition of "unclaimed" (app/ownership.py): a lead with no
+     owner. An anonymous conversation is never unclaimed -- there is nothing
+     to claim until a lead exists. */
+  unclaimed: boolean
   contact_risk: boolean
   email_consent_at: string | null
   created_at: string
@@ -120,8 +124,15 @@ export interface Lead {
   /* Folded on by the list endpoint. A lead has no stage column -- these are
      derived from its conversations and appointments (api/leads.py). */
   stage?: 'new' | 'qualifying' | 'qualified' | 'appointment'
+  /* The one definition of "needs a person" (app/escalations.py): true iff
+     this buyer has at least one unclaimed escalation, on any of their
+     threads. */
   flagged?: boolean
   vehicle_of_interest?: Vehicle | null
+  /* At least one upcoming (not past, not cancelled/no-show) appointment --
+     app/appointment_scope.py. Replaces the old conversations.stage==='booked'
+     read, which a cancel or an escalation never walked back. */
+  appointment_set?: boolean
   appointment_count?: number
   unconfirmed_count?: number
   last_touch_at?: string
@@ -131,6 +142,10 @@ export interface Lead {
   conversation_count?: number
   channels?: string[]
   open?: boolean
+  /* Live iff at least one of this lead's own threads is (threads.is_live) --
+     never derived from a different thread's `open` plus a `last_touch_at`
+     that also counts mail and appointments. */
+  live?: boolean
   declined?: boolean
   appointments?: Appointment[]
   conversations?: Conversation[]
@@ -182,6 +197,10 @@ export interface Conversation {
   messages?: Message[]
   open_escalation?: Escalation | null
   rails?: Rail[]
+  /* The one definition of "live right now" (app/threads.py): not closed and
+     its own last activity (or start) is under threads.LIVE_AFTER (30 min)
+     old. List responses only. */
+  live?: boolean
 }
 
 export interface Appointment {
@@ -194,7 +213,13 @@ export interface Appointment {
   assigned_to?: User | null
   starts_at: string
   duration_min: number
-  status: 'booked' | 'confirmed' | 'cancelled' | 'no_show'
+  status: 'booked' | 'confirmed' | 'cancelled' | 'no_show' | 'completed'
+  /* Cancelled or a no-show -- app.appointment_scope.OFF_STATUSES, the one
+     definition the Calendar's list and week views both read now. */
+  off: boolean
+  /* Still ahead of the dealership's own wall clock and not off
+     (app.appointment_scope.is_upcoming). Only on /api/appointments rows. */
+  upcoming?: boolean
   booked_by: 'liner' | 'rep'
   conversation_id: string | null
   created_at: string
@@ -259,6 +284,9 @@ export interface Escalation {
   channel?: string | null
   lead?: Lead | null
   vehicle?: Vehicle | null
+  /* Overview's needs_a_person rows only: how many of this buyer's own
+     escalations are open. One row per buyer now, not one per escalation. */
+  escalation_count?: number
 }
 
 export interface KnowledgeEntry {
@@ -305,35 +333,39 @@ export interface Kpi {
   label: string
   value: number
   window: string
-  /** 'usd' for a figure that is money rather than a count. Sent by the server
-   *  so the card cannot decide to render a dollar amount as a tally. */
-  format?: 'usd'
   /** The count is real but the feature behind it is not set up, so the window
    *  line says why instead of a zero reading as a quiet day. */
   unavailable?: boolean
-  /** Something to act on (e.g. traffic on a model with no published rates). */
-  warning?: boolean
 }
 
 export interface Overview {
   dealership: Dealership
   generated_at: string
   kpis: Kpi[]
+  /** `conversations` is people in progress right now (threads.live_keys) --
+   *  the same figure as the Conversations page's In progress card, not
+   *  every open thread ever. */
   badges: { conversations: number; appointments: number; escalations: number; inventory: number }
   queues: {
+    /** One row per buyer (app/escalations.py's waiting_on_person), not one
+     *  per escalation -- a buyer with three open threads is one row here,
+     *  carrying `escalation_count`. */
     needs_a_person: Escalation[]
     unconfirmed_appointments: Appointment[]
     unassigned_appointments: Appointment[]
-    /** Today's conversations, newest activity first. Split at
-     *  `happening_now_since` -- the panel shows the last two hours and
+    /** Booked visits whose time has passed with nobody marking them
+     *  confirmed, cancelled or a no-show. */
+    unmarked_appointments: Appointment[]
+    /** Today's conversations, newest activity first, each carrying its own
+     *  `live` flag (threads.is_live) -- the client shows the live rows and
      *  expands to the rest of the day. */
-    active_conversations: (Conversation & { last_activity_at?: string })[]
+    active_conversations: (Conversation & { last_activity_at?: string; live: boolean })[]
     unclaimed_leads: Lead[]
     inventory_issues: Vehicle[]
   }
-  mix: { channel: string; count: number }[]
-  source_mix: { source: string; count: number }[]
-  happening_now_since: string
+  /** Minutes of inactivity after which a thread stops being "live"
+   *  (threads.LIVE_AFTER), for copy that wants to say the number. */
+  live_window_minutes: number
   by_hour: { hour: number; count: number; open: boolean }[]
 }
 

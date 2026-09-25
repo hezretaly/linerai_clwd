@@ -260,18 +260,21 @@ def rates_for(model: str) -> tuple[dict[str, float], bool]:
     return base, known is not None or any(v is not None for v in override.values())
 
 
-def price_of(usage: dict, model: str = "") -> float:
+def price_of(usage: dict, model: str) -> float:
     """What one response cost, in dollars.
 
     An estimate, and labelled one everywhere it is shown: the authority is
     OpenAI's own billing page. What it is *not* is a guess -- the token counts
     are the ones the provider reported for that exact response.
 
-    Priced against the model that billed it rather than the one configured
-    now, so switching to mini tomorrow does not silently re-price yesterday's
-    calls at the new rate and make a change look like a saving it was not.
+    `model` is required and is the model that actually billed this row --
+    never the currently configured `VOICE_MODEL`. A row is priced against the
+    model that billed it, so switching to mini tomorrow does not silently
+    re-price yesterday's calls at the new rate and make a change look like a
+    saving it was not. An empty model is reported unpriced by `rates_for`,
+    never charged at today's rate as a guess.
     """
-    rate, _ = rates_for(model or settings.voice_model)
+    rate, _ = rates_for(model)
     per_million = (
         usage.get("cached_tokens", 0) * rate["cached_in"]
         + max(usage.get("input_audio_tokens", 0), 0) * rate["audio_in"]
@@ -280,6 +283,25 @@ def price_of(usage: dict, model: str = "") -> float:
         + usage.get("output_text_tokens", 0) * rate["text_out"]
     )
     return per_million / 1_000_000
+
+
+def usage_of(row) -> dict:
+    """A `CallUsage` row as the shape `price_of` reads. The one reader --
+    `api/voice.py`'s `record_usage` and `call_cost` built this dict by hand in
+    two places, and `cost_of` needs it as a third."""
+    return {
+        "cached_tokens": row.cached_tokens,
+        "input_audio_tokens": row.input_audio_tokens,
+        "input_text_tokens": row.input_text_tokens,
+        "output_audio_tokens": row.output_audio_tokens,
+        "output_text_tokens": row.output_text_tokens,
+    }
+
+
+def cost_of(row) -> float:
+    """What one `CallUsage` row cost -- `price_of` against the model that
+    actually billed it, never the model configured now."""
+    return price_of(usage_of(row), row.model)
 
 
 #: Which transcribers accept the newer config surface -- `keywords` and

@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, get_dealership, require_manager
 from app.db import get_db, utcnow
+from app.escalations import fired_counts
 from app.models import (
     AssistantPrompt,
     AssistantSettings,
@@ -404,7 +405,8 @@ def list_handoff_rules(
     db: Session = Depends(get_db), user: User = Depends(current_user)
 ) -> dict:
     rows = db.query(HandoffRule).order_by(HandoffRule.key.asc()).all()
-    return {"rules": [handoff_rule_out(r) for r in rows]}
+    fired = fired_counts(db)
+    return {"rules": [handoff_rule_out(r, fired.get(r.id, 0)) for r in rows]}
 
 
 class RulePatch(BaseModel):
@@ -430,7 +432,7 @@ def patch_handoff_rule(
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(rule, key, value)
     db.commit()
-    out = handoff_rule_out(rule)
+    out = handoff_rule_out(rule, fired_counts(db).get(rule.id, 0))
     if not rule.enabled:
         out["warning"] = (
             "Liner will keep going in those situations instead of stopping and asking "

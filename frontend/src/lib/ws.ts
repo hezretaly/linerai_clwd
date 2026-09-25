@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { withStore } from './store'
 
 export interface DealerEvent {
@@ -88,6 +88,37 @@ const INVALIDATES: Record<string, string[]> = {
 }
 
 /**
+ * Lead rows are a projection of conversation (and escalation, and message)
+ * rows -- every field `lead_summaries` computes (`flagged`, `open`, `live`,
+ * `last_touch_at`, `conversation_count`, ...) is derived from the same
+ * threads an event about a conversation just changed. So an event that
+ * invalidates `conversations` has to invalidate `leads` too, or the two
+ * pages holding one buyer's data go stale independently.
+ *
+ * Before this, each `INVALIDATES` line had to remember to list both keys by
+ * hand, and several did not -- `handoff.triggered` (a takeover) is the one
+ * that matters most: after it, /app/conversations' own rows (`['conversations']`)
+ * refreshed correctly, but the *lead* rows the same page also renders
+ * (`['leads']`) sat stale until the page was reloaded, so the "Needs a
+ * person" flag and the "Unclaimed" chip briefly disagreed with the Overview,
+ * which *had* refreshed. One rule here, applied by `invalidateKeys` below,
+ * closes it for every event type at once rather than one at a time.
+ */
+const IMPLIES: Record<string, string[]> = {
+  conversations: ['leads'],
+}
+
+export function invalidateKeys(queryClient: QueryClient, keys: string[]): void {
+  const expanded = new Set(keys)
+  for (const key of keys) {
+    for (const implied of IMPLIES[key] ?? []) expanded.add(implied)
+  }
+  for (const key of expanded) {
+    void queryClient.invalidateQueries({ queryKey: [key] })
+  }
+}
+
+/**
  * Dealer event socket. Reconnects with `?since=` so a dashboard that was closed
  * during a booking catches up from the events table instead of refetching all.
  */
@@ -126,9 +157,7 @@ export function useDealerEvents(onEvent?: (event: DealerEvent) => void): void {
           return
         }
 
-        for (const key of INVALIDATES[event.type] ?? []) {
-          void queryClient.invalidateQueries({ queryKey: [key] })
-        }
+        invalidateKeys(queryClient, INVALIDATES[event.type] ?? [])
         handler.current?.({ ...event, replayed: !live })
       }
 

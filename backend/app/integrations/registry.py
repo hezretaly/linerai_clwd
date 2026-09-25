@@ -234,7 +234,7 @@ def _sms_status() -> IntegrationStatus:
     if not settings.texting:
         return IntegrationStatus(
             key="sms",
-            label="Texting",
+            label="Text messages (SMS)",
             configured=False,
             impl="switched off",
             missing=["TEXTING"],
@@ -248,7 +248,7 @@ def _sms_status() -> IntegrationStatus:
     missing = account.missing()
     return IntegrationStatus(
         key="sms",
-        label="Texting",
+        label="Text messages (SMS)",
         configured=not missing,
         impl="twilio" if not missing else "none",
         missing=missing,

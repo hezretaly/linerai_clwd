@@ -5,9 +5,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user
+from app import appointment_scope, clock
+from app.api.deps import current_user, get_dealership
 from app.db import get_db
-from app.models import Appointment, User
+from app.models import Appointment, Dealership, User
 from app.schemas.serialize import appointment_out
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -41,6 +42,7 @@ def list_appointments(
     end: datetime | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     query = db.query(Appointment)
     if status:
@@ -56,7 +58,18 @@ def list_appointments(
     if end:
         query = query.filter(Appointment.starts_at < end.replace(tzinfo=None))
     rows = query.order_by(Appointment.starts_at.asc()).all()
-    return {"appointments": [appointment_out(a, db) for a in rows]}
+    now = clock.wall_now(dealership)
+    return {
+        "appointments": [
+            # `upcoming`: the same rule the Calendar's list view judges
+            # past/future by (`app.appointment_scope.is_upcoming`), computed
+            # here on the server's own dealership-local clock so the browser
+            # stops parsing a naive wall-clock timestamp as its own local
+            # time and disagreeing with the row by the viewer's UTC offset.
+            {**appointment_out(a, db), "upcoming": appointment_scope.is_upcoming(a, now)}
+            for a in rows
+        ]
+    }
 
 
 @router.get("/{appointment_id}")

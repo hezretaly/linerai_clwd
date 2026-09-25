@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from datetime import datetime
@@ -40,7 +39,7 @@ def list_conversations(
     # opening the chat widget and closing it should not reach the dealer. The
     # rule lives in `app/threads.py` because the sidebar badge has to agree
     # with this list, and for a while it did not.
-    query = db.query(Conversation).filter(threads.started(db))
+    query = threads.conversations(db)
     if status:
         query = query.filter(Conversation.status == status)
     if channel:
@@ -51,12 +50,8 @@ def list_conversations(
     # that opened this morning and has been silent since above one that a buyer
     # is typing in right now, which is the wrong way round for a list whose
     # whole job is "what is happening".
-    last_activity = dict(
-        db.query(Message.conversation_id, func.max(Message.created_at))
-        .filter(Message.conversation_id.in_([c.id for c in rows] or [""]))
-        .group_by(Message.conversation_id)
-        .all()
-    )
+    last_activity = threads.last_activity(db, [c.id for c in rows])
+    now = utcnow()
 
     def activity_of(convo: Conversation) -> datetime:
         return last_activity.get(convo.id) or convo.started_at
@@ -79,6 +74,11 @@ def list_conversations(
                 **conversation_out(c, db),
                 "last_activity_at": stamp(activity_of(c)),
                 "focus_vehicle": focus.get(c.focus_vehicle_id or ""),
+                # The one definition of "live right now" (`app/threads.py`),
+                # so the client no longer re-derives a 30-minute window
+                # against its own clock -- which drifted from the 2-hour
+                # window the Overview panel used to apply independently.
+                "live": threads.is_live(c, last_activity.get(c.id), now),
             }
             for c in rows
         ]

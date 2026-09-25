@@ -79,6 +79,11 @@ interface RowView {
   vehicle: { title: string; price: number | null } | null
   assignedTo: string | null
   assignedId: string | null
+  /** A thread with no lead can never be claimed -- there is nothing to claim
+   *  until a lead exists -- so an unassigned anonymous row reads "Anonymous"
+   *  rather than "Unclaimed", which is the word the chip and the dropdown
+   *  both reserve for an unowned lead. */
+  isLead: boolean
   flagged: boolean
   activeAt: string
   /** Where a click goes: the buyer's page, or an anonymous thread's own. */
@@ -102,6 +107,7 @@ function view(row: Row): RowView {
         : null,
       assignedTo: c.lead?.assigned_to?.name ?? null,
       assignedId: c.lead?.assigned_user_id ?? null,
+      isLead: false,
       flagged: Boolean(c.open_escalation),
       activeAt: c.last_activity_at ?? c.started_at,
       thread: `/app/conversations/${c.id}`,
@@ -125,6 +131,7 @@ function view(row: Row): RowView {
       : null,
     assignedTo: l.assigned_to?.name ?? null,
     assignedId: l.assigned_user_id ?? null,
+    isLead: true,
     flagged: Boolean(l.flagged),
     activeAt: l.last_touch_at ?? l.created_at,
     thread: `/app/leads/${l.id}`,
@@ -230,8 +237,12 @@ export function ConversationListPage() {
     .filter((r) =>
       assignee === ''
         ? true
+        // Reads the same predicate the chip does, so the dropdown and the
+        // chip cannot drift apart: `!r.assignedId` was true for every
+        // anonymous thread as well as every unowned lead, because a thread
+        // with no lead has no assignedId either.
         : assignee === 'unclaimed'
-          ? !r.assignedId
+          ? rowMatches(r.row, 'unclaimed', meId)
           : r.assignedId === assignee,
     )
 
@@ -497,7 +508,9 @@ function TableRow({
         )}
       </td>
       <td className="whitespace-nowrap px-3 py-2.5">
-        {r.assignedTo ?? <span className="text-muted-foreground">Unclaimed</span>}
+        {r.assignedTo ?? (
+          <span className="text-muted-foreground">{r.isLead ? 'Unclaimed' : 'Anonymous'}</span>
+        )}
       </td>
       <td className={clsx('tnum whitespace-nowrap px-3 py-2.5', ageClass(r.activeAt))}>
         {relative(r.activeAt)}
@@ -560,7 +573,7 @@ function PhoneRow({
               <span className="text-[11px] text-muted-foreground">
                 {r.origin}
                 {' -- '}
-                {r.assignedTo ?? 'Unclaimed'}
+                {r.assignedTo ?? (r.isLead ? 'Unclaimed' : 'Anonymous')}
               </span>
             </div>
           </div>

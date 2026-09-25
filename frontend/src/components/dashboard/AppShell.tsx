@@ -24,8 +24,9 @@ const NAV = [
   { to: '/app', label: 'Overview', icon: 'overview', end: true, group: 'Today',
     badge: null, tone: 'muted' },
   // Everyone Liner has heard from, on every channel, in one list. The badge is
-  // blue, not red: it counts messages waiting to be read, and red is this
-  // dashboard's word for something going wrong.
+  // blue, not red: it is people in progress right now -- the same figure as
+  // the Conversations page's In progress card (`threads.live_keys`), not a
+  // count of unread messages and not every thread that has ever been open.
   { to: '/app/conversations', label: 'Conversations', icon: 'inbox', group: 'Today',
     badge: 'conversations', tone: 'primary' },
   // The mailbox, and under it the campaigns that are a reason to write. Under
@@ -184,6 +185,7 @@ export function AppShell() {
                     <span className={clsx(!open && 'lg:hidden')}>{item.label}</span>
                     {count ? (
                       <span
+                        title={item.badge === 'appointments' ? `${count} not confirmed` : undefined}
                         className={clsx(
                           'tnum rounded-full px-1.5 py-0.5 text-[10px]',
                           item.tone === 'primary'
@@ -399,16 +401,22 @@ export function IntegrationBanner() {
   const missing = data?.integrations.filter((i) => !i.configured && !i.switched_off) ?? []
   if (!missing.length) return null
 
+  // Plain words for a manager who is not technical: no "integration", no
+  // "simulating a result". A manager who saw "Texting" here once read it as
+  // the chat handoff, not SMS -- so the same label the buyer page's Text
+  // button uses ("Text messages (SMS)") is used here too.
+  const names = missing.map((i) => i.label)
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  const pronoun = names.length > 1 ? 'them' : 'it'
+
   return (
     <div className="border-b border-warning/30 bg-warning-muted px-4 py-2 text-warning-foreground md:px-6">
       <p className="text-sm">
-        <span className="font-semibold">
-          {missing.length} integration{missing.length > 1 ? 's are' : ' is'} not configured:
-        </span>{' '}
-        {missing.map((i) => i.label).join(', ')}.{' '}
-        <span className="opacity-80">
-          Those features report themselves as unavailable rather than simulating a result.
-        </span>{' '}
+        <span className="font-semibold">Not set up yet: {list}.</span>{' '}
+        <span className="opacity-80">Nothing is sent that way until {pronoun} {pronoun === 'it' ? 'is' : 'are'}.</span>{' '}
         <a href={withStore('/api/integrations')} className="underline" target="_blank" rel="noreferrer">
           Details
         </a>

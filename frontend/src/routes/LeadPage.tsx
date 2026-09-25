@@ -50,6 +50,10 @@ interface TimelinePayload {
   entries: TimelineEntry[]
   channels: Record<string, number>
   conversations: Conversation[]
+  /** Lead-level: every thread closed, and one closed as a client decline
+   *  (threads.lead_declined). Absent on a bare conversation timeline, which
+   *  has no lead and so is never "declined" in this sense. */
+  declined?: boolean
   /** Composed from rows on the newest thread -- who, which car, what was
    *  captured, where it got to. Not `summary`, which is Liner's last reply. */
   recap: string
@@ -230,6 +234,7 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
           name={name}
           conversation={targetConvo}
           conversations={data.conversations}
+          declined={Boolean(data.declined)}
           onDecline={() => decline.mutate()}
           onBook={() => setBooking(true)}
         />
@@ -402,16 +407,22 @@ function Header({
   name,
   conversation,
   conversations,
+  declined,
   onDecline,
   onBook,
 }: {
   name: string
   conversation: Conversation | null
   conversations: Conversation[]
+  /** The lead-level fact (threads.lead_declined, from the timeline payload):
+   *  every thread closed, and at least one closed as a client decline. Not
+   *  re-derived here -- `conversations.some(outcome === 'declined')` was a
+   *  wider rule that could be true while a thread was still open, which is
+   *  never what the list row or the chip mean by "declined". */
+  declined: boolean
   onDecline: () => void
   onBook: () => void
 }) {
-  const declined = conversations.some((c) => c.outcome === 'declined')
   const booked = conversations.some((c) => c.stage === 'booked')
   // **The channel buttons moved to the footer**, beside the composer they
   // open, so the control and the thing it controls are in one place and the
@@ -442,9 +453,20 @@ function Header({
         </div>
       </div>
       <div className="ml-auto hidden shrink-0 items-center gap-2 lg:flex">
+        {/* The lead-level badge: every thread is closed and one of them ended
+            in a decline. Outside the `{conversation && ...}` gate on purpose
+            -- `conversation` (the open thread to reply on) is null in exactly
+            this state, so the badge used to disappear the moment the last
+            thread closed, which is the one state the list row and the chip
+            call "declined". */}
+        {declined && (
+          <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs font-medium text-muted-foreground">
+            Client declined
+          </span>
+        )}
         {conversation && (
           <>
-          {declined ? (
+          {conversation.outcome === 'declined' ? (
             <span className="inline-flex h-8 items-center rounded-md bg-muted px-3 text-xs font-medium text-muted-foreground">
               Client declined
             </span>

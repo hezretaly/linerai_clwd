@@ -539,6 +539,14 @@ def main() -> int:
     # neither, the first buyer message moves both.
     badge_before = call("GET", "/api/overview")["badges"]["conversations"]
     listed_before = len(call("GET", "/api/conversations")["conversations"])
+    # threads.started(db) is meant to be the *only* way to count a
+    # conversation -- app/threads.py's `conversations()` helper -- so the
+    # chart's subtitle (trends.conversations) and its bars (by_hour) must
+    # move in the same lockstep as the badge and the list, not just alongside
+    # them: trends() and _bucket() used to query raw Conversation rows with
+    # no started() filter at all, so an empty widget session moved the chart
+    # while leaving the badge, the KPI and the list untouched.
+    trend_before = call("GET", "/api/overview/trends?range=today")
     session = call("POST", "/api/chat/sessions")
     convo = session["conversation_id"]
     rails = session["rails"]
@@ -568,6 +576,15 @@ def main() -> int:
           badge_empty == badge_before, f"{badge_before} -> {badge_empty}")
     check("nor in the list",
           convo not in listed_empty and len(listed_empty) == listed_before)
+    trend_empty = call("GET", "/api/overview/trends?range=today")
+    check("nor on the chart's subtitle -- this would have failed against the "
+          "old trends() query, which counted the raw row with no started() "
+          "filter and moved the moment the widget opened",
+          trend_empty["conversations"] == trend_before["conversations"],
+          f"{trend_before['conversations']} -> {trend_empty['conversations']}")
+    check("nor in its bars",
+          sum(h["count"] for h in trend_empty["by_hour"])
+          == sum(h["count"] for h in trend_before["by_hour"]))
 
     reply, state, _ = say(convo, rail_id=pick(rails, "under $20k"))
     check("liner answered with inventory", bool(reply and reply["content"]))
@@ -576,6 +593,12 @@ def main() -> int:
     check("the first buyer message puts it on the badge and in the list together",
           badge_after == badge_before + 1 and convo in listed_after,
           f"badge {badge_before} -> {badge_after}, listed: {convo in listed_after}")
+    trend_after = call("GET", "/api/overview/trends?range=today")
+    check("and moves the chart's subtitle and bars by the same one",
+          trend_after["conversations"] == trend_before["conversations"] + 1
+          and sum(h["count"] for h in trend_after["by_hour"])
+          == sum(h["count"] for h in trend_before["by_hour"]) + 1,
+          f"conversations {trend_before['conversations']} -> {trend_after['conversations']}")
 
     # **A buyer who names one car is shown that car.** "Do you have a Kia
     # Sorento?" scored every Kia at one and the Sorentos at two, and the
@@ -622,6 +645,41 @@ def main() -> int:
         again = _tools.escalate_to_human(_db, _c, {"reason": "and the tow rating?"})
         check("and a second escalation on an open handoff says so instead of raising twice",
               again.get("already_escalated") is True and "guidance" in again)
+
+    print("\n== a handoff rule's 'fired' count is the escalation rows behind it ==")
+    # HandoffRule.fired_count was a hand-incremented column, seeded with a
+    # made-up starting value and moved by exactly one writer -- so it drifted
+    # from the escalations table on the first row any *other* path added.
+    # `app.escalations.fired_counts` derives it instead: count the rows.
+    rule_before = next(
+        r for r in call("GET", "/api/handoff-rules")["rules"] if r["key"] == "asks_for_manager"
+    )
+    fresh = call("POST", "/api/chat/sessions")["conversation_id"]
+    from app.models import Conversation as _FiredConvo
+    with _Local() as _fdb:
+        _fc = _fdb.query(_FiredConvo).filter_by(id=fresh).one()
+        _tools.escalate_to_human(
+            _fdb, _fc, {"rule_key": "asks_for_manager", "reason": "wants a manager"}
+        )
+    rule_after = next(
+        r for r in call("GET", "/api/handoff-rules")["rules"] if r["key"] == "asks_for_manager"
+    )
+    check("the setup page's 'Fired N times' moved by exactly the one row just "
+          "added, not by whatever the seed happened to start it at",
+          rule_after["fired_count"] == rule_before["fired_count"] + 1,
+          f"{rule_before['fired_count']} -> {rule_after['fired_count']}")
+    with _Local() as _fdb2:
+        from app.models import Escalation as _FiredEsc
+        row_count = (
+            _fdb2.query(_FiredEsc)
+            .filter_by(handoff_rule_id=rule_after["id"])
+            .count()
+        )
+    check("and it equals the actual row count for that rule -- this would "
+          "have failed against the old counter, seeded ahead of any row and "
+          "bumped by only one of the several writers that add escalations",
+          rule_after["fired_count"] == row_count,
+          f"fired_count={rule_after['fired_count']} rows={row_count}")
 
     # **A car's options list is its knowledge base.** Pasted one per line on
     # the vehicle's drawer, saved through the same PATCH as any edit, marked
@@ -850,19 +908,13 @@ def main() -> int:
     print("\n== credit applications are real sends, or nothing ==")
     over0 = call("GET", "/api/overview")
     keys = [k["key"] for k in over0["kpis"]]
+    # Voice spend and Calls came off the dash on request -- the owner's own
+    # words were "i think we can remove the voice spend and calls from the
+    # dash overview". /api/voice/usage and /api/voice/cost/{id} still exist
+    # for a call's own page; nothing on the overview counts calls any more.
     check("the cards the dashboard asks for, in order",
-          keys == ["chat", "email", "calls", "voice_spend", "appointments_set",
+          keys == ["chat", "email", "appointments_set",
                    "needs_a_person", "credit_apps"], ", ".join(keys))
-    # Money, not a tally. A card that rendered a dollar amount as a count would
-    # read as five hundred calls rather than five hundred dollars.
-    spend = next(k for k in over0["kpis"] if k["key"] == "voice_spend")
-    check("and voice spend says it is money rather than a count",
-          spend.get("format") == "usd", str(spend.get("format")))
-    # $0.00 on this card would read as "calls are free", which is the most
-    # expensive thing this dashboard could imply.
-    check("with nothing billed yet, it says so instead of showing zero",
-          spend["unavailable"] == (spend["value"] == 0),
-          f"{spend['value']} / {spend['window']}")
     lead_for_credit = next(
         (lead for lead in call("GET", "/api/leads")["leads"] if lead["email"]), None
     )
@@ -1613,6 +1665,21 @@ def main() -> int:
         "tool_call_id": f"cbk-{cancelling}"})["result"]
     check("booking puts the thread at the booked stage",
           call("GET", f"/api/conversations/{cancelling}")["stage"] == "booked")
+
+    # The KPI, the lead's own appointment_set flag and the Calendar's off==false
+    # count are the three surfaces the audit found disagreeing: the KPI had no
+    # status predicate at all (counted a cancelled row created in the window
+    # the same as a live one), while the other two correctly excluded it.
+    # `app.appointment_scope.STANDING_STATUSES` is now the one definition all
+    # three read.
+    appts_before = next(
+        k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
+    )["value"]
+    leads_appt_before = sum(
+        1 for l in call("GET", "/api/leads")["leads"] if l.get("appointment_set")
+    )
+    live_rows_before = sum(1 for a in call("GET", "/api/appointments")["appointments"] if not a["off"])
+
     call("POST", f"/api/appointments/{made['appointment_id']}/cancel", {})
     thread_now = call("GET", f"/api/conversations/{cancelling}")
     lead_now = call("GET", f"/api/leads/{made['lead_id']}")
@@ -1621,6 +1688,81 @@ def main() -> int:
     check("and the thread and the buyer now answer Appointed the same way",
           (thread_now["stage"] == "booked") == (lead_now["stage"] == "appointment"),
           f"{thread_now['stage']} vs {lead_now['stage']}")
+    check("the lead's own appointment_set flag agrees with its derived stage",
+          lead_now["appointment_set"] == (lead_now["stage"] == "appointment"),
+          f"appointment_set={lead_now['appointment_set']} stage={lead_now['stage']}")
+
+    # Declined only while it stays declined: every thread closed, and one
+    # closed as a client decline (threads.lead_declined). The buyer page's
+    # header used to answer a *wider* rule (any thread declined, whether or
+    # not it was still open) while the list read the lead-level fact, so a
+    # buyer with one open thread and one declined-and-closed one showed
+    # "Client declined" on their own page and nothing on the list.
+    call("POST", f"/api/conversations/{cancelling}/decline")
+    timeline_declined = call("GET", f"/api/leads/{made['lead_id']}/timeline")["declined"]
+    list_declined = next(
+        l for l in call("GET", "/api/leads")["leads"] if l["id"] == made["lead_id"]
+    )["declined"]
+    check("the buyer page's timeline and the list row agree this buyer declined",
+          timeline_declined is True and timeline_declined == list_declined,
+          f"timeline={timeline_declined} list={list_declined}")
+
+    # A booked visit that has already gone by, never confirmed: the sidebar
+    # badge (app.appointment_scope.unconfirmed) has to drop it exactly when
+    # the Calendar's own list would, and the old badge query
+    # (status == 'booked', no time bound) never did -- such a row stayed in
+    # both forever, with a wait time that only grew.
+    other_slot = call("GET", f"/api/conversations/{named}/availability")["days"][0]["slots"][1]
+    stale = call("POST", f"/api/chat/sessions/{named}/book", {
+        "starts_at": other_slot["starts_at"], "name": "Stale Booking",
+        "email": f"stale.{named[:8]}@example.invalid", "phone": "319-555-0188",
+    })["appointment"]
+    booked_here.append(stale["id"])
+    from datetime import timedelta as _NapDelta
+    from app import clock as _stale_clock
+    from app.models import Appointment as _StaleAppt, Dealership as _StaleDealership
+    with _Local() as _sdb:
+        row = _sdb.query(_StaleAppt).filter_by(id=stale["id"]).one()
+        # starts_at is dealership *wall-clock*, not UTC -- backdating it with
+        # a UTC clock would land in the wrong place by the zone's offset.
+        dealership_row = _sdb.query(_StaleDealership).one()
+        row.starts_at = _stale_clock.wall_now(dealership_row) - _NapDelta(hours=3)
+        _sdb.commit()
+    badge_stale = call("GET", "/api/overview")["badges"]["appointments"]
+    still_booked_ids = {
+        a["id"] for a in call("GET", "/api/appointments")["appointments"]
+        if a["status"] == "booked" and a.get("upcoming")
+    }
+    check("a booked visit whose time has passed drops off the unconfirmed "
+          "badge -- this would have failed against the old status-only "
+          "query, which kept it forever with no way to clear it",
+          stale["id"] not in still_booked_ids,
+          f"stale id in upcoming-booked set: {stale['id'] in still_booked_ids}")
+    unmarked_ids = {
+        a["id"] for a in call("GET", "/api/overview")["queues"]["unmarked_appointments"]
+    }
+    check("and it surfaces in its own 'visit passed, not marked' queue "
+          "instead of vanishing",
+          stale["id"] in unmarked_ids, f"badge={badge_stale}")
+
+    appts_after = next(
+        k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
+    )["value"]
+    leads_appt_after = sum(
+        1 for l in call("GET", "/api/leads")["leads"] if l.get("appointment_set")
+    )
+    live_rows_after = sum(1 for a in call("GET", "/api/appointments")["appointments"] if not a["off"])
+    # This would have failed against the old KPI query (no status filter at
+    # all): appts_after would equal appts_before rather than dropping.
+    check("cancelling a booking made in the window drops the KPI, the "
+          "appointment_set count and the off==false count by exactly one, "
+          "together",
+          appts_after == appts_before - 1
+          and leads_appt_after == leads_appt_before - 1
+          and live_rows_after == live_rows_before - 1,
+          f"kpi {appts_before}->{appts_after}, "
+          f"appointment_set {leads_appt_before}->{leads_appt_after}, "
+          f"off==false {live_rows_before}->{live_rows_after}")
 
     # A rep who leaves, still holding buyers. They drop off the roster and
     # their leads stay pointing at them -- not unclaimed, so no queue asks
@@ -2094,19 +2236,39 @@ def main() -> int:
 
     print("\n== the overview drives the live panel ==")
     over = call("GET", "/api/overview")
-    check("it says where 'now' ends, rather than the client deciding",
-          bool(over.get("happening_now_since")), over.get("happening_now_since", "")[:19])
+    # The one definition of "live" lives in app/threads.py and is served as a
+    # number of minutes, not a computed cutoff -- the client used to be handed
+    # `happening_now_since` and apply its *own* 30-minute rule on top of a
+    # server-side 2-hour one, which is how "Live" came to mean two different
+    # windows on one page.
+    check("it says the live window in minutes, not a cutoff the client must "
+          "re-derive a window from",
+          over.get("live_window_minutes") == 30, str(over.get("live_window_minutes")))
     day = over["queues"]["active_conversations"]
-    check("today's conversations carry their last activity",
-          all("last_activity_at" in c for c in day), f"{len(day)} today")
+    check("today's conversations carry their last activity and their own live flag",
+          all("last_activity_at" in c and "live" in c for c in day), f"{len(day)} today")
     # Ordered on last activity, not on start: a thread opened this morning with
     # a message a minute ago is the most live thing on the screen.
     stamps = [c["last_activity_at"] for c in day]
     check("newest activity first", stamps == sorted(stamps, reverse=True))
-    check("a live conversation is inside the two-hour window -- the panel that "
-          "shows live work must not open empty on a fresh seed",
-          any(c["last_activity_at"] >= over["happening_now_since"]
-              and c["status"] in ("active", "handoff") for c in day))
+    check("a live conversation is flagged live -- the panel that shows live "
+          "work must not open empty on a fresh seed",
+          any(c["live"] and c["status"] in ("active", "handoff") for c in day))
+
+    # Same fact, three surfaces: the sidebar badge (threads.live_keys), the
+    # Conversations page's own rows (/api/leads' `live` plus /api/conversations'
+    # `live` on anonymous threads) must count exactly the same people. Put the
+    # old rule back mentally and this fails: the badge used to count every
+    # open (active/handoff) thread with *no* time window at all, which is a
+    # number strictly >= this one and equal to it only by coincidence.
+    conv_rows = call("GET", "/api/conversations")["conversations"]
+    lead_rows = call("GET", "/api/leads")["leads"]
+    live_people = {l["id"] for l in lead_rows if l.get("live")}
+    live_people |= {c["id"] for c in conv_rows if c["live"] and not c.get("lead_id")}
+    check("the sidebar Conversations badge equals live leads plus live "
+          "anonymous threads -- not every open thread ever",
+          over["badges"]["conversations"] == len(live_people),
+          f"badge={over['badges']['conversations']} live_people={len(live_people)}")
 
     print("\n== the appointment exists on the dealer side ==")
     appointments = call("GET", "/api/appointments")["appointments"]
@@ -2159,6 +2321,80 @@ def main() -> int:
     _, _, more = say(probe, content="ok. separately, do you take trade-ins?")
     check("so a following question still gets answered",
           any(e == "assistant_message" for e, _ in more))
+
+    print("\n== needs a person counts buyers, not escalation rows ==")
+    # A second, unrelated escalation on the same thread `probe` just raised --
+    # the shape the audit measured as "Carlos": one buyer, several open
+    # escalations. `app.escalations.waiting_on_person` is keyed on the buyer
+    # (lead, or the conversation itself when there is none), so this must
+    # still count as one person everywhere the fact is read.
+    from app.db import SessionLocal as _NapSession
+    from app.models import Escalation as _NapEscalation
+    _napdb = _NapSession()
+    try:
+        _napdb.add(_NapEscalation(conversation_id=probe, reason="Also asked for a manager."))
+        _napdb.commit()
+    finally:
+        _napdb.close()
+
+    nap_over = call("GET", "/api/overview")
+    nap_kpi = next(k for k in nap_over["kpis"] if k["key"] == "needs_a_person")["value"]
+    nap_queue_len = len(nap_over["queues"]["needs_a_person"])
+    nap_leads_flagged = sum(1 for l in call("GET", "/api/leads")["leads"] if l.get("flagged"))
+    nap_anon_flagged = sum(
+        1 for c in call("GET", "/api/conversations")["conversations"]
+        if not c.get("lead_id") and c.get("open_escalation")
+    )
+    # Put the old rule back mentally: the KPI and the queue used to be
+    # `len(open_escalations)`/one row per escalation row, so a buyer with two
+    # open escalations on one thread counted twice there while the
+    # Conversations page's per-person flags counted them once -- this fails
+    # against that old code (2 vs 1 for this buyer) and holds against the fix.
+    check("the KPI, the queue length and the per-person flagged counts agree "
+          "on the same buyers",
+          nap_kpi == nap_queue_len == nap_leads_flagged + nap_anon_flagged,
+          f"kpi={nap_kpi} queue={nap_queue_len} "
+          f"leads_flagged={nap_leads_flagged} anon_flagged={nap_anon_flagged}")
+    probe_row = next(
+        (e for e in nap_over["queues"]["needs_a_person"] if e["conversation_id"] == probe), None
+    )
+    check("that buyer's row carries both of its escalations, not just the "
+          "newest one",
+          probe_row is not None and probe_row.get("escalation_count") == 2,
+          str(probe_row))
+
+    print("\n== unclaimed leads vs the unclaimed chip ==")
+    # An anonymous thread (no lead yet) can never be "unclaimed" -- there is
+    # nothing to claim until a lead exists. Before this the Conversations
+    # page's chip read `!c.lead?.assigned_user_id`, which is true whenever
+    # `c.lead` is null, so every anonymous started thread counted as
+    # unclaimed while the Overview panel, which only ever queries `Lead`,
+    # never could see them.
+    anon_started = call("POST", "/api/chat/sessions")["conversation_id"]
+    say(anon_started, content="Do you have anything under $15k?")
+    unclaimed_overview = len(call("GET", "/api/overview")["queues"]["unclaimed_leads"])
+    all_leads = call("GET", "/api/leads")["leads"]
+    all_convos = call("GET", "/api/conversations")["conversations"]
+    unclaimed_leads_flag = sum(1 for l in all_leads if l.get("unclaimed"))
+    anon_started_count = sum(1 for c in all_convos if not c.get("lead_id"))
+    check("the overview panel and /api/leads' own unclaimed flag agree",
+          unclaimed_overview == unclaimed_leads_flag,
+          f"panel={unclaimed_overview} flagged_leads={unclaimed_leads_flag}")
+    anon_row = next(c for c in all_convos if c["id"] == anon_started)
+    check("an anonymous started thread carries lead: null, so the client's "
+          "matches(c, 'unclaimed') -- Boolean(c.lead?.unclaimed) -- reads "
+          "false for it rather than true",
+          anon_row["lead"] is None, str(anon_row.get("lead")))
+    # The old chip rule (`!c.lead?.assigned_user_id`, true whenever `c.lead`
+    # is null) would have added every anonymous started thread to the count.
+    # There is now at least one (`anon_started`), so the two figures must
+    # differ, proving this scenario actually exercises the fix rather than
+    # passing by coincidence on data with no anonymous threads.
+    old_style_chip = unclaimed_leads_flag + anon_started_count
+    check("reproducing the old, wider chip rule on this data gives a "
+          "different number, confirming the scenario is real",
+          old_style_chip != unclaimed_overview,
+          f"old-style chip={old_style_chip} panel={unclaimed_overview}")
 
     print("\n== adf lead import ==")
     raw_sample = call("GET", "/api/leads/import/adf/sample", stream=True).encode()
@@ -2505,6 +2741,21 @@ def main() -> int:
           f"{before['mention_count']} quotes, {len(before['appointments'])} visits")
     check("and it names who is booked in to see it, not just who was told",
           isinstance(before["appointments"], list))
+    # "Quoted to N buyers" is buyers, not vehicle_mentions rows: a buyer named
+    # the same car more than once in one chat, or on more than one channel
+    # (one Conversation each), and the old count -- COUNT(VehicleMention.id)
+    # -- counted every one of those as a separate offer. The drawer's own
+    # list is now collapsed to one row per buyer, so its length has to equal
+    # the number on the banner.
+    distinct_buyers = {
+        m.get("lead_id") or m["conversation_id"] for m in before["mentions"]
+    }
+    check("the drawer's mention list has exactly one row per buyer, matching "
+          "the banner's own count -- this would have failed against the old "
+          "row-per-mention list on any buyer quoted the same car twice",
+          len(before["mentions"]) == len(distinct_buyers) == before["mention_count"],
+          f"rows={len(before['mentions'])} distinct_buyers={len(distinct_buyers)} "
+          f"mention_count={before['mention_count']}")
 
     # Before/after, or the check proves nothing: a car the stub was never going
     # to offer "stops being offered" whatever the status says.

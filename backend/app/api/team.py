@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app import clock
 from app.api.deps import (
     DEALERSHIP_ROLES,
     current_user,
@@ -21,9 +22,18 @@ from app.schemas.serialize import dealership_out, user_out
 router = APIRouter(tags=["team"])
 
 
-def rep_load(db: Session, user: User) -> dict:
-    """Today's booked load and the next free slot. Auto-assign reads this."""
-    now = utcnow()
+def rep_load(db: Session, user: User, dealership: Dealership) -> dict:
+    """Today's booked load and the next free slot. Auto-assign reads this.
+
+    "Today" and "now" are the dealership's own wall clock (`app.clock`), not
+    `db.utcnow()`: `Appointment.starts_at` is stored dealership-local, and
+    from about 7pm to midnight local the UTC calendar date has already
+    rolled to tomorrow. A UTC-midnight window compared against that column
+    counted tomorrow's visits as today's and dropped today's evening ones --
+    which also meant `at_capacity` and auto-assign disagreed with themselves
+    depending on the hour, on data that never changed.
+    """
+    now = clock.wall_now(dealership)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     todays = (
@@ -45,17 +55,24 @@ def rep_load(db: Session, user: User) -> dict:
         **user_out(user),
         "todays_appointments": len(todays),
         "at_capacity": len(todays) >= user.daily_cap,
+        # Wall-clock either way, like `starts_at` itself -- the fallback used
+        # to be `utcnow()`, a UTC instant shown with no zone, which read as
+        # 7:48 AM on a page a Chicago manager was reading at 2:48 AM.
         "next_free_at": (last_end or now).isoformat(),
     }
 
 
 @router.get("/team")
-def list_team(db: Session = Depends(get_db), user: User = Depends(current_user)) -> dict:
+def list_team(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
+) -> dict:
     # Dealership staff only. Liner's own `owner` accounts share this table
     # and have no business on somebody else's roster -- they take no
     # appointments, own no leads, and are not a manager's to administer.
     rows = staff_query(db).order_by(User.role.asc(), User.name.asc()).all()
-    return {"members": [rep_load(db, u) for u in rows]}
+    return {"members": [rep_load(db, u, dealership) for u in rows]}
 
 
 class MemberPatch(BaseModel):
@@ -70,6 +87,7 @@ def patch_member(
     body: MemberPatch,
     db: Session = Depends(get_db),
     manager: User = Depends(require_manager),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     member = db.query(User).filter_by(id=user_id).one_or_none()
     if member is None or member.role not in DEALERSHIP_ROLES:
@@ -82,14 +100,14 @@ def patch_member(
     leaving = body.active is False and member.active
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(member, key, value)
-    handed_back = _hand_back(db, member) if leaving else {}
+    handed_back = _hand_back(db, member, dealership) if leaving else {}
     db.commit()
     if leaving:
         emit(db, "team.deactivated", {"user_id": member.id, **handed_back})
-    return {**rep_load(db, member), **handed_back}
+    return {**rep_load(db, member, dealership), **handed_back}
 
 
-def _hand_back(db: Session, member: User) -> dict:
+def _hand_back(db: Session, member: User, dealership: Dealership) -> dict:
     """Someone leaving hands their buyers back, rather than taking them along.
 
     Deactivating dropped them off the roster and left every lead and
@@ -115,7 +133,10 @@ def _hand_back(db: Session, member: User) -> dict:
         .filter(
             Appointment.assigned_user_id == member.id,
             Appointment.status.in_(["booked", "confirmed"]),
-            Appointment.starts_at >= utcnow(),
+            # `starts_at` is dealership wall-clock; comparing it against
+            # `utcnow()` mis-keeps or mis-releases visits in the 5-6 hour
+            # band where the two clocks disagree.
+            Appointment.starts_at >= clock.wall_now(dealership),
         )
         .all()
     )

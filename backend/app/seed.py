@@ -863,13 +863,15 @@ def _knowledge_for(raw: dict) -> list[tuple[str, str]]:
 
 
 def _seed_rules_and_knowledge(db: Session, raw: dict) -> None:
-    fired = {"out_the_door_price": 12, "financing_trouble": 5, "asks_for_manager": 3,
-             "urgency": 8, "ready_to_sign": 4}
+    # No made-up `fired_count` here any more: "Fired N times" is now derived
+    # from escalation rows (`app.escalations.fired_counts`), so a rule starts
+    # truthfully at zero on a real, non-fixture dealership instead of reading
+    # "Fired 12 times" over a setup page nobody has used yet.
     for key, label, description, threshold, unit, route in HANDOFF_RULES:
         db.add(HandoffRule(
             key=key, label=label, description=description, enabled=True,
             threshold_value=threshold, threshold_unit=unit, route_target=route,
-            notify="email_dashboard", fired_count=fired.get(key, 0),
+            notify="email_dashboard",
         ))
     for topic, answer in _knowledge_for(raw):
         db.add(KnowledgeEntry(topic=topic, answer=answer, use_count=0))

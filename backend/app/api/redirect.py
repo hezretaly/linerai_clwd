@@ -34,6 +34,50 @@ log = logging.getLogger("liner.redirect")
 router = APIRouter(tags=["redirect"])
 
 
+def opens_between(db: Session, kind: str, since, until=None) -> dict:
+    """"An application opened in [since, until)" -- the one definition, on
+    the clock of the *open* itself, that both the Overview card's emailed and
+    website halves now use.
+
+    Before this, the emailed half was windowed on send time
+    (`Outreach.created_at`) while the website half was windowed on click time
+    (`LinkClick.created_at`): a link sent 25 hours ago and opened a minute ago
+    added zero to a card labelled "last 24 hours", and an old send re-opened
+    just outside the window silently vanished the moment the send itself
+    turned 24h old. `Outreach.first_clicked_at` already records the moment of
+    the open (`api/redirect.py`'s own `follow()`), so the emailed half is
+    windowed on it instead, while keeping its one-buyer-one-open rule: a
+    second click on the same send is not a second open.
+    """
+    q = db.query(Outreach).filter(
+        Outreach.kind == kind, Outreach.status == "sent", Outreach.first_clicked_at >= since,
+    )
+    if until is not None:
+        q = q.filter(Outreach.first_clicked_at < until)
+    emailed = q.count()
+
+    site_q = db.query(LinkClick).filter(LinkClick.kind == kind, LinkClick.created_at >= since)
+    if until is not None:
+        site_q = site_q.filter(LinkClick.created_at < until)
+    site_rows = site_q.all()
+    website = sum(1 for r in site_rows if r.source == "website")
+    chat = sum(1 for r in site_rows if r.source == "chat")
+
+    sent_q = db.query(Outreach).filter(
+        Outreach.kind == kind, Outreach.status == "sent", Outreach.created_at >= since,
+    )
+    if until is not None:
+        sent_q = sent_q.filter(Outreach.created_at < until)
+
+    return {
+        "emailed": emailed,
+        "website": website,
+        "chat": chat,
+        "site": website + chat,
+        "sent": sent_q.count(),
+    }
+
+
 def _target(db: Session, record: Outreach) -> str:
     if record.kind == "credit_application":
         return (live_settings(db).credit_application_url or "").strip()

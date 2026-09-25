@@ -19,7 +19,7 @@ from app.api.deps import current_user, find_staff, get_dealership
 from app.api.team import rep_load
 from app.config import settings
 from app.db import get_db, utcnow
-from app import email_outbound
+from app import clock, email_outbound
 from app.events import emit
 from app.models import (
     Appointment,
@@ -100,6 +100,7 @@ def reschedule(
     body: Reschedule,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     """Move a visit without destroying it.
 
@@ -121,7 +122,10 @@ def reschedule(
     when = body.starts_at.replace(tzinfo=None)
     if when == appointment.starts_at:
         return appointment_out(appointment, db)
-    if when < utcnow():
+    # `starts_at` is dealership wall-clock; comparing it against `utcnow()`
+    # refused an honest reschedule (or let a stale one through) in the 5-6
+    # hour band where the two clocks disagree.
+    if when < clock.wall_now(dealership):
         raise HTTPException(400, "That time has already passed.")
 
     clash = (
@@ -194,6 +198,7 @@ def assign(
     body: AssignBody,
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
+    dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     appointment = get_appointment(db, appointment_id)
 
@@ -201,7 +206,7 @@ def assign(
         # Round-robin over reps who are under their daily cap -- the rule the
         # dashboard advertises. Showing a rule beats showing a chore.
         reps = db.query(User).filter_by(role="rep", active=True).order_by(User.name.asc()).all()
-        loads = [(rep, rep_load(db, rep)) for rep in reps]
+        loads = [(rep, rep_load(db, rep, dealership)) for rep in reps]
         available = [(rep, load) for rep, load in loads if not load["at_capacity"]]
         if not available:
             raise HTTPException(

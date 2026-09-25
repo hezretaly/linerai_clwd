@@ -269,10 +269,23 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   whole week, so Alsbou -- closing at six on Sunday -- were open until eight
   every day to the model. Bookable times were always right; only the sentence
   that answers "are you open Sunday evening?" was not.
-- **Naive timestamps are dealership-local**, not UTC-with-conversion.
-  `check_availability` builds slots straight from `hours_json` in that frame.
-  Never hardcode an hour — `_next_open_slot` in `seed.py` exists because a
-  hardcoded 9 PM produced an appointment the calendar could not draw.
+- **Only `Appointment.starts_at` is naive dealership-local; everything else
+  naive is UTC.** `check_availability` builds slots straight from
+  `hours_json` in the wall-clock frame, and never hardcode an hour —
+  `_next_open_slot` in `seed.py` exists because a hardcoded 9 PM produced an
+  appointment the calendar could not draw. Every other naive column
+  (`Conversation.started_at`, `Lead.created_at`, ...) is `db.utcnow()`, a UTC
+  instant with no zone marker — this file said "naive timestamps are
+  dealership-local" as a blanket rule for a long time, which was wrong for
+  everything but appointments, and every "today"/"this hour" boundary that
+  compared one of those columns against `db.utcnow()` truncated in *UTC*,
+  shifting by the zone's offset (5-6h for America/Chicago): from about 7pm
+  local, "today" was already tomorrow's UTC date. **`app/clock.py`** is the
+  one place that conversion happens now — `wall_now`, `today`,
+  `day_start_utc`, `local_hour`, `local_date` — and the Overview's windows
+  (`_window`, `_by_hour`, `_bucket`), `team.py`'s `rep_load` and the
+  `appointment_scope`/`outreach.py` "has this passed" checks all read it
+  rather than truncating `db.utcnow()` by hand.
 - **The prompt is a brief, not a script.** `DEFAULT_PROMPT` in `prompts.py`
   says the job in a few plain paragraphs — answer straight away with real cars
   and real prices, one question at a time, nothing invented — and the owner's
@@ -826,12 +839,25 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   from **one predicate**: they were two, and the header said 16 over a list of
   147. Cancelled and past are excluded by default and each button says how many
   it would add — "nothing booked" and "they cancelled" are different facts, and
-  only one of them needs a phone call.
+  only one of them needs a phone call. That predicate is not the week grid's
+  or the phone Agenda's, though — those filtered by day only and treated
+  every status alike, so a cancelled visit read "1 booked" on the week view
+  in the same breath the list correctly hid it. `frontend/src/lib/appointments.ts`
+  now holds the frontend half (`isOff`, `isPast`), reading the server's own
+  `appointment.off` (`app.appointment_scope.OFF_STATUSES`) rather than each
+  view keeping its own status tuple.
 - **Every count comes from `/api/overview`.** No page counts for itself. The
   two charts are the exception and have their own `/api/overview/trends?range=`,
   so moving a chart's window cannot silently change what the KPI cards mean.
   An unknown range is a 400 -- answering a typo with "today" shows the wrong
-  window under the right caption.
+  window under the right caption. `source_mix` (the "Where leads came from"
+  donut) is served **only** by `/api/overview/trends` now, never by
+  `/api/overview` -- it used to appear on both, on two different windows (a
+  rolling 24h count on the overview, the picker's actual range on trends),
+  and the frontend's fallback (`sourceTrend?.source_mix ?? data.source_mix`)
+  showed the 24h number under whatever caption the picker had already
+  committed to. The chart now waits for its own response rather than
+  falling back to a different window's count.
 - **A vehicle is never deleted, only taken off the lot.** `status` goes
   `available | sold | removed`, and it has its own endpoint
   (`POST /api/inventory/{id}/status`) rather than riding along in the PATCH
@@ -3467,13 +3493,21 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   closes a thread, so an abandoned tab stays open for ever — and *In progress*
   counted every chat anybody ever walked away from, which is a number a
   manager reads as *fourteen conversations happening right now*.
-  `LIVE_AFTER_MINUTES` is thirty, and it is a conversation's own patience
-  rather than a business rule: a buyer comparing two cars pauses for minutes,
-  and a buyer who has gone is gone. The badge is split on the **same**
-  predicate as the chip — a row badged In progress that the In progress filter
-  does not contain is a page arguing with itself — so an open thread gone
-  quiet reads *Gone quiet*, which is a third thing and not Closed: it still
-  has an owner and still takes a reply.
+  `threads.LIVE_AFTER` is thirty minutes, and it is a conversation's own
+  patience rather than a business rule: a buyer comparing two cars pauses for
+  minutes, and a buyer who has gone is gone. **The window lives on the
+  server now, in `app/threads.py` (`LIVE_AFTER`, `is_live`, `live_keys`), not
+  in the frontend.** It used to be a client-only constant, re-applied with a
+  different value (two hours) by the Overview panel and ignored entirely by
+  the sidebar badge (which counted every open thread, ever) — three answers
+  to "is this happening now". Every reader takes a `live` flag the server
+  already computed: the badge (`threads.live_keys`), each row in
+  `/api/conversations` and `/api/leads`, and the Overview's "Everything
+  today" panel. The badge is split on the **same** predicate as the chip — a
+  row badged In progress that the In progress filter does not contain is a
+  page arguing with itself — so an open thread gone quiet reads *Gone quiet*,
+  which is a third thing and not Closed: it still has an owner and still
+  takes a reply.
 - **Opening the widget is not a conversation, on the badge as well as in the
   list.** A chat session is minted before anybody types, because the greeting
   needs a row to hang off, and a visitor who clicks "Chat with us" and closes
@@ -3484,9 +3518,15 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   chat's own request had failed and left exactly one such row. The rule is
   in `app/threads.py` and nowhere else — a conversation has *started* once
   the buyer has said something in it — and the badge, the list, the Chats
-  KPI and the overview's today panel all read it. `make smoke` opens a session
-  and asserts nothing moves, then sends one message and asserts everything
-  moves together.
+  KPI, the overview's today panel, the by-hour chart and its trends all read
+  it, through `threads.conversations(db)`, a base query with the rule
+  already applied. It was missing from the chart and its trends for a
+  while — `trends()`, `_by_hour()` and `_channel_mix()` queried
+  `Conversation` rows directly — so an abandoned widget session moved the
+  chart while the badge, the KPI and the list correctly ignored it. `make
+  smoke` opens a session and asserts nothing moves (the badge, the list, the
+  chart's subtitle and its bars alike), then sends one message and asserts
+  everything moves together.
 - **One definition of every conversation filter.** `lib/conversationFilters.ts`
   owns the seven — and `stateOf`, the badge a row wears. Chat, Calls and the
   cross-channel Conversations list all read it. They were three copies of the
@@ -3563,6 +3603,33 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     appointment rows. It walks back to `contact_capture` — not to `opening`,
     which would have the rails greet a buyer who has already given their
     details — and only when nothing else of theirs is still standing.
+    `app/appointment_scope.py` is now the one place "appointment set",
+    "unconfirmed" and "off" (cancelled or a no-show) are each defined —
+    `STANDING_STATUSES`, `OFF_STATUSES`, `is_upcoming` on the dealership's own
+    wall clock (`app.clock.wall_now`, never `db.utcnow()`, because
+    `starts_at` is stored wall-clock) — and every reader (the Overview KPI,
+    the sidebar Calendar badge, each lead's `appointment_set`, the Calendar's
+    list and week views) calls it rather than re-deriving a status tuple or a
+    time bound of its own. A visit whose time passed with nobody marking it
+    confirmed, cancelled or a no-show gets its own queue,
+    `unmarked_appointments`, instead of sitting inside "unconfirmed" forever.
+  - **Needs a person counts buyers, not escalation rows.** The KPI, the
+    sidebar badge, the panel pill and the Conversations page's own card and
+    chip each had their own definition, and the units differed: a buyer with
+    three open escalations across three channels counted as three on one
+    surface and one person on another. `app/escalations.py`'s
+    `waiting_on_person(db)` is the one definition — keyed on the buyer
+    (`lead_id`, or the conversation itself when there is none) — and
+    `fired_counts(db)` is the same idea for a handoff rule's "Fired N times"
+    on the Liner setup page: the count of escalation rows carrying that
+    rule's id, not a hand-incremented column that one writer moved while
+    several others added rows it never saw.
+  - **Unclaimed means a lead with no owner, never an anonymous thread.**
+    There is nothing to claim until a lead exists — `app/ownership.py`'s
+    `unclaimed()` — so an anonymous started chat is not "Unclaimed", it is
+    its own thing, and every anonymous thread used to inflate the
+    Conversations page's chip while the Overview panel, which only ever
+    queries `Lead`, could never see them.
   - **Somebody leaving hands their buyers back.** Deactivating dropped a rep
     off the roster and left their leads pointing at them: not unclaimed, so no
     queue asked anyone to pick them up, and not workable, because the owner was

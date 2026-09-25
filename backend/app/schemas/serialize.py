@@ -180,6 +180,13 @@ def lead_out(lead: Lead, db: Session | None = None, *, detail: bool = False) -> 
         "phone": lead.phone,
         "source": lead.source,
         "assigned_user_id": lead.assigned_user_id,
+        # The one definition of "unclaimed" -- a lead with no owner
+        # (`app/ownership.py`) -- served so the client reads it rather than
+        # re-deriving it, which is how an anonymous thread (where
+        # `lead` is null) once counted as unclaimed on the Conversations
+        # page's chip while the Overview panel, which only ever sees leads,
+        # never could.
+        "unclaimed": lead.assigned_user_id is None,
         # No email means the product has no way to reach them (§18.5).
         "contact_risk": lead.contact_risk,
         "email_consent_at": stamp(lead.email_consent_at),
@@ -300,6 +307,8 @@ def conversation_out(c: Conversation, db: Session | None = None, *, detail: bool
 
 
 def appointment_out(a: Appointment, db: Session | None = None) -> dict:
+    from app.appointment_scope import OFF_STATUSES
+
     out = {
         "id": a.id,
         "lead_id": a.lead_id,
@@ -308,6 +317,12 @@ def appointment_out(a: Appointment, db: Session | None = None) -> dict:
         "starts_at": iso(a.starts_at),
         "duration_min": a.duration_min,
         "status": a.status,
+        # Cancelled or a no-show -- the one definition
+        # (`app.appointment_scope.OFF_STATUSES`), so the Calendar's list and
+        # week views read the same flag rather than each keeping their own
+        # allow/deny-list of statuses, which is how 'completed' ended up
+        # treated as live on one view and unclassified on the other.
+        "off": a.status in OFF_STATUSES,
         "booked_by": a.booked_by,
         "conversation_id": a.conversation_id,
         "created_at": stamp(a.created_at),
@@ -419,7 +434,15 @@ def escalation_out(e: Escalation, db: Session | None = None) -> dict:
     }
     if db is not None and e.handoff_rule_id:
         rule = db.query(HandoffRule).filter_by(id=e.handoff_rule_id).one_or_none()
-        out["rule"] = handoff_rule_out(rule) if rule else None
+        # No `fired_count` here: the Needs a person queue this feeds never
+        # displays it, and the stale seeded counter (§Item 10/28) is exactly
+        # what put a "Fired 12 times" figure next to the one row that rule
+        # ever actually raised. The Liner setup page reads the real count
+        # from `list_handoff_rules`, computed once for the whole list.
+        out["rule"] = (
+            {k: v for k, v in handoff_rule_out(rule, 0).items() if k != "fired_count"}
+            if rule else None
+        )
     # The "Needs a person" table names the buyer, the car and the channel in
     # one row -- a rep triages on those, not on a conversation id. All three
     # hang off the conversation, so the row costs one extra join, not a
@@ -443,7 +466,12 @@ def escalation_out(e: Escalation, db: Session | None = None) -> dict:
     return out
 
 
-def handoff_rule_out(r: HandoffRule) -> dict:
+def handoff_rule_out(r: HandoffRule, fired: int) -> dict:
+    """`fired` is the true count -- `app.escalations.fired_counts(db)`, the
+    count of escalation rows carrying this rule's id -- not the stored
+    `HandoffRule.fired_count` column, which only one writer ever moved and
+    which the demo seed started 31 fires ahead of any row that backed it.
+    """
     return {
         "id": r.id,
         "key": r.key,
@@ -454,7 +482,7 @@ def handoff_rule_out(r: HandoffRule) -> dict:
         "threshold_unit": r.threshold_unit,
         "route_target": r.route_target,
         "notify": r.notify,
-        "fired_count": r.fired_count,
+        "fired_count": fired,
         "updated_at": stamp(r.updated_at),
     }
 

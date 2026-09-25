@@ -21,10 +21,67 @@ there.
 
 from __future__ import annotations
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app import threads
 from app.db import utcnow
 from app.models import Conversation, Escalation, Lead
+
+
+def waiting_on_person(db: Session) -> dict[str, list[Escalation]]:
+    """People a person must still be found for.
+
+    Key is `lead_id` for a lead's thread, or `conversation_id` for an
+    anonymous one; value is their unclaimed escalations, oldest first. This
+    is the one definition of "Needs a person": the Overview KPI's value is
+    `len(...)`, the panel pill reads the same number, the queue is one row
+    per key here, and the Conversations page's "Needs a person" card, its
+    "Needs attention" chip and each lead's `flagged` flag all read the same
+    keys rather than counting escalation rows (which double- or triple-counts
+    a buyer with several open threads) or re-deriving their own list.
+
+    A lead-linked thread counts even when it has not started -- an escalated
+    thread with a known buyer is never invisible. An anonymous thread only
+    counts once it has started (`threads.started`): with no buyer message and
+    no lead, there is no row anywhere a rep could open to work it, so an
+    unclaimed escalation on one would be a phantom entry on every screen that
+    reads this.
+    """
+    rows = (
+        db.query(Escalation, Conversation)
+        .join(Conversation, Conversation.id == Escalation.conversation_id)
+        .filter(Escalation.claimed_at.is_(None))
+        .filter(or_(Conversation.lead_id.isnot(None), threads.started(db)))
+        .order_by(Escalation.created_at.asc())
+        .all()
+    )
+    out: dict[str, list[Escalation]] = {}
+    for escalation, convo in rows:
+        key = convo.lead_id or convo.id
+        out.setdefault(key, []).append(escalation)
+    return out
+
+
+def fired_counts(db: Session) -> dict[str, int]:
+    """How many times each handoff rule has actually fired -- the count of
+    `escalations` rows carrying that rule's id, claimed or not: a fire is a
+    fire whether or not somebody has since picked it up.
+
+    This replaces `HandoffRule.fired_count`, a hand-incremented column that
+    only one writer (`escalate_to_human`) ever moved, while the demo seed and
+    a handful of other callers added escalation rows with no rule id and
+    never touched it -- so the Liner setup page's "Fired N times" and the
+    rows actually behind "Needs a person" told two different stories for the
+    same rule from the day the fixture was seeded.
+    """
+    rows = (
+        db.query(Escalation.handoff_rule_id, func.count(Escalation.id))
+        .filter(Escalation.handoff_rule_id.isnot(None))
+        .group_by(Escalation.handoff_rule_id)
+        .all()
+    )
+    return dict(rows)
 
 
 def owner_of(db: Session, convo: Conversation) -> str | None:

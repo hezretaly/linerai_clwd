@@ -7,27 +7,23 @@ the mockups disagreed with themselves across pages (Conversations 4 vs 3, Leads
 
 from __future__ import annotations
 
-import json
-from datetime import date, datetime, time, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import threads
+from app import appointment_scope, clock, escalations, ownership, threads
 from app.api.deps import current_user, get_dealership
+from app.api.inventory import quoted_buyer_counts
+from app.api.redirect import opens_between
 from app.api.settings import live_settings
 from app.db import get_db, utcnow
-from app.integrations.voice.openai_realtime import price_of, rates_for
 from app.models import (
     Appointment,
-    CallUsage,
     Conversation,
     Dealership,
-    Escalation,
     Lead,
-    LinkClick,
-    Message,
     Outreach,
     User,
     Vehicle,
@@ -60,49 +56,13 @@ def overview(
     # and counting it makes a quiet afternoon read as fourteen chats.
     def convos_on(channel: str) -> int:
         return (
-            db.query(Conversation)
-            .filter(
-                Conversation.started_at >= since,
-                Conversation.channel == channel,
-                threads.started(db),
-            )
+            threads.conversations(db)
+            .filter(Conversation.started_at >= since, Conversation.channel == channel)
             .count()
         )
 
     chats = convos_on("chat")
-    calls = convos_on("voice")
 
-    # What those calls cost. From `call_usage`, which holds the token counts
-    # the provider itself reported per response -- not an estimate from
-    # wall-clock, and not a number this page worked out for itself. A realtime
-    # call re-bills the whole conversation on every turn, so spend is the one
-    # figure on this dashboard that does not track the number of calls.
-    spend = (
-        db.query(CallUsage)
-        .join(Conversation, Conversation.id == CallUsage.conversation_id)
-        .filter(Conversation.started_at >= since)
-        .all()
-    )
-    voice_usd = sum(
-        price_of({
-            "cached_tokens": r.cached_tokens,
-            "input_audio_tokens": r.input_audio_tokens,
-            "input_text_tokens": r.input_text_tokens,
-            "output_audio_tokens": r.output_audio_tokens,
-            "output_text_tokens": r.output_text_tokens,
-        })
-        for r in spend
-    )
-    # Every model that billed in the window that we have no published rates
-    # for. A total which quietly omits one is worse than a total that names it.
-    unpriced = sorted({r.model for r in spend if not rates_for(r.model)[1]})
-    voice_tokens = sum(r.input_tokens + r.output_tokens for r in spend)
-    # The single number that explains a surprising bill. Cached input is
-    # discounted roughly eighty-fold, so the same calls cost several times more
-    # when this drops -- and nothing else on the page would look different.
-    cached = sum(r.cached_tokens for r in spend)
-    fresh = sum(r.input_audio_tokens + r.input_text_tokens for r in spend)
-    voice_cache_ratio = round(cached / (cached + fresh), 2) if cached + fresh else 0.0
     # Real rows, and only the ones that actually went. A queued or failed send
     # is not an email the buyer received, and counting it would make the card
     # read best when delivery is broken.
@@ -111,97 +71,69 @@ def overview(
         .filter(Outreach.created_at >= since, Outreach.status == "sent")
         .count()
     )
-    credit_sent = (
-        db.query(Outreach)
-        .filter(
-            Outreach.created_at >= since,
-            Outreach.status == "sent",
-            Outreach.kind == "credit_application",
-        )
-        .count()
-    )
-    # The number that means something is how many were opened. Sending is the
-    # dealership's own activity; a buyer following the link is the buyer doing
-    # something, which is the only part that says the outreach worked.
-    credit_opened = (
-        db.query(Outreach)
-        .filter(
-            Outreach.created_at >= since,
-            Outreach.status == "sent",
-            Outreach.kind == "credit_application",
-            Outreach.click_count > 0,
-        )
-        .count()
-    )
-    # The website half: somebody pressing Financing on the storefront. No
-    # buyer and no send to hang it on, so it is a row of its own -- and it is
-    # the same act as opening the emailed link, so it counts on the same card.
-    credit_site = (
-        db.query(LinkClick)
-        .filter(LinkClick.created_at >= since, LinkClick.kind == "credit_application")
-        .count()
-    )
     credit_url = (live_settings(db).credit_application_url or "").strip()
-    appointments_set = db.query(Appointment).filter(Appointment.created_at >= since).count()
-    leads_captured = db.query(Lead).filter(Lead.created_at >= since).count()
-    # Oldest first: this is a triage queue, and the overview quotes the longest
-    # wait in its subheading. Without an explicit order the "oldest" is just
-    # whatever the database returned last.
-    open_escalations = (
-        db.query(Escalation)
-        .filter(Escalation.claimed_at.is_(None))
-        .order_by(Escalation.created_at.asc())
-        .all()
-    )
+    # Both halves windowed on the moment the buyer opened it, not on when the
+    # dealership sent the link -- see `redirect.opens_between`.
+    credit_opens = opens_between(db, "credit_application", since)
 
-    unconfirmed = (
+    appointments_set = (
         db.query(Appointment)
-        .filter(Appointment.status == "booked")
-        .order_by(Appointment.starts_at.asc())
-        .all()
+        .filter(
+            Appointment.created_at >= since,
+            Appointment.status.in_(appointment_scope.STANDING_STATUSES),
+        )
+        .count()
     )
+    leads_captured = db.query(Lead).filter(Lead.created_at >= since).count()
+
+    # The one definition of "needs a person": every buyer with at least one
+    # unclaimed escalation, keyed by person rather than by escalation row --
+    # so someone with three open threads counts once, the way the list shows
+    # them, not three times the way the raw row count used to.
+    waiting = escalations.waiting_on_person(db)
+    needs_a_person_rows = [
+        {**escalation_out(rows[0], db), "escalation_count": len(rows)}
+        for rows in waiting.values()
+    ]
+    needs_a_person_rows.sort(key=lambda r: r["created_at"] or "")
+
+    unconfirmed = appointment_scope.unconfirmed(db, dealership)
     unassigned = [a for a in unconfirmed if a.assigned_user_id is None]
-    # The sidebar badge. Same predicate as `/api/conversations`, or the icon
-    # says 1 over a list with nothing in it -- which is what a widget opened
-    # and never typed in produced on a real host.
-    active_conversations = (
-        db.query(Conversation)
-        .filter(Conversation.status.in_(["active", "handoff"]), threads.started(db))
-        .order_by(Conversation.started_at.desc())
-        .all()
-    )
-    # "Happening now" is the last two hours; the panel expands to the rest of
-    # today. Both come from one list so the client splits rather than refetches.
-    #
-    # Ordered on last *activity*, not on start: a conversation opened at nine
-    # with a message two minutes ago is the most live thing on the screen, and
-    # sorting by started_at buried it under quieter, newer threads.
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today = (
-        db.query(Conversation)
-        .filter(Conversation.started_at >= start_of_day, threads.started(db))
-        .all()
-    )
-    last_activity = dict(
-        db.query(Message.conversation_id, func.max(Message.created_at))
-        .filter(Message.conversation_id.in_([c.id for c in today] or [""]))
-        .group_by(Message.conversation_id)
-        .all()
-    )
+
+    # The sidebar Conversations badge. The one definition of "live right
+    # now" -- `threads.live_keys` -- so this equals the Conversations page's
+    # In progress card for the same data, rather than counting every open
+    # thread ever (which is the figure CLAUDE.md's "Live means still being
+    # said" bullet retired, and which used to still be what this badge read).
+    live_now = threads.live_keys(db, now)
+
+    # "Everything today", the panel that expands past the live rows: threads
+    # that started since dealership-local midnight. Ordered on last
+    # *activity*, not on start, so a thread opened at nine with a message two
+    # minutes ago is not buried under quieter, newer threads.
+    start_of_day = clock.day_start_utc(dealership, clock.today(dealership))
+    today = threads.conversations(db).filter(Conversation.started_at >= start_of_day).all()
+    last_activity = threads.last_activity(db, [c.id for c in today])
 
     def activity_of(convo: Conversation):
         return last_activity.get(convo.id) or convo.started_at
 
     today.sort(key=activity_of, reverse=True)
     day_payload = [
-        {**conversation_out(c, db), "last_activity_at": stamp(activity_of(c))}
+        {
+            **conversation_out(c, db),
+            "last_activity_at": stamp(activity_of(c)),
+            "live": threads.is_live(c, last_activity.get(c.id), now),
+        }
         for c in today
     ]
     # Nobody owns these yet. There is no round-robin in this system, so the
     # queue is exactly "assigned to no one", oldest first -- not a rotation.
+    # A lead with no owner, never an anonymous thread: there is nothing to
+    # claim until a lead exists (`app/ownership.py`).
     unclaimed_leads = (
         db.query(Lead)
-        .filter(Lead.assigned_user_id.is_(None))
+        .filter(ownership.unclaimed())
         .order_by(Lead.created_at.asc())
         .all()
     )
@@ -218,15 +150,24 @@ def overview(
             convo_of.setdefault(lead_id, convo_id)
 
     # Blast radius: vehicles no longer available that Liner has quoted (§18.2).
-    stale_rows = (
-        db.query(Vehicle, func.count(VehicleMention.id))
+    # Counted in buyers, not in `vehicle_mentions` rows -- one buyer named the
+    # same car across several channels, or quoted it twice in one chat, is one
+    # buyer, not several offers.
+    stale_vehicle_ids = [
+        v.id for v in db.query(Vehicle.id)
         .join(VehicleMention, VehicleMention.vehicle_id == Vehicle.id)
         .filter(Vehicle.status != "available")
-        .group_by(Vehicle.id)
+        .distinct()
         .all()
+    ]
+    quoted_counts = quoted_buyer_counts(db, stale_vehicle_ids) if stale_vehicle_ids else {}
+    stale_vehicles = (
+        db.query(Vehicle).filter(Vehicle.id.in_(stale_vehicle_ids)).all()
+        if stale_vehicle_ids else []
     )
     inventory_issues = [
-        {**vehicle_out(v, mentions=count), "quoted_to": count} for v, count in stale_rows
+        {**vehicle_out(v, mentions=quoted_counts.get(v.id, 0)), "quoted_to": quoted_counts.get(v.id, 0)}
+        for v in stale_vehicles
     ]
 
     return {
@@ -237,35 +178,10 @@ def overview(
              "value": chats, "window": "last 24 hours"},
             {"key": "email", "label": "Emails sent",
              "value": emails_sent, "window": "last 24 hours"},
-            # Voice conversations. The count is real -- the seed has them and the
-            # transcript endpoints work -- but no voice vendor is configured, so
-            # nothing new arrives here until one is. The banner says so.
-            {"key": "calls", "label": "Calls",
-             "value": calls, "window": "last 24 hours"},
-            # Money, not a count, and deliberately next to the calls it came
-            # from. Marked unavailable rather than showing $0.00 when nothing
-            # has been recorded: a zero here reads as "calls are free", which
-            # is the most expensive thing this dashboard could imply.
-            {"key": "voice_spend", "label": "Voice spend",
-             "value": round(voice_usd, 2),
-             "format": "usd",
-             "window": (
-                 f"no published rates for {', '.join(unpriced)} -- set VOICE_PRICE_*"
-                 if unpriced else
-                 f"{voice_tokens:,} tokens, {int(voice_cache_ratio * 100)}% cached "
-                 "-- last 24 hours" if spend
-                 else "no calls billed yet"
-             ),
-             "unavailable": not spend or bool(unpriced),
-             # Only unpriced traffic is something to act on. "No calls billed
-             # yet" is a fact, not a fault, and warm on this page means a
-             # fault -- two meanings for one colour is how the one that
-             # matters stops being read.
-             "warning": bool(unpriced)},
             {"key": "appointments_set", "label": "Appointments set",
              "value": appointments_set, "window": "last 24 hours"},
             {"key": "needs_a_person", "label": "Needs a person",
-             "value": len(open_escalations), "window": "open now"},
+             "value": len(needs_a_person_rows), "window": "open now"},
             # Opens of the application, from the two places a buyer can reach
             # it: the link a rep emailed, and the storefront's Financing links.
             # Clicks, never completions -- the dealer's form reports nothing
@@ -273,27 +189,39 @@ def overview(
             # and the card says that rather than a zero that reads as a quiet
             # day.
             {"key": "credit_apps", "label": "Credit applications",
-             "value": credit_opened + credit_site,
+             "value": credit_opens["emailed"] + credit_opens["site"],
              "window": (
-                 f"opened -- {credit_opened} of {credit_sent} emailed, "
-                 f"{credit_site} from the website -- last 24 hours" if credit_url
+                 f"opened -- {credit_opens['emailed']} from emailed links, "
+                 f"{credit_opens['site']} from the website -- last 24 hours "
+                 f"({credit_opens['sent']} sent)" if credit_url
                  else "no application link set"
              ),
              "unavailable": not credit_url},
         ],
         "leads_captured": leads_captured,
         "badges": {
-            "conversations": len(active_conversations),
+            # People in progress right now -- the same figure as the
+            # Conversations page's In progress card, not "every open thread
+            # ever" (that number is `mix`/mentions elsewhere; nothing on the
+            # nav names it any more).
+            "conversations": len(live_now),
             "appointments": len(unconfirmed),
-            "escalations": len(open_escalations),
+            "escalations": len(needs_a_person_rows),
             "inventory": len(inventory_issues),
         },
         "queues": {
-            "needs_a_person": [escalation_out(e, db) for e in open_escalations],
+            "needs_a_person": needs_a_person_rows,
             "unconfirmed_appointments": [appointment_out(a, db) for a in unconfirmed],
             "unassigned_appointments": [appointment_out(a, db) for a in unassigned],
-            # The whole day, newest activity first. The client shows the
-            # last two hours and expands to the rest -- see happening_now_since.
+            # Visits whose time has passed with nobody marking them
+            # confirmed, cancelled or a no-show -- surfaced on its own rather
+            # than hidden inside "nobody has heard back" forever.
+            "unmarked_appointments": [
+                appointment_out(a, db) for a in appointment_scope.unmarked(db, dealership)
+            ],
+            # The whole day, newest activity first, each row carrying its own
+            # `live` flag. The client shows the live rows and expands to the
+            # rest.
             "active_conversations": day_payload,
             "unclaimed_leads": [
                 {**lead_out(lead, db), "conversation_id": convo_of.get(lead.id)}
@@ -301,10 +229,8 @@ def overview(
             ],
             "inventory_issues": inventory_issues,
         },
-        "happening_now_since": stamp(now - timedelta(hours=2)),
-        "mix": _channel_mix(db, since),
-        "source_mix": _source_mix(db, since),
-        "by_hour": _by_hour(db, dealership, start_of_day, now),
+        "live_window_minutes": int(threads.LIVE_AFTER.total_seconds() // 60),
+        "by_hour": _by_hour(db, dealership, clock.today(dealership), clock.today(dealership)),
     }
 
 
@@ -323,27 +249,38 @@ RANGES = {
 MAX_SPAN_DAYS = 366
 
 
-def _window(now, key: str):
-    """(start, end) for a range key. Naive and dealership-local throughout --
-    these are the same clock the conversations were stamped with."""
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+def _window(dealership: Dealership, key: str):
+    """(start, end, first_day, last_day) for a range key, in the dealership's
+    own local day. `start`/`end` are naive UTC instants -- what the UTC-
+    stamped columns are compared against -- and `first_day`/`last_day` are
+    the local calendar dates the window actually covers, DST-correct via
+    `app.clock`.
+    """
+    d = clock.today(dealership)
     if key == "yesterday":
-        return midnight - timedelta(days=1), midnight
-    if key == "week":
-        return midnight - timedelta(days=6), now
-    if key == "month":
-        return midnight - timedelta(days=29), now
-    return midnight, now
+        first_day = last_day = d - timedelta(days=1)
+    elif key == "week":
+        first_day, last_day = d - timedelta(days=6), d
+    elif key == "month":
+        first_day, last_day = d - timedelta(days=29), d
+    else:
+        first_day = last_day = d
+    start = clock.day_start_utc(dealership, first_day)
+    end = utcnow() if last_day >= d else clock.day_start_utc(dealership, last_day + timedelta(days=1))
+    return start, end, first_day, last_day
 
 
-def _custom_window(now, first: str, last: str):
-    """(start, end, label) for an explicit date, or a date to a date.
+def _custom_window(dealership: Dealership, first: str, last: str):
+    """(start, end, first_day, last_day, label) for an explicit date, or a
+    date to a date, in the dealership's own local day.
 
     `to` defaults to `from`, so one date is a legal answer -- picking a single
     day is the common case and should not need the same date typed twice. The
-    end is exclusive midnight of the day after, or a range ending today would
-    stop at 00:00 and show nothing.
+    end is exclusive local midnight of the day after, or a range ending today
+    would stop at local 00:00 and show nothing.
     """
+    from datetime import date
+
     try:
         start_date = date.fromisoformat(first)
         end_date = date.fromisoformat(last) if last else start_date
@@ -355,15 +292,17 @@ def _custom_window(now, first: str, last: str):
     if (end_date - start_date).days + 1 > MAX_SPAN_DAYS:
         raise HTTPException(400, f"That is more than {MAX_SPAN_DAYS} days.")
 
-    start = datetime.combine(start_date, time.min)
-    end = min(datetime.combine(end_date, time.min) + timedelta(days=1), now)
+    start = clock.day_start_utc(dealership, start_date)
+    end = min(
+        clock.day_start_utc(dealership, end_date + timedelta(days=1)), utcnow()
+    )
     if start_date == end_date:
         label = f"{start_date:%a} {start_date.day} {start_date:%B}"
     elif start_date.year == end_date.year:
         label = f"{start_date.day} {start_date:%b} to {end_date.day} {end_date:%b}"
     else:
         label = f"{start_date.day} {start_date:%b %Y} to {end_date.day} {end_date:%b %Y}"
-    return start, end, label
+    return start, end, start_date, end_date, label
 
 
 @router.get("/overview/trends")
@@ -382,76 +321,78 @@ def trends(
     whole dashboard, and the counts on the cards must not silently start
     meaning "last month" because someone moved a chart selector.
     """
-    now = utcnow()
     if from_:
         # Explicit dates win. Sending both a range and a from would otherwise
         # answer for one of them silently, and the caption would name the other.
-        start, end, label = _custom_window(now, from_, to)
+        start, end, first_day, last_day, label = _custom_window(dealership, from_, to)
         range = "custom"
     else:
         if range not in RANGES:
             raise HTTPException(
                 400, f"range must be one of: {', '.join(RANGES)}, or pass from/to"
             )
-        start, end = _window(now, range)
+        start, end, first_day, last_day = _window(dealership, range)
         label = RANGES[range]
 
-    first_day = start.date()
-    last_day = (end - timedelta(microseconds=1)).date()
+    counts = _bucket(db, dealership, start, end)
     return {
         "range": range,
         "label": label,
         "from": first_day.isoformat(),
         "to": last_day.isoformat(),
-        # Calendar days the window covers, counting both ends. Deriving it from
-        # `end` instead made a range ending today one day shorter than the same
-        # range asked for tomorrow, because `end` is clamped to now.
+        # Calendar days the window covers, counting both ends, from the local
+        # dates the window was built from -- deriving it from UTC instants
+        # made a range ending today one day shorter than the same range asked
+        # for tomorrow, and dropped today from a week/month range shown after
+        # 7pm local, because the UTC date had already rolled to tomorrow.
         "days": (last_day - first_day).days + 1,
-        "conversations": (
-            db.query(Conversation)
-            .filter(Conversation.started_at >= start, Conversation.started_at < end)
-            .count()
-        ),
-        "by_hour": _by_hour(db, dealership, start, end),
+        # Derived from the same bucket counts as `by_hour`, so the two cannot
+        # drift the way a separately-queried total and chart once did.
+        "conversations": sum(counts.values()),
+        "by_hour": _by_hour(db, dealership, first_day, last_day, counts=counts),
         "source_mix": _source_mix(db, start, end),
     }
 
 
-def _channel_mix(db: Session, since) -> list[dict]:
-    rows = (
-        db.query(Conversation.channel, func.count(Conversation.id))
-        .filter(Conversation.started_at >= since)
-        .group_by(Conversation.channel)
-        .all()
-    )
-    return [{"channel": channel, "count": count} for channel, count in rows]
-
-
-def _source_mix(db: Session, start, end=None) -> list[dict]:
+def _source_mix(db: Session, start, end) -> list[dict]:
     """Where leads came from -- `leads.source`, not the conversation channel.
 
-    The two are different axes and the overview shows both: a buyer can arrive
-    from the website and then be handled over voice.
+    `end` is required: an open-ended rolling window here is how the Overview
+    used to serve a 24h "source_mix" that no caption on the page ever
+    described (the donut's caption always names the picker's range, e.g.
+    "today" or "this week"), so a first-paint race or a still-loading range
+    switch showed the rolling 24h number under whichever caption the UI had
+    already committed to. `/api/overview` no longer serves this field at all
+    -- only `/api/overview/trends` does, so the count and its caption always
+    come from the same response.
     """
-    query = db.query(Lead.source, func.count(Lead.id)).filter(Lead.created_at >= start)
-    if end is not None:
-        query = query.filter(Lead.created_at < end)
-    rows = query.group_by(Lead.source).all()
+    rows = (
+        db.query(Lead.source, func.count(Lead.id))
+        .filter(Lead.created_at >= start, Lead.created_at < end)
+        .group_by(Lead.source)
+        .all()
+    )
     return [{"source": source, "count": count} for source, count in rows]
 
 
-def _by_hour(db: Session, dealership: Dealership, start, end) -> list[dict]:
+def _by_hour(
+    db: Session, dealership: Dealership, first_day, last_day, *, counts: dict[int, int] | None = None
+) -> list[dict]:
     """Conversations in the window bucketed by hour of day, open or closed.
 
     The point the chart makes is that Liner answers when the showroom cannot,
     so every bucket carries whether the dealership was open at that hour. That
-    comes from `hours_json` -- never a hardcoded 8-to-6. Timestamps are naive
-    and already in the dealership's local frame, so `.hour` is the local hour.
+    comes from `hours_json` -- never a hardcoded 8-to-6. Hours and days here
+    are the dealership's own local ones (`app.clock`), not the UTC hour a
+    naive-UTC timestamp's `.hour` used to give: from about 7pm to midnight
+    local, that made an evening chat plot into tomorrow morning's bar.
 
     Over more than a day, `open` is "open at that hour on most days in the
     window". A Sunday in a seven-day window does not make 10 AM a closed hour,
     and requiring every day would paint the whole week closed.
     """
+    import json
+
     day_names = [
         "monday", "tuesday", "wednesday", "thursday",
         "friday", "saturday", "sunday",
@@ -459,12 +400,15 @@ def _by_hour(db: Session, dealership: Dealership, start, end) -> list[dict]:
     hours = json.loads(dealership.hours_json or "{}")
 
     days = []
-    cursor = start.date()
-    while cursor < end.date() or cursor == start.date():
+    cursor = first_day
+    while cursor <= last_day:
         days.append(hours.get(day_names[cursor.weekday()]))
         cursor += timedelta(days=1)
 
-    counts = _bucket(db, start, end)
+    if counts is None:
+        start = clock.day_start_utc(dealership, first_day)
+        end = clock.day_start_utc(dealership, last_day + timedelta(days=1))
+        counts = _bucket(db, dealership, start, end)
 
     def is_open(hour: int) -> bool:
         open_on = sum(
@@ -479,19 +423,24 @@ def _by_hour(db: Session, dealership: Dealership, start, end) -> list[dict]:
     ]
 
 
-def _bucket(db: Session, start, end) -> dict[int, int]:
-    """Bucket in Python rather than SQL.
+def _bucket(db: Session, dealership: Dealership, start, end) -> dict[int, int]:
+    """Bucket in Python rather than SQL, by dealership-local hour.
 
     `strftime` is SQLite-only and `date_part` is Postgres-only; the Postgres
     door stays open, so neither goes in a query. Today's conversations are a
     small enough set that the loop costs nothing.
+
+    `threads.conversations(db)` -- started(db) already applied -- so a chat
+    widget opened and abandoned does not inflate this chart the way it once
+    could while the KPIs, the badge and the today panel correctly ignored it.
     """
     rows = (
-        db.query(Conversation.started_at)
+        threads.conversations(db, Conversation.started_at)
         .filter(Conversation.started_at >= start, Conversation.started_at < end)
         .all()
     )
     counts: dict[int, int] = {}
     for (started_at,) in rows:
-        counts[started_at.hour] = counts.get(started_at.hour, 0) + 1
+        h = clock.local_hour(dealership, started_at)
+        counts[h] = counts.get(h, 0) + 1
     return counts

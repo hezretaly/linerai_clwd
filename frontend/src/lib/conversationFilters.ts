@@ -7,6 +7,12 @@ import type { Conversation, Lead } from './types'
  *  a filter drift -- Appointed counting `stage === 'booked'` on one page and an
  *  appointment row on another gives a manager two different numbers for the
  *  same question, and no way to tell which is wrong.
+ *
+ *  Every predicate below reads a flag the server already computed --
+ *  `c.live`, `c.lead?.unclaimed`, `l.appointment_set`, `l.declined` -- rather
+ *  than re-deriving it from timestamps on the client. The one definition
+ *  lives in `backend/app/threads.py`, `app/ownership.py` and
+ *  `app/appointment_scope.py`; this file only asks which rows match it.
  */
 export const CONVERSATION_FILTERS = [
   'all',
@@ -20,38 +26,12 @@ export const CONVERSATION_FILTERS = [
 
 export type ConversationFilter = (typeof CONVERSATION_FILTERS)[number]
 
-/**
- * How long a thread stays Live after the last thing anybody said.
- *
- * "Not closed" is not the same as live, and the gap between them is most of
- * this list. A buyer opens a chat at nine in the evening, asks one question
- * and shuts the tab; nothing closes the thread, because only the buyer can,
- * so it sat under In progress for weeks. A manager reading "14 in progress"
- * takes it to mean fourteen conversations happening -- something to walk the
- * floor about -- when thirteen of them ended days ago.
- *
- * Thirty minutes is a conversation's own patience, not a business rule: a
- * buyer comparing two cars takes a few minutes between messages and a buyer
- * who has gone is gone. Anything longer and the number stops meaning "now",
- * which is the only thing it is read for.
- *
- * A thread that goes quiet is not closed and does not pretend to be -- it
- * still has an owner, still takes a reply, and `stateOf` below badges it
- * Gone quiet rather than Closed. Only the buyer closes a thread.
- */
-export const LIVE_AFTER_MINUTES = 30
-
-/** Was anything said here inside the live window? */
-export function stillGoing(lastActivity: string | null | undefined): boolean {
-  if (!lastActivity) return false
-  const at = new Date(lastActivity).getTime()
-  if (Number.isNaN(at)) return false
-  return Date.now() - at < LIVE_AFTER_MINUTES * 60_000
-}
-
 export const FILTER_LABEL: Record<ConversationFilter, string> = {
   all: 'All',
-  flagged: 'Needs attention',
+  // Renamed from "Needs attention" to match the KPI it links from
+  // (Overview.tsx's KPI_LINKS points 'needs_a_person' at ?filter=flagged) --
+  // two names for one link target read as two different things.
+  flagged: 'Needs a person',
   unclaimed: 'Unclaimed',
   live: 'Live',
   mine: 'Mine',
@@ -71,20 +51,24 @@ export function matches(
   meId: string | undefined,
 ): boolean {
   switch (filter) {
+    // "Needs a person" for a thread means it is one of the escalations behind
+    // the server's waiting_on_person() -- open_escalation is per-thread
+    // display data built from that same set, so this still means the right
+    // thing for both a lead's thread and an anonymous one.
     case 'flagged':
       return Boolean(c.open_escalation)
+    // A thread with no lead can never be unclaimed -- there is nothing to
+    // claim until a lead exists. `c.lead?.unclaimed` is false whenever
+    // `c.lead` is null, which is the fix: the old rule (`!c.lead?.assigned_user_id`)
+    // was true for every anonymous thread, so the chip counted every live
+    // chat that had not yet booked or filled in a details card.
     case 'unclaimed':
-      return !c.lead?.assigned_user_id
-    // Not closed, rather than 'active'. A thread at 'handoff' is one a rep is
-    // standing in -- as live as it gets -- and counting only 'active' meant a
-    // row badged "In progress" was missing from the In progress filter. The
-    // lead side answers this from `open`, which is the same rule.
-    //
-    // And still being *said* -- see LIVE_AFTER_MINUTES. An abandoned tab never
-    // closes its thread, so without the window this counted every chat anybody
-    // ever walked away from.
+      return Boolean(c.lead?.unclaimed)
+    // The server's one definition of live (threads.is_live): not closed, and
+    // its own last activity is inside threads.LIVE_AFTER. No window is
+    // re-derived here against the browser's clock.
     case 'live':
-      return c.status !== 'closed' && stillGoing(c.last_activity_at ?? c.started_at)
+      return Boolean(c.live)
     case 'mine':
       return Boolean(meId && c.lead?.assigned_user_id === meId)
     case 'declined':
@@ -121,13 +105,13 @@ export function stateOf(c: Conversation): [string, string] {
   // at status 'handoff', and calling that Closed next to a "Needs a person"
   // tag on the same row told a manager two opposite things at once.
   //
-  // Split on the same window the Live filter uses, because the badge and the
-  // chip are read together: a row badged In progress that the In progress
+  // Split on `c.live`, the same flag the Live filter reads, because the badge
+  // and the chip are read together: a row badged In progress that the Live
   // filter does not contain is a page arguing with itself. Gone quiet is a
   // third thing and says so -- the thread is open and still takes a reply,
-  // nobody has closed it, and nothing has been said for half an hour.
+  // nobody has closed it, and nothing has been said for the live window.
   if (c.status !== 'closed') {
-    return stillGoing(c.last_activity_at ?? c.started_at)
+    return c.live
       ? ['In progress', 'border-primary/30 bg-primary/10 text-primary']
       : ['Gone quiet', 'border-border text-muted-foreground']
   }
@@ -153,19 +137,19 @@ export function leadMatches(
     case 'flagged':
       return Boolean(l.flagged)
     case 'unclaimed':
-      return !l.assigned_user_id
+      return Boolean(l.unclaimed)
     case 'mine':
       return Boolean(meId && l.assigned_user_id === meId)
     case 'appointed':
-      return l.stage === 'appointment'
-    // Both derived from the lead's conversations by the API, so a person is
-    // Live when any of their threads is, not when the newest one happens to
-    // be -- a buyer with an open call and a closed chat is live. `open` is the
-    // API's word for "not closed", so it needs the same window as a thread
-    // does; `last_touch_at` is the last thing that happened across all of
-    // them, which is exactly what the window asks about.
+      return Boolean(l.appointment_set)
+    // The server's own `live` flag: true when any *one* of this lead's
+    // threads is live (threads.is_live), never derived here from `open`
+    // (any thread not closed) combined with `last_touch_at` (the max over
+    // every thread, appointment and email) -- that combination could mix
+    // "open" from one thread with "recent" from a different one, or from an
+    // email or a booked appointment, and call the result Live.
     case 'live':
-      return Boolean(l.open) && stillGoing(l.last_touch_at ?? l.created_at)
+      return Boolean(l.live)
     case 'declined':
       return Boolean(l.declined)
     default:
@@ -175,10 +159,10 @@ export function leadMatches(
 
 export function leadStateOf(l: Lead): [string, string] {
   if (l.declined) return ['Client declined', 'border-border text-muted-foreground']
-  if (l.stage === 'appointment')
+  if (l.appointment_set)
     return ['Appointment set', 'border-success/30 bg-success/10 text-success']
   if (l.open) {
-    return stillGoing(l.last_touch_at ?? l.created_at)
+    return l.live
       ? ['In progress', 'border-primary/30 bg-primary/10 text-primary']
       : ['Gone quiet', 'border-border text-muted-foreground']
   }

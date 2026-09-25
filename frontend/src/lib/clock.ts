@@ -68,6 +68,15 @@ export function zonedParts(at: Date, timezone?: string) {
   return { hour: get('hour') % 24, minute: get('minute') }
 }
 
+/** `YYYY-MM-DD` in the dealership's own zone -- for a date picker's `max`,
+ *  which has to name the dealership's *today*, not the viewer's browser date
+ *  and not the UTC date (the latter is already tomorrow from about 7pm
+ *  local). `en-CA` is the one built-in locale whose short date format is
+ *  exactly this shape. */
+export function zonedDateStr(at: Date, timezone?: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone || undefined }).format(at)
+}
+
 /** `Mon, Aug 17 · 8:53 PM`, in the dealership's zone. */
 export function zonedStamp(at: Date, timezone?: string): string {
   const zone = timezone || undefined

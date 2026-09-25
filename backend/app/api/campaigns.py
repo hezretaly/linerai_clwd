@@ -44,7 +44,7 @@ from app.models import (
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 #: How long a buyer has to have been silent to count as gone cold. Longer than
-#: `LIVE_AFTER_MINUTES` by a wide margin: that one is about whether a
+#: `threads.LIVE_AFTER` by a wide margin: that one is about whether a
 #: conversation is still happening, this is about whether a person has moved on.
 COLD_DAYS = 14
 
@@ -59,7 +59,7 @@ def _price_drops(db: Session) -> tuple[int, list[dict]]:
     rows = (
         db.query(
             Lead.id, Lead.name, Lead.email,
-            Vehicle.year, Vehicle.make, Vehicle.model,
+            Vehicle.id, Vehicle.year, Vehicle.make, Vehicle.model,
             VehicleMention.quoted_price, Vehicle.price,
         )
         .join(Conversation, Conversation.id == VehicleMention.conversation_id)
@@ -77,10 +77,13 @@ def _price_drops(db: Session) -> tuple[int, list[dict]]:
         .all()
     )
     # One buyer per car, not one per time it was mentioned: a buyer told about
-    # the same Silverado four times is one person to write to.
+    # the same Silverado four times is one person to write to. Keyed on
+    # Vehicle.id, not the title string -- two different cars can share one
+    # ("2022 Tesla Model S" is not unique on this lot), and keying on the
+    # string treated them as the same car, silently merging their audiences.
     seen: dict[tuple[str, str], dict] = {}
-    for lead_id, name, email, year, make, model, quoted, now in rows:
-        key = (lead_id, f"{year} {make} {model}")
+    for lead_id, name, email, vehicle_id, year, make, model, quoted, now in rows:
+        key = (lead_id, vehicle_id)
         if key in seen:
             continue
         seen[key] = {
@@ -128,7 +131,10 @@ def _still_here(db: Session) -> tuple[int, list[dict]]:
         Appointment.status.in_(["booked", "confirmed"])
     )
     rows = (
-        db.query(Lead.id, Lead.name, Lead.email, Vehicle.year, Vehicle.make, Vehicle.model)
+        db.query(
+            Lead.id, Lead.name, Lead.email,
+            Vehicle.id, Vehicle.year, Vehicle.make, Vehicle.model,
+        )
         .join(Conversation, Conversation.lead_id == Lead.id)
         .join(VehicleMention, VehicleMention.conversation_id == Conversation.id)
         .join(Vehicle, Vehicle.id == VehicleMention.vehicle_id)
@@ -139,8 +145,13 @@ def _still_here(db: Session) -> tuple[int, list[dict]]:
     examples = [
         {"lead_id": i, "name": n or e or "Unnamed buyer",
          "vehicle": f"{y} {mk} {md}"}
-        for i, n, e, y, mk, md in rows[:5]
+        for i, n, e, _vid, y, mk, md in rows[:5]
     ]
+    # The audience is buyers, so the count stays distinct on the lead --
+    # Vehicle.id only had to be in the query above, so two different cars
+    # sharing one title ("2022 Tesla Model S" is not unique on this lot)
+    # are not folded into one row by `.distinct()` before the row is dropped
+    # by `rows[:5]` for the examples.
     return len({r[0] for r in rows}), examples
 
 

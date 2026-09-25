@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import { api, ApiError } from '../lib/api'
 import { dateTime, isOpenOn, money, openWindow, time } from '../lib/format'
 import { useNow, zonedParts } from '../lib/clock'
+import { isOff, isPast } from '../lib/appointments'
 import type { Appointment, Outreach, Overview, TeamMember } from '../lib/types'
 import {
   addrList,
@@ -175,7 +176,11 @@ export function CalendarPage() {
 
       {view === 'list' && (
         <div className="p-4 md:p-6">
-          <BookedList appointments={data.appointments} onOpen={setOpenId} />
+          <BookedList
+            appointments={data.appointments}
+            onOpen={setOpenId}
+            unconfirmed={overview?.badges.appointments}
+          />
         </div>
       )}
 
@@ -272,13 +277,19 @@ export function CalendarPage() {
                         }}
                         className={clsx(
                           'absolute overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] animate-cell-fill',
-                          appointment.status === 'confirmed'
-                            ? 'border-success/30 bg-success-muted text-success'
-                            : 'border-primary/30 bg-accent text-primary',
+                          isOff(appointment)
+                            ? 'border-border bg-muted text-muted-foreground opacity-70'
+                            : appointment.status === 'confirmed'
+                              ? 'border-success/30 bg-success-muted text-success'
+                              : 'border-primary/30 bg-accent text-primary',
                         )}
                       >
                         <p className="truncate font-medium">{appointment.lead?.name}</p>
-                        <p className="truncate opacity-80">{time(appointment.starts_at)}</p>
+                        <p className="truncate opacity-80">
+                          {time(appointment.starts_at)}
+                          {isOff(appointment) &&
+                            ` -- ${appointment.status === 'no_show' ? 'no show' : appointment.status}`}
+                        </p>
                       </button>
                     )
                   })}
@@ -345,19 +356,20 @@ function ViewToggle({
 function BookedList({
   appointments,
   onOpen,
+  unconfirmed,
 }: {
   appointments: Appointment[]
   onOpen: (id: string) => void
+  /** The sidebar Calendar badge's own number (`overview.badges.appointments`
+   *  -- app.appointment_scope.unconfirmed), shown beside this list's own
+   *  count instead of leaving the badge as a figure nobody on this page ever
+   *  shows: "11 still to come · 4 not confirmed" gives the badge's number a
+   *  home on the page it links to. */
+  unconfirmed?: number
 }) {
   const [showPast, setShowPast] = useState(false)
   const [showCancelled, setShowCancelled] = useState(false)
   const now = Date.now()
-
-  // An appointment is "past" once it has finished, not once it has started --
-  // a rep looking at the list mid-visit should still find the one they are in.
-  const isPast = (a: Appointment) =>
-    new Date(a.starts_at).getTime() + a.duration_min * 60_000 < now
-  const isOff = (a: Appointment) => a.status === 'cancelled' || a.status === 'no_show'
 
   const { shown, hiddenPast, hiddenOff } = useMemo(() => {
     const sorted = [...appointments].sort((a, b) => a.starts_at.localeCompare(b.starts_at))
@@ -365,12 +377,12 @@ function BookedList({
     // copies is how a heading says 16 over a list of 147 -- which this did,
     // because the count filtered to live bookings and the list did not.
     const keep = (a: Appointment) =>
-      (showPast || !isPast(a)) && (showCancelled || !isOff(a))
+      (showPast || !isPast(a, now)) && (showCancelled || !isOff(a))
     return {
       shown: sorted.filter(keep),
       // What each toggle would add, so a button can say what it is for.
-      hiddenPast: sorted.filter((a) => isPast(a) && (showCancelled || !isOff(a))).length,
-      hiddenOff: sorted.filter((a) => isOff(a) && (showPast || !isPast(a))).length,
+      hiddenPast: sorted.filter((a) => isPast(a, now) && (showCancelled || !isOff(a))).length,
+      hiddenOff: sorted.filter((a) => isOff(a) && (showPast || !isPast(a, now))).length,
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointments, showPast, showCancelled, now])
@@ -405,6 +417,12 @@ function BookedList({
           <span className="font-medium text-foreground">{shown.length}</span>{' '}
           {shown.length === 1 ? 'appointment' : 'appointments'}
           {showPast ? '' : ' still to come'}
+          {/* The sidebar badge's own number, read rather than recounted --
+              this page never showed anywhere the figure a rep sees on every
+              other page next to the Calendar icon. */}
+          {typeof unconfirmed === 'number' && unconfirmed > 0 && (
+            <span> · <span className="font-medium text-foreground">{unconfirmed}</span> not confirmed</span>
+          )}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {(hiddenPast > 0 || showPast) && (
@@ -525,6 +543,14 @@ function Agenda({
         // A closed day with nothing booked is not worth a row of its own.
         if (!open && mine.length === 0) return null
 
+        // The same predicate the list view uses: a cancelled or no-show row
+        // is not "booked". The old header counted every row on the day
+        // whatever its status, so a day holding nothing but a cancellation
+        // still read "1 booked" while the list's own count (with cancelled
+        // hidden by default) correctly said none.
+        const live = mine.filter((a) => !isOff(a))
+        const off = mine.length - live.length
+
         return (
           <Card key={day.toISOString()} className="overflow-hidden">
             <div className="flex items-baseline justify-between border-b border-border bg-muted/40 px-4 py-2">
@@ -540,7 +566,13 @@ function Agenda({
                 {day.toDateString() === today && ' -- today'}
               </span>
               <span className="text-xs text-muted-foreground">
-                {!open ? 'Closed' : mine.length === 0 ? 'Nothing booked' : `${mine.length} booked`}
+                {!open
+                  ? 'Closed'
+                  : live.length === 0
+                    ? off > 0
+                      ? `Nothing booked · ${off} cancelled`
+                      : 'Nothing booked'
+                    : `${live.length} booked${off > 0 ? ` · ${off} cancelled` : ''}`}
               </span>
             </div>
 
@@ -550,7 +582,10 @@ function Agenda({
                   <li key={appointment.id}>
                     <button
                       onClick={() => onOpen(appointment.id)}
-                      className="flex w-full items-baseline gap-3 px-4 py-3 text-left active:bg-muted"
+                      className={clsx(
+                        'flex w-full items-baseline gap-3 px-4 py-3 text-left active:bg-muted',
+                        isOff(appointment) && 'opacity-55',
+                      )}
                     >
                       <span className="tnum w-16 shrink-0 text-sm font-medium">
                         {time(appointment.starts_at)}
@@ -567,10 +602,16 @@ function Agenda({
                         </span>
                       </span>
                       <Badge
-                        tone={appointment.status === 'confirmed' ? 'success' : 'primary'}
+                        tone={
+                          appointment.status === 'confirmed'
+                            ? 'success'
+                            : isOff(appointment)
+                              ? 'neutral'
+                              : 'primary'
+                        }
                         className="shrink-0"
                       >
-                        {appointment.status}
+                        {appointment.status === 'no_show' ? 'no show' : appointment.status}
                       </Badge>
                     </button>
                   </li>

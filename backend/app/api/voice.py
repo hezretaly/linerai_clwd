@@ -45,7 +45,7 @@ from app.integrations.base import NotConfigured
 from app.integrations.registry import get_voice_provider
 from app.integrations.voice.transcribe import get_transcriber
 from app.config import settings
-from app.integrations.voice.openai_realtime import CALLS_URL, price_of, rates_for
+from app.integrations.voice.openai_realtime import CALLS_URL, cost_of, rates_for
 from app.models import (
     CallBuyerTrack,
     CallRecording,
@@ -356,17 +356,7 @@ def record_usage(body: Usage, db: Session = Depends(get_db)) -> dict:
     )
     db.add(row)
     db.commit()
-    return {"recorded": True, "estimated_usd": round(price_of(_as_dict(row), row.model), 6)}
-
-
-def _as_dict(row: CallUsage) -> dict:
-    return {
-        "cached_tokens": row.cached_tokens,
-        "input_audio_tokens": row.input_audio_tokens,
-        "input_text_tokens": row.input_text_tokens,
-        "output_audio_tokens": row.output_audio_tokens,
-        "output_text_tokens": row.output_text_tokens,
-    }
+    return {"recorded": True, "estimated_usd": round(cost_of(row), 6)}
 
 
 @router.get("/recordings")
@@ -431,7 +421,7 @@ def call_cost(
             "fresh_input_tokens": r.input_audio_tokens + r.input_text_tokens,
             "output_tokens": r.output_tokens,
             "output_audio_tokens": r.output_audio_tokens,
-            "estimated_usd": round(price_of(_as_dict(r), r.model), 6),
+            "estimated_usd": round(cost_of(r), 6),
         }
         for r in rows
     ]

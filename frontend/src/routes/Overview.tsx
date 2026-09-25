@@ -16,6 +16,7 @@ import {
 
 import { api, ApiError } from '../lib/api'
 import { relative, waited } from '../lib/format'
+import { zonedDateStr } from '../lib/clock'
 import type { Appointment, Escalation, Lead, Overview } from '../lib/types'
 import { Card, Empty, NotBacked, Spinner, Unavailable } from '../components/ui'
 import { Icon, type IconName } from '../components/Icon'
@@ -30,11 +31,13 @@ const RAMP = [
   'var(--color-ramp-4)',
 ]
 
+// Voice spend and Calls are gone from the Overview -- the owner asked for
+// the two cards to come off the dash. /api/voice/usage and
+// /api/voice/cost/{id} still exist for a call's own page; nothing here
+// counts calls or their cost any more.
 const KPI_ICONS: Record<string, IconName> = {
   chat: 'chat',
   email: 'mail',
-  calls: 'phone',
-  voice_spend: 'voice',
   appointments_set: 'calendar',
   needs_a_person: 'user',
   credit_apps: 'file',
@@ -45,10 +48,6 @@ const KPI_ICONS: Record<string, IconName> = {
 const KPI_LINKS: Record<string, string> = {
   chat: '/app/conversations',
   email: '/app/conversations',
-  calls: '/app/conversations',
-  // The calls it was spent on. There is no billing page to send them to,
-  // and a card that leads nowhere is a number to go and look up elsewhere.
-  voice_spend: '/app/conversations?filter=calls',
   appointments_set: '/app/calendar',
   // Both channels: an escalation on a call does not appear on the chat page.
   needs_a_person: '/app/conversations?filter=flagged',
@@ -75,6 +74,8 @@ function trendQuery({ range, from, to }: TrendChoice): string {
 interface Trend {
   range: TrendRange
   label: string
+  from: string
+  to: string
   days: number
   conversations: number
   by_hour: { hour: number; count: number; open: boolean }[]
@@ -108,6 +109,7 @@ function TrendHeader({
   onChoice,
   error,
   legend = false,
+  timezone,
 }: {
   title: string
   subtitle: string
@@ -118,8 +120,12 @@ function TrendHeader({
    *  here would give two answers to the same question. */
   error?: string
   legend?: boolean
+  /** The dealership's own timezone, so the date picker's `max` is *its*
+   *  today. The UTC date (the old `toISOString().slice(0, 10)`) is already
+   *  tomorrow from about 7pm local. */
+  timezone?: string
 }) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = zonedDateStr(new Date(), timezone)
   return (
     <div className="p-6 pb-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -233,27 +239,31 @@ export function OverviewPage() {
 
   const escalations = data.queues.needs_a_person
   const unconfirmed = data.queues.unconfirmed_appointments
-  // The mockup folds unconfirmed appointments into this queue as one summary
-  // row rather than giving them a panel: from a rep's side it is the same
-  // question -- who is waiting on a person -- so the count follows suit.
-  const waitingCount = escalations.length + (unconfirmed.length ? 1 : 0)
+  // One row per buyer already (app/escalations.py's waiting_on_person), so
+  // this is exactly the "Needs a person" KPI and the sidebar badge -- no
+  // more adding a synthetic +1 for unconfirmed appointments, which is a
+  // different fact (the Calendar badge already counts it) and which made
+  // the pill disagree with the KPI on the same page the moment any
+  // appointment was booked.
+  const waitingCount = escalations.length
   // The endpoint returns this queue oldest first.
   const oldest = escalations[0]
-  // Everything this panel can show: the flagged conversations plus the single
-  // summary row for unconfirmed appointments. That row used to sit outside the
-  // cap, so the panel showed three and the expander stayed hidden until a
-  // third escalation arrived.
+  // Layout only: how many rows the panel has to show, including the single
+  // summary row for unconfirmed appointments. That row used to sit outside
+  // the cap, so the panel showed three and the expander stayed hidden until
+  // a third escalation arrived.
   const queueRows = escalations.length + (unconfirmed.length ? 1 : 0)
   const shownEscalations = showAllFlagged
     ? escalations
     : escalations.slice(0, unconfirmed.length ? 1 : 2)
 
-  // The server sends today's conversations newest-activity first and the
-  // two-hour mark to split them at, so "now" means the same thing here as it
-  // does in the query that built the list.
+  // Every row already carries its own `live` flag (threads.is_live), so the
+  // page never re-derives a window against its own clock -- which is how a
+  // 30-minute Conversations-page rule and a 2-hour Overview-panel rule, both
+  // called "Live", drifted apart.
   const today = data.queues.active_conversations
-  const recent = today.filter((c) => (c.last_activity_at ?? c.started_at) >= data.happening_now_since)
-  const earlier = today.filter((c) => !recent.includes(c))
+  const recent = today.filter((c) => c.live)
+  const earlier = today.filter((c) => !c.live)
   const live = showAll ? today : recent
   const unclaimed = data.queues.unclaimed_leads
 
@@ -267,7 +277,7 @@ export function OverviewPage() {
           <>
             <Unavailable
               label="Today"
-              why="Every figure here is the last 24 hours. Nothing rolls conversations up by day, so there is no range to select."
+              why="The KPI cards are the last 24 hours; Needs a person is open right now; the two charts and the Everything-today panel run from local midnight at the showroom. Nothing rolls conversations up by calendar day, so there is no single range to select for the whole page."
             />
             <Unavailable
               label="Export"
@@ -277,8 +287,8 @@ export function OverviewPage() {
         }
       />
 
-      {/* ---- KPIs: four cards, the four the endpoint computes -------------- */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      {/* ---- KPIs: five cards, the five the endpoint computes -------------- */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {data.kpis.map((kpi) => (
           <Link
             key={kpi.key}
@@ -294,22 +304,11 @@ export function OverviewPage() {
                 />
               </div>
               <div className="p-6 pt-0">
-                <div className="tnum text-2xl font-bold">
-                  {kpi.format === 'usd'
-                    ? `$${kpi.value.toFixed(2)}`
-                    : kpi.value}
-                </div>
+                <div className="tnum text-2xl font-bold">{kpi.value}</div>
                 {/* The mockup compares each figure to a 30-day average. Nothing
                     stores a daily rollup, so the card states its own window
                     rather than inventing a trend to sit under the number. */}
-                <p
-                  className={clsx(
-                    'mt-1 text-xs',
-                    kpi.warning ? 'text-warning-foreground' : 'text-muted-foreground',
-                  )}
-                >
-                  {kpi.window}
-                </p>
+                <p className="mt-1 text-xs text-muted-foreground">{kpi.window}</p>
               </div>
             </Card>
           </Link>
@@ -347,7 +346,7 @@ export function OverviewPage() {
           )}
         </div>
 
-        {waitingCount === 0 ? (
+        {queueRows === 0 ? (
           <Empty title="Nothing waiting" hint="Liner is handling everything right now." />
         ) : (
           <div className="scroll-thin overflow-x-auto">
@@ -428,13 +427,21 @@ export function OverviewPage() {
                 >
                   Happening now
                 </Link>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                  Live
-                </span>
+                {/* Only over the rows this chip's window actually covers --
+                    expanding to "Everything today" shows quiet, closed
+                    threads too, which is not what a green "Live" pill
+                    should sit over. */}
+                {!showAll && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
+                    <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                    Live
+                  </span>
+                )}
               </div>
               <p className="mt-1.5 text-sm text-muted-foreground">
-                {showAll ? 'Everything today' : 'Anything with a message in the last two hours'}
+                {showAll
+                  ? 'Everything today'
+                  : `Still being said -- active in the last ${data.live_window_minutes} minutes`}
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -450,10 +457,10 @@ export function OverviewPage() {
           </div>
           {live.length === 0 ? (
             <Empty
-              title="Nothing open"
+              title="Nothing live"
               hint={
                 earlier.length
-                  ? 'Nothing in the last two hours. Expand for the rest of today.'
+                  ? `Nothing in the last ${data.live_window_minutes} minutes. Expand for the rest of today.`
                   : 'No conversation has been active today.'
               }
             />
@@ -509,12 +516,26 @@ export function OverviewPage() {
             choice={sourceChoice}
             onChoice={setSourceChoice}
             error={(sourceError as ApiError | null)?.message}
+            timezone={data.dealership.timezone}
           />
           <div className="p-6 pt-0">
-            <SourceChart
-              mix={sourceTrend?.source_mix ?? data.source_mix}
-              caption={SHORT_RANGE[sourceChoice.range]}
-            />
+            {/* Both the count and its caption come from the same response
+                now -- /api/overview no longer serves a source_mix at all, so
+                there is nothing to fall back to. While the range is loading
+                (first paint, a just-picked custom range, or disabled with no
+                `from` yet) the chart shows a placeholder instead of another
+                window's number under this one's caption, which is the bug
+                this replaced: a rolling-24h count shown under "this week". */}
+            {sourceTrend ? (
+              <SourceChart
+                mix={sourceTrend.source_mix}
+                caption={SHORT_RANGE[sourceTrend.range]}
+              />
+            ) : (
+              <div className="flex h-[260px] items-center justify-center">
+                <Spinner />
+              </div>
+            )}
           </div>
         </Card>
         <Card className="min-w-0 shadow-sm lg:col-span-4">
@@ -529,6 +550,7 @@ export function OverviewPage() {
             onChoice={setHourChoice}
             error={(hourError as ApiError | null)?.message}
             legend
+            timezone={data.dealership.timezone}
           />
           <div className="p-6 pt-0">
             <HourChart data={hourTrend?.by_hour ?? data.by_hour} />
@@ -774,7 +796,7 @@ function SourceChart({
   mix,
   caption,
 }: {
-  mix: Overview['source_mix']
+  mix: Trend['source_mix']
   /** The hole says what the denominator is. With a range picker above it,
    *  "leads today" was a caption that stopped being true the moment anyone
    *  chose a different window. Named `caption` rather than `window`, which is
