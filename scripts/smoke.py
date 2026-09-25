@@ -492,6 +492,32 @@ def fill_slot(starts_at: str, count: int, tag: str) -> list[str]:
     return ids
 
 
+def book_first_free(convo_id: str, **fields) -> dict:
+    """POST /api/conversations/{id}/book -- the rep-facing executor -- at
+    whichever offered time this signed-in account is actually free for.
+
+    A rep who books here lands on the appointment they book (`book_appointment`'s
+    `assigned_user_id`), so the first offered time is not guaranteed open: this
+    same account accumulates assignments across the whole run, and an earlier
+    section's booking can genuinely overlap a later section's first choice. A
+    real rep would just try the next time rather than treat that as broken, so
+    this does too, rather than every call site re-deriving the same retry.
+    """
+    offered = [
+        s["starts_at"]
+        for d in call("GET", f"/api/conversations/{convo_id}/availability")["days"]
+        for s in d["slots"]
+    ]
+    for candidate in offered:
+        code, body = status_of(
+            "POST", f"/api/conversations/{convo_id}/book",
+            {"starts_at": candidate, **fields},
+        )
+        if code == 200:
+            return json.loads(body)
+    raise AssertionError(f"no offered time was free to book for {convo_id}: {offered}")
+
+
 def _store_files() -> set[str]:
     """The slugs that have a database on disk right now."""
     import pathlib as _pl
@@ -1585,12 +1611,7 @@ def main() -> int:
     tag = secrets.token_hex(4)
     owned = call("POST", "/api/chat/sessions")["conversation_id"]
     say(owned, content="I want to see something with a third row")
-    owned_slots = [t["starts_at"] for d in
-                   call("GET", f"/api/conversations/{owned}/availability")["days"]
-                   for t in d["slots"]]
-    call("POST", f"/api/conversations/{owned}/book", {
-        "starts_at": owned_slots[0], "name": "Owned Buyer",
-        "email": f"owned.buyer.{tag}@example.invalid"})
+    book_first_free(owned, name="Owned Buyer", email=f"owned.buyer.{tag}@example.invalid")
     for appt in call("GET", "/api/appointments")["appointments"]:
         if appt["conversation_id"] == owned and appt["status"] in ("booked", "confirmed"):
             booked_here.append(appt["id"])
@@ -2605,22 +2626,10 @@ def main() -> int:
     # offered time is not guaranteed free -- this signed-in account may
     # already hold something overlapping it from earlier in this same run.
     # The dedicated overlap test covers that refusal on purpose; this section
-    # is only proving a rep can book at all, so it tries times in order
-    # rather than assuming the first one is open for this particular person.
-    offered = [s["starts_at"] for d in card["days"] for s in d["slots"]]
-    booked_by_rep = None
-    for candidate in offered:
-        code, body = status_of("POST", f"/api/conversations/{rep_convo}/book", {
-            "starts_at": candidate, "name": "Rep Booked", "email": "rep.booked@example.invalid",
-        })
-        if code == 200:
-            booked_by_rep = json.loads(body)
-            rep_slot = candidate
-            break
-    check("a time this rep is actually free for exists on the card",
-          booked_by_rep is not None, str(offered))
-    if booked_by_rep is None:
-        return report()
+    # is only proving a rep can book at all, so `book_first_free` tries times
+    # in order rather than assuming the first one is open for this person.
+    booked_by_rep = book_first_free(
+        rep_convo, name="Rep Booked", email="rep.booked@example.invalid")
     check("the rep booking lands on the thread", booked_by_rep["stage"] == "booked",
           booked_by_rep["stage"])
     made = [a for a in call("GET", "/api/appointments")["appointments"]
@@ -2837,18 +2846,12 @@ def main() -> int:
     # *then* phone. So someone who booked from chat and rang back leaving a
     # second address arrived as a second lead with the same number on file.
     phone = "(319) 555-0148"
-    card = call("GET", f"/api/conversations/{rep_convo}/availability")
-    slots = [s["starts_at"] for d in card["days"] for s in d["slots"]]
     one = call("POST", "/api/chat/sessions")["conversation_id"]
     say(one, content="I'd like to come in")
-    call("POST", f"/api/conversations/{one}/book", {
-        "starts_at": slots[0], "name": "Robin Ash",
-        "email": "robin.ash@example.invalid", "phone": phone})
+    book_first_free(one, name="Robin Ash", email="robin.ash@example.invalid", phone=phone)
     two = call("POST", "/api/chat/sessions")["conversation_id"]
     say(two, content="Booking again")
-    call("POST", f"/api/conversations/{two}/book", {
-        "starts_at": slots[1], "name": "Robin Ash",
-        "email": "r.ash@work.invalid", "phone": phone})
+    book_first_free(two, name="Robin Ash", email="r.ash@work.invalid", phone=phone)
     lead_one = call("GET", f"/api/conversations/{one}")["lead"]["id"]
     lead_two = call("GET", f"/api/conversations/{two}")["lead"]["id"]
     check("a second booking on the same phone lands on the same lead",
@@ -3569,12 +3572,8 @@ def main() -> int:
     # claimed the one it found.
     mine = call("POST", "/api/chat/sessions")["conversation_id"]
     say(mine, content="I want to see something with a third row")
-    slots = [s["starts_at"] for d in
-             call("GET", f"/api/conversations/{mine}/availability")["days"]
-             for s in d["slots"]]
     escalation_email = f"reply.test.{run}@example.invalid"
-    call("POST", f"/api/conversations/{mine}/book", {
-        "starts_at": slots[0], "name": "Reply Tester", "email": escalation_email})
+    book_first_free(mine, name="Reply Tester", email=escalation_email)
     for appt in call("GET", "/api/appointments")["appointments"]:
         if appt["conversation_id"] == mine and appt["status"] in ("booked", "confirmed"):
             booked_here.append(appt["id"])
