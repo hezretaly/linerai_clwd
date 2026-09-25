@@ -290,6 +290,18 @@ def agent_state(
     threw, and can be thrown back here.
     """
     verdict = email_agent.enabled(db)
+    # `have_model`'s own wording names LLM_MODE on purpose -- it is shared
+    # with the "Draft with Liner" composer, where a rep needs a refusal a
+    # stub reply cannot be mistaken for. This card has a different reader (a
+    # dealership manager deciding whether to turn email on), so its "no
+    # model" reason is reworded here rather than in the shared function.
+    detail = verdict.detail
+    if verdict.reason == "no_model":
+        detail = (
+            "Liner isn't connected to a live assistant on this deployment "
+            "yet, so it has nothing to write email replies with. Contact "
+            "Liner to set this up."
+        )
     # The last few messages Liner declined to answer, and why. This is the
     # question a person actually has -- "it did not reply, is that on purpose?"
     # -- and the reason was only on the receipt, which is a diagnostics strip
@@ -313,7 +325,7 @@ def agent_state(
     return {
         "on": verdict.allowed,
         "reason": verdict.reason,
-        "detail": verdict.detail,
+        "detail": detail,
         "declined": declined,
         # Named separately so the page can say *which* is off. One boolean
         # would send somebody editing `.env` to undo a dashboard switch.

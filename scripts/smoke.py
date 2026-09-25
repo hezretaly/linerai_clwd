@@ -7823,13 +7823,22 @@ def main() -> int:
         try:
             cfg_settings.email_agent = True
             runtime_flags.set(_db, "email_agent", "on", reason="smoke")
-            stub_verdict = agent.enabled(_db)
+            # `email_agent.have_model()` itself still names LLM_MODE on
+            # purpose -- it is shared with the "Draft with Liner" composer,
+            # where a rep needs a refusal a stub reply cannot be mistaken
+            # for (see the `have_model` docstring). This card's reader is a
+            # dealership manager, not a rep comparing a draft against a
+            # stub, so `/api/email/agent` (`agent_state` in api/mailbox.py)
+            # rewords it -- checked through that endpoint, like the
+            # off_in_env case above, rather than by calling `enabled()`
+            # in-process and expecting it to carry the card's wording.
+            card = call("GET", "/api/email/agent")
             check("with no model there is no reply, in words a dealer can "
                   "act on -- never an env var they cannot set",
-                  not stub_verdict.allowed and stub_verdict.reason == "no_model"
-                  and "Contact Liner" in stub_verdict.detail
-                  and "LLM_MODE" not in stub_verdict.detail,
-                  stub_verdict.detail)
+                  not card["on"] and card["reason"] == "no_model"
+                  and "Contact Liner" in card["detail"]
+                  and "LLM_MODE" not in card["detail"],
+                  card["detail"])
         finally:
             cfg_settings.email_agent = was
             runtime_flags.set(_db, "email_agent", "off", reason="smoke reset")

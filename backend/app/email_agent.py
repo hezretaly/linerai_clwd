@@ -132,11 +132,10 @@ def have_model(*, has_provider: bool = False) -> Verdict:
     if not has_provider and settings.llm_mode != "live":
         return Verdict(
             False, "no_model",
-            # Same rule as off_in_env: this reaches a dealer's screen, and
-            # LLM_MODE/OPENAI_API_KEY are not theirs to set.
-            "Liner isn't connected to a live assistant on this deployment "
-            "yet, so it has nothing to write email replies with. Contact "
-            "Liner to set this up.",
+            "LLM_MODE is stub, so there is no model to write with. The "
+            "scripted agent answers a screen -- it points at a booking card "
+            "and rail chips, neither of which exists in an inbox. Set "
+            "LLM_MODE=live and OPENAI_API_KEY.",
         )
     return Verdict(True)
 
