@@ -112,7 +112,14 @@ def overview(
     # *activity*, not on start, so a thread opened at nine with a message two
     # minutes ago is not buried under quieter, newer threads.
     start_of_day = clock.day_start_utc(dealership, clock.today(dealership))
-    today = threads.conversations(db).filter(Conversation.started_at >= start_of_day).all()
+    # `listed`, not the plain `conversations()`/`started()` base: an escalated
+    # caller with no transcribed word is still someone this panel, and the
+    # badge built from the same rows, has to show -- see `threads.listed`.
+    today = (
+        db.query(Conversation)
+        .filter(threads.listed(db), Conversation.started_at >= start_of_day)
+        .all()
+    )
     last_activity = threads.last_activity(db, [c.id for c in today])
 
     def activity_of(convo: Conversation):

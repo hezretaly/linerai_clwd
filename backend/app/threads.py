@@ -131,11 +131,17 @@ def is_live(convo: Conversation, last_at: datetime | None, now: datetime) -> boo
 
 
 def live_keys(db: Session, now: datetime) -> set[str]:
-    """`coalesce(lead_id, id)` for every started, not-closed, live thread --
+    """`coalesce(lead_id, id)` for every listed, not-closed, live thread --
     one key per person (a lead) or per anonymous thread. This is the unit the
     Conversations page's In progress card counts in, and what the sidebar
-    badge must equal."""
-    rows = conversations(db).filter(Conversation.status != "closed").all()
+    badge must equal.
+
+    `listed`, not `conversations` (plain `started`): the list itself now
+    shows an anonymous caller escalated before any of their audio was
+    transcribed, with its own `live` flag set, and a badge counting fewer
+    people than the page it names is the same bug in one more place.
+    """
+    rows = db.query(Conversation).filter(listed(db), Conversation.status != "closed").all()
     activity = last_activity(db, [c.id for c in rows])
     keys: set[str] = set()
     for c in rows:
