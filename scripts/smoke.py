@@ -6051,6 +6051,78 @@ def main() -> int:
     finally:
         _cdb.close()
 
+    # **An inbox has no screen of ours either.** Left unrefused, this returned
+    # the card plus "the contact form is on the buyer's screen now", and a
+    # real reply closed with "The contact form is there so someone can answer
+    # your questions" -- a sentence about a form that does not exist, mailed
+    # to a buyer.
+    from app.models import Lead as _EmailCardLead
+
+    _edb = _CardSession()
+    try:
+        mailed_convo = _Convo(channel="email", stage="opening")
+        _edb.add(mailed_convo)
+        _edb.commit()
+        try:
+            _tools.request_details(_edb, mailed_convo, {"fields": ["phone"]})
+            check("an email refuses the card rather than promising an inbox form",
+                  False, "it returned a card")
+        except _tools.ToolError as exc:
+            check("an email refuses the card rather than promising an inbox form",
+                  "form" in str(exc).lower() and "inbox" in str(exc).lower(),
+                  str(exc)[:60])
+
+        # An email lead is minted with an address, so `escalate_to_human`'s
+        # own "no way to reach them" branch never fires through the ordinary
+        # product flow -- exercised directly here, the same way the refusal
+        # above has no HTTP path onto it either.
+        unreachable = _EmailCardLead(name="", email="", phone="", source="email")
+        _edb.add(unreachable)
+        _edb.commit()
+        mailed_convo.lead_id = unreachable.id
+        _edb.commit()
+        esc = _tools.escalate_to_human(_edb, mailed_convo, {"reason": "is it a three-row?"})
+        check("no card is drawn on email even with nobody to ring",
+              not esc.get("fields"), str(esc)[:120])
+        check("and the guidance asks for the words instead of promising a form",
+              "contact form" not in esc["guidance"].lower()
+              and "name" in esc["guidance"].lower()
+              and "phone" in esc["guidance"].lower(),
+              esc["guidance"])
+
+        # And the ordinary case -- a real email buyer, who always has an
+        # address -- draws nothing either. There is no screen of ours on
+        # either side of "can we reach them", only on a call is there one.
+        reachable = _EmailCardLead(
+            name="", email=f"reachable.{stamp}@example.invalid", phone="", source="email"
+        )
+        _edb.add(reachable)
+        _edb.commit()
+        second_convo = _Convo(channel="email", stage="opening", lead_id=reachable.id)
+        _edb.add(second_convo)
+        _edb.commit()
+        esc2 = _tools.escalate_to_human(_edb, second_convo, {"reason": "any other colors?"})
+        check("and an ordinary reachable email buyer draws no card either",
+              not esc2.get("fields") and esc2.get("buyer_reachable") is True,
+              str(esc2)[:120])
+
+        # Children first, in their own commit: both escalations point at
+        # their conversation, and SQLite refuses to drop a row something else
+        # still points at -- and unlike the ORM relationships elsewhere in
+        # this codebase, a bare FK column with no `relationship()` is not
+        # ordered against its parent within a single flush.
+        from app.models import Escalation as _Esc
+        for esc_row in _edb.query(_Esc).filter(
+            _Esc.conversation_id.in_([mailed_convo.id, second_convo.id])
+        ):
+            _edb.delete(esc_row)
+        _edb.commit()
+        for row in (mailed_convo, second_convo, unreachable, reachable):
+            _edb.delete(row)
+        _edb.commit()
+    finally:
+        _edb.close()
+
     print("\n== the turn that asks for contact details draws the boxes ==")
     # **The one turn whose whole purpose is collecting a name and a number
     # drew no form at all.** `contact_capture` asked for both in a sentence
@@ -7844,6 +7916,26 @@ def main() -> int:
               "Do not quote their message back" in EMAIL_ADDENDUM)
         check("and to hand over rather than go quiet",
               "escalate_to_human" in EMAIL_ADDENDUM)
+        # **A car the model names must lead somewhere.** A real reply named
+        # five BMWs and gave the buyer no way to see any of them. `listing_url`
+        # already rides every car a tool returns (the dealer's own site, not
+        # ours) -- the fix is telling the model to relay it, not building a
+        # second link.
+        check("it tells the model to put the car's own link under each one",
+              "listing_url" in EMAIL_ADDENDUM)
+        check("and to leave the markdown out, since a mail client shows it typed",
+              "No markdown" in EMAIL_ADDENDUM and "asterisks" in EMAIL_ADDENDUM)
+
+        # **A bare link in the text half is auto-linkified by a mail client;**
+        # the same link in the HTML half is inert text unless something makes
+        # it an anchor -- so a car's listing_url reached a real inbox unclickable.
+        from app.integrations.email.resend import as_html as _as_html
+        _linked = _as_html("See it here: https://dealer.example/inventory/abc123.")
+        check("a bare https link in the html half becomes a clickable anchor",
+              '<a href="https://dealer.example/inventory/abc123">' in _linked,
+              _linked)
+        check("and the sentence's own full stop stays outside the link",
+              "abc123</a>." in _linked, _linked)
 
         # Over the cap, Liner does not answer badly -- it hands the message to
         # a person. Truncating and answering anyway means confidently replying
@@ -7890,10 +7982,21 @@ def main() -> int:
 
             spoke = replier.answer(
                 _db, envelope, buyer, theirs,
-                provider=FakeProvider([scripted("Happy to help -- when suits you?")]),
+                provider=FakeProvider([scripted(
+                    "**Happy to help** -- when suits you?\n\n"
+                    "- Weekdays are easiest\n- We're closed Sundays"
+                )]),
             )
             check("Liner answers, and the reply is a real outreach row",
                   spoke["sent"] and spoke.get("outreach_id"), str(spoke.get("reason")))
+            # **A model writes markdown unless something takes it out.** A real
+            # reply closed "The contact form is there..." with a price still
+            # wearing its asterisks. Chat strips in `record_assistant_message`,
+            # which this path never goes through, so `email_reply.answer` does
+            # it itself, once, before the send below and the mirrored copy in
+            # the thread -- so the two cannot differ.
+            check("the reply reaches an inbox with no markdown left in it",
+                  "*" not in spoke.get("body", ""), spoke.get("body", "")[:80])
 
             thread = _db.query(_Convo).filter_by(
                 lead_id=buyer.id, channel="email").one()
@@ -7901,6 +8004,11 @@ def main() -> int:
                   bool(thread.id))
             check("so Take over, pause and escalation are there from turn one",
                   hasattr(thread, "agent_paused"))
+            liner_rows = _db.query(_Msg).filter_by(
+                conversation_id=thread.id, role="liner").all()
+            check("and the thread's own mirror is just as clean",
+                  all("*" not in m.content for m in liner_rows),
+                  liner_rows[0].content[:80] if liner_rows else "")
             said = [m.role for m in _db.query(_Msg).filter_by(
                 conversation_id=thread.id).all()]
             check("and both sides are message rows, like any other channel",
