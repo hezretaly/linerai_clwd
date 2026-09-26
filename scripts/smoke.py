@@ -1037,6 +1037,15 @@ def main() -> int:
     # chatted at some point in the past -- that gap (the window applied, the
     # channel silently dropped on the way to `/api/leads`) was a real bug,
     # caught by review and fixed once; this is the regression test for it.
+    #
+    # The fixture rows this needs are given back in a `finally`, the same
+    # discipline `book_appointment`'s slots and the SMS section's stranger
+    # lead already follow here: a buyer with both `chat` and `voice` in their
+    # channels is exactly what a *later* section's own fixture lookup
+    # ({"chat", "voice"} <= channels, newest first) is searching for, and
+    # left behind it shadows that section's real fixture lead -- which
+    # surfaced two sections later as "the fixture really has an inferred
+    # field to test with", naming the wrong change entirely.
     from app.db import SessionLocal as _WinSession
     from app.db import utcnow as _win_utcnow
     from app.models import Conversation as _WinConvo, Lead as _WinLead, Message as _WinMessage
@@ -1044,6 +1053,7 @@ def main() -> int:
     from datetime import timedelta as _win_td
 
     _wdb = _WinSession()
+    mixed_lead_id = old_chat_id = None
     try:
         mixed_lead = _WinLead(
             id=_win_id(), name="Window Mix Test", email="window-mix@example.invalid",
@@ -1069,49 +1079,67 @@ def main() -> int:
         ])
         _wdb.commit()
         mixed_lead_id, old_chat_id = mixed_lead.id, old_chat.id
+
+        windowed_chat_leads = call("GET", "/api/leads?window=24h&channel=chat")["leads"]
+        check("a lead whose only recent activity is a different channel is not on "
+              "the Chats KPI's own windowed+channel link",
+              mixed_lead_id not in {lead["id"] for lead in windowed_chat_leads},
+              f"{len(windowed_chat_leads)} leads")
+        windowed_conversations = call(
+            "GET", "/api/conversations?window=24h&channel=chat"
+        )["conversations"]
+        check("nor does the anonymous-thread half of the same query admit the stale chat",
+              old_chat_id not in {c["id"] for c in windowed_conversations})
+        # And the positive case: the recent-call conversation itself belongs on
+        # a window+channel=voice query, so the fix narrows rather than hides.
+        windowed_voice_leads = call("GET", "/api/leads?window=24h&channel=voice")["leads"]
+        check("but the same buyer is found on the channel their recent activity "
+              "actually matches",
+              mixed_lead_id in {lead["id"] for lead in windowed_voice_leads})
+
+        for path in ("/api/conversations?window=nope", "/api/leads?window=nope",
+                     "/api/appointments?booked=nope", "/api/email/messages?window=nope"):
+            code, detail = status_of("GET", path)
+            check(f"an unrecognized window value on {path.split('?')[0]} is a 400, "
+                  "not a silent fallback to the default", code == 400, f"{code} {detail[:60]}")
+
+        chats_kpi = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "chat")
+        kpi_chat_buyers = {
+            (row["lead_id"] or row["id"])
+            for row in call("GET", "/api/conversations?window=24h&channel=chat")["conversations"]
+            if not row["lead_id"]
+        } | {lead["id"] for lead in windowed_chat_leads}
+        check("the Chats KPI's own count is exactly the buyers its own link shows",
+              chats_kpi["value"] == len(kpi_chat_buyers),
+              f"kpi={chats_kpi['value']} link={len(kpi_chat_buyers)}")
+
+        appts_kpi = next(
+            k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
+        )
+        booked_recently = call("GET", "/api/appointments?booked=24h")["appointments"]
+        check("the Appointments set KPI's own count is exactly its own link's rows",
+              appts_kpi["value"] == len(booked_recently),
+              f"kpi={appts_kpi['value']} link={len(booked_recently)}")
     finally:
+        # Guarded on a real id throughout -- `lead_id == None` would otherwise
+        # match every anonymous thread in the database the moment creation
+        # failed before `mixed_lead_id` was ever set.
+        if mixed_lead_id:
+            # Every message, then both conversations, then the lead --
+            # children before the parent, or the foreign keys refuse it.
+            _wdb.query(_WinMessage).filter(
+                _WinMessage.conversation_id.in_(
+                    _wdb.query(_WinConvo.id).filter(_WinConvo.lead_id == mixed_lead_id)
+                )
+            ).delete(synchronize_session=False)
+            _wdb.query(_WinConvo).filter(_WinConvo.lead_id == mixed_lead_id).delete(
+                synchronize_session=False
+            )
+            _wdb.query(_WinLead).filter(_WinLead.id == mixed_lead_id).delete(
+                synchronize_session=False
+            )
+            _wdb.commit()
         _wdb.close()
-
-    windowed_chat_leads = call("GET", "/api/leads?window=24h&channel=chat")["leads"]
-    check("a lead whose only recent activity is a different channel is not on "
-          "the Chats KPI's own windowed+channel link",
-          mixed_lead_id not in {lead["id"] for lead in windowed_chat_leads},
-          f"{len(windowed_chat_leads)} leads")
-    windowed_conversations = call("GET", "/api/conversations?window=24h&channel=chat")[
-        "conversations"
-    ]
-    check("nor does the anonymous-thread half of the same query admit the stale chat",
-          old_chat_id not in {c["id"] for c in windowed_conversations})
-    # And the positive case: the recent-call conversation itself belongs on a
-    # window+channel=voice query, so the fix narrows rather than just hides.
-    windowed_voice_leads = call("GET", "/api/leads?window=24h&channel=voice")["leads"]
-    check("but the same buyer is found on the channel their recent activity "
-          "actually matches",
-          mixed_lead_id in {lead["id"] for lead in windowed_voice_leads})
-
-    for path in ("/api/conversations?window=nope", "/api/leads?window=nope",
-                 "/api/appointments?booked=nope", "/api/email/messages?window=nope"):
-        code, detail = status_of("GET", path)
-        check(f"an unrecognized window value on {path.split('?')[0]} is a 400, "
-              "not a silent fallback to the default", code == 400, f"{code} {detail[:60]}")
-
-    chats_kpi = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "chat")
-    kpi_chat_buyers = {
-        (row["lead_id"] or row["id"])
-        for row in call("GET", "/api/conversations?window=24h&channel=chat")["conversations"]
-        if not row["lead_id"]
-    } | {lead["id"] for lead in windowed_chat_leads}
-    check("the Chats KPI's own count is exactly the buyers its own link shows",
-          chats_kpi["value"] == len(kpi_chat_buyers),
-          f"kpi={chats_kpi['value']} link={len(kpi_chat_buyers)}")
-
-    appts_kpi = next(
-        k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
-    )
-    booked_recently = call("GET", "/api/appointments?booked=24h")["appointments"]
-    check("the Appointments set KPI's own count is exactly its own link's rows",
-          appts_kpi["value"] == len(booked_recently),
-          f"kpi={appts_kpi['value']} link={len(booked_recently)}")
 
     print("\n== credit applications are real sends, or nothing ==")
     over0 = call("GET", "/api/overview")
