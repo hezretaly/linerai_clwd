@@ -6289,9 +6289,14 @@ def main() -> int:
     # Polish rewrites the rep's subject with their body, so the email composer
     # has to send it: it did not, and a polished body came back under a
     # subject the assistant had never seen.
+    #
+    # Nested one level deeper than a bare composer: the button that answers a
+    # buyer's own inbound email reads the words above the quote instead and
+    # never sends a subject (it keeps the one it answers), so this -- the
+    # plain, new-thread case -- is the `else` half of that choice.
     check("the email composer sends its subject to be polished with the body",
           "subject: subject ?? ''" in _assist
-          and 'channel="email"\n          text={body}\n          subject={subject}' in _lead_page)
+          and 'channel="email"\n            text={body}\n            subject={subject}' in _lead_page)
     for _channel in ("email", "sms", "chat"):
         check(f"and the {_channel} composer has it beside Send",
               f'<AssistButton\n' in _lead_page and f'channel="{_channel}"' in _lead_page)
