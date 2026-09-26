@@ -8377,15 +8377,25 @@ def main() -> int:
             )
             _db.add_all([receipt, theirs])
             _db.commit()
-            was_flag = runtime_flags.get(_db, "email_agent")
+            # Two switches, and the stricter wins: `.env`'s `email_agent` and
+            # the runtime flag of the same name both have to be on, or
+            # `schedule` refuses with `off_in_env` before it ever reaches the
+            # cooldown this section is testing.
+            was_env, was_flag = cfg_settings.email_agent, runtime_flags.get(_db, "email_agent")
+            cfg_settings.email_agent = True
             runtime_flags.set(_db, "email_agent", "on", reason="smoke")
             result = _cool_replier.schedule(_db, receipt, waiter, theirs)
             check("it queues rather than answers on the spot",
                   result["queued"], str(result.get("reason")))
-            due_row = _db.query(_CoolDue).filter_by(lead_id=waiter.id).one()
-            minutes_out = (due_row.due_at - utcnow_local()).total_seconds() / 60
+            due_row = (
+                _db.query(_CoolDue).filter_by(lead_id=waiter.id).one_or_none()
+                if result["queued"] else None
+            )
+            minutes_out = (due_row.due_at - utcnow_local()).total_seconds() / 60 if due_row else None
             check("and it is due in the dashboard's 5 minutes, not the old default",
-                  4.9 <= minutes_out <= 5.1, f"{minutes_out:.2f} minutes")
+                  due_row is not None and 4.9 <= minutes_out <= 5.1,
+                  f"{minutes_out:.2f} minutes" if minutes_out is not None else "not queued")
+            cfg_settings.email_agent = was_env
             runtime_flags.set(_db, "email_agent", was_flag or "off", reason="smoke reset")
         finally:
             runtime_flags.set(_db, "email_reply_cooldown", "", reason="smoke reset")
