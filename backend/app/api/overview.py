@@ -54,14 +54,19 @@ def overview(
     # Only conversations the buyer spoke in -- the same rule the list applies,
     # from `app/threads.py`. A chat widget opened and closed again is a row,
     # and counting it makes a quiet afternoon read as fourteen chats.
-    def convos_on(channel: str) -> int:
-        return (
-            threads.conversations(db)
-            .filter(Conversation.started_at >= since, Conversation.channel == channel)
-            .count()
-        )
-
-    chats = convos_on("chat")
+    #
+    # Counted in buyers, not in conversation rows, because the list this card
+    # links to (`?window=24h`) shows one row per buyer too: a buyer who opened
+    # two chat threads today is one row there, and a card counting rows would
+    # say 2 over a list of 1. `lead_id`, or the conversation's own id where
+    # there is none -- an anonymous thread is its own "buyer" for counting,
+    # exactly as it is its own row on the list.
+    chat_convos = (
+        db.query(Conversation)
+        .filter(threads.started_since(db, since), Conversation.channel == "chat")
+        .all()
+    )
+    chats = len({c.lead_id or c.id for c in chat_convos})
 
     # Real rows, and only the ones that actually went. `outreach_status.SENT_EMAIL`
     # is the one definition the Mail page's own Sent tab uses too -- without
@@ -84,10 +89,7 @@ def overview(
 
     appointments_set = (
         db.query(Appointment)
-        .filter(
-            Appointment.created_at >= since,
-            Appointment.status.in_(appointment_scope.STANDING_STATUSES),
-        )
+        .filter(appointment_scope.booked_since(since))
         .count()
     )
     leads_captured = db.query(Lead).filter(Lead.created_at >= since).count()

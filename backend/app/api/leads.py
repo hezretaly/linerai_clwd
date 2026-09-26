@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -232,6 +234,8 @@ def lead_summaries(
 def list_leads(
     source: str | None = Query(None),
     risk: bool | None = Query(None, description="Only leads with no way to reach them"),
+    window: str | None = Query(None),
+    channel: str | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
     dealership: Dealership = Depends(get_dealership),
@@ -239,6 +243,21 @@ def list_leads(
     query = db.query(Lead)
     if source:
         query = query.filter(Lead.source == source)
+    if window or channel:
+        # `Lead.channels` (in `lead_summaries`, below) is all-time -- it
+        # cannot answer "did this buyer chat in the last 24 hours." Only a
+        # lead with a *conversation* matching the window/channel belongs in
+        # a windowed list; this mirrors `/api/conversations`'s own filter so
+        # the two pages can never disagree about the same card's set.
+        convo_leads = db.query(Conversation.lead_id).filter(Conversation.lead_id.isnot(None))
+        if window:
+            if window != "24h":
+                raise HTTPException(400, "window must be '24h'")
+            since = utcnow() - timedelta(hours=24)
+            convo_leads = convo_leads.filter(threads.started_since(db, since))
+        if channel:
+            convo_leads = convo_leads.filter(Conversation.channel == channel)
+        query = query.filter(Lead.id.in_(convo_leads.distinct()))
     rows = query.order_by(Lead.created_at.desc()).all()
     if risk is True:
         # contact_risk inverted when SMS came out: no email is what makes a

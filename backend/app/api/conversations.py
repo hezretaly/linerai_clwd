@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app import appointment_scope, email_outbound, email_reply, threads, timeline
 from app.recap import conversation_recap
@@ -32,6 +32,7 @@ def _get(db: Session, conversation_id: str) -> Conversation:
 def list_conversations(
     status: str | None = Query(None),
     channel: str | None = Query(None),
+    window: str | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> dict:
@@ -45,6 +46,15 @@ def list_conversations(
     # this list is where a rep looks. Excluding such a row hid it from the
     # very page "Needs a person" points a rep at.
     query = db.query(Conversation).filter(threads.listed(db))
+    if window:
+        if window != "24h":
+            raise HTTPException(400, "window must be '24h'")
+        since = utcnow() - timedelta(hours=24)
+        # Narrower than `listed()`: this is "a buyer actually started this
+        # recently" -- the same predicate the Chats KPI counts -- not merely
+        # "still open," so a stale thread awaiting a person does not inflate
+        # a card whose caption says "last 24 hours."
+        query = query.filter(threads.started_since(db, since))
     if status:
         query = query.filter(Conversation.status == status)
     if channel:

@@ -44,22 +44,31 @@ const KPI_ICONS: Record<string, IconName> = {
 }
 
 /** Where each figure came from, so the card is a way in rather than a number
- *  to go and look up somewhere else. */
+ *  to go and look up somewhere else. `credit_apps` has no entry here -- see
+ *  the special case in the render loop below for why. */
 const KPI_LINKS: Record<string, string> = {
   // `?channel=chat`, not a bare link: the card counts a buyer only when
   // `chat` is in their `channels`, and the list's own "Came from" filter now
   // reads membership the same way (`lib/conversationFilters`) -- so this is
-  // the one link that actually lands on the KPI's own set (item 26).
-  chat: '/app/conversations?channel=chat',
+  // the one link that actually lands on the KPI's own set (item 26). The
+  // card itself has always been a last-24h count, though -- `&window=24h`
+  // is what actually narrows the list to that same window; without it the
+  // link showed every chat conversation ever, a superset of the number above
+  // it.
+  chat: '/app/conversations?channel=chat&window=24h',
   // The Mail page, not the conversations list -- "Emails sent" counts
   // `Outreach` rows (`outreach_status.SENT_EMAIL`), which is exactly what
   // the Mail page's own Sent tab counts. The conversations list has no
   // "Sent" concept at all to reconcile the number against (item 2).
-  email: '/app/campaigns',
-  appointments_set: '/app/calendar',
+  // `?box=sent&window=24h` lands on that tab already narrowed to the same
+  // last-24h window the card counts, rather than on the whole mailbox.
+  email: '/app/campaigns?box=sent&window=24h',
+  // `?booked=24h`: the card counts appointments *booked* in the last 24h,
+  // not ones scheduled to happen in it, and `booked` is the literal value
+  // `/api/appointments` takes to narrow the same way.
+  appointments_set: '/app/calendar?booked=24h',
   // Both channels: an escalation on a call does not appear on the chat page.
   needs_a_person: '/app/conversations?filter=flagged',
-  credit_apps: '/app/conversations',
 }
 
 type TrendRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom'
@@ -285,13 +294,26 @@ export function OverviewPage() {
 
       {/* ---- KPIs: five cards, the five the endpoint computes -------------- */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {data.kpis.map((kpi) => (
-          <Link
-            key={kpi.key}
-            to={KPI_LINKS[kpi.key] ?? '/app'}
-            className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Card className="h-full shadow-sm transition-colors hover:border-primary">
+        {data.kpis.map((kpi) => {
+          // `credit_apps` counts a click on the finance link (the counted hop
+          // in app/redirect.py), and that click deliberately names no
+          // conversation -- this codebase's own rule that a click is never
+          // tied to a thread. There is no page listing those clicks to land
+          // on, so this card is never a link, whatever its value or
+          // `unavailable` says.
+          //
+          // Every other card: not clickable at zero, and not when the
+          // feature behind it is `unavailable` -- a link promising rows and
+          // landing on nothing, or on a feature that was never set up, is
+          // worse than no link.
+          const linkable = kpi.key !== 'credit_apps' && kpi.value !== 0 && !kpi.unavailable
+          const card = (
+            <Card
+              className={clsx(
+                'h-full shadow-sm',
+                linkable && 'transition-colors hover:border-primary',
+              )}
+            >
               <div className="flex items-center justify-between p-6 pb-2">
                 <h3 className="text-sm font-medium text-primary">{kpi.label}</h3>
                 <Icon
@@ -307,8 +329,19 @@ export function OverviewPage() {
                 <p className="mt-1 text-xs text-muted-foreground">{kpi.window}</p>
               </div>
             </Card>
-          </Link>
-        ))}
+          )
+          return linkable ? (
+            <Link
+              key={kpi.key}
+              to={KPI_LINKS[kpi.key] ?? '/app'}
+              className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {card}
+            </Link>
+          ) : (
+            <div key={kpi.key}>{card}</div>
+          )
+        })}
       </div>
 
       {/* ---- Needs a person ----------------------------------------------- */}

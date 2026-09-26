@@ -175,6 +175,12 @@ export function ConversationListPage() {
   // chips already own that key.
   const [origin, setOrigin] = useState(params.get('channel') ?? '')
   const [assignee, setAssignee] = useState('')
+  // Not seeded into state like `origin` above -- there is no control here
+  // that changes the window independently of the URL, only "Show all"
+  // below, which clears the param directly, so state would go stale the
+  // moment that click fired. Exactly `'24h'`, so a stray value in the URL
+  // reads as no window rather than silently narrowing the list.
+  const windowed = params.get('window') === '24h'
 
   // Linkable, and the back button means something -- the same rule the Chat
   // page follows, because the Overview links into both.
@@ -183,13 +189,34 @@ export function ConversationListPage() {
     setParams(next === 'all' ? {} : { filter: next }, { replace: true })
   }
 
+  // Sent to the server only alongside `window` -- unwindowed, `origin` is
+  // purely the client-side filter below, applied over every channel a lead
+  // has ever used. Windowed, the backend has to be told the same channel:
+  // without it, `/api/leads?window=24h` admits a buyer whose only activity
+  // in the window was a call, and the client-side filter then waves them
+  // through anyway because `chat` is still in their all-time `channels` --
+  // showing up on the Chats KPI's own `?channel=chat&window=24h` link
+  // despite not having chatted in the window at all.
+  const windowChannel = windowed && origin ? origin : ''
+
   const { data, isLoading } = useQuery({
-    queryKey: ['conversations'],
-    queryFn: () => api.get<{ conversations: Conversation[] }>('/api/conversations'),
+    // `windowed`/`windowChannel` in the key -- not just the URL -- or a page
+    // that opened windowed and then followed "Show all" would keep serving
+    // the first fetch's (narrower) cache entry instead of asking again.
+    queryKey: ['conversations', windowed, windowChannel],
+    queryFn: () =>
+      api.get<{ conversations: Conversation[] }>(
+        `/api/conversations${windowed ? '?window=24h' : ''}`
+        + (windowChannel ? `&channel=${windowChannel}` : ''),
+      ),
   })
   const { data: leadData } = useQuery({
-    queryKey: ['leads'],
-    queryFn: () => api.get<{ leads: Lead[] }>('/api/leads'),
+    queryKey: ['leads', windowed, windowChannel],
+    queryFn: () =>
+      api.get<{ leads: Lead[] }>(
+        `/api/leads${windowed ? '?window=24h' : ''}`
+        + (windowChannel ? `&channel=${windowChannel}` : ''),
+      ),
   })
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -270,6 +297,25 @@ export function ConversationListPage() {
           </Link>
         }
       />
+
+      {/* ---- windowed notice: only true when a KPI's own link narrowed the
+          fetch, so the rows below are exactly what that card counted ---- */}
+      {windowed && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Icon name="clock" className="h-3.5 w-3.5 shrink-0" />
+          Showing buyers from the last 24 hours.
+          <button
+            onClick={() => {
+              const next = new URLSearchParams(params)
+              next.delete('window')
+              setParams(next, { replace: true })
+            }}
+            className="font-medium text-primary hover:underline"
+          >
+            Show all
+          </button>
+        </div>
+      )}
 
       {/* ---- counters, which are also the filters ---- */}
       <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

@@ -500,7 +500,6 @@ def build_user(name: str, local: str, role: str, initials: str, cap: int) -> Use
     return User(
         name=name, email=staff_address(local), password_hash=_hash(_password_for(role)),
         role=role, avatar_initials=initials, daily_cap=cap,
-        notify_channel="email" if role == "manager" else "dashboard",
     )
 
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
@@ -98,10 +99,24 @@ function dateKey(d: Date): string {
 const VIEW_KEY = 'liner.calendar.view'
 
 export function CalendarPage() {
+  const [params, setParams] = useSearchParams()
+  // Present only when arriving from the Overview's "Appointments set" KPI
+  // link (`/app/calendar?booked=24h`) -- *booked*, not *starts*: the KPI
+  // counts by when the appointment was made, a different axis from the
+  // views below it, which are both organised by when the visit happens.
+  // Read raw rather than validated, because this page never sends it
+  // anywhere that would 400 on a typo -- it only ever compares it to the
+  // one literal the backend accepts (`?range=` on trends does the refusing).
+  const booked = params.get('booked')
+
   const [weekOffset, setWeekOffset] = useState(0)
   const [openId, setOpenId] = useState<string | null>(null)
   const [view, setView] = useState<'week' | 'list'>(
-    () => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'week'),
+    // Arriving from the KPI link is a more specific intent than "whichever
+    // view I had open last" -- so it wins over VIEW_KEY, but only for this
+    // initial render. Switching to Week afterwards is not fought (`setMode`
+    // below still writes VIEW_KEY as it always did).
+    () => (booked === '24h' || localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'week'),
   )
   // The red line marking now, in the *dealership's* zone. Slots are naive
   // timestamps meaning showroom-local, so reading `now.getHours()` off the
@@ -126,8 +141,16 @@ export function CalendarPage() {
     queryFn: () => api.get<Overview>('/api/overview'),
   })
   const { data, isLoading } = useQuery({
-    queryKey: ['appointments'],
-    queryFn: () => api.get<{ appointments: Appointment[] }>('/api/appointments'),
+    // `['appointments']` alone still matches this by prefix for every
+    // existing `invalidateQueries({ queryKey: ['appointments'] })` (the
+    // drawer's confirm/assign/outreach mutations) -- adding `booked` here
+    // only keeps the two windows (all appointments, last-24h-booked) from
+    // sharing a cache entry.
+    queryKey: ['appointments', booked],
+    queryFn: () =>
+      api.get<{ appointments: Appointment[] }>(
+        booked === '24h' ? '/api/appointments?booked=24h' : '/api/appointments',
+      ),
   })
 
   const dealership = overview?.dealership
@@ -208,6 +231,14 @@ export function CalendarPage() {
             onOpen={setOpenId}
             unconfirmed={overview?.badges.appointments}
             todayKey={todayKey}
+            booked={booked === '24h'}
+            onClearBooked={() =>
+              setParams((prev) => {
+                const next = new URLSearchParams(prev)
+                next.delete('booked')
+                return next
+              })
+            }
           />
         </div>
       )}
@@ -385,6 +416,8 @@ function BookedList({
   onOpen,
   unconfirmed,
   todayKey,
+  booked,
+  onClearBooked,
 }: {
   appointments: Appointment[]
   onOpen: (id: string) => void
@@ -396,6 +429,14 @@ function BookedList({
   unconfirmed?: number
   /** The dealership's own zoned `YYYY-MM-DD` for "today" (item 31). */
   todayKey: string
+  /** True for the Overview's "Appointments set" KPI link (`?booked=24h`):
+   *  `appointments` already arrived narrowed to standing bookings *made* in
+   *  the last 24 hours. That is a different axis from every predicate below
+   *  -- day-grouping and the past/cancelled toggles all answer "when does the
+   *  day fall" -- so none of it applies and the set is shown flat instead. */
+  booked?: boolean
+  /** Clears `?booked=24h`, back to the ordinary list. */
+  onClearBooked?: () => void
 }) {
   const [showPast, setShowPast] = useState(false)
   const [showCancelled, setShowCancelled] = useState(false)
@@ -416,6 +457,83 @@ function BookedList({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointments, showPast, showCancelled, now])
+
+  if (booked) {
+    const sorted = [...appointments].sort((a, b) => a.starts_at.localeCompare(b.starts_at))
+    return (
+      <div className="space-y-4">
+        {/* Same bar the Conversations and Mail pages land a KPI's window
+            link on -- an inline "Show all" text link in a muted caption,
+            not a bordered button, so the three windowed drill-downs read as
+            one pattern rather than three unrelated ones. */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Icon name="clock" className="h-3.5 w-3.5 shrink-0" />
+          <span className="tnum">
+            <span className="font-medium text-foreground">{sorted.length}</span>{' '}
+            {sorted.length === 1 ? 'appointment' : 'appointments'} booked in the last 24 hours.
+          </span>
+          <button onClick={onClearBooked} className="font-medium text-primary hover:underline">
+            Show all
+          </button>
+        </div>
+        {!sorted.length ? (
+          <Card>
+            <Empty
+              title="Nothing booked in the last 24 hours"
+              hint="Appointments set since this time yesterday appear here."
+            />
+          </Card>
+        ) : (
+          <Card className="overflow-hidden">
+            <ul className="divide-y divide-border">
+              {sorted.map((appointment) => (
+                <li key={appointment.id}>
+                  <button
+                    onClick={() => onOpen(appointment.id)}
+                    className={clsx(
+                      'flex w-full items-baseline gap-3 px-4 py-3 text-left transition-colors hover:bg-accent',
+                      isOff(appointment) && 'opacity-55',
+                    )}
+                  >
+                    {/* The full date, not just the time: nothing here groups
+                        by day, so the row itself has to say when the visit
+                        falls -- separately from the heading above it, which
+                        says when it was *booked*. */}
+                    <span className="shrink-0 whitespace-nowrap text-sm font-medium">
+                      {dateTime(appointment.starts_at)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">
+                        {appointment.lead?.name ?? 'Unknown'}
+                      </span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {appointment.vehicle?.title ?? 'No vehicle'}
+                        {appointment.assigned_to
+                          ? ` -- ${appointment.assigned_to.name}`
+                          : ' -- unassigned'}
+                      </span>
+                    </span>
+                    <Badge
+                      tone={
+                        appointment.status === 'confirmed'
+                          ? 'success'
+                          : isOff(appointment)
+                            ? 'neutral'
+                            : 'primary'
+                      }
+                      className="shrink-0"
+                    >
+                      {appointment.status === 'no_show' ? 'no show' : appointment.status}
+                    </Badge>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+      </div>
+    )
+  }
 
   if (!appointments.length) {
     return (

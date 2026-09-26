@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 
@@ -313,7 +313,24 @@ interface Recipient {
  * on the screen somebody lands on reads as a page that failed to lay out. */
 export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
   const queryClient = useQueryClient()
-  const [box, setBox] = useState<Box>('all')
+  const [params, setParams] = useSearchParams()
+  // Seeded from the URL rather than always `'all'`: the Overview's Emails
+  // sent KPI links in with `?box=sent&window=24h`, and this page used to
+  // ignore both and open on the unfiltered tab regardless of where the link
+  // pointed. Validated against `BOXES` the way ConversationList checks
+  // `?filter=` against `CONVERSATION_FILTERS` -- a stale or hand-edited value
+  // falls back to `all` rather than the tab strip rendering a box nothing
+  // here recognises.
+  const requestedBox = params.get('box')
+  const [box, setBox] = useState<Box>(
+    BOXES.some(([key]) => key === requestedBox) ? (requestedBox as Box) : 'all',
+  )
+  // Read straight from the URL rather than held in state: the only thing that
+  // ever changes it is "Show all" below, which already re-renders this page.
+  // Shadows the DOM global for the rest of this function, harmlessly --
+  // nothing here calls it, and TypeScript refuses a `window.<method>` typo
+  // against a value typed `string | null`.
+  const window = params.get('window')
   const [people, setPeople] = useState<ThreadBox>('open')
   const [query, setQuery] = useState('')
   const [reading, setReading] = useState<Mail | null>(null)
@@ -331,9 +348,13 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
   }, [])
 
   const { data: mail, dataUpdatedAt, isFetching } = useQuery({
-    queryKey: ['email-messages', box, query, shown],
+    // `window` in the key, not folded into `box` or `query`: a windowed and
+    // an unwindowed fetch for the same tab and search are different requests
+    // and must not answer from each other's cache.
+    queryKey: ['email-messages', box, query, shown, window],
     queryFn: () => api.get<Mailbox>(
-      `/api/email/messages?box=${box}&q=${encodeURIComponent(query)}&limit=${shown}`,
+      `/api/email/messages?box=${box}&q=${encodeURIComponent(query)}&limit=${shown}`
+      + (window === '24h' ? '&window=24h' : ''),
     ),
     refetchInterval: POLL_MS,
     // A tab left open all morning is the case this page is for. Coming back to
@@ -455,7 +476,23 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
             {BOXES.map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => setBox(key)}
+                onClick={() => {
+                  setBox(key)
+                  // A manual tab pick is the user taking the wheel back from
+                  // whatever KPI link brought them here -- the 24h window was
+                  // scoped to the box that link opened on, and carrying it
+                  // silently onto a tab someone actually chose is how a
+                  // "Received" tab ends up quietly missing everything older
+                  // than a day with no caption saying so (the banner below
+                  // only ever mentions "sent mail").
+                  if (window) {
+                    setParams((prev) => {
+                      const next = new URLSearchParams(prev)
+                      next.delete('window')
+                      return next
+                    }, { replace: true })
+                  }
+                }}
                 className={clsx(
                   'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                   box === key
@@ -510,6 +547,25 @@ export function EmailSetupPage({ heading = true }: { heading?: boolean }) {
             Check now
           </button>
         </div>
+
+        {/* The Overview's Emails sent KPI links in on this window -- a tab
+            silently narrowed by an unfamiliar URL param and no caption saying
+            so would read as a mailbox missing everything older than a day. */}
+        {window === '24h' && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+            <span>Showing sent mail from the last 24 hours.</span>
+            <button
+              onClick={() => setParams((prev) => {
+                const next = new URLSearchParams(prev)
+                next.delete('window')
+                return next
+              }, { replace: true })}
+              className="ml-auto shrink-0 font-medium text-primary hover:underline"
+            >
+              Show all
+            </button>
+          </div>
+        )}
 
         {!mail ? (
           <Spinner />

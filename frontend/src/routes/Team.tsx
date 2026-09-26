@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseMutationResult } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
-import { hoursLabel, time } from '../lib/format'
+import { hoursLabel } from '../lib/format'
+import { optimisticPatch } from '../lib/optimistic'
 import type {
   Dealership,
   NewRepResponse,
@@ -18,6 +19,11 @@ export function TeamPage() {
   const queryClient = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
   const [removing, setRemoving] = useState<TeamMember | null>(null)
+  // Switching TO out is a real consequence (no new work until somebody
+  // switches them back), so it goes through a confirmation sheet rather than
+  // firing on the same click as every other toggle here; switching back is
+  // reversible with nothing to lose, so it stays a plain switch.
+  const [confirmingOut, setConfirmingOut] = useState<TeamMember | null>(null)
   const [revealed, setRevealed] = useState<
     { title: string; name: string; email: string; password: string } | null
   >(null)
@@ -39,15 +45,19 @@ export function TeamPage() {
   })
   const canManage = me?.user.role === 'manager'
 
-  const patch = useMutation({
-    mutationFn: ({ id, ...payload }: { id: string } & Record<string, unknown>) =>
-      api.patch(`/api/team/${id}`, payload),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['team'] }),
-  })
-
   const setOut = useMutation({
     mutationFn: ({ id, out }: { id: string; out: boolean }) =>
       api.patch<TeamMember>(`/api/team/${id}/out`, { out }),
+    // The switch reads `checked` straight off this query's data, so without
+    // this it does not move until the PATCH round-trips -- a laggy toggle on
+    // anything slower than a fast connection. See lib/optimistic.ts.
+    ...optimisticPatch<{ members: TeamMember[] }, { id: string; out: boolean }>(
+      queryClient,
+      ['team'],
+      (old, { id, out }) => ({
+        members: old.members.map((m) => (m.id === id ? { ...m, out } : m)),
+      }),
+    ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['team'] }),
   })
 
@@ -90,10 +100,8 @@ export function TeamPage() {
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2 font-medium">Name</th>
                 <th className="px-4 py-2 font-medium">Role</th>
-                <th className="px-4 py-2 font-medium">Today</th>
-                <th className="px-4 py-2 font-medium">Next free</th>
-                <th className="px-4 py-2 font-medium">Notify by</th>
-                <th className="px-4 py-2 font-medium">Out today</th>
+                <th className="px-4 py-2 font-medium">Appointments today</th>
+                <th className="px-4 py-2 font-medium">Out</th>
                 {canManage && (
                   <th className="px-4 py-2 font-medium">
                     <span className="sr-only">Actions</span>
@@ -128,43 +136,15 @@ export function TeamPage() {
                   <td className="px-4 py-2.5 capitalize text-muted-foreground">
                     {member.role}
                   </td>
-                  <td className="px-4 py-2.5">
-                    <span className="tabular-nums">
-                      {member.todays_appointments}/{member.daily_cap}
-                    </span>
-                    {member.at_capacity && (
-                      <Badge tone="primary" className="ml-2">
-                        At cap
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {time(member.next_free_at)}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {/* Two options only. SMS is out of scope everywhere. */}
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={member.notify_channel === 'email'}
-                        onChange={(value) =>
-                          patch.mutate({
-                            id: member.id,
-                            notify_channel: value ? 'email' : 'dashboard',
-                          })
-                        }
-                        label={`Notify ${member.name} by email`}
-                      />
-                      <span className="text-xs text-muted-foreground">
-                        {member.notify_channel === 'email' ? 'Email + dashboard' : 'Dashboard only'}
-                      </span>
-                    </div>
-                  </td>
+                  <td className="px-4 py-2.5 tabular-nums">{member.todays_appointments}</td>
                   <td className="px-4 py-2.5">
                     {canToggleOut ? (
                       <Switch
                         checked={member.out}
-                        onChange={(value) => setOut.mutate({ id: member.id, out: value })}
-                        label={`${member.name} is out today`}
+                        onChange={(value) =>
+                          value ? setConfirmingOut(member) : setOut.mutate({ id: member.id, out: value })
+                        }
+                        label={`${member.name} is out`}
                       />
                     ) : (
                       <span className="text-xs text-muted-foreground">
@@ -250,6 +230,14 @@ export function TeamPage() {
       )}
 
       {removing && <RemoveRepSheet member={removing} onClose={() => setRemoving(null)} />}
+
+      {confirmingOut && (
+        <OutConfirmSheet
+          member={confirmingOut}
+          setOut={setOut}
+          onClose={() => setConfirmingOut(null)}
+        />
+      )}
 
       {revealed && (
         <PasswordRevealSheet
@@ -353,11 +341,11 @@ function blastRadius(preview: RemovePreview): string {
   return `This hands back ${parts.length ? `${parts.join(', ')} and ${last}` : last}.`
 }
 
-/** Removing is `PATCH .../active=false`, the same call the notify and Out
- *  switches already use -- there is no separate remove endpoint. The blast
- *  radius is shown before the decision, same as taking a car off the lot
- *  (Inventory.tsx): the moment that matters is who this hands back, and a
- *  confirmation that arrives after is a speed bump, not a warning. */
+/** Removing is `PATCH .../active=false` -- there is no separate remove
+ *  endpoint. The blast radius is shown before the decision, same as taking
+ *  a car off the lot (Inventory.tsx): the moment that matters is who this
+ *  hands back, and a confirmation that arrives after is a speed bump, not a
+ *  warning. */
 function RemoveRepSheet({ member, onClose }: { member: TeamMember; onClose: () => void }) {
   const queryClient = useQueryClient()
 
@@ -407,6 +395,64 @@ function RemoveRepSheet({ member, onClose }: { member: TeamMember; onClose: () =
             onClick={() => remove.mutate()}
           >
             {remove.isPending ? 'Removing...' : 'Remove'}
+          </Button>
+        </div>
+      </div>
+    </Sheet>
+  )
+}
+
+/** Same shape as `RemoveRepSheet` -- the blast radius shown before the
+ *  decision -- but with no preview to fetch: unlike a removal, what marking
+ *  somebody out affects is always the same two sentences, not something to
+ *  compute per rep. `setOut` is the page's own mutation (already wired for
+ *  an instant toggle, above) so confirming here and flipping the switch back
+ *  off go through the one optimistic update rather than two that could
+ *  disagree; the per-call `onSuccess` is what closes this sheet, so a
+ *  request that fails -- rolled back automatically -- leaves it open with
+ *  the inline error below instead of having already closed on an update that
+ *  then reverts. */
+function OutConfirmSheet({
+  member,
+  setOut,
+  onClose,
+}: {
+  member: TeamMember
+  // Matches what `useMutation` actually infers for the page's `setOut` once
+  // `optimisticPatch` is spread in -- its `onMutate` return value becomes the
+  // fourth (context) type parameter, so a looser one here would not accept it.
+  setOut: UseMutationResult<
+    TeamMember,
+    unknown,
+    { id: string; out: boolean },
+    { previous: { members: TeamMember[] } | undefined }
+  >
+  onClose: () => void
+}) {
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title={<h2 className="text-base font-semibold">Mark {member.name} as out?</h2>}
+    >
+      <div className="space-y-4">
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          They won't be offered new buyers or appointments, and the calendar has one fewer
+          slot per time until you switch them back. What they already have stays theirs.
+        </p>
+        {setOut.isError && (
+          <p className="text-sm text-destructive">{(setOut.error as ApiError).message}</p>
+        )}
+        <div className="flex justify-end gap-2 border-t border-border pt-3">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={setOut.isPending}
+            onClick={() => setOut.mutate({ id: member.id, out: true }, { onSuccess: onClose })}
+          >
+            {setOut.isPending ? 'Marking out...' : 'Mark out'}
           </Button>
         </div>
       </div>

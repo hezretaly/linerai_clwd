@@ -1029,6 +1029,90 @@ def main() -> int:
     check("a slot refuses once it is genuinely full, not after the first booking",
           code == 409, detail[:80])
 
+    print("\n== a windowed KPI link lands on exactly the rows it counted ==")
+    # The Chats KPI counts distinct buyers with a *chat* conversation started
+    # in the last 24h (threads.started_since + channel == "chat"); its own
+    # link is `?channel=chat&window=24h`. A buyer whose only recent activity
+    # is on a *different* channel must not show up there just because they
+    # chatted at some point in the past -- that gap (the window applied, the
+    # channel silently dropped on the way to `/api/leads`) was a real bug,
+    # caught by review and fixed once; this is the regression test for it.
+    from app.db import SessionLocal as _WinSession
+    from app.db import utcnow as _win_utcnow
+    from app.models import Conversation as _WinConvo, Lead as _WinLead, Message as _WinMessage
+    from app.models.base import new_id as _win_id
+    from datetime import timedelta as _win_td
+
+    _wdb = _WinSession()
+    try:
+        mixed_lead = _WinLead(
+            id=_win_id(), name="Window Mix Test", email="window-mix@example.invalid",
+            source="chat",
+        )
+        _wdb.add(mixed_lead)
+        _wdb.flush()
+        old_chat = _WinConvo(
+            id=_win_id(), lead_id=mixed_lead.id, channel="chat",
+            started_at=_win_utcnow() - _win_td(days=7),
+        )
+        recent_call = _WinConvo(
+            id=_win_id(), lead_id=mixed_lead.id, channel="voice",
+            started_at=_win_utcnow() - _win_td(hours=1),
+        )
+        _wdb.add_all([old_chat, recent_call])
+        _wdb.flush()
+        _wdb.add_all([
+            _WinMessage(id=_win_id(), conversation_id=old_chat.id, role="buyer",
+                        content="hello", created_at=_win_utcnow() - _win_td(days=7)),
+            _WinMessage(id=_win_id(), conversation_id=recent_call.id, role="buyer",
+                        content="hi from a call", created_at=_win_utcnow() - _win_td(hours=1)),
+        ])
+        _wdb.commit()
+        mixed_lead_id, old_chat_id = mixed_lead.id, old_chat.id
+    finally:
+        _wdb.close()
+
+    windowed_chat_leads = call("GET", "/api/leads?window=24h&channel=chat")["leads"]
+    check("a lead whose only recent activity is a different channel is not on "
+          "the Chats KPI's own windowed+channel link",
+          mixed_lead_id not in {lead["id"] for lead in windowed_chat_leads},
+          f"{len(windowed_chat_leads)} leads")
+    windowed_conversations = call("GET", "/api/conversations?window=24h&channel=chat")[
+        "conversations"
+    ]
+    check("nor does the anonymous-thread half of the same query admit the stale chat",
+          old_chat_id not in {c["id"] for c in windowed_conversations})
+    # And the positive case: the recent-call conversation itself belongs on a
+    # window+channel=voice query, so the fix narrows rather than just hides.
+    windowed_voice_leads = call("GET", "/api/leads?window=24h&channel=voice")["leads"]
+    check("but the same buyer is found on the channel their recent activity "
+          "actually matches",
+          mixed_lead_id in {lead["id"] for lead in windowed_voice_leads})
+
+    for path in ("/api/conversations?window=nope", "/api/leads?window=nope",
+                 "/api/appointments?booked=nope", "/api/email/messages?window=nope"):
+        code, detail = status_of("GET", path)
+        check(f"an unrecognized window value on {path.split('?')[0]} is a 400, "
+              "not a silent fallback to the default", code == 400, f"{code} {detail[:60]}")
+
+    chats_kpi = next(k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "chat")
+    kpi_chat_buyers = {
+        (row["lead_id"] or row["id"])
+        for row in call("GET", "/api/conversations?window=24h&channel=chat")["conversations"]
+        if not row["lead_id"]
+    } | {lead["id"] for lead in windowed_chat_leads}
+    check("the Chats KPI's own count is exactly the buyers its own link shows",
+          chats_kpi["value"] == len(kpi_chat_buyers),
+          f"kpi={chats_kpi['value']} link={len(kpi_chat_buyers)}")
+
+    appts_kpi = next(
+        k for k in call("GET", "/api/overview")["kpis"] if k["key"] == "appointments_set"
+    )
+    booked_recently = call("GET", "/api/appointments?booked=24h")["appointments"]
+    check("the Appointments set KPI's own count is exactly its own link's rows",
+          appts_kpi["value"] == len(booked_recently),
+          f"kpi={appts_kpi['value']} link={len(booked_recently)}")
+
     print("\n== credit applications are real sends, or nothing ==")
     over0 = call("GET", "/api/overview")
     keys = [k["key"] for k in over0["kpis"]]
@@ -3708,6 +3792,31 @@ def main() -> int:
     check("and is not pinned to a buyer it does not belong to",
           all(m["lead_id"] is None for m in unmatched))
 
+    # `email_threads.unplaced()` carries no time bound of its own -- it is
+    # shared with the People tab's own copy -- so `?window=24h` on this
+    # endpoint only narrowed the `Outreach`-derived rows above it, and an
+    # unmatched stranger's mail from any age kept showing under `unmatched`
+    # (and `all`) regardless. Backdating a real unmatched row past the window
+    # and re-asking is the regression test for that gap.
+    from app.db import SessionLocal as _OldSession, utcnow as _old_utcnow
+    from app.models import InboundEmail as _OldInbound
+    from datetime import timedelta as _old_td
+
+    _odb = _OldSession()
+    try:
+        stray = _odb.query(_OldInbound).filter_by(id=unmatched[0]["id"]).one()
+        stray.created_at = _old_utcnow() - _old_td(days=8)
+        _odb.commit()
+    finally:
+        _odb.close()
+    windowed_unmatched = call("GET", "/api/email/messages?box=unmatched&window=24h")["messages"]
+    check("a windowed mailbox drops an unmatched stranger's mail from outside "
+          "the window too, not just the outreach rows",
+          unmatched[0]["id"] not in {m["id"] for m in windowed_unmatched})
+    check("but it is still there once the window is lifted",
+          unmatched[0]["id"] in
+          {m["id"] for m in call("GET", "/api/email/messages?box=unmatched")["messages"]})
+
     # Taken from a message that is really there, not a guess. A term that
     # matches nothing makes "narrows the list" true for the wrong reason.
     term = next(
@@ -4301,6 +4410,14 @@ def main() -> int:
     roster = call("GET", "/api/team")["members"]
     check("and a dealership's team page never lists them",
           not [u for u in roster if u["role"] == "owner"], f"{len(roster)} on the roster")
+    # `next_free_at` was never a slot search -- it read "now" for anyone with
+    # nothing booked, which is why every rep showed the same time, and
+    # nothing read `notify_channel` to notify anyone. Both are gone from the
+    # wire; the column behind `notify_channel` stays (dropping it is a
+    # migration nobody needs), but the roster no longer serializes it.
+    check("the roster no longer carries the two fields the Team page dropped",
+          all("next_free_at" not in m and "notify_channel" not in m for m in roster),
+          str(sorted(set(roster[0].keys()))) if roster else "no members")
 
     # Our accounts are in `ops_users` now, not a role on the dealership's
     # table. That fixes a class of bug rather than three instances: an
@@ -8670,7 +8787,7 @@ def main() -> int:
     # dealership-local wall clock (`check_availability` builds them straight
     # out of `hours_json`), so 10:00 means ten at the showroom and a zone on it
     # would be a claim nobody can honour. They stay bare, deliberately.
-    WALL_CLOCK = {"starts_at", "ends_at", "slot_at", "from", "to", "next_free_at"}
+    WALL_CLOCK = {"starts_at", "ends_at", "slot_at", "from", "to"}
     TIMESTAMP = re.compile(r'"([a-z_]+)":\s*"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[^"]*)"')
 
     def unmarked(payload) -> list[str]:

@@ -33,7 +33,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="rep")  # manager | rep
     avatar_initials: Mapped[str] = mapped_column(String(4), default="")
     daily_cap: Mapped[int] = mapped_column(Integer, default=8)
-    notify_channel: Mapped[str] = mapped_column(String(20), default="email")  # email | dashboard
+    notify_channel: Mapped[str] = mapped_column(String(20), default="email")  # email | dashboard -- unused: no reader notifies anyone off this; kept rather than migrated out, since dropping a column nobody reads is not worth a migration a real dealership's database would have to run.
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Temporarily off the floor -- lunch, a day off -- never what they already
     # own. That is `active` (deactivate, hand everything back); `out` changes

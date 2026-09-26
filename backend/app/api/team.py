@@ -25,9 +25,9 @@ router = APIRouter(tags=["team"])
 
 
 def rep_load(db: Session, user: User, dealership: Dealership) -> dict:
-    """Today's booked load and the next free slot. Auto-assign reads this.
+    """Today's booked load. Auto-assign reads this.
 
-    "Today" and "now" are the dealership's own wall clock (`app.clock`), not
+    "Today" is the dealership's own wall clock (`app.clock`), not
     `db.utcnow()`: `Appointment.starts_at` is stored dealership-local, and
     from about 7pm to midnight local the UTC calendar date has already
     rolled to tomorrow. A UTC-midnight window compared against that column
@@ -49,18 +49,10 @@ def rep_load(db: Session, user: User, dealership: Dealership) -> dict:
         .order_by(Appointment.starts_at.asc())
         .all()
     )
-    last_end = None
-    if todays:
-        last = todays[-1]
-        last_end = last.starts_at + timedelta(minutes=last.duration_min)
     return {
         **user_out(user),
         "todays_appointments": len(todays),
         "at_capacity": len(todays) >= user.daily_cap,
-        # Wall-clock either way, like `starts_at` itself -- the fallback used
-        # to be `utcnow()`, a UTC instant shown with no zone, which read as
-        # 7:48 AM on a page a Chicago manager was reading at 2:48 AM.
-        "next_free_at": (last_end or now).isoformat(),
     }
 
 
@@ -111,7 +103,6 @@ def add_member(
 
 class MemberPatch(BaseModel):
     daily_cap: int | None = None
-    notify_channel: str | None = None
     active: bool | None = None
 
 
@@ -137,8 +128,6 @@ def patch_member(
     dealership: Dealership = Depends(get_dealership),
 ) -> dict:
     member = _member(db, user_id)
-    if body.notify_channel is not None and body.notify_channel not in {"email", "dashboard"}:
-        raise HTTPException(400, "notify_channel must be 'email' or 'dashboard'")
     leaving = body.active is False and member.active
     for key, value in body.model_dump(exclude_none=True).items():
         setattr(member, key, value)

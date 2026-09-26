@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, ApiError } from '../lib/api'
+import { optimisticPatch } from '../lib/optimistic'
 import { withStore } from '../lib/store'
 import type { AssistantSettings, HandoffRule, Rail } from '../lib/types'
 import { Badge, Button, Card, Empty, Spinner, Switch, Tabs } from '../components/ui'
@@ -323,8 +324,18 @@ function HandoffRules() {
   })
 
   const patch = useMutation({
-    mutationFn: ({ id, ...payload }: { id: string } & Record<string, unknown>) =>
+    mutationFn: ({ id, ...payload }: { id: string; enabled: boolean }) =>
       api.patch(`/api/handoff-rules/${id}`, payload),
+    // Same laggy-switch problem Team's Out toggle has (lib/optimistic.ts):
+    // `checked` reads straight off this query's data, so without this it
+    // sticks until the PATCH round-trips.
+    ...optimisticPatch<{ rules: HandoffRule[] }, { id: string; enabled: boolean }>(
+      queryClient,
+      ['handoff-rules'],
+      (old, { id, enabled }) => ({
+        rules: old.rules.map((rule) => (rule.id === id ? { ...rule, enabled } : rule)),
+      }),
+    ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['handoff-rules'] }),
   })
 
@@ -379,8 +390,18 @@ function Rails() {
   })
 
   const patch = useMutation({
-    mutationFn: ({ id, ...payload }: { id: string } & Record<string, unknown>) =>
+    mutationFn: ({ id, ...payload }: { id: string; enabled: boolean }) =>
       api.patch(`/api/rails/${id}`, payload),
+    // Same laggy-switch problem Team's Out toggle has (lib/optimistic.ts):
+    // `checked` reads straight off this query's data, so without this it
+    // sticks until the PATCH round-trips.
+    ...optimisticPatch<{ rails: Rail[] }, { id: string; enabled: boolean }>(
+      queryClient,
+      ['rails'],
+      (old, { id, enabled }) => ({
+        rails: old.rails.map((rail) => (rail.id === id ? { ...rail, enabled } : rail)),
+      }),
+    ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rails'] }),
   })
 

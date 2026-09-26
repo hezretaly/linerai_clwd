@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, Query
 
 from app.models import Conversation, Escalation, Message
@@ -57,6 +57,18 @@ def started(db: Session):
         .subquery()
     )
     return Conversation.id.in_(select(spoke))
+
+
+def started_since(db: Session, since: datetime):
+    """`started(db)`, further narrowed to a conversation begun since `since`.
+
+    A filter clause, like `started`/`listed`, so it composes onto whatever
+    base query a caller already has. The Chats KPI's own count and the
+    conversations list's `?window=` narrowing share this rather than each
+    re-deriving "began recently" against a different base query -- which is
+    exactly how a card that says 3 ends up linking to a list of 140.
+    """
+    return and_(started(db), Conversation.started_at >= since)
 
 
 def listed(db: Session):

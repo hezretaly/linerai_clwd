@@ -12,7 +12,9 @@ Every URL here is unchanged by the move.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -90,6 +92,7 @@ def receipts(
 def messages(
     box: str = "all",
     q: str = "",
+    window: str | None = Query(None),
     limit: int = PAGE,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -109,13 +112,13 @@ def messages(
     browser until they press send. An empty "Drafts" tab would claim a feature
     that is not there.
     """
-    rows = (
-        db.query(Outreach)
-        .filter(Outreach.channel == "email")
-        .order_by(Outreach.created_at.desc())
-        .limit(CEILING)
-        .all()
-    )
+    rows = db.query(Outreach).filter(Outreach.channel == "email")
+    if window:
+        if window != "24h":
+            raise HTTPException(400, "window must be '24h'")
+        since = utcnow() - timedelta(hours=24)
+        rows = rows.filter(outreach_status.SENT_AT >= since)
+    rows = rows.order_by(Outreach.created_at.desc()).limit(CEILING).all()
     lead_ids = {r.lead_id for r in rows if r.lead_id}
     leads = {
         lead.id: lead
@@ -168,6 +171,13 @@ def messages(
     # People tab's own copy silently capped itself at 200 rows before
     # counting, which this one never did (item 47).
     for r in email_threads.unplaced(db, limit=CEILING):
+        # `unplaced()` is shared with `threads()`'s own People-tab copy and
+        # carries no time bound of its own -- so without this, `window=24h`
+        # narrowed every sent row above but let an unmatched stranger's mail
+        # from any age keep showing under `all`/`unmatched`, silently wider
+        # than the window the banner claims.
+        if window and r.created_at < since:
+            continue
         out.append({
             "id": r.id,
             "kind": "unmatched",

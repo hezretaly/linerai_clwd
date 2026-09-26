@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import appointment_scope, clock
 from app.api.deps import current_user, get_dealership
-from app.db import get_db
+from app.db import get_db, utcnow
 from app.models import Appointment, Dealership, User
 from app.schemas.serialize import appointment_out
 
@@ -38,6 +38,7 @@ def assert_transition(current: str, target: str) -> None:
 def list_appointments(
     status: str | None = Query(None),
     user_id: str | None = Query(None),
+    booked: str | None = Query(None),
     start: datetime | None = Query(None),
     end: datetime | None = Query(None),
     db: Session = Depends(get_db),
@@ -49,6 +50,11 @@ def list_appointments(
         query = query.filter(Appointment.status == status)
     if user_id:
         query = query.filter(Appointment.assigned_user_id == user_id)
+    if booked:
+        if booked != "24h":
+            raise HTTPException(400, "booked must be '24h'")
+        since = utcnow() - timedelta(hours=24)
+        query = query.filter(appointment_scope.booked_since(since))
     # Naive, like every stored time: `starts_at` is dealership wall-clock time.
     # An offset on the query (`?start=...Z`) is dropped rather than converted,
     # which is what SQLite always did; Postgres would otherwise shift an aware

@@ -23,7 +23,6 @@ export interface User {
   role: 'manager' | 'rep' | 'owner'
   avatar_initials: string
   daily_cap: number
-  notify_channel: 'email' | 'dashboard'
   active: boolean
   /* Temporarily off the floor (lunch, a day off) -- never touches what they
      already own, which is what `active` (deactivate) is for. Not eligible
@@ -34,7 +33,6 @@ export interface User {
 export interface TeamMember extends User {
   todays_appointments: number
   at_capacity: boolean
-  next_free_at: string
 }
 
 /** POST /team body. Always makes a `rep` -- there is no path to a second

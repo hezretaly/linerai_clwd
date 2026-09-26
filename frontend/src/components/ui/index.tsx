@@ -106,15 +106,26 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={clsx(
-        'relative h-6 w-11 shrink-0 rounded-full transition-colors duration-150',
+        'relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ease-in-out',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         'disabled:cursor-not-allowed disabled:opacity-50',
-        checked ? 'bg-primary' : 'bg-border',
+        // `border` and the knob's `background` sat one step apart in
+        // lightness, so an off switch and an on switch barely read as
+        // different controls. `muted-foreground` is tuned per theme to stay a
+        // legible mid grey against that theme's own surface, so dropping the
+        // opacity down to `/30` reads as a deliberate "off" in both themes
+        // rather than washing out to the same near-invisible grey `border`
+        // already used for hairlines everywhere else -- and it stays well
+        // clear of `disabled:opacity-50`, which dims the whole control.
+        checked ? 'bg-primary' : 'bg-muted-foreground/30',
       )}
     >
       <span
         className={clsx(
-          'absolute top-0.5 h-5 w-5 rounded-full bg-background transition-transform duration-150',
+          // `shadow-sm` lifts the knob off the track -- with no shadow at all
+          // it read as a hole cut in the track rather than a separate piece
+          // sitting on top of it, in both states.
+          'absolute top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform duration-200 ease-in-out',
           checked ? 'translate-x-5.5' : 'translate-x-0.5',
         )}
       />

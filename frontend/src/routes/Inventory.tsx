@@ -5,6 +5,7 @@ import clsx from 'clsx'
 
 import { api } from '../lib/api'
 import { dateTime, miles, money } from '../lib/format'
+import { optimisticPatch } from '../lib/optimistic'
 import type { Vehicle } from '../lib/types'
 import { Badge, Button, Card, Empty, Field, Input, Sheet, Spinner, Switch, Tabs } from '../components/ui'
 import { PageHeader } from '../components/dashboard/AppShell'
@@ -180,6 +181,28 @@ function VehicleDrawer({ id, onClose }: { id: string | null; onClose: () => void
   const patch = useMutation({
     mutationFn: (payload: Record<string, unknown>) =>
       api.patch(`/api/inventory/${id}`, payload),
+    // Same laggy-switch problem Team's Out toggle has (lib/optimistic.ts),
+    // for the three rule switches below -- this mutation also carries the
+    // price override and the options textarea, which have no cache field to
+    // move optimistically, so `apply` touches only `rules.*` and leaves the
+    // rest of the cached vehicle alone. The payload's `rule_` prefix has no
+    // counterpart in `rules`, so each key is mapped by hand rather than
+    // spread onto it.
+    ...optimisticPatch<Vehicle, Record<string, unknown>>(
+      queryClient,
+      ['inventory', id],
+      (old, vars) => ({
+        ...old,
+        rules: {
+          ...old.rules,
+          ...('rule_discuss' in vars ? { discuss: vars.rule_discuss as boolean } : {}),
+          ...('rule_hold_price' in vars ? { hold_price: vars.rule_hold_price as boolean } : {}),
+          ...('rule_mention_warranty' in vars
+            ? { mention_warranty: vars.rule_mention_warranty as boolean }
+            : {}),
+        },
+      }),
+    ),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['inventory'] })
       void queryClient.invalidateQueries({ queryKey: ['overview'] })

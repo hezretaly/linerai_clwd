@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app import clock
@@ -39,6 +40,18 @@ STANDING_STATUSES = ("booked", "confirmed")
 #: A booked visit that is not going to happen. The complement of
 #: STANDING_STATUSES over every status this API can write.
 OFF_STATUSES = ("cancelled", "no_show")
+
+
+def booked_since(since: datetime):
+    """A filter clause: a standing appointment whose *booking* happened
+    since `since` -- when the slot was taken, not when the visit itself
+    falls. Different axis from `start`/`end` on the appointments list,
+    which filter by `starts_at` (the visit's own time). Shared by the
+    Overview KPI's "Appointments set" count and the Calendar's own
+    `?booked=24h` narrowing, so the two cannot disagree about which
+    bookings count.
+    """
+    return and_(Appointment.created_at >= since, Appointment.status.in_(STANDING_STATUSES))
 
 
 def is_upcoming(a: Appointment, now) -> bool:
