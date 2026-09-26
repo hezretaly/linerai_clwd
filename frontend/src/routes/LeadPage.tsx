@@ -25,7 +25,15 @@ import {
 } from '../components/dashboard/EmailReader'
 import type { TimelineEntry } from '../components/dashboard/Timeline'
 import type { RecipientSuggestion } from '../components/email'
-import { textToHtml } from '../lib/email'
+import {
+  aboveQuote,
+  quoteHtml,
+  quoteMarker,
+  quotedBody,
+  reSubject,
+  textToHtml,
+  type MailContent,
+} from '../lib/email'
 import { AssignTo } from '../components/dashboard/AssignTo'
 import { CarPhoto } from '../components/CarPhoto'
 import { AssistButton, Refused } from '../components/dashboard/AssistButton'
@@ -133,10 +141,60 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
   }, [id])
 
   const target = data?.reply_to ?? null
+
+  // The last thing the buyer themselves sent, on any channel -- a mirrored
+  // buyer chat message counts, and so does an inbound email, which the
+  // timeline lists once as an outreach entry rather than twice (its message
+  // mirror is deliberately hidden there). `data.entries` is oldest-first, so
+  // this is the last match walking from the end.
+  const lastFromBuyer = useMemo(() => {
+    const entries = data?.entries ?? []
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]
+      if ((e.kind === 'outreach' && e.direction === 'in') || (e.kind === 'message' && e.role === 'buyer')) {
+        return e
+      }
+    }
+    return null
+  }, [data])
+  const lastInboundEmailNow =
+    lastFromBuyer?.kind === 'outreach' && lastFromBuyer.channel === 'email' ? lastFromBuyer : null
+
+  // Pinned once per lead, on the first timeline this page reads for them --
+  // not recomputed on every later refresh. Without this, a second email
+  // arriving from the buyer while a rep is reading or typing a reply to the
+  // first one would silently retarget the reply to the new one out from
+  // under them, which is the exact "answering the wrong message" risk the
+  // reader's own `lastInbound` was removed to prevent (see `EmailReply`
+  // below) -- reintroduced here in a different shape if this were reactive.
+  const [pinnedEmailId, setPinnedEmailId] = useState<string | null | undefined>(undefined)
+  useEffect(() => setPinnedEmailId(undefined), [id])
+  useEffect(() => {
+    if (pinnedEmailId === undefined && data) setPinnedEmailId(lastInboundEmailNow?.id ?? null)
+  }, [data, pinnedEmailId, lastInboundEmailNow])
+  // Looked up fresh by id so its own fields (e.g. `at`) stay current even
+  // though which entry is pinned does not change underneath the rep.
+  const lastInboundEmail = pinnedEmailId
+    ? (data?.entries.find((e) => e.id === pinnedEmailId && e.kind === 'outreach') ?? null)
+    : null
+
   const targetConvo = useMemo(
     () => data?.conversations.find((c) => c.id === target) ?? null,
     [data, target],
   )
+
+  // "Text" is the box that types live into an open thread -- offering it
+  // over an email thread let a rep's plain-text reply go out as a second,
+  // unthreaded email with a guessed subject (`send_rep_reply`), because
+  // `_reply_target` names the most recently *started* conversation, email
+  // included. Whenever that thread is email, replying to it *is* Email.
+  const targetIsEmail = targetConvo?.channel === 'email'
+  // Nothing here means a rep has chosen otherwise: `mode` starts at its
+  // default, `'chat'`, and stays there until the picker or a send resets
+  // it. A thread that is email leaves nothing to type into as chat, so
+  // that default becomes Email instead, defaulting to a reply to the
+  // buyer's own last email rather than a blank new one.
+  const effectiveMode: Channel = mode === 'chat' && targetIsEmail ? 'email' : mode
 
   /* Who an email from this page is likely to go to, offered as somebody
    * types into To or Cc: every address the buyer is known by -- `/reach`'s
@@ -308,9 +366,12 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
         <div className="shrink-0 border-t border-border bg-background">
           <ChannelPicker
             reach={reach}
-            mode={mode}
+            mode={effectiveMode}
             onPick={setMode}
-            hasThread={target !== null}
+            // Not just `target !== null`: an email thread is not a text
+            // conversation, and offering "Text" over one drew a button that
+            // sent a real email in plain text under a guessed subject.
+            hasThread={target !== null && !targetIsEmail}
             threadLabel={CHANNEL_LABEL[targetConvo?.channel ?? 'chat'] ?? 'Website chat'}
           />
           {/* Without a ceiling the composer reproduces the squeeze one edge
@@ -324,14 +385,16 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
               mode === 'email' ? 'max-h-[75vh]' : 'max-h-[45vh]',
             )}
           >
-            {mode === 'email' && lead ? (
+            {effectiveMode === 'email' && lead ? (
               <EmailReply
+                key={lastInboundEmail?.id ?? 'new'}
                 lead={lead}
                 signature={data?.email_signature ?? ''}
                 suggestions={suggestions}
+                replyTo={lastInboundEmail}
                 onDone={() => { setMode('chat'); invalidate() }}
               />
-            ) : mode === 'sms' && lead ? (
+            ) : effectiveMode === 'sms' && lead ? (
               <SmsComposer
                 lead={lead}
                 onDone={() => { setMode('chat'); invalidate() }}
@@ -1058,6 +1121,7 @@ function EmailReply({
   lead,
   signature,
   suggestions,
+  replyTo,
   onDone,
 }: {
   lead: Lead
@@ -1066,10 +1130,36 @@ function EmailReply({
   signature: string
   /** Addresses offered as somebody types into To or Cc. */
   suggestions: RecipientSuggestion[]
+  /** The lead's last inbound email, when the footer opened here because of
+   *  it rather than because a rep picked Email by hand. Answering it is the
+   *  default; a rep can still start a fresh thread (below). Remounted per
+   *  lead by the caller's `key`, so this never carries a stale entry across
+   *  a navigation. */
+  replyTo?: TimelineEntry | null
   onDone: () => void
 }) {
+  // A rep pressing "Write a new email instead" leaves this thread's default
+  // without erasing it for the next lead -- `replyTo` is the caller's prop
+  // and this is the one bit of "not that one" state belonging to this box.
+  const [skipReply, setSkipReply] = useState(false)
+  const answeringInbound = skipReply ? null : (replyTo ?? null)
+
+  // The message being answered, read the same way "Open and reply" reads
+  // it -- so the quote, the subject and the addresses agree with what that
+  // drawer would have built for the identical email.
+  const { data: inbound } = useQuery({
+    queryKey: ['email-read', 'message', answeringInbound?.id ?? ''],
+    queryFn: () =>
+      api.get<MailContent>(
+        `/api/email/read/message/${encodeURIComponent(answeringInbound!.id)}?images=0`,
+      ),
+    enabled: Boolean(answeringInbound?.id),
+  })
+
   // To starts at the address on their row -- what "email this buyer" meant
   // when it was a line of text rather than a field -- and is theirs to change.
+  // Replying overwrites this once `inbound` loads (below); until then the
+  // reply form opens blank rather than to the wrong address for a moment.
   const [draft, setDraft] = useState<MailDraft>(() => emptyDraft(lead.email))
   const patch = (p: Partial<MailDraft>) => setDraft((d) => ({ ...d, ...p }))
   const { subject, text: body } = draft
@@ -1080,6 +1170,22 @@ function EmailReply({
    *  records -- a rep tidying the wording of a credit application has not
    *  turned it into something else. */
   const [preset, setPreset] = useState<Preset>('')
+
+  useEffect(() => {
+    if (!answeringInbound || !inbound) return
+    setDraft({
+      ...emptyDraft(inbound.reply.to.join(', ')),
+      cc: inbound.reply.cc.join(', '),
+      subject: inbound.reply.subject || reSubject(inbound.subject),
+      // A blank line, then the quote -- the same shape `quotedBody` gives
+      // "Open and reply", so a rep switching between the two sees one
+      // convention rather than two.
+      html: quotedBody(inbound, 'reply'),
+    })
+    // Only when the message being answered changes -- not on every
+    // keystroke, which would overwrite what the rep just typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answeringInbound?.id, inbound])
 
   /* A built draft, fetched on demand rather than up front: `credit_application`
    * refuses when no URL is configured, and a composer that asked for both on
@@ -1122,6 +1228,11 @@ function EmailReply({
         : api.post<SendResult>('/api/email/compose', {
             ...draftPayload(draft),
             lead_id: lead.id,
+            // Threads it under the message it answers, the same header
+            // `EmailReader` sends for the identical case -- without it this
+            // would be a second, correct-looking email starting a new
+            // thread in their inbox instead of answering the one on screen.
+            ...(answeringInbound ? { in_reply_to_outreach_id: answeringInbound.id } : {}),
           }),
     onSuccess: (result) => {
       // A refusal comes back as a stored failed row rather than an error, and
@@ -1134,6 +1245,7 @@ function EmailReply({
       setDraft(emptyDraft(lead.email))
       setProblem('')
       setPreset('')
+      setSkipReply(false)
       onDone()
     },
     // A 400 names what it could not read -- the address that is not one, the
@@ -1152,9 +1264,24 @@ function EmailReply({
             credit application is counted on the overview and carries a
             rewritten link, so "this is a follow-up" is a fact about the
             message rather than a label on a button. */}
-        {preset
-          ? `Sending as ${presetLabel}. It starts a new thread in their inbox.`
-          : 'A new message, so it starts a new thread in their inbox. To answer one of theirs, open it on the timeline and press Reply.'}
+        {answeringInbound ? (
+          <>
+            Replying to their email from {relative(answeringInbound.at)}
+            {inbound ? ` -- under "${inbound.subject || '(no subject)'}"` : ''}, so it stays one
+            thread in their inbox.{' '}
+            <button
+              type="button"
+              className="font-medium text-primary hover:underline"
+              onClick={() => setSkipReply(true)}
+            >
+              Write a new email instead
+            </button>
+          </>
+        ) : preset ? (
+          `Sending as ${presetLabel}. It starts a new thread in their inbox.`
+        ) : (
+          'A new message, so it starts a new thread in their inbox. To answer one of theirs, open it on the timeline and press Reply.'
+        )}
       </p>
       <ComposeFields
         draft={draft}
@@ -1200,25 +1327,45 @@ function EmailReply({
             email, Polish on one with words in it. What is handed over to
             polish is the plain text -- the drafts and the guards behind them
             only read text -- so formatting is the rep's to re-apply. */}
-        <AssistButton
-          channel="email"
-          text={body}
-          subject={subject}
-          leadId={lead.id}
-          onProblem={setProblem}
-          onDraft={(result) => {
-            setRefused(result.violations ?? [])
-            if (result.body) patch({ html: textToHtml(result.body), text: result.body })
-            // Polish rewrites the subject the rep typed along with the body --
-            // it is their subject, tidied. A generated email only fills a box
-            // that is empty or holds the last draft's own subject.
-            const polished = result.mode === 'polish' && result.body
-            if (result.subject && (polished || !subject.trim() || subject === draftedSubject)) {
-              patch({ subject: result.subject })
-              setDraftedSubject(result.subject)
-            }
-          }}
-        />
+        {answeringInbound && inbound ? (
+          // Reading the words above the quote, exactly as "Open and reply"
+          // does -- Auto-generate answers the email on screen rather than
+          // nothing, and Polish never sees the quoted original as if it
+          // were the rep's own words to tidy.
+          <AssistButton
+            channel="email"
+            text={aboveQuote(body, quoteMarker(inbound, 'reply'))}
+            leadId={lead.id}
+            answering={{ kind: 'message', id: answeringInbound.id, how: 'reply', forwardTo: draft.to }}
+            onProblem={setProblem}
+            onDraft={(result) => {
+              setRefused(result.violations ?? [])
+              if (result.body) {
+                patch({ html: textToHtml(result.body) + quoteHtml(inbound, 'reply'), text: result.body })
+              }
+            }}
+          />
+        ) : (
+          <AssistButton
+            channel="email"
+            text={body}
+            subject={subject}
+            leadId={lead.id}
+            onProblem={setProblem}
+            onDraft={(result) => {
+              setRefused(result.violations ?? [])
+              if (result.body) patch({ html: textToHtml(result.body), text: result.body })
+              // Polish rewrites the subject the rep typed along with the body --
+              // it is their subject, tidied. A generated email only fills a box
+              // that is empty or holds the last draft's own subject.
+              const polished = result.mode === 'polish' && result.body
+              if (result.subject && (polished || !subject.trim() || subject === draftedSubject)) {
+                patch({ subject: result.subject })
+                setDraftedSubject(result.subject)
+              }
+            }}
+          />
+        )}
         <Button
           size="sm"
           variant="primary"
