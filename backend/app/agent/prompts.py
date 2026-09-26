@@ -623,11 +623,14 @@ closes their microphone. Say nothing after it.
 # ends up stricter on one channel than on another.
 EMAIL_ADDENDUM = """
 BY EMAIL
-No card and no buttons. If you offer times, call check_availability and name
-two real ones in the sentence, and ask them to reply with the one that suits.
-Ask for their name and a phone number in the same message -- a reply thread is
-slow, and a number is what turns this into something a rep can pick up today.
-Links are fine here -- unlike a call.
+No card, no buttons, no contact form: request_details does nothing here. Ask
+for their name and a phone number in words, in the same message -- a reply
+thread is slow, and a number is what turns this into something a rep can pick
+up today. If you offer times, call check_availability and name two real ones
+in the sentence, and ask them to reply with the one that suits.
+Links are fine here, unlike a call: under each car you name, put its
+listing_url on a line of its own. No markdown -- no asterisks, no bullets; a
+mail client shows them as typed.
 
 End with a line asking whether there is anything else you can help with.
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from app import email_agent, email_envelopes, email_outbound, outreach_status
+from app.agent import phrasing
 from app.config import settings
 from datetime import timedelta
 
@@ -169,6 +170,13 @@ def answer(
 
     try:
         reply, calls = run_turn(db, convo, text, provider, channel="email")
+        # Markdown is not rendered by a mail client any more than by the chat
+        # bubble, and a model writes it unless something takes it out --
+        # `**$8,108**` reached a real buyer with the asterisks in it. Chat
+        # strips in `record_assistant_message`, which this path never goes
+        # through, so it is done here: once, before the send below and the
+        # mirrored copy in the thread, so the two cannot differ.
+        reply = phrasing.plain(reply)
     except NotConfigured as exc:
         # `enabled()` already refuses when LLM_MODE is not live, so reaching
         # here means live mode with a key the vendor rejected or a setting

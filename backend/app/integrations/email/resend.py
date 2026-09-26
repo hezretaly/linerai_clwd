@@ -14,6 +14,7 @@ Set ``EMAIL_SENDER=resend``, ``RESEND_API_KEY`` and ``SENDING_DOMAIN``.
 from __future__ import annotations
 
 import base64
+import re
 
 import httpx
 
@@ -51,8 +52,34 @@ def as_html(text: str) -> str:
 
     blocks = [b.strip() for b in (text or "").split("\n\n") if b.strip()]
     return "".join(
-        f"<p>{escape(b).replace(chr(10), '<br>')}</p>" for b in blocks
+        f"<p>{_linked(escape(b)).replace(chr(10), '<br>')}</p>" for b in blocks
     )
+
+
+# A bare address, after escaping: `&` is already `&amp;` and stays so inside
+# the href, which is the valid form. Stops before whitespace, a tag, or the
+# `&` that opens an entity, and gives back trailing punctuation -- a link
+# at the end of a sentence is written "...here: https://x/y." and the full
+# stop is the sentence's, not the address's.
+_URL = re.compile(r"https?://[^\s<&]+")
+
+
+def _linked(escaped: str) -> str:
+    """Bare https links in an escaped paragraph, made clickable.
+
+    Liner's own replies name a car's page on a line of its own; a mail client
+    turns a bare address in a *text* part into a link, but in the HTML part
+    it is exactly what it says -- text -- so the buyer saw the address and
+    could not press it. Rep-written mail arrives as HTML already and never
+    reaches this."""
+    def wrap(match: re.Match) -> str:
+        url = match.group(0)
+        trail = ""
+        while url and url[-1] in ".,;:)!?":
+            trail = url[-1] + trail
+            url = url[:-1]
+        return f'<a href="{url}">{url}</a>{trail}'
+    return _URL.sub(wrap, escaped)
 
 
 class ResendSender(EmailSender):

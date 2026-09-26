@@ -1113,6 +1113,16 @@ def request_details(db: Session, convo: Conversation, args: dict) -> dict:
             "There is no screen on a call, so there is no card to show. Ask for "
             "the number out loud and read it back to check it."
         )
+    # An inbox has no screen of ours either. Left unrefused, the tool handed
+    # back the card and its "the contact form is on the buyer's screen now"
+    # note, and a real reply closed with "The contact form is there so someone
+    # can answer your questions" -- a sentence about a form that does not
+    # exist, in an email.
+    if convo.channel == "email":
+        raise ToolError(
+            "There is no form in an inbox, so there is no card to show. Ask for "
+            "their name and a phone number in words, in this reply."
+        )
     # **Once.** The card is replayed on refresh while it is unanswered, so a
     # second one is the same question twice on one screen -- and a buyer who
     # has left the boxes empty has answered, in their way. Asked again, the
@@ -1606,11 +1616,17 @@ def escalate_to_human(
         # an email in a sentence", which is what this said before -- and the
         # chat rules forbid exactly that, so the two instructions fought.
         guidance += (
-            " We have no way to reach this buyer, so the contact form is on their "
-            "screen now. Say in one line what it is for and stop."
-            if convo.channel != "voice" else
             " We have no way to reach this buyer, so ask for their number out loud "
             "now and read it back to check it. Save it with save_captured_fields."
+            if convo.channel == "voice" else
+            # An email buyer always has an address, so this branch is
+            # unreachable there today -- but a form must never be promised in
+            # an inbox, whatever minted the lead.
+            " We have no way to reach this buyer, so ask for their name and a "
+            "phone number in words, in this reply."
+            if convo.channel == "email" else
+            " We have no way to reach this buyer, so the contact form is on their "
+            "screen now. Say in one line what it is for and stop."
         )
     return {
         "escalation_id": escalation.id,
@@ -1640,9 +1656,10 @@ def contact_card(db: Session, convo: Conversation, reachable: bool) -> dict:
     buyer with no phone number.
 
     Nothing is drawn when there is no need: a buyer already on file, a card
-    already unanswered on their screen, or a call, which has no screen at all.
+    already unanswered on their screen, or a call or an email, neither of
+    which has a screen of ours to draw on.
     """
-    if reachable or convo.channel == "voice":
+    if reachable or convo.channel in ("voice", "email"):
         return {}
     if details_pending(db, convo):
         # Asking again, with the form already up: it is brought back down
