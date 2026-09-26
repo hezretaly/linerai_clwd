@@ -809,6 +809,21 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
     windows = {"morning": (8, 12), "afternoon": (12, 17), "evening": (17, 20), "any": (8, 20)}
     lo, hi = windows.get(period, windows["any"])
 
+    # Twelve slots total, spread across every open day in the window rather
+    # than the first ones scanned -- a fixed `per_day < 3` let a wide period
+    # ("any", three slots a day) exhaust the budget by Thursday while a
+    # narrow one ("morning", two a day) reached all the way to next
+    # Saturday, so a slot genuinely offered and booked under one period
+    # could vanish from a same-week request under another -- not because it
+    # was full, but because the earlier period never got scanned that far.
+    # Sized to the days this call actually has open, so the cap always
+    # spans `days_ahead`, whatever the period's own density is.
+    open_days = sum(
+        1 for day_offset in range(1, days_ahead + 1)
+        if hours.get(DAY_NAMES[((now + timedelta(days=day_offset)).weekday())])
+    )
+    per_day_cap = max(1, 12 // open_days) if open_days else 3
+
     slots: list[str] = []
     for day_offset in range(1, days_ahead + 1):
         day = (now + timedelta(days=day_offset)).replace(minute=0, second=0, microsecond=0)
@@ -819,18 +834,13 @@ def check_availability(db: Session, convo: Conversation, args: dict) -> dict:
         close_h = int(window["close"].split(":")[0])
         start_h, end_h = max(open_h, lo), min(close_h, hi)
 
-        # Cap per day so the result spans the week. Twelve consecutive
-        # half-hours on one morning is one option dressed up as twelve, and
-        # the caller needs two genuinely different times to offer.
         cursor = day.replace(hour=start_h)
         per_day = 0
-        while cursor.hour < end_h and per_day < 3:
+        while cursor.hour < end_h and per_day < per_day_cap:
             if cursor > now and counts[cursor.replace(second=0, microsecond=0)] < capacity:
                 slots.append(cursor.isoformat())
                 per_day += 1
             cursor += timedelta(hours=3)
-        if len(slots) >= 12:
-            break
 
     # Whether we already know who this is, and how to ring them.
     #
