@@ -42,6 +42,21 @@ from app.config import settings
 from app.db import utcnow
 from app.models import Lead, Outreach
 
+
+def cooldown_minutes(db: Session) -> int:
+    """How long Liner waits before answering -- the `email_reply_cooldown`
+    runtime flag if a manager has set one, `EMAIL_REPLY_COOLDOWN_MINUTES`
+    otherwise. One reader, so `may_reply`'s brake, `email_reply.schedule`'s
+    due time and the Liner setup card's own sentence cannot disagree about
+    what the number currently is."""
+    raw = flags.get(db, "email_reply_cooldown")
+    if raw:
+        try:
+            return max(int(raw), 1)
+        except ValueError:
+            pass
+    return max(settings.email_reply_cooldown_minutes, 0)
+
 #: Why the ceiling tripped, written onto the flag so the morning after does not
 #: read as somebody having switched it off by hand.
 TRIPPED = (
@@ -181,7 +196,7 @@ def may_reply(
         # Liner's carries NULL.
         last_at = sent.sent_at or sent.created_at
         since = now - (last_at or now)
-        window = timedelta(minutes=max(settings.email_reply_cooldown_minutes, 0))
+        window = timedelta(minutes=cooldown_minutes(db))
         if sent.sent_by_user_id and since < window:
             return Verdict(
                 False, "person_answered",
@@ -196,7 +211,7 @@ def may_reply(
                 False, "cooldown",
                 f"Answered {int(since.total_seconds() // 60)} minutes ago; "
                 f"{int(left.total_seconds() // 60) + 1} to go. "
-                "EMAIL_REPLY_COOLDOWN_MINUTES is the setting.",
+                "The wait is set on the Liner setup page.",
             )
 
     ceiling = max(settings.email_replies_per_hour, 0)

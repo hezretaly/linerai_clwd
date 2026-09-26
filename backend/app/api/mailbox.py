@@ -20,7 +20,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import email_envelopes, email_outbound, matching, outreach_send, outreach_status
-from app.api.deps import current_user
+from app.api.deps import current_user, require_manager
 from app.api.inbound_email import signature_for
 from app.config import settings
 from app.db import get_db, utcnow
@@ -345,7 +345,7 @@ def agent_state(
             {**row, "updated_at": stamp(row["updated_at"])}
             for row in flags.all_flags(db)
         ],
-        "cooldown_minutes": settings.email_reply_cooldown_minutes,
+        "cooldown_minutes": email_agent.cooldown_minutes(db),
         "hourly_ceiling": settings.email_replies_per_hour,
         # A model has to exist to write with, and that is a third thing that
         # can be off. Reported separately because it is fixed in a different
@@ -413,6 +413,39 @@ def set_agent(
     flags.set(db, "email_agent", value, reason=body.reason, by=user.id)
     emit(db, "email.agent", {"value": value, "by": user.id})
     return agent_state(db=db, user=user)
+
+
+class CooldownBody(BaseModel):
+    minutes: int
+
+
+@router.post("/email/agent/cooldown")
+def set_cooldown(
+    body: CooldownBody,
+    db: Session = Depends(get_db),
+    manager: User = Depends(require_manager),
+) -> dict:
+    """How long Liner waits before answering, live the moment it is saved --
+    the same shape as the credit-application link (`put_credit_link` above):
+    a fact about how the dealership wants to run, not a change to how Liner
+    talks, so there is nothing to draft or publish.
+
+    Manager only, unlike the on/off switch above it: throwing the switch is
+    the thing a rep reaches for while an inbox is being hammered, but a rep
+    lowering the wait to make their own queue move faster is a policy change
+    dressed as an emergency, and it changes what every future buyer's wait
+    looks like, not just this one thread's.
+
+    Applies to the next reply queued, never to one already waiting --
+    `email_reply.schedule` bakes the number into that row's own `due_at`
+    when it is created, so lowering or raising this does not reach back into
+    the queue.
+    """
+    if body.minutes < 1:
+        raise HTTPException(400, "The wait cannot be less than one minute.")
+    flags.set(db, "email_reply_cooldown", str(body.minutes), by=manager.id)
+    emit(db, "email.cooldown_changed", {"minutes": body.minutes, "by": manager.id})
+    return agent_state(db=db, user=manager)
 
 
 @router.get("/email/threads")

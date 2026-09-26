@@ -79,6 +79,7 @@ const INVALIDATES: Record<string, string[]> = {
   // dashboard where mail arriving is the whole point of having it open.
   'email.received': [...MAIL_PAGE_KEYS, 'leads', 'conversations', 'ops-mail', 'ops-summary'],
   'email.agent': ['email-agent'],
+  'email.cooldown_changed': ['email-agent'],
   'vehicle.status_changed': ['inventory', 'overview'],
   // Ours, not a dealership's: somebody asking Liner for a demo. Every ops
   // surface reads the same three keys, so a booking made while the calendar is

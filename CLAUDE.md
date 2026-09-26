@@ -1048,13 +1048,26 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
     through our webhook for no reason — and `make smoke` fails if the backend
     checks one the Worker does not send.
   - **Every reply waits, including the first, and one clock does both jobs.**
-    `EMAIL_REPLY_COOLDOWN_MINUTES` is how long Liner waits *before* answering,
-    not only the gap between answers — a dealership replying three seconds
-    after a buyer wrote is obviously a robot, and the wait buys the thing that
-    matters more: a window in which a rep reads the message and takes the
-    thread over first. A rep answering inside it cancels the queued reply, so
-    the buyer gets one email and not two. The gap between replies falls out of
-    the same number rather than being a second rule.
+    `email_agent.cooldown_minutes()` is how long Liner waits *before*
+    answering, not only the gap between answers — a dealership replying three
+    seconds after a buyer wrote is obviously a robot, and the wait buys the
+    thing that matters more: a window in which a rep reads the message and
+    takes the thread over first. A rep answering inside it cancels the queued
+    reply, so the buyer gets one email and not two. The gap between replies
+    falls out of the same number rather than being a second rule.
+    - **A manager's own setting, not only `.env`.** `email_reply_cooldown` is
+      a runtime flag (`app/flags.py`) sitting in front of
+      `EMAIL_REPLY_COOLDOWN_MINUTES`, the same shape as `email_agent` in front
+      of `EMAIL_AGENT` — takes effect on the next reply queued, no restart.
+      Manager only, unlike the on/off switch beside it: a rep reaches for that
+      one while an inbox is being hammered, but changing how long *every*
+      future buyer waits is a policy call, the same weight as the
+      credit-application link. Never below one minute, checked at the
+      endpoint (`POST /api/email/agent/cooldown`) rather than in the flag
+      itself, the same way the credit link's `https://` shape is checked at
+      its own endpoint. The number is read once, when a reply is queued, and
+      baked into that row's own `due_at` — changing the setting afterwards
+      does not reach back into replies already waiting.
     - **A row with a due time, not a sleeping task.** `asyncio.sleep(3600)` in
       a handler is lost on the next deploy, and this redeploys often;
       `email_replies_due` survives one and `app/email_replies.py` is a single

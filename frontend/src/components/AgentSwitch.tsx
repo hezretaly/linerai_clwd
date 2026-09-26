@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -59,6 +60,76 @@ function dueIn(iso: string): string {
   return `in ${Math.round(minutes / 60)}h`
 }
 
+/** The wait itself, editable in place of the number in the sentence below --
+ *  manager only. A rep reaches for the on/off switch while an inbox is being
+ *  hammered; changing how long *every future* buyer waits is a policy call,
+ *  the same weight as the credit-application link, not an emergency lever.
+ *  Never below one minute -- faster than that reads as a robot, and the
+ *  whole point of the wait is a window in which a rep can answer first. */
+function CooldownEditor({ minutes, manager }: { minutes: number; manager: boolean }) {
+  const queryClient = useQueryClient()
+  const [value, setValue] = useState(String(minutes))
+  const [done, setDone] = useState(false)
+  // Another manager's save (or this one's own, replayed off the socket)
+  // lands here as a fresh `minutes` prop -- without this the box would keep
+  // showing whatever was typed before that arrived.
+  useEffect(() => setValue(String(minutes)), [minutes])
+
+  const save = useMutation({
+    mutationFn: (next: number) =>
+      api.post<AgentState>('/api/email/agent/cooldown', { minutes: next }),
+    onSuccess: (state) => {
+      queryClient.setQueryData(['email-agent'], state)
+      setDone(true)
+    },
+  })
+
+  if (!manager) return <span className="tnum font-medium text-foreground">{minutes}</span>
+
+  const parsed = Number(value)
+  const valid = Number.isInteger(parsed) && parsed >= 1
+  const changed = valid && parsed !== minutes
+
+  return (
+    <span className="inline-flex items-center gap-1.5 align-middle">
+      <input
+        type="number"
+        min={1}
+        step={1}
+        aria-label="Minutes before Liner answers an email"
+        value={value}
+        onChange={(e) => {
+          setValue(e.target.value)
+          setDone(false)
+        }}
+        className="tnum h-6 w-14 rounded-md border border-input bg-background px-1.5 text-center text-xs shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      {changed && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          disabled={save.isPending}
+          onClick={() => save.mutate(parsed)}
+        >
+          {save.isPending ? 'Saving...' : 'Save'}
+        </Button>
+      )}
+      {!valid && (
+        <span className="text-xs text-destructive">whole minutes, at least 1</span>
+      )}
+      {save.isError && (
+        <span className="text-xs text-destructive">
+          not saved: {save.error instanceof Error ? save.error.message : 'the request failed'}
+        </span>
+      )}
+      {done && !changed && !save.isError && (
+        <span className="text-xs text-success">saved</span>
+      )}
+    </span>
+  )
+}
+
 /** Whether Liner is answering email, why not, and the switch itself.
  *
  *  The three checks are named individually because they are fixed in three
@@ -81,6 +152,12 @@ function Switch({
   busy: boolean
   onToggle: (value: 'on' | 'off') => void
 }) {
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<{ user: { role: string } }>('/api/auth/me'),
+    staleTime: 5 * 60_000,
+  })
+  const manager = me?.user.role === 'manager'
   if (!state) return null
   const flagOn = state.flag === 'on'
   // Named checks, in the order they are cheapest to fix. Plain words only --
@@ -138,13 +215,20 @@ function Switch({
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{why}</p>
       )}
 
-      <p className="mt-3 text-xs text-muted-foreground">
+      <p className="mt-3 flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
         {/* Every reply waits, including the first -- the wait is the window in
             which a rep can get there first. Said here because otherwise a few
             quiet minutes are indistinguishable from the agent being off, which
-            is the exact confusion this card exists to end. */}
-        Every reply waits {state.cooldown_minutes} minutes before it goes, so a rep can answer
-        first. At most {state.hourly_ceiling} an hour, after which this switches itself off.
+            is the exact confusion this card exists to end. Editable in place
+            for a manager (`CooldownEditor`); a rep reads the same sentence
+            with a plain number, the on/off switch above being the control
+            that is actually theirs. */}
+        <span>Every reply waits</span>
+        <CooldownEditor minutes={state.cooldown_minutes} manager={manager} />
+        <span>
+          minutes before it goes, so a rep can answer first. At most {state.hourly_ceiling} an
+          hour, after which this switches itself off.
+        </span>
       </p>
 
       {state.waiting_count > 0 && (

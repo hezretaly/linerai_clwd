@@ -119,10 +119,12 @@ class Settings(BaseSettings):
     #: rather than the emergency one. The `email_agent` runtime flag is the
     #: other half, and the stricter of the two wins.
     email_agent: bool = False
-    #: One reply per correspondent per this many minutes. A tuning value, so
-    #: `.env` is right for it -- unlike the kill switch, which is reached for
-    #: while something is going wrong and cannot wait for a restart.
-    email_reply_cooldown_minutes: int = 60
+    #: One reply per correspondent per this many minutes -- the `.env`
+    #: fallback for whenever the `email_reply_cooldown` runtime flag (below,
+    #: `app/flags.py`) has not been set. A manager can change the number from
+    #: the dashboard without a restart; this is only what a fresh deployment
+    #: starts at.
+    email_reply_cooldown_minutes: int = 5
     #: Across every correspondent, per hour. Per-correspondent stops one loop;
     #: a spam run across five hundred addresses walks past it, because every
     #: one is a first contact. Breaching this throws the kill switch.

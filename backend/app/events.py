@@ -59,6 +59,8 @@ EVENT_TYPES = {
     # Whether Liner answers email was switched, which every open dashboard
     # needs to agree about immediately.
     "email.agent",
+    # A manager changed how long Liner waits before answering.
+    "email.cooldown_changed",
     # Somebody asked us for a demo. Ours, not a dealership's -- it is the one
     # event on this system that nobody clicked for and that we have to act on.
     "demo.requested",

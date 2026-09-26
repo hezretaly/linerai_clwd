@@ -8294,8 +8294,8 @@ def main() -> int:
             soon = agent.may_reply(_db, fresh, has_provider=True)
             check("its own last reply holds the same clock",
                   not soon.allowed and soon.reason == "cooldown", soon.reason)
-            check("and the refusal names the setting that moves it",
-                  "EMAIL_REPLY_COOLDOWN_MINUTES" in soon.detail, soon.detail[:60])
+            check("and the refusal points at where the setting lives",
+                  "Liner setup" in soon.detail, soon.detail[:60])
 
             # Per correspondent stops one loop. A spam run across five hundred
             # addresses walks past it, because every one is a first contact --
@@ -8323,6 +8323,72 @@ def main() -> int:
 
     check("an unknown flag is refused rather than quietly stored",
           _raises_keyerror(runtime_flags))
+
+    print("\n== a manager can change how long Liner waits, from the dashboard ==")
+    # The wait used to be `.env`-only. It is a manager's own setting now, the
+    # same shape as the on/off switch beside it, and given back to "" here so
+    # nothing after this section inherits a flag value and stops noticing the
+    # direct `settings.email_reply_cooldown_minutes` writes the earlier
+    # sections in this file already make.
+    from app import email_reply as _cool_replier
+    from app.models import EmailReplyDue as _CoolDue, InboundEmail as _CoolIn
+
+    with _BrakeSession() as _db:
+        try:
+            saved = call("POST", "/api/email/agent/cooldown", {"minutes": 5})
+            check("saving it updates the card's own number",
+                  saved["cooldown_minutes"] == 5, str(saved["cooldown_minutes"]))
+            check("and a fresh fetch agrees",
+                  call("GET", "/api/email/agent")["cooldown_minutes"] == 5)
+
+            for bad in (0, -1):
+                code, detail = status_of(
+                    "POST", "/api/email/agent/cooldown", {"minutes": bad}
+                )
+                check(f"{bad} minutes is refused, not floored to one",
+                      code == 400, f"{code} {detail[:60]}")
+            check("the card is unmoved by the refused attempts",
+                  call("GET", "/api/email/agent")["cooldown_minutes"] == 5)
+
+            call("POST", "/api/auth/login", REP_LOGIN)
+            denied = status_of("POST", "/api/email/agent/cooldown", {"minutes": 10})[0]
+            call("POST", "/api/auth/login", LOGIN)
+            check("a rep can throw the on/off switch but not change the wait",
+                  denied == 403, str(denied))
+
+            # The number a reply is actually queued with is the one that
+            # matters -- the card could say 5 while `schedule` still read a
+            # stale value if anything reached the setting directly instead of
+            # through `email_agent.cooldown_minutes`.
+            waiter = _Lead(name="", email=f"cooldown-dash.{stamp}@example.invalid",
+                            phone="", source="email")
+            _db.add(waiter)
+            _db.commit()
+            receipt = _CoolIn(
+                outcome="accepted", message_id=f"<cooldown-dash-{stamp}@mail>",
+                from_address=waiter.email, to_address="sales@example.invalid",
+                subject="Silverado", body="Is it still there?", lead_id=waiter.id,
+            )
+            theirs = _Outreach(
+                lead_id=waiter.id, channel="email", direction="in", kind="reply",
+                to_address=waiter.email, subject="Silverado",
+                body="Is it still there?", provider="inbound",
+                status="sent", sent_at=utcnow_local(),
+            )
+            _db.add_all([receipt, theirs])
+            _db.commit()
+            was_flag = runtime_flags.get(_db, "email_agent")
+            runtime_flags.set(_db, "email_agent", "on", reason="smoke")
+            result = _cool_replier.schedule(_db, receipt, waiter, theirs)
+            check("it queues rather than answers on the spot",
+                  result["queued"], str(result.get("reason")))
+            due_row = _db.query(_CoolDue).filter_by(lead_id=waiter.id).one()
+            minutes_out = (due_row.due_at - utcnow_local()).total_seconds() / 60
+            check("and it is due in the dashboard's 5 minutes, not the old default",
+                  4.9 <= minutes_out <= 5.1, f"{minutes_out:.2f} minutes")
+            runtime_flags.set(_db, "email_agent", was_flag or "off", reason="smoke reset")
+        finally:
+            runtime_flags.set(_db, "email_reply_cooldown", "", reason="smoke reset")
 
     # **The Worker forwards the message; it no longer reads it.** It used to
     # parse with postal-mime and post a JSON digest -- one sender, no Cc, and

@@ -404,9 +404,15 @@ def enabled_note() -> str:
 # **Every reply waits, including the first.** Answering three seconds after a
 # buyer wrote is the most robotic thing a mailbox can do, and the wait buys
 # something besides: a window in which a rep can read the message and take the
-# thread over before anything goes out on its own. It is the same number either
-# way -- `EMAIL_REPLY_COOLDOWN_MINUTES` -- so a gap *between* replies falls out
-# of it rather than being a second rule.
+# thread over before anything goes out on its own. It is the same number
+# either way -- `email_agent.cooldown_minutes()`, a manager's own setting on
+# the Liner setup page with `EMAIL_REPLY_COOLDOWN_MINUTES` as its fallback --
+# so a gap *between* replies falls out of it rather than being a second rule.
+#
+# The number read here is the one in effect **at the moment a reply is
+# queued**, and it is baked into the row as `due_at`: changing the setting
+# afterwards does not rewrite anything already waiting. Only the next reply
+# to be queued sees the new number.
 
 
 def schedule(
@@ -433,7 +439,7 @@ def schedule(
         _hand_over(db, lead, refused)
         return {"queued": False, "reason": "handed_over", "detail": refused}
 
-    due = utcnow() + timedelta(minutes=max(settings.email_reply_cooldown_minutes, 0))
+    due = utcnow() + timedelta(minutes=email_agent.cooldown_minutes(db))
     row = EmailReplyDue(
         inbound_email_id=claim.id, lead_id=lead.id, outreach_id=received.id,
         due_at=due, automated=automated,

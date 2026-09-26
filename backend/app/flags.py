@@ -79,6 +79,22 @@ FLAGS = {
             values=PHONE_PERSONAS,
         ),
         Flag(
+            key="email_reply_cooldown",
+            label="Minutes before Liner answers an email",
+            # No default here that means anything -- `""` falls through to
+            # `email_agent.cooldown_minutes()`'s own fallback, `.env`'s
+            # `EMAIL_REPLY_COOLDOWN_MINUTES`, so a deployment that has never
+            # touched this dashboard keeps behaving exactly as it always did.
+            # `values=()`: a whole number of minutes is not a closed set the
+            # way a persona or an on/off switch is, so the floor (never under
+            # one minute -- faster than that reads as a robot, and stops the
+            # rep-answers-first window doing its job) is enforced where the
+            # value is actually set, in `PATCH /api/email/agent/cooldown`,
+            # the same way the credit-application link's `https://` shape is
+            # checked at its own endpoint rather than here.
+            default="",
+        ),
+        Flag(
             key="website_chat",
             label="The chat bubble on the dealership's website",
             # **On, and for the reason `phone_persona` is:** the permissive
