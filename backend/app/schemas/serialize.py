@@ -79,11 +79,11 @@ def loads(raw: str, fallback):
 def user_out(u) -> dict | None:
     """A dealership `User` or an ops `OpsUser`, in one shape.
 
-    `daily_cap` and `notify_channel` are about taking appointments on a
-    showroom floor and an ops account has neither column. They are answered
-    with a zero and a blank rather than omitted, so the frontend has one
-    account shape and no branch -- a key that exists on some responses and not
-    others is how a page ends up rendering `undefined`.
+    `daily_cap` is about taking appointments on a showroom floor and an ops
+    account has no such column. It is answered with a zero rather than
+    omitted, so the frontend has one account shape and no branch -- a key
+    that exists on some responses and not others is how a page ends up
+    rendering `undefined`.
     """
     if u is None:
         return None
@@ -94,7 +94,6 @@ def user_out(u) -> dict | None:
         "role": u.role,
         "avatar_initials": u.avatar_initials,
         "daily_cap": getattr(u, "daily_cap", 0),
-        "notify_channel": getattr(u, "notify_channel", ""),
         "active": u.active,
         "out": getattr(u, "out", False),
     }

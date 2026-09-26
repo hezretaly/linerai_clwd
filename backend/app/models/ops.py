@@ -58,9 +58,9 @@ class OpsUser(OpsBase):
     """Us. Not a `User` -- a `User` works at the dealership.
 
     The two tables have almost the same columns and that is not a reason to
-    merge them: `daily_cap` and `notify_channel` are about taking appointments
-    on a showroom floor, which nobody here does. What they share is a name, an
-    address and a password, which is what any account is.
+    merge them: `daily_cap` is about taking appointments on a showroom floor,
+    which nobody here does. What they share is a name, an address and a
+    password, which is what any account is.
     """
 
     __tablename__ = "ops_users"
