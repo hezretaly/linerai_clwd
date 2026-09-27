@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
@@ -183,18 +183,29 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
     [data, target],
   )
 
-  // "Text" is the box that types live into an open thread -- offering it
-  // over an email thread let a rep's plain-text reply go out as a second,
-  // unthreaded email with a guessed subject (`send_rep_reply`), because
-  // `_reply_target` names the most recently *started* conversation, email
-  // included. Whenever that thread is email, replying to it *is* Email.
-  const targetIsEmail = targetConvo?.channel === 'email'
+  // "Text" is the box that types live into an open thread, so it only makes
+  // sense over a genuine chat thread. `target` is whichever conversation
+  // `_reply_target` names -- the one that *started* most recently, not the
+  // one shaped like a chat -- so offering "Text" whenever it merely was not
+  // email let it appear over an open voice conversation too, posting a rep
+  // message into a call transcript nobody reads live. The email case is the
+  // same failure by a different route: it let a plain-text reply go out as a
+  // second, unthreaded email under a guessed subject (`send_rep_reply`).
+  const targetIsChatThread = targetConvo?.channel === 'chat'
+  // Whether to default the picker to Email is a fact about what the BUYER
+  // last did, not about which conversation row happens to have the latest
+  // `started_at` -- those can disagree (an attempted, unanswered call opened
+  // after an active email exchange would outrank it, and the composer would
+  // default back to a chat box for a buyer who last wrote in by email).
+  // `lastInboundEmailNow` already answers "what did the buyer send last, on
+  // any channel", so the default reads that instead of `target`.
+  const lastMessageWasEmail = lastInboundEmailNow !== null
   // Nothing here means a rep has chosen otherwise: `mode` starts at its
   // default, `'chat'`, and stays there until the picker or a send resets
-  // it. A thread that is email leaves nothing to type into as chat, so
-  // that default becomes Email instead, defaulting to a reply to the
-  // buyer's own last email rather than a blank new one.
-  const effectiveMode: Channel = mode === 'chat' && targetIsEmail ? 'email' : mode
+  // it. A buyer whose last word was an email has nothing to type into as
+  // chat, so that default becomes Email instead, defaulting to a reply to
+  // the buyer's own last email rather than a blank new one.
+  const effectiveMode: Channel = mode === 'chat' && lastMessageWasEmail ? 'email' : mode
 
   /* Who an email from this page is likely to go to, offered as somebody
    * types into To or Cc: every address the buyer is known by -- `/reach`'s
@@ -368,21 +379,24 @@ export function LeadPage({ of }: { of: 'lead' | 'conversation' }) {
             reach={reach}
             mode={effectiveMode}
             onPick={setMode}
-            // Not just `target !== null`: an email thread is not a text
-            // conversation, and offering "Text" over one drew a button that
-            // sent a real email in plain text under a guessed subject.
-            hasThread={target !== null && !targetIsEmail}
+            // Not just "not email": a voice conversation is not a text
+            // conversation either, and offering "Text" over either drew a
+            // button that posted somewhere the buyer would never see it.
+            hasThread={target !== null && targetIsChatThread}
             threadLabel={CHANNEL_LABEL[targetConvo?.channel ?? 'chat'] ?? 'Website chat'}
           />
           {/* Without a ceiling the composer reproduces the squeeze one edge
-              lower: the email box is nine rows plus a subject plus a hint. */}
+              lower: the email box is nine rows plus a subject plus a hint.
+              Keyed on `effectiveMode`, not `mode` -- an auto-defaulted email
+              reply (the case this default exists for) never touches `mode`
+              at all, so keying on `mode` capped exactly that case at 45vh. */}
           <div
             className={clsx(
               'scroll-thin overflow-y-auto p-4',
               // An email is subject, a body worth reading, the draft controls
               // and Send. At 45vh Send sat below the fold of the footer's own
               // scroll, which read as a composer with no way to send.
-              mode === 'email' ? 'max-h-[75vh]' : 'max-h-[45vh]',
+              effectiveMode === 'email' ? 'max-h-[75vh]' : 'max-h-[45vh]',
             )}
           >
             {effectiveMode === 'email' && lead ? (
@@ -1171,8 +1185,23 @@ function EmailReply({
    *  turned it into something else. */
   const [preset, setPreset] = useState<Preset>('')
 
+  // What the quote read when it was inserted -- the editor's own
+  // normalisation of the html `quotedBody` set, once it has reported back --
+  // so switching away from a reply only asks first when there is a real edit
+  // to lose, the same rule `EmailReader`'s own discard confirm follows.
+  const openedQuoteText = useRef<string | null>(null)
+  const edit = (p: Partial<MailDraft>) => {
+    if (answeringInbound && openedQuoteText.current === null && p.text !== undefined) {
+      openedQuoteText.current = p.text
+    }
+    patch(p)
+  }
+  const replyChanged =
+    Boolean(answeringInbound) && openedQuoteText.current !== null && body !== openedQuoteText.current
+
   useEffect(() => {
     if (!answeringInbound || !inbound) return
+    openedQuoteText.current = null
     setDraft({
       ...emptyDraft(inbound.reply.to.join(', ')),
       cc: inbound.reply.cc.join(', '),
@@ -1245,7 +1274,15 @@ function EmailReply({
       setDraft(emptyDraft(lead.email))
       setProblem('')
       setPreset('')
-      setSkipReply(false)
+      // Not back to `false`: this box does not remount after a send (the
+      // caller's `key` is the pinned email, unchanged by sending a reply to
+      // it), so resetting to reply mode here left the note reading "Replying
+      // to their email..." over a draft just blanked to nothing -- the quote
+      // was gone, the prefill effect had no changed dependency to re-run on,
+      // and a second press of Send went out with an empty body and subject.
+      // Having just answered it, a blank new-message box is the right rest
+      // state; "Reply to their email instead" (below) still reopens it.
+      setSkipReply(true)
       onDone()
     },
     // A 400 names what it could not read -- the address that is not one, the
@@ -1272,7 +1309,18 @@ function EmailReply({
             <button
               type="button"
               className="font-medium text-primary hover:underline"
-              onClick={() => setSkipReply(true)}
+              onClick={() => {
+                // Flipping this alone used to leave the quote, the Re:
+                // subject and the reply's own To/Cc sitting in the draft --
+                // "instead" sent a reply-shaped email that opened a second,
+                // unthreaded thread rather than a new message.
+                if (replyChanged && !window.confirm('Discard this reply? Nothing here is saved as a draft.')) return
+                setSkipReply(true)
+                setDraft(emptyDraft(lead.email))
+                setPreset('')
+                setProblem('')
+                setRefused([])
+              }}
             >
               Write a new email instead
             </button>
@@ -1280,12 +1328,30 @@ function EmailReply({
         ) : preset ? (
           `Sending as ${presetLabel}. It starts a new thread in their inbox.`
         ) : (
-          'A new message, so it starts a new thread in their inbox. To answer one of theirs, open it on the timeline and press Reply.'
+          <>
+            A new message, so it starts a new thread in their inbox. To answer one of theirs, open
+            it on the timeline and press Reply.
+            {replyTo && (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  className="font-medium text-primary hover:underline"
+                  onClick={() => {
+                    if (body.trim() && !window.confirm('Discard this email? Nothing here is saved as a draft.')) return
+                    setSkipReply(false)
+                  }}
+                >
+                  Reply to their email instead
+                </button>
+              </>
+            )}
+          </>
         )}
       </p>
       <ComposeFields
         draft={draft}
-        onChange={patch}
+        onChange={edit}
         suggestions={suggestions}
         // **Shown, not typed, and it carries their name.** Appended on the
         // way out by the compose endpoint, so a rep who could not see it
