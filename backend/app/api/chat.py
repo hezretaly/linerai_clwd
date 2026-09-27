@@ -828,6 +828,19 @@ def details_from_card(
         # to fix and the card says so under the box. Nothing here is a bug.
         raise HTTPException(400, str(exc)) from None
 
+    # **A promised callback is a rep's job, not a fact about the buyer.**
+    # This reply says "someone here will give you a call" on every submission,
+    # unconditionally -- but nothing raised a handoff to say so, so the buyer
+    # left the card believing a person had it and the dashboard's own "Needs a
+    # person" queue never heard about them. `escalate_to_human` is idempotent
+    # (an already-open handoff answers `already_escalated` rather than
+    # stacking a second one) and reachable is `True` the moment `save_details`
+    # has run, so it draws no card of its own here -- it only raises the flag
+    # the promise above already made.
+    tools.escalate_to_human(
+        db, convo, {"reason": "Left their name and number for a callback."}
+    )
+
     # What happens next, and nothing beyond it. There is no SMS provider here,
     # so the honest promise is that a person will ring -- never that we will
     # text, which is the thing a buyer handing over a mobile number expects.
