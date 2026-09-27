@@ -3,6 +3,7 @@ import clsx from 'clsx'
 
 import { applyBrand } from '../lib/brand'
 import { api, ApiError, streamMessages } from '../lib/api'
+import { linked } from '../lib/linkify'
 import { STORE, WIDGET, withStore } from '../lib/store'
 import { useDealership } from '../lib/dealership'
 import {
@@ -661,7 +662,7 @@ export function Chat() {
               >
                 <div
                   className={clsx(
-                    'max-w-[80%] rounded-2xl px-4 py-2.5 text-[15px] leading-snug whitespace-pre-wrap animate-fade-up',
+                    'max-w-[80%] break-words rounded-2xl px-4 py-2.5 text-[15px] leading-snug whitespace-pre-wrap animate-fade-up',
                     item.role === 'buyer'
                       ? 'bg-bubble-buyer text-bubble-buyer-foreground'
                       : item.role === 'rep'
@@ -669,7 +670,7 @@ export function Chat() {
                         : 'bg-muted text-foreground',
                   )}
                 >
-                  {item.content}
+                  {linked(item.content)}
                 </div>
               </div>
             )

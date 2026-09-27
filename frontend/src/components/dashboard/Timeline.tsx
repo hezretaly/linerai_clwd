@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { dateTime, money, time } from '../../lib/format'
 import type { Vehicle, User } from '../../lib/types'
 import { addrList, fileSize, type Addr, type EmailSummary } from '../../lib/email'
+import { linked } from '../../lib/linkify'
 import { Icon } from '../Icon'
 import { Badge } from '../ui'
 import { withStore } from '../../lib/store'
@@ -113,8 +114,8 @@ function Message({ e, showChannel }: { e: TimelineEntry; showChannel: boolean })
   if (e.role === 'buyer') {
     return (
       <>
-        <div className="mt-2 max-w-[80%] self-start rounded-lg rounded-bl-sm border border-border bg-background px-3.5 py-2.5 text-sm leading-relaxed">
-          {e.content}
+        <div className="mt-2 max-w-[80%] self-start break-words rounded-lg rounded-bl-sm border border-border bg-background px-3.5 py-2.5 text-sm leading-relaxed">
+          {linked(e.content)}
         </div>
         <div className="tnum mb-1 flex items-center gap-2 self-start text-[11px] text-muted-foreground">
           {showChannel && <ChannelMark channel={e.channel} />}
@@ -127,8 +128,8 @@ function Message({ e, showChannel }: { e: TimelineEntry; showChannel: boolean })
   if (e.role === 'rep') {
     return (
       <>
-        <div className="mt-2 max-w-[80%] self-end whitespace-pre-wrap rounded-lg rounded-br-sm bg-foreground px-3.5 py-2.5 text-sm leading-relaxed text-background">
-          {e.content}
+        <div className="mt-2 max-w-[80%] self-end whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-foreground px-3.5 py-2.5 text-sm leading-relaxed text-background">
+          {linked(e.content)}
         </div>
         <div className="tnum mb-1 flex items-center gap-2 self-end text-[11px] text-muted-foreground">
           Sent by a person · {stamp}
@@ -146,8 +147,8 @@ function Message({ e, showChannel }: { e: TimelineEntry; showChannel: boolean })
           <span>Liner ran {e.tool_calls!.map((t) => t.name).join(', ')}</span>
         </div>
       )}
-      <div className="mt-2 max-w-[80%] self-end whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
-        {e.content}
+      <div className="mt-2 max-w-[80%] self-end whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+        {linked(e.content)}
       </div>
       <div className="tnum mb-1 flex items-center gap-2 self-end text-[11px] text-muted-foreground">
         {showChannel && <ChannelMark channel={e.channel} />}
