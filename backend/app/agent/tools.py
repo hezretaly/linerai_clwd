@@ -573,6 +573,19 @@ def offerable(query):
     )
 
 
+#: Single letters that are ordinary English words rather than a model's own
+#: initial. "a" is the one the rule below exists for -- it is a whole-word
+#: match against every A-Class and A-Spec on the lot. Every *other* letter is
+#: closer to a name a dealer actually uses (Mercedes' C/E/S/G-Class, an "R"
+#: trim) than to a word a buyer would type on its own, so only these are
+#: dropped rather than every single-character token: dropping "c" as well
+#: made "what about c class" degrade to "class" alone, which every one of
+#: those trims answers to equally -- asking about the C-Class by name
+#: returned the C-Class, the E-Class and the SL-Class as if a buyer had asked
+#: about none of them in particular.
+_FILLER_LETTERS = {"a", "i"}
+
+
 def _words(text: str) -> list[str]:
     """Split on anything that is not a letter or a digit, never on spaces.
 
@@ -582,15 +595,14 @@ def _words(text: str) -> list[str]:
     lot instead of the car they named. "BMW X5" and "tell me about the BMW X5"
     both worked, which is what made it invisible for so long.
 
-    A lone *letter* is dropped and a lone *digit* is kept, which is not a
-    stylistic distinction. "Do you have a chevy Trax?" contains the word "a",
-    which is a whole-word match against every A-Class and A-Spec on the lot, so
-    two cars nobody asked about outranked the one that was named. No car is
-    called "a". Several are called 3 and 5.
+    A lone *letter* is dropped only when it is in `_FILLER_LETTERS`, and a lone
+    *digit* is always kept -- see `_FILLER_LETTERS` for why "a" is the narrow
+    case rather than every single character. No car is called "a" or "i".
+    Several are called 3 and 5, and several more are called C, E or S.
     """
     return [
         w for w in re.split(r"[^a-z0-9]+", (text or "").lower())
-        if w and (len(w) > 1 or w.isdigit())
+        if w and (len(w) > 1 or w.isdigit() or w not in _FILLER_LETTERS)
     ]
 
 
