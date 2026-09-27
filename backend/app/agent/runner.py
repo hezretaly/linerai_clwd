@@ -307,6 +307,14 @@ def record_assistant_message(
     # call the addendum's one-question rule is the only lever there is.
     if _asked_in_a_box(calls) or phrasing.asks_something_else(reply):
         reply = phrasing.without_offer_more(reply)
+    # A form the model names must be a form a tool drew this turn, the same
+    # rule a car or a price is already held to. Without this, a reply that
+    # had already answered the question in full -- three named cars, a real
+    # price, a real mileage -- closed with "the contact form is here" anyway,
+    # on a turn that drew no card at all: the model repeating a sign-off from
+    # habit rather than from anything that actually happened this turn.
+    if not _asked_in_a_box(calls) and "contact form" in reply.lower():
+        reply = phrasing.without_unfounded_form_claim(reply)
 
     message = Message(
         conversation_id=convo.id,

@@ -97,6 +97,41 @@ def without_offer_more(text: str) -> str:
     return _OFFER_MORE.sub("", text or "").strip()
 
 
+#: A closing line naming the contact form. See `without_unfounded_form_claim`.
+_FORM_MENTION = re.compile(
+    r"(?:^|(?<=[.!?\n]))[^.!?\n]*\bcontact form\b[^.!?\n]*[.!?]?\s*$",
+    re.I,
+)
+
+
+def without_unfounded_form_claim(text: str) -> str:
+    """Drop a trailing sentence naming the contact form -- said this turn drew
+    none.
+
+    **A form the model names must be a form a tool drew**, the same rule
+    `check_unsourced_vehicles` already holds a car to. `escalate_to_human`'s
+    own guidance says not to repeat "somebody will confirm" on an
+    already-open handoff -- "they heard it" -- and a model does it anyway
+    often enough that a real reply named the contact form under three
+    separate, fully-answered inventory questions in a row, with no card drawn
+    for any of them: "new arrivals" got three named cars and "the contact
+    form is here so someone can help you compare them", "anything mercedes"
+    got three more and the same line again. Read as sourced the way a price
+    is: only when *this turn's* tool results actually put one on screen
+    (`runner._asked_in_a_box`), never because the model said so.
+
+    Only the final sentence, and only one that names the contact form -- the
+    same restraint `without_offer_more` uses, so the worst a false positive
+    can do is remove a sentence that had nothing behind it anyway.
+
+    Left alone if it was the *whole* reply: "anything mercedes" once drew
+    three cards and no prose but that one sentence, and a blank bubble is a
+    worse failure than the false claim it would have replaced.
+    """
+    stripped = _FORM_MENTION.sub("", text or "").strip()
+    return stripped or (text or "").strip()
+
+
 def money(value: int | None) -> str:
     """`$21,400`, or what the listing itself says when it carries no price.
 
