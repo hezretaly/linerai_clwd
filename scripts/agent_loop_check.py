@@ -1127,6 +1127,14 @@ def main() -> int:
             if _visit is not None:
                 db.delete(_visit)
             db.query(Message).filter_by(conversation_id=booker.id).delete()
+            # The card's submit now raises a real handoff to back its own
+            # "someone here will give you a call" -- children first, in their
+            # own commit: SQLite refuses to drop a conversation something
+            # else still points at, and a bare FK column with no
+            # `relationship()` is not ordered against its parent within a
+            # single flush.
+            db.query(Escalation).filter_by(conversation_id=booker.id).delete()
+            db.commit()
             db.delete(booker)
             from app.models import CapturedField as _Field  # noqa: E402
             db.query(_Field).filter_by(lead_id=reached.id).delete()
