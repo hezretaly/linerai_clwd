@@ -6002,6 +6002,13 @@ def main() -> int:
     made = call("GET", f"/api/leads/{saved['saved']['lead_id']}")
     check("with the number on the row, where the matcher reads it",
           "5550134" in re.sub(r"\D", "", made["phone"] or ""), made["phone"])
+    # **A promised callback is a rep's job, not a fact about the buyer.** The
+    # reply above says "someone here will give you a call" on every
+    # submission -- so this buyer must actually be findable in "Needs a
+    # person", or the promise was made to nobody. `flagged` is the one
+    # definition `waiting_on_person` backs everywhere it is read.
+    check("submitting the card raises 'Needs a person', not just a promise",
+          made["flagged"] is True, str(made.get("flagged")))
     # **Provenance passes on merit, not by exemption.** The submission is
     # written into the transcript as the buyer's own message first, so
     # `save_captured_fields` finds the value in something they wrote -- the
@@ -6122,6 +6129,77 @@ def main() -> int:
         _edb.commit()
     finally:
         _edb.close()
+
+    print("\n== a buyer who names one Mercedes trim is shown that trim ==")
+    # **A single-letter model designator is not a filler word.** Dropping
+    # every lone letter to stop "a" matching every A-Class also dropped "c",
+    # so "what about c class" degraded to the keyword "class" alone -- which
+    # every one of Mercedes' -Class trims answers to equally. Asking about
+    # the C-Class by name returned the C-Class, the E-Class and the SL-Class
+    # as if none had been named in particular.
+    from app.agent.tools import _hits, _words
+
+    def _score(keywords: str, haystack: str) -> int:
+        words, hay = _words(keywords), _words(haystack)
+        return sum(1 for k in words if _hits(k, hay))
+
+    check("'c class' still drops the filler word 'a'",
+          _words("a chevy trax") == ["chevy", "trax"], _words("a chevy trax"))
+    c_score = _score("c class", "Mercedes-Benz C-Class C 300")
+    e_score = _score("c class", "Mercedes-Benz E-Class E 350")
+    sl_score = _score("c class", "Mercedes-Benz SL-Class SL 550")
+    check("but 'c class' now scores the C-Class uniquely above the others",
+          c_score > e_score and c_score > sl_score,
+          f"c={c_score} e={e_score} sl={sl_score}")
+    check("and naming a specific BMW model still outscores its own family",
+          _score("BMW X1", "BMW X1 xDrive28i") > _score("BMW X1", "BMW 3-Series 328i xDrive"))
+
+    print("\n== a form the model names must be a form a tool drew ==")
+    # **A car the model names must be a car a tool returned; the same now**
+    # **holds for a form.** A real chat closed three separate, fully-answered
+    # inventory replies with "the contact form is here so someone can help
+    # you..." though none of the three turns had drawn one --
+    # `escalate_to_human`'s own guidance says not to repeat that on an
+    # already-open handoff, and the model did anyway.
+    from app.agent.runner import record_assistant_message as _record_msg
+    from app.db import SessionLocal as _FormSession
+    from app.models import Conversation as _FormConvo
+
+    _formdb = _FormSession()
+    try:
+        form_convo = _FormConvo(channel="chat", stage="browsing")
+        _formdb.add(form_convo)
+        _formdb.commit()
+
+        unfounded = _record_msg(
+            _formdb, form_convo,
+            "Here's what's new: a 2018 Jeep and a 2015 Jeep, both in Santa Ana. "
+            "The contact form is here so someone can help you compare them.",
+            [{"name": "search_inventory", "input": {}, "result": {"vehicles": []}}],
+        )
+        check("a form claim with no card drawn this turn is stripped",
+              "contact form" not in unfounded.content.lower(), unfounded.content)
+        check("and the rest of the answer survives untouched",
+              "2018 Jeep" in unfounded.content, unfounded.content)
+
+        founded = _record_msg(
+            _formdb, form_convo,
+            "Please fill in the details on screen so a colleague can confirm. "
+            "The contact form is on your screen now.",
+            [{"name": "request_details", "input": {}, "result": {"fields": [{"key": "phone"}]}}],
+        )
+        check("but a form the turn really drew is left alone",
+              "contact form" in founded.content.lower(), founded.content)
+
+        # Children first, in their own commit -- see the identical note above
+        # this same pattern earlier in the file.
+        for row in (unfounded, founded):
+            _formdb.delete(row)
+        _formdb.commit()
+        _formdb.delete(form_convo)
+        _formdb.commit()
+    finally:
+        _formdb.close()
 
     print("\n== the turn that asks for contact details draws the boxes ==")
     # **The one turn whose whole purpose is collecting a name and a number
