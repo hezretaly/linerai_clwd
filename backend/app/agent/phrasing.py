@@ -25,7 +25,16 @@ import re
 #: Underscores are left alone. `josh_r@example.com` is an address a buyer
 #: typed, and `_` as emphasis is rare enough that dropping it would break more
 #: than it tidied.
+#:
+#: A markdown link is the one marker that carries content worth keeping: the
+#: asterisk rule removes a wrapper, but `[text](url)` left alone reaches an
+#: inbox exactly as typed, brackets and all, the same failure this whole
+#: function exists to fix -- and it is the shape a model reaches for the
+#: moment it is told to relay a car's own link. Unwrapped to "text (url)"
+#: instead of dropped outright, since the bare url that survives is exactly
+#: what the HTML half's own linkifier (`resend._linked`) turns clickable.
 _MARKDOWN = (
+    (re.compile(r"\[([^\[\]]+)\]\((https?://\S+?)\)"), r"\1 (\2)"),  # [text](url)
     (re.compile(r"\*{1,3}"), ""),        # **bold**, *italic*, ***both***
     (re.compile(r"^ {0,3}#{1,6}\s+", re.M), ""),  # ### a heading
     (re.compile(r"`+"), ""),             # `code`

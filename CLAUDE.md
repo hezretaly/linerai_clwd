@@ -590,8 +590,13 @@ There is no pytest suite and no Playwright suite — deliberately (see below).
   offered the rep no composer and no Take over. The one person who could have
   helped had no way in, and the buyer could not tell. The buyer ends it, via
   `close_conversation`, and `record_buyer_message` reopens a closed chat that
-  somebody types into again — chat only, because a voice call that ended really
-  did end and its `ended_at` is how long it ran.
+  somebody types into again. Email reopens the same way — `remember_inbound`
+  is the one place every delivery passes through, since `thread_for` reuses a
+  buyer's email conversation regardless of its status — so a buyer who says
+  goodbye and writes back next week is answered into a thread that says so,
+  not one still marked closed with no Take over on it. Voice alone stays
+  closed for good: a call that ended really did end, and its `ended_at` is
+  how long it ran.
 - **Every turn ends by offering more, and the last one asks for a number.**
   Two halves of the operator's rule, and they sit in different places for the
   usual reason. "Is there anything else I can help with" is a *behaviour* and

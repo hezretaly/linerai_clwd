@@ -115,6 +115,19 @@ def remember_inbound(db: Session, convo: Conversation, received: Outreach, text:
     )
     if already is not None:
         return
+    # A buyer writing into a closed email thread has reopened it -- the same
+    # rule `record_buyer_message` applies to a closed chat. Without this, a
+    # buyer who said "thanks, that's all" and closed it out, then wrote back
+    # a week later with something new, was answered into a thread still
+    # marked closed: no Take over, no "conversation" row on
+    # `/app/conversations`, nothing on the dealer's own board saying anyone
+    # had written in again. `thread_for` reuses this same row regardless of
+    # status, so this is the one place every reopened delivery passes through.
+    # `ended_at` is not a duration on email the way it is on a call that truly
+    # ended, so clearing it loses nothing.
+    if convo.status == "closed":
+        convo.status = "active"
+        convo.ended_at = None
     db.add(Message(
         conversation_id=convo.id, role="buyer", content=text,
         tool_calls_json=_dump([{"name": "outreach", "outreach_id": received.id}]),

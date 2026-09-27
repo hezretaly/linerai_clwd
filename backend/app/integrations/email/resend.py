@@ -56,12 +56,17 @@ def as_html(text: str) -> str:
     )
 
 
-# A bare address, after escaping: `&` is already `&amp;` and stays so inside
-# the href, which is the valid form. Stops before whitespace, a tag, or the
-# `&` that opens an entity, and gives back trailing punctuation -- a link
-# at the end of a sentence is written "...here: https://x/y." and the full
-# stop is the sentence's, not the address's.
-_URL = re.compile(r"https?://[^\s<&]+")
+# A bare address, after escaping. `escape()` already ran over the whole
+# paragraph, so every `&` in this text -- inside a URL's own query string or
+# not -- reads as `&amp;` alike; stopping at it split a listing_url carrying
+# more than one query parameter in two, leaving `&year=2020` sitting after
+# the closed tag as plain text next to a half-working link. A car page with a
+# broken link is the same failure this exists to fix, so the match runs
+# through `&` and stops only at whitespace or a tag -- gives back trailing
+# punctuation, because a link at the end of a sentence is written
+# "...here: https://x/y." and the full stop is the sentence's, not the
+# address's.
+_URL = re.compile(r"https?://[^\s<]+")
 
 
 def _linked(escaped: str) -> str:
