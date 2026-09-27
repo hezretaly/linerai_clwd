@@ -6300,6 +6300,40 @@ def main() -> int:
     for _channel in ("email", "sms", "chat"):
         check(f"and the {_channel} composer has it beside Send",
               f'<AssistButton\n' in _lead_page and f'channel="{_channel}"' in _lead_page)
+
+    # **The footer's height cap and the box it caps must key on the same
+    # value.** They were `mode` and `effectiveMode`, which agree everywhere
+    # except the one case the auto-default exists for: a lead whose thread is
+    # email but who a rep has not clicked Email for. There, the email box
+    # rendered under the 45vh cap meant for a plain box, and CLAUDE.md is
+    # explicit about what that looks like -- Send below the fold of the
+    # footer's own scroll.
+    check("the footer's height cap is keyed on the same mode the box is",
+          "effectiveMode === 'email' ? 'max-h-[75vh]'" in _lead_page)
+    # **"Text" only makes sense over a real chat thread.** `target` names
+    # whichever conversation started most recently, and that can be a voice
+    # or an email conversation just as easily as a chat one -- offering
+    # "Text" over either posted a rep's message somewhere the buyer would
+    # never read it live.
+    check("'Text' is offered only over a genuine chat thread",
+          "hasThread={target !== null && targetIsChatThread}" in _lead_page)
+    # **Which buyer message decides the default is a fact about the buyer,**
+    # not about which conversation row happens to have the latest
+    # `started_at` -- an attempted, unanswered call opened after an active
+    # email exchange used to outrank it and default the composer back to chat.
+    check("the Email default reads what the buyer last sent, not which "
+          "thread started last",
+          "mode === 'chat' && lastMessageWasEmail ? 'email' : mode" in _lead_page)
+    # **"Write a new email instead" must actually write a new email.**
+    # Flipping the mode alone left the quoted original, the Re: subject and
+    # the reply's own To/Cc sitting in the draft, so the button's own promise
+    # -- "instead" -- sent a reply-shaped email that opened a second,
+    # unthreaded thread rather than a new message. And it needs a way back:
+    # without one, pressing it was a one-way door out of the reply.
+    check("writing a new email resets the draft rather than just the label",
+          "setSkipReply(true)\n                setDraft(emptyDraft(lead.email))" in _lead_page)
+    check("and there is a way back into the reply",
+          "Reply to their email instead" in _lead_page)
     # Reply, Reply all and Forward in both email readers have it too, on the
     # words above the quote -- and it answers *that* email, read by the server
     # through the reader's own function, never a body the browser sent.
@@ -7880,10 +7914,11 @@ def main() -> int:
     # channel quietly stops running the guards.
     from app import email_reply as replier
     from app import flags as _flags
+    from app.agent import phrasing
     # Aliased: `say` is already the chat sender in this file.
     from app.agent.fake_provider import FakeProvider
     from app.agent.fake_provider import say as scripted
-    from app.agent.prompts import EMAIL_ADDENDUM, build_system_prompt
+    from app.agent.prompts import CHAT_ADDENDUM, EMAIL_ADDENDUM, OPERATING_RULES, build_system_prompt
     from app.api.settings import live_settings as _live
     from app.config import settings as _cfg
     from app.db import SessionLocal as _ReplySession
@@ -7941,6 +7976,40 @@ def main() -> int:
               _linked)
         check("and the sentence's own full stop stays outside the link",
               "abc123</a>." in _linked, _linked)
+        # **A dealer's listing_url routinely carries more than one query
+        # parameter**, and stopping the match at `&` split it in two --
+        # `&year=2020` fell out of the href and sat next to the closed tag as
+        # plain text, next to a link that only pointed at half the address.
+        _multi = _as_html("https://dealer.example/inventory?vin=ABC123&year=2020")
+        check("a listing_url with more than one query parameter stays whole",
+              '<a href="https://dealer.example/inventory?vin=ABC123&amp;year=2020">'
+              in _multi and "&year=2020" not in _multi.split("</a>", 1)[-1],
+              _multi)
+
+        # **A markdown link reaches an inbox exactly as typed unless something**
+        # **takes it apart.** The addendum above asks the model to relay a
+        # car's own link, and a model told to include a link reaches for
+        # `[text](url)` as readily as it reaches for `**bold**` -- the same
+        # failure the owner originally reported, one marker over.
+        check("a markdown link is unwrapped to text and a bare, clickable url",
+              phrasing.plain("See [this BMW](https://dealer.example/x1) today.")
+              == "See this BMW (https://dealer.example/x1) today.")
+        check("even when its url carries a query string of its own",
+              phrasing.plain("[the listing](https://x.example/car?a=1&b=2) is live")
+              == "the listing (https://x.example/car?a=1&b=2) is live")
+
+        # **The shared rules must never promise a screen only chat has.**
+        # `OPERATING_RULES` said `escalate_to_human` "brings up the contact
+        # form" and "puts the contact form on their screen" -- true only on
+        # chat, appended *before* the email addendum's denial of exactly that,
+        # so the prompt carried two rules that fought and gave the model no
+        # tiebreaker. The mechanic now lives only where it is true: in
+        # `CHAT_ADDENDUM`, and in `escalate_to_human`'s own per-channel
+        # guidance, never in the rules every channel shares.
+        check("the shared operating rules no longer promise a contact form",
+              "contact form" not in OPERATING_RULES.lower())
+        check("chat's own addendum still describes it -- it is the one channel with one",
+              "contact form" in CHAT_ADDENDUM.lower())
 
         # Over the cap, Liner does not answer badly -- it hands the message to
         # a person. Truncating and answering anyway means confidently replying
@@ -8057,6 +8126,79 @@ def main() -> int:
             body = (invented.get("body") or "")
             check("and an unsourced claim is caught on email as on a screen",
                   invented["sent"] and "still available" not in body, body[:60])
+
+            # **A closed email thread must reopen on the next word from the
+            # buyer.** Chat's own `record_buyer_message` reopens a closed
+            # thread; email had no equivalent, so a buyer who said "thanks,
+            # that's everything" and wrote back a week later with something
+            # new was answered into a thread still marked closed -- no Take
+            # over, no live row on `/app/conversations`, nothing saying
+            # anyone had written in again. A phone on file, so the
+            # once-only "who do we ring" guard does not intervene and the
+            # close goes through on the first turn.
+            from app.agent.fake_provider import call_tool
+
+            closer = _L(name="Sam Close", email=f"close.{stamp}@example.invalid",
+                        phone="5551230099", source="email")
+            _db.add(closer)
+            _db.commit()
+            first_claim = _Receipt(
+                outcome="accepted", message_id=f"<close1-{stamp}@mail>",
+                from_address=f'"Sam Close" <{closer.email}>',
+                to_address="sales@example.invalid", subject="Thanks",
+                body="Thanks, that's everything for now.", lead_id=closer.id,
+            )
+            first_out = _Out(
+                lead_id=closer.id, channel="email", direction="in", kind="reply",
+                to_address=closer.email, subject="Thanks",
+                body="Thanks, that's everything for now.", provider="inbound",
+                provider_message_id=f"<close1-{stamp}@mail>", status="sent",
+                sent_at=utcnow_local(),
+            )
+            _db.add_all([first_claim, first_out])
+            _db.commit()
+
+            closing = replier.answer(
+                _db, first_claim, closer, first_out,
+                provider=FakeProvider([
+                    call_tool("close_conversation", summary="Said thanks, nothing further."),
+                    scripted("Anytime -- reach out if you need anything else."),
+                ]),
+            )
+            check("closing an email thread is a real tool call, not a refusal",
+                  closing["sent"], str(closing.get("reason")))
+            closed_thread = _db.query(_Convo).filter_by(
+                lead_id=closer.id, channel="email").one()
+            check("and it really closes the thread",
+                  closed_thread.status == "closed" and closed_thread.ended_at is not None,
+                  f"status={closed_thread.status} ended_at={closed_thread.ended_at}")
+
+            second_claim = _Receipt(
+                outcome="accepted", message_id=f"<close2-{stamp}@mail>",
+                from_address=f'"Sam Close" <{closer.email}>',
+                to_address="sales@example.invalid", subject="One more thing",
+                body="Actually, one more question.", lead_id=closer.id,
+            )
+            second_out = _Out(
+                lead_id=closer.id, channel="email", direction="in", kind="reply",
+                to_address=closer.email, subject="One more thing",
+                body="Actually, one more question.", provider="inbound",
+                provider_message_id=f"<close2-{stamp}@mail>", status="sent",
+                sent_at=utcnow_local(),
+            )
+            _db.add_all([second_claim, second_out])
+            _db.commit()
+
+            reopened = replier.answer(
+                _db, second_claim, closer, second_out,
+                provider=FakeProvider([scripted("Sure -- what would you like to know?")]),
+            )
+            check("a second email answers rather than failing quietly",
+                  reopened["sent"], str(reopened.get("reason")))
+            _db.refresh(closed_thread)
+            check("and writing back reopens the thread, same row `thread_for` reuses",
+                  closed_thread.status == "active" and closed_thread.ended_at is None,
+                  f"status={closed_thread.status} ended_at={closed_thread.ended_at}")
         finally:
             _cfg.email_agent, _cfg.email_reply_cooldown_minutes = was_env, was_cool
             _cfg.email_replies_per_hour = was_ceiling
