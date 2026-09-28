@@ -125,7 +125,16 @@ export function Switch({
           // `shadow-sm` lifts the knob off the track -- with no shadow at all
           // it read as a hole cut in the track rather than a separate piece
           // sitting on top of it, in both states.
-          'absolute top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform duration-200 ease-in-out',
+          //
+          // `left-0` is load-bearing, not decoration: with no explicit `left`
+          // this absolutely positioned span's static position resolved to
+          // roughly half the track's own width rather than its edge, so
+          // `translate-x-5.5` -- correct on its own, measured against a
+          // knob actually starting at the left edge -- carried it past the
+          // track's right edge instead of flush against it. Grey read as
+          // "inside" only because its own translate happened to still land
+          // within the track by coincidence, off-centre rather than flush.
+          'absolute left-0 top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform duration-200 ease-in-out',
           checked ? 'translate-x-5.5' : 'translate-x-0.5',
         )}
       />
