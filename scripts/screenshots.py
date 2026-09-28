@@ -207,6 +207,7 @@ OVERFLOW_JS = """() => {
 
 
 async def main() -> int:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
 
     OUT.mkdir(exist_ok=True)
@@ -350,6 +351,66 @@ async def main() -> int:
                         f"{route}: expected one prompt box, found {boxes} textarea(s), "
                         f"#assistant-prompt x{prompt_box}, old labels {retired}"
                     )
+                # **A switch's own knob must stay inside its own track when**
+                # **on.** The bug this catches -- the knob's un-translated
+                # position resolving to roughly half the track's own width
+                # rather than its edge -- only pushed it past the track's far
+                # side in the *checked* state; off happened to still land
+                # inside by coincidence, flush against the wrong edge with no
+                # margin rather than visibly outside it. So this drives the
+                # switch to "on" regardless of which way the fixture seeded
+                # it, rather than whichever state one click away happens to
+                # be. A handoff rule's toggles flip in place with no
+                # confirmation step, unlike Team's "Out" switch, which opens a
+                # sheet first and would block a second click. Restored to
+                # its original state after, so the rule this leaves behind is
+                # enabled exactly as the fixture seeded it.
+                await page.click("button:text-is('Handoff rules')")
+                switch = page.locator('button[role="switch"]').first
+                # The tab's own rules are a separate, lazily-enabled query --
+                # `networkidle` on the page's first load cannot have waited on
+                # a fetch that only starts once this tab is clicked. Checking
+                # `switch.count()` immediately raced that fetch and lost most
+                # of the time, silently skipping the whole check with nothing
+                # in the log to say so. Waiting for the element itself, rather
+                # than a guessed pause, is what a lazy load actually needs.
+                try:
+                    await switch.wait_for(state="visible", timeout=5_000)
+                except PlaywrightTimeoutError:
+                    pass
+                if await switch.count():
+                    # Waits for the click's own state change too, not a fixed
+                    # pause alone -- `aria-checked` can still read the
+                    # pre-click value a moment later, which would measure the
+                    # knob mid-transition (or not yet started).
+                    async def clicked_to(want: str) -> None:
+                        await switch.click()
+                        for _ in range(20):
+                            if await switch.get_attribute("aria-checked") == want:
+                                break
+                            await page.wait_for_timeout(50)
+                        await page.wait_for_timeout(500)  # the 200ms transition
+
+                    was_on = (await switch.get_attribute("aria-checked")) == "true"
+                    if was_on:
+                        await clicked_to("false")
+                    track = await switch.bounding_box()
+                    await clicked_to("true")
+                    knob = await switch.locator("span").first.bounding_box()
+                    if track and knob:
+                        inside = (
+                            knob["x"] >= track["x"] - 0.5
+                            and knob["x"] + knob["width"] <= track["x"] + track["width"] + 0.5
+                        )
+                        if not inside:
+                            failures.append(
+                                f"{route}: a switch's knob sits outside its own track when "
+                                f"on -- track x={track['x']:.1f} w={track['width']:.1f}, "
+                                f"knob x={knob['x']:.1f} w={knob['width']:.1f}"
+                            )
+                    if not was_on:
+                        await clicked_to("false")
+                await page.click("button:text-is('Instructions')")
             # A React crash leaves the root blank; console errors catch the rest.
             real = [e for e in errors if "favicon" not in e.lower()]
 
